@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentViewController = paneContainer
         window.center()
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         self.window = window
 
         setupMenuKeyBindings()

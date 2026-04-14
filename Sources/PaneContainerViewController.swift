@@ -118,8 +118,11 @@ final class PaneContainerViewController: NSViewController {
 
     @discardableResult
     func addPane() -> PaneModel {
-        let pane = PaneModel(controller: controller)
-        pane.terminalView.delegate = self
+        let pane = PaneModel(
+            controller: controller,
+            onTitle: { [weak self] (id: UUID, title: String) in self?.handleTitleChange(title, from: id) },
+            onClose: { [weak self] (id: UUID) in self?.handlePaneClose(from: id) }
+        )
 
         let insertIndex = panes.isEmpty ? 0 : focusedIndex + 1
         panes.insert(pane, at: insertIndex)
@@ -243,27 +246,17 @@ final class PaneContainerViewController: NSViewController {
             scrollView.contentView.animator().bounds.origin.x = clampedX
         }
     }
-}
 
-// MARK: - Terminal Delegate
+    // MARK: - Terminal Event Handlers
 
-extension PaneContainerViewController:
-    TerminalSurfaceTitleDelegate,
-    TerminalSurfaceResizeDelegate,
-    TerminalSurfaceCloseDelegate
-{
-    func terminalDidChangeTitle(_ title: String) {
-        if let focused = panes[safe: focusedIndex],
-            focused.terminalView === view.window?.firstResponder
-        {
-            view.window?.title = title
-        }
+    private func handleTitleChange(_ title: String, from paneID: UUID) {
+        guard let focused = panes[safe: focusedIndex], focused.id == paneID else { return }
+        view.window?.title = title
     }
 
-    func terminalDidResize(columns _: Int, rows _: Int) {}
-
-    func terminalDidClose(processAlive _: Bool) {
-        removeCurrentPane()
+    private func handlePaneClose(from paneID: UUID) {
+        guard let index = panes.firstIndex(where: { $0.id == paneID }) else { return }
+        removePane(at: index)
     }
 }
 
