@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+DerivedData/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+Packages/
+
+# libghostty pre-built binary
+GhosttyKit.xcframework/
+
+# Nix
+result
+result-*
+.direnv/
+.envrc
+
+# Environment
+.env
+.env.*
