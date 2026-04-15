@@ -11,6 +11,7 @@ public final class PaneContainerViewController: NSViewController {
     private var focusedIndex: Int = 0
 
     private let defaultPaneWidth: CGFloat = 640
+    private let minPaneWidth: CGFloat = 100
     private let focusBorderWidth: CGFloat = 2
     private let focusBorderColor: NSColor = .systemBlue
 
@@ -80,7 +81,7 @@ public final class PaneContainerViewController: NSViewController {
         scrollView.horizontalScrollElasticity = .allowed
 
         stackView.orientation = .horizontal
-        stackView.spacing = 1
+        stackView.spacing = 0  // handles serve as spacing between panes
         stackView.detachesHiddenViews = false
 
         scrollView.documentView = stackView
@@ -140,18 +141,13 @@ public final class PaneContainerViewController: NSViewController {
         let tv = pane.terminalView
         tv.translatesAutoresizingMaskIntoConstraints = false
 
-        if insertIndex < stackView.arrangedSubviews.count {
-            stackView.insertArrangedSubview(tv, at: insertIndex)
-        } else {
-            stackView.addArrangedSubview(tv)
-        }
-
         // New panes start at defaultPaneWidth with no preset (currentPreset=nil).
         // User can cycle presets with ⌥⌃+/.
         let wc = tv.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
         wc.isActive = true
         pane.widthConstraint = wc
 
+        rebuildStackView()
         view.layoutSubtreeIfNeeded()
         setFocus(index: insertIndex)
         return pane
@@ -165,10 +161,12 @@ public final class PaneContainerViewController: NSViewController {
         pane.terminalView.removeFromSuperview()
 
         if panes.isEmpty {
+            for v in stackView.arrangedSubviews { v.removeFromSuperview() }
             view.window?.close()
             return
         }
 
+        rebuildStackView()
         let newIndex = min(index, panes.count - 1)
         setFocus(index: newIndex)
     }
@@ -212,6 +210,7 @@ public final class PaneContainerViewController: NSViewController {
         let pane = panes[index]
         applyFocusBorder(pane)
         view.window?.makeFirstResponder(pane.terminalView)
+        updateHandleActiveStates()
         scrollToPane(at: index)
     }
 
@@ -268,27 +267,85 @@ public final class PaneContainerViewController: NSViewController {
 
     public func movePaneLeft() {
         guard focusedIndex > 0 else { return }
-        let from = focusedIndex
-        let to = focusedIndex - 1
-        panes.swapAt(from, to)
-        // Move only the target view to its new position
-        let tv = panes[to].terminalView
-        stackView.removeArrangedSubview(tv)
-        stackView.insertArrangedSubview(tv, at: to)
+        panes.swapAt(focusedIndex, focusedIndex - 1)
+        focusedIndex -= 1
+        rebuildStackView()
         view.layoutSubtreeIfNeeded()
-        setFocus(index: to)
+        setFocus(index: focusedIndex)
     }
 
     public func movePaneRight() {
         guard focusedIndex < panes.count - 1 else { return }
-        let from = focusedIndex
-        let to = focusedIndex + 1
-        panes.swapAt(from, to)
-        let tv = panes[to].terminalView
-        stackView.removeArrangedSubview(tv)
-        stackView.insertArrangedSubview(tv, at: to)
+        panes.swapAt(focusedIndex, focusedIndex + 1)
+        focusedIndex += 1
+        rebuildStackView()
         view.layoutSubtreeIfNeeded()
-        setFocus(index: to)
+        setFocus(index: focusedIndex)
+    }
+
+    // MARK: - Stack View Rebuild
+
+    /// Rebuild arrangedSubviews from panes array, inserting resize handles between panes.
+    /// Full rebuild (vs differential update) trades minor layout cost for correctness —
+    /// manual arrangedSubview index management was error-prone with handles interleaved.
+    private func rebuildStackView() {
+        // Remove handles; pane views stay in superview (they have constraints)
+        for v in stackView.arrangedSubviews.reversed() {
+            stackView.removeArrangedSubview(v)
+            if v is PaneResizeHandle { v.removeFromSuperview() }
+        }
+        for (i, pane) in panes.enumerated() {
+            if i > 0 {
+                let handle = makeResizeHandle(leftIndex: i - 1, rightIndex: i)
+                stackView.addArrangedSubview(handle)
+                NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
+            }
+            stackView.addArrangedSubview(pane.terminalView)
+        }
+    }
+
+    private func makeResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
+        let handle = PaneResizeHandle()
+        let leftPane = panes[leftIndex]
+        let rightPane = panes[rightIndex]
+        handle.onDrag = { [weak self, weak leftPane, weak rightPane] deltaX in
+            guard let self, let leftPane, let rightPane else { return }
+            // Resize only the focused pane
+            let isLeftFocused = leftPane.id == self.panes[safe: self.focusedIndex]?.id
+            let isRightFocused = rightPane.id == self.panes[safe: self.focusedIndex]?.id
+            guard isLeftFocused || isRightFocused else { return }
+            let focusedPane = isLeftFocused ? leftPane : rightPane
+            guard let constraint = focusedPane.widthConstraint else { return }
+            // Left pane: drag right → wider. Right pane: drag left → wider.
+            let sign: CGFloat = isLeftFocused ? 1 : -1
+            let newWidth = max(self.minPaneWidth, constraint.constant + deltaX * sign)
+            let actualDelta = newWidth - constraint.constant
+            constraint.constant = newWidth
+            focusedPane.currentPreset = nil
+            // When resizing via the LEFT handle, compensate scroll so the
+            // right edge appears fixed (stack view anchors from the left).
+            if isRightFocused, actualDelta != 0 {
+                var origin = self.scrollView.contentView.bounds.origin
+                origin.x += actualDelta
+                self.scrollView.contentView.setBoundsOrigin(origin)
+            }
+        }
+        return handle
+    }
+
+    /// Update which resize handles are active based on focused pane.
+    private func updateHandleActiveStates() {
+        guard let focusedPane = panes[safe: focusedIndex] else { return }
+        for v in stackView.arrangedSubviews {
+            guard let handle = v as? PaneResizeHandle else { continue }
+            guard let handleIndex = stackView.arrangedSubviews.firstIndex(of: handle) else { continue }
+            // Handle at arrangedSubviews index i is between pane at i-1 and i+1.
+            // It's active if either adjacent arranged view is the focused pane's terminalView.
+            let leftView = stackView.arrangedSubviews[safe: handleIndex - 1]
+            let rightView = stackView.arrangedSubviews[safe: handleIndex + 1]
+            handle.isActive = leftView === focusedPane.terminalView
+                || rightView === focusedPane.terminalView
+        }
     }
 
     // MARK: - Focus Indicator
@@ -349,6 +406,7 @@ public final class PaneContainerViewController: NSViewController {
         }
         focusedIndex = index
         applyFocusBorder(panes[index])
+        updateHandleActiveStates()
         scrollToPane(at: index)
     }
 
