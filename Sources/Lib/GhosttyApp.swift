@@ -20,7 +20,7 @@ public final class GhosttyApp {
             NSLog("[e05] ghostty_config_new failed")
             return
         }
-        let configPath = NSString("~/.config/ghostty/config").expandingTildeInPath
+        let configPath = NSString("~/.config/e05/config").expandingTildeInPath
         if FileManager.default.fileExists(atPath: configPath) {
             configPath.withCString { ghostty_config_load_file(cfg, $0) }
         }
