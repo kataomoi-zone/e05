@@ -173,7 +173,28 @@ public final class PaneContainerViewController: NSViewController {
         setFocus(index: newIndex)
     }
 
+    /// Close the focused pane. Shows a confirmation dialog if a process is running.
     public func removeCurrentPane() {
+        guard let pane = panes[safe: focusedIndex] else { return }
+        if let surface = pane.terminalView.surface,
+           ghostty_surface_needs_confirm_quit(surface)
+        {
+            let alert = NSAlert()
+            alert.messageText = "Close this pane?"
+            alert.informativeText = "A process is still running."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+            guard let window = view.window else { return }
+            let targetId = pane.id
+            alert.beginSheetModal(for: window) { [weak self] response in
+                guard response == .alertFirstButtonReturn, let self else { return }
+                if let idx = self.panes.firstIndex(where: { $0.id == targetId }) {
+                    self.removePane(at: idx)
+                }
+            }
+            return
+        }
         removePane(at: focusedIndex)
     }
 
