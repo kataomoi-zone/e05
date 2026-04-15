@@ -1,5 +1,5 @@
 import AppKit
-import GhosttyKit
+import E05Lib
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

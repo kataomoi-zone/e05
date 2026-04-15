@@ -3,14 +3,14 @@ import GhosttyKit
 
 /// Manages the ghostty runtime lifecycle: init, config, app, tick.
 @MainActor
-final class GhosttyApp {
+public final class GhosttyApp {
     private(set) var app: ghostty_app_t?
     private(set) var config: ghostty_config_t?
 
-    var onSetTitle: ((ghostty_surface_t, String) -> Void)?
-    var onCloseSurface: (() -> Void)?
+    public var onSetTitle: ((ghostty_surface_t, String) -> Void)?
+    public var onCloseSurface: (() -> Void)?
 
-    init() {
+    public init() {
         let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
         guard initResult == 0 else {
             NSLog("[e05] ghostty_init failed: \(initResult)")
@@ -104,7 +104,7 @@ final class GhosttyApp {
         // for proper cleanup, but for now the app lives for the process lifetime
     }
 
-    func tick() {
+    public func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
     }

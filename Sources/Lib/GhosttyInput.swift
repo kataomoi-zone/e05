@@ -2,9 +2,9 @@ import AppKit
 import GhosttyKit
 
 /// Helpers for converting AppKit key events to ghostty input structures.
-enum GhosttyInput {
+public enum GhosttyInput {
     /// Convert NSEvent.ModifierFlags to ghostty_input_mods_e.
-    static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+    public static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods: UInt32 = 0
         if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
         if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
@@ -15,7 +15,7 @@ enum GhosttyInput {
     }
 
     /// Build ghostty_input_key_s from an NSEvent.
-    static func keyEvent(
+    public static func keyEvent(
         from event: NSEvent,
         action: ghostty_input_action_e,
         translationMods: ghostty_input_mods_e? = nil
@@ -49,7 +49,7 @@ enum GhosttyInput {
     }
 
     /// Get printable characters from an NSEvent, handling control characters.
-    static func ghosttyCharacters(from event: NSEvent) -> String? {
+    public static func ghosttyCharacters(from event: NSEvent) -> String? {
         guard let characters = event.characters else { return nil }
         guard characters.count == 1,
               let scalar = characters.unicodeScalars.first

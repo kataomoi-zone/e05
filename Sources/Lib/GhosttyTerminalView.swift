@@ -3,17 +3,17 @@ import GhosttyKit
 
 /// NSView that hosts a single ghostty terminal surface with Metal rendering.
 @MainActor
-final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
+public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     private let ghosttyApp: GhosttyApp
     private var surface: ghostty_surface_t?
     private var metalLayer: CAMetalLayer?
     private var markedTextStorage = NSMutableAttributedString()
     private var keyTextAccumulator: [String] = []
 
-    var onTitleChange: ((String) -> Void)?
-    var onClose: (() -> Void)?
+    public var onTitleChange: ((String) -> Void)?
+    public var onClose: (() -> Void)?
 
-    init(frame: NSRect, ghosttyApp: GhosttyApp) {
+    public init(frame: NSRect, ghosttyApp: GhosttyApp) {
         self.ghosttyApp = ghosttyApp
         super.init(frame: frame)
         wantsLayer = true
@@ -26,7 +26,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Layer
 
-    override func makeBackingLayer() -> CALayer {
+    public override func makeBackingLayer() -> CALayer {
         let layer = CAMetalLayer()
         layer.device = MTLCreateSystemDefaultDevice()
         layer.isOpaque = true
@@ -37,7 +37,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Surface Lifecycle
 
-    override func viewDidMoveToWindow() {
+    public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             createSurface()
@@ -79,12 +79,12 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Layout
 
-    override func setFrameSize(_ newSize: NSSize) {
+    public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateSize()
     }
 
-    override func viewDidChangeBackingProperties() {
+    public override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         guard let surface, let scale = window?.backingScaleFactor else { return }
         metalLayer?.contentsScale = scale
@@ -103,15 +103,15 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Focus
 
-    override var acceptsFirstResponder: Bool { true }
+    public override var acceptsFirstResponder: Bool { true }
 
-    override func becomeFirstResponder() -> Bool {
+    public override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { ghostty_surface_set_focus(surface, true) }
         return result
     }
 
-    override func resignFirstResponder() -> Bool {
+    public override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
         if result { ghostty_surface_set_focus(surface, false) }
         return result
@@ -119,7 +119,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Key Input
 
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard window?.firstResponder === self else { return false }
 
         switch event.keyCode {
@@ -144,7 +144,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         return false
     }
 
-    override func keyDown(with event: NSEvent) {
+    public override func keyDown(with event: NSEvent) {
         guard surface != nil else { return }
 
         let action: ghostty_input_action_e = event.isARepeat
@@ -174,12 +174,12 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         sendKeyEvent(event, action: action, text: chars)
     }
 
-    override func keyUp(with event: NSEvent) {
+    public override func keyUp(with event: NSEvent) {
         guard surface != nil else { return }
         sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE, text: nil)
     }
 
-    override func flagsChanged(with event: NSEvent) {
+    public override func flagsChanged(with event: NSEvent) {
         guard surface != nil else { return }
         let isPress = isModifierPress(event)
         let action: ghostty_input_action_e = isPress
@@ -236,29 +236,29 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - Mouse
 
-    override func mouseDown(with event: NSEvent) {
+    public override func mouseDown(with event: NSEvent) {
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS,
                                      GHOSTTY_MOUSE_LEFT,
                                      GhosttyInput.ghosttyMods(event.modifierFlags))
     }
 
-    override func mouseUp(with event: NSEvent) {
+    public override func mouseUp(with event: NSEvent) {
         guard let surface else { return }
         ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE,
                                      GHOSTTY_MOUSE_LEFT,
                                      GhosttyInput.ghosttyMods(event.modifierFlags))
     }
 
-    override func mouseMoved(with event: NSEvent) {
+    public override func mouseMoved(with event: NSEvent) {
         updateMousePos(event)
     }
 
-    override func mouseDragged(with event: NSEvent) {
+    public override func mouseDragged(with event: NSEvent) {
         updateMousePos(event)
     }
 
-    override func scrollWheel(with event: NSEvent) {
+    public override func scrollWheel(with event: NSEvent) {
         guard let surface else { return }
         ghostty_surface_mouse_scroll(surface,
                                      event.scrollingDeltaX,
@@ -266,7 +266,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
                                      ghostty_input_scroll_mods_t(GhosttyInput.ghosttyMods(event.modifierFlags).rawValue))
     }
 
-    override func updateTrackingAreas() {
+    public override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
         addTrackingArea(NSTrackingArea(
@@ -294,7 +294,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     /// (e.g. ESC → cancelOperation:, Enter → insertNewline:).
     /// Terminal views should NOT execute these commands — the raw key
     /// events are sent to ghostty instead.
-    override func doCommand(by selector: Selector) {
+    public override func doCommand(by selector: Selector) {
         NSLog("[e05] doCommand(by: %@)", NSStringFromSelector(selector))
         // Intentionally do nothing. Without this, AppKit sends the command
         // up the responder chain, which can cause hangs (e.g. cancelOperation: for ESC).
@@ -302,7 +302,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
 
     // MARK: - NSTextInputClient
 
-    func insertText(_ string: Any, replacementRange _: NSRange) {
+    public func insertText(_ string: Any, replacementRange _: NSRange) {
         let text: String
         if let s = string as? String { text = s }
         else if let s = string as? NSAttributedString { text = s.string }
@@ -311,7 +311,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         markedTextStorage.mutableString.setString("")
     }
 
-    func setMarkedText(_ string: Any, selectedRange _: NSRange, replacementRange _: NSRange) {
+    public func setMarkedText(_ string: Any, selectedRange _: NSRange, replacementRange _: NSRange) {
         if let s = string as? String {
             markedTextStorage.mutableString.setString(s)
         } else if let s = string as? NSAttributedString {
@@ -326,36 +326,36 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         }
     }
 
-    func unmarkText() {
+    public func unmarkText() {
         markedTextStorage.mutableString.setString("")
         if let surface {
             ghostty_surface_preedit(surface, nil, 0)
         }
     }
 
-    func selectedRange() -> NSRange {
+    public func selectedRange() -> NSRange {
         NSRange(location: NSNotFound, length: 0)
     }
 
-    func markedRange() -> NSRange {
+    public func markedRange() -> NSRange {
         markedTextStorage.length > 0
             ? NSRange(location: 0, length: markedTextStorage.length)
             : NSRange(location: NSNotFound, length: 0)
     }
 
-    func hasMarkedText() -> Bool {
+    public func hasMarkedText() -> Bool {
         markedTextStorage.length > 0
     }
 
-    func attributedSubstring(forProposedRange _: NSRange, actualRange _: NSRangePointer?) -> NSAttributedString? {
+    public func attributedSubstring(forProposedRange _: NSRange, actualRange _: NSRangePointer?) -> NSAttributedString? {
         nil
     }
 
-    func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
         []
     }
 
-    func firstRect(forCharacterRange _: NSRange, actualRange _: NSRangePointer?) -> NSRect {
+    public func firstRect(forCharacterRange _: NSRange, actualRange _: NSRangePointer?) -> NSRect {
         guard let windowFrame = window?.frame else { return .zero }
         let local = convert(bounds, to: nil)
         return NSRect(
@@ -366,7 +366,7 @@ final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
         )
     }
 
-    func characterIndex(for _: NSPoint) -> Int {
+    public func characterIndex(for _: NSPoint) -> Int {
         0
     }
 }
