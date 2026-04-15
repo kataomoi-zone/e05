@@ -16,11 +16,14 @@ public final class ColumnModel {
     public let containerView: NSStackView = {
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 2
-        stack.distribution = .fillEqually
+        stack.spacing = 0  // vertical resize handles serve as spacing
+        stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         return stack
     }()
+
+    /// Equal height constraints between panes. Deactivated when user drags to resize.
+    var equalHeightConstraints: [NSLayoutConstraint] = []
 
     public var focusedPane: PaneModel? {
         panes[safe: focusedPaneIndex]

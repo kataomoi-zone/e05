@@ -1,33 +1,45 @@
 import AppKit
 
-/// Thin view between panes that handles drag-to-resize.
+/// Thin view between panes/columns that handles drag-to-resize.
 /// Transparent by default, shows indicator on hover.
 @MainActor
 public final class PaneResizeHandle: NSView {
-    static let handleWidth: CGFloat = 6
+    public enum Orientation {
+        case horizontal  // between columns (left-right drag)
+        case vertical    // between panes within a column (up-down drag)
+    }
 
-    /// Called during drag with the horizontal delta.
-    public var onDrag: ((_ deltaX: CGFloat) -> Void)?
+    static let handleSize: CGFloat = 6
+
+    public let orientation: Orientation
+
+    /// Called during drag with the delta along the resize axis.
+    public var onDrag: ((_ delta: CGFloat) -> Void)?
 
     /// Only active handles (adjacent to focused pane) show resize cursor and respond to drag.
     public var isActive: Bool = false {
         didSet { window?.invalidateCursorRects(for: self) }
     }
 
-    private var dragStartX: CGFloat = 0
+    private var dragStartPos: CGFloat = 0
     private var isHovering = false
     private var isDragging = false
     private var cursorPushed = false
 
-    public init() {
+    public init(orientation: Orientation) {
+        self.orientation = orientation
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = nil // transparent by default
+        layer?.backgroundColor = nil
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError()
+    }
+
+    private var resizeCursor: NSCursor {
+        orientation == .horizontal ? .resizeLeftRight : .resizeUpDown
     }
 
     // MARK: - Tracking & Cursor
@@ -47,7 +59,7 @@ public final class PaneResizeHandle: NSView {
         isHovering = true
         layer?.backgroundColor = NSColor.separatorColor.cgColor
         if !cursorPushed {
-            NSCursor.resizeLeftRight.push()
+            resizeCursor.push()
             cursorPushed = true
         }
     }
@@ -65,7 +77,7 @@ public final class PaneResizeHandle: NSView {
 
     public override func resetCursorRects() {
         if isActive {
-            addCursorRect(bounds, cursor: .resizeLeftRight)
+            addCursorRect(bounds, cursor: resizeCursor)
         }
     }
 
@@ -74,14 +86,19 @@ public final class PaneResizeHandle: NSView {
     public override func mouseDown(with event: NSEvent) {
         guard isActive else { return }
         isDragging = true
-        dragStartX = event.locationInWindow.x
+        dragStartPos = orientation == .horizontal
+            ? event.locationInWindow.x
+            : event.locationInWindow.y
     }
 
     public override func mouseDragged(with event: NSEvent) {
         guard isActive, isDragging else { return }
-        let deltaX = event.locationInWindow.x - dragStartX
-        dragStartX = event.locationInWindow.x
-        onDrag?(deltaX)
+        let currentPos = orientation == .horizontal
+            ? event.locationInWindow.x
+            : event.locationInWindow.y
+        let delta = currentPos - dragStartPos
+        dragStartPos = currentPos
+        onDrag?(delta)
     }
 
     public override func mouseUp(with _: NSEvent) {
@@ -99,6 +116,11 @@ public final class PaneResizeHandle: NSView {
 
     public static func makeConstraints(for handle: PaneResizeHandle) -> [NSLayoutConstraint] {
         handle.translatesAutoresizingMaskIntoConstraints = false
-        return [handle.widthAnchor.constraint(equalToConstant: handleWidth)]
+        return switch handle.orientation {
+        case .horizontal:
+            [handle.widthAnchor.constraint(equalToConstant: handleSize)]
+        case .vertical:
+            [handle.heightAnchor.constraint(equalToConstant: handleSize)]
+        }
     }
 }

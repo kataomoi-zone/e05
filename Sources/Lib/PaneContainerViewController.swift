@@ -42,6 +42,7 @@ public final class PaneContainerViewController: NSViewController {
 
     private let defaultPaneWidth: CGFloat = 640
     private let minPaneWidth: CGFloat = 100
+    private let minPaneHeight: CGFloat = 50
     private let focusBorderWidth: CGFloat = 2
     private let focusBorderColor: NSColor = .systemBlue
 
@@ -85,9 +86,9 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLayout()
         guard !isUpdatingLayout else { return }
         isUpdatingLayout = true
-        // Recalculate fraction-based presets on window resize
         let visibleWidth = scrollView.contentView.bounds.width
         for column in columns {
+            // Recalculate fraction-based width presets on window resize
             if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
                 column.widthConstraint?.constant = visibleWidth * f
             }
@@ -431,7 +432,7 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     private func makeColumnResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
-        let handle = PaneResizeHandle()
+        let handle = PaneResizeHandle(orientation: .horizontal)
         let leftColumn = columns[leftIndex]
         let rightColumn = columns[rightIndex]
         handle.onDrag = { [weak self, weak leftColumn, weak rightColumn] deltaX in
@@ -456,19 +457,89 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     /// Rebuild the containerView of a column from its panes array.
+    /// Inserts vertical resize handles between panes and sets equal height constraints.
     private func rebuildColumnView(column: ColumnModel) {
+        // Clean up old constraints and views
+        NSLayoutConstraint.deactivate(column.equalHeightConstraints)
+        column.equalHeightConstraints.removeAll()
         for v in column.containerView.arrangedSubviews.reversed() {
             column.containerView.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
-        for pane in column.panes {
+
+        var firstTV: NSView?
+        for (i, pane) in column.panes.enumerated() {
+            if i > 0 {
+                let handle = makeVerticalResizeHandle(column: column, topIndex: i - 1, bottomIndex: i)
+                column.containerView.addArrangedSubview(handle)
+                NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
+            }
             let tv = pane.terminalView
             column.containerView.addArrangedSubview(tv)
             NSLayoutConstraint.activate([
                 tv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
                 tv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
             ])
+            // Equal height constraints between all panes (deactivated on drag)
+            if let first = firstTV {
+                let c = tv.heightAnchor.constraint(equalTo: first.heightAnchor)
+                c.isActive = true
+                column.equalHeightConstraints.append(c)
+            } else {
+                firstTV = tv
+            }
         }
+    }
+
+    private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int) -> PaneResizeHandle {
+        let handle = PaneResizeHandle(orientation: .vertical)
+        // Vertical handles are always active within a column (unlike horizontal
+        // handles which are only active adjacent to the focused column).
+        handle.isActive = true
+        let topPaneId = column.panes[topIndex].id
+        let bottomPaneId = column.panes[bottomIndex].id
+        handle.onDrag = { [weak self, weak column] deltaY in
+            guard let self, let column, column.panes.count > 1,
+                  let topIdx = column.panes.firstIndex(where: { $0.id == topPaneId }),
+                  let bottomIdx = column.panes.firstIndex(where: { $0.id == bottomPaneId })
+            else { return }
+            let topPane = column.panes[topIdx]
+            let bottomPane = column.panes[bottomIdx]
+
+            // AppKit Y is up, so dragging down (negative deltaY) should grow the top pane
+            let newTopHeight = topPane.terminalView.frame.height - deltaY
+            let newBottomHeight = bottomPane.terminalView.frame.height + deltaY
+            guard newTopHeight >= self.minPaneHeight, newBottomHeight >= self.minPaneHeight else { return }
+
+            // Replace all height constraints with ratio constraints relative to first pane.
+            // Ratio constraints fill the container naturally — no absolute heights needed.
+            NSLayoutConstraint.deactivate(column.equalHeightConstraints)
+            column.equalHeightConstraints.removeAll()
+
+            let firstTV = column.panes[0].terminalView
+            // Use current frame heights (with the drag delta applied to the two panes)
+            for (i, pane) in column.panes.enumerated() where i > 0 {
+                let currentHeight: CGFloat
+                if pane.id == topPane.id {
+                    currentHeight = newTopHeight
+                } else if pane.id == bottomPane.id {
+                    currentHeight = newBottomHeight
+                } else {
+                    currentHeight = pane.terminalView.frame.height
+                }
+                let firstHeight = (column.panes[0].id == topPane.id) ? newTopHeight :
+                                  (column.panes[0].id == bottomPane.id) ? newBottomHeight :
+                                  firstTV.frame.height
+                guard firstHeight > 0 else { continue }
+                let ratio = currentHeight / firstHeight
+                let c = pane.terminalView.heightAnchor.constraint(
+                    equalTo: firstTV.heightAnchor, multiplier: ratio
+                )
+                c.isActive = true
+                column.equalHeightConstraints.append(c)
+            }
+        }
+        return handle
     }
 
     /// Update which resize handles are active based on focused column.
