@@ -8,7 +8,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     public private(set) var surface: ghostty_surface_t?
     private var metalLayer: CAMetalLayer?
     private var markedTextStorage = NSMutableAttributedString()
-    private var keyTextAccumulator: [String] = []
+    /// nil = outside keyDown, [] = inside keyDown (no text yet).
+    /// This distinction lets insertText know whether to accumulate or send directly.
+    private var keyTextAccumulator: [String]?
 
     public var onTitleChange: ((String) -> Void)?
     public var onClose: (() -> Void)?
@@ -148,26 +150,36 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
         // Command key: send without text (for keybinds)
         guard !event.modifierFlags.contains(.command) else {
-            sendKeyEvent(event, action: action, text: nil)
+            sendKeyEvent(event, action: action, text: nil, composing: false)
             return
         }
+
+        // Record IME state before interpretKeyEvents
+        let markedTextBefore = hasMarkedText()
 
         // Collect text via input method system
         keyTextAccumulator = []
         interpretKeyEvents([event])
+        let accumulated = keyTextAccumulator ?? []
+        keyTextAccumulator = nil
 
-        // If text was collected, send with text
-        if !keyTextAccumulator.isEmpty {
-            for text in keyTextAccumulator {
-                sendKeyEvent(event, action: action, text: text)
+        // Sync preedit state after interpretKeyEvents
+        syncPreedit(clearIfNeeded: markedTextBefore)
+
+        // IME composing: tell ghostty not to encode this key
+        let composing = hasMarkedText() || markedTextBefore
+
+        // If text was collected (IME confirmed or normal input), send with text
+        if !accumulated.isEmpty {
+            for text in accumulated {
+                sendKeyEvent(event, action: action, text: text, composing: false)
             }
             return
         }
 
-        // No marked text and no collected text — send with derived characters
-        guard !hasMarkedText() else { return }
-        let chars = GhosttyInput.ghosttyCharacters(from: event)
-        sendKeyEvent(event, action: action, text: chars)
+        // No text collected — send with derived characters (or composing=true to suppress)
+        let chars = composing ? nil : GhosttyInput.ghosttyCharacters(from: event)
+        sendKeyEvent(event, action: action, text: chars, composing: composing)
     }
 
     public override func keyUp(with event: NSEvent) {
@@ -184,9 +196,10 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     }
 
     @discardableResult
-    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?) -> Bool {
+    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?, composing: Bool = false) -> Bool {
         guard let surface else { return false }
         var key = GhosttyInput.keyEvent(from: event, action: action)
+        key.composing = composing
 
         // Match Ghostty's own behavior: only send text for printable characters
         // (codepoint >= 0x20). Control characters are encoded by ghostty itself
@@ -303,8 +316,21 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
         if let s = string as? String { text = s }
         else if let s = string as? NSAttributedString { text = s.string }
         else { return }
-        keyTextAccumulator.append(text)
-        markedTextStorage.mutableString.setString("")
+
+        unmarkText()
+
+        // Inside keyDown: accumulate for sendKeyEvent
+        if keyTextAccumulator != nil {
+            keyTextAccumulator?.append(text)
+            return
+        }
+
+        // Outside keyDown (e.g. drag-and-drop): send directly to PTY
+        guard let surface else { return }
+        NSLog("[e05-key] insertText outside keyDown: \"%@\"", text)
+        text.withCString { ptr in
+            ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
+        }
     }
 
     public func setMarkedText(_ string: Any, selectedRange _: NSRange, replacementRange _: NSRange) {
@@ -313,18 +339,26 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
         } else if let s = string as? NSAttributedString {
             markedTextStorage.setAttributedString(s)
         }
-        // Send preedit to ghostty for inline IME preview
-        if let surface {
-            let text = markedTextStorage.string
-            text.withCString { ptr in
-                ghostty_surface_preedit(surface, ptr, UInt(text.utf8.count))
-            }
+        // If called outside keyDown (e.g. keyboard layout change), sync immediately
+        if keyTextAccumulator == nil {
+            syncPreedit()
         }
     }
 
     public func unmarkText() {
+        guard markedTextStorage.length > 0 else { return }
         markedTextStorage.mutableString.setString("")
-        if let surface {
+        syncPreedit()
+    }
+
+    private func syncPreedit(clearIfNeeded: Bool = true) {
+        guard let surface else { return }
+        if markedTextStorage.length > 0 {
+            let text = markedTextStorage.string
+            text.withCString { ptr in
+                ghostty_surface_preedit(surface, ptr, UInt(text.utf8.count))
+            }
+        } else if clearIfNeeded {
             ghostty_surface_preedit(surface, nil, 0)
         }
     }
