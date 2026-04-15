@@ -175,14 +175,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cycleWidthItem.keyEquivalentModifierMask = [.option, .control]
         paneMenu.addItem(cycleWidthItem)
 
-        // ⌥⌃+T: Toggle header visibility
-        let toggleHeaderItem = NSMenuItem(
-            title: "Toggle Header",
-            action: #selector(handleToggleHeader),
-            keyEquivalent: "t"
+        // ⌘+Shift+L: Toggle URL bar visibility
+        let toggleURLBarItem = NSMenuItem(
+            title: "Toggle URL Bar",
+            action: #selector(handleToggleURLBar),
+            keyEquivalent: "l"
         )
-        toggleHeaderItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(toggleHeaderItem)
+        toggleURLBarItem.keyEquivalentModifierMask = [.command, .shift]
+        paneMenu.addItem(toggleURLBarItem)
+
+        // ⌘+L: Focus URL bar
+        let focusURLBarItem = NSMenuItem(
+            title: "Focus URL Bar",
+            action: #selector(handleFocusURLBar),
+            keyEquivalent: "l"
+        )
+        paneMenu.addItem(focusURLBarItem)
 
         // ⌥⌃+B: New Browser Column
         let newBrowserItem = NSMenuItem(
@@ -258,8 +266,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         paneContainer?.cycleWidthPreset(defaultWidthCycle)
     }
 
-    @objc private func handleToggleHeader() {
-        paneContainer?.toggleHeaderVisibility()
+    @objc private func handleToggleURLBar() {
+        paneContainer?.toggleURLBarVisibility()
+    }
+
+    @objc private func handleFocusURLBar() {
+        paneContainer?.focusURLBar()
     }
 
     @objc private func handleNewBrowser() {

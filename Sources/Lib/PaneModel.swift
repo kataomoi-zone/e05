@@ -22,14 +22,27 @@ public final class PaneModel {
     /// Terminal title or page title.
     public var title: String = ""
 
-    /// Overlay header showing the title.
+    /// Overlay header showing the title (visible when URL bar is hidden).
     public let headerView = PaneHeaderView()
+
+    /// Shared URL bar (toggleable, visible on all pane types).
+    public let urlBar = PaneURLBar()
+
+    /// Whether the URL bar is currently shown.
+    public private(set) var isURLBarVisible = false
 
     // TODO: used for vertical drag resize (Step 5)
     public var heightConstraint: NSLayoutConstraint?
 
-    /// The NSView to add to the layout. Works for both terminal and browser.
-    public var contentView: NSView {
+    /// Container view holding URL bar + content. This is what gets added to the layout.
+    public let containerView: NSView = {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    /// The raw content NSView (terminal or browser).
+    public var rawContentView: NSView {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv
@@ -56,13 +69,17 @@ public final class PaneModel {
         }
     }
 
+    private var urlBarTopConstraint: NSLayoutConstraint?
+    private var contentTopToURLBarConstraint: NSLayoutConstraint?
+    private var contentTopToContainerConstraint: NSLayoutConstraint?
+
     /// Create a terminal pane.
     public init(ghosttyApp: GhosttyApp) {
         self.address = .terminal
         let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
         tv.translatesAutoresizingMaskIntoConstraints = false
         self.content = .terminal(tv)
-        setupHeaderView()
+        setupContainerView()
     }
 
     /// Create a browser pane with an optional initial URL.
@@ -70,7 +87,7 @@ public final class PaneModel {
         self.address = url.map { PaneAddress($0) } ?? .blankBrowser
         let bv = Self.makeBrowserView()
         self.content = .browser(bv)
-        setupHeaderView()
+        setupContainerView()
         if let url { bv.navigate(to: url.absoluteString) }
     }
 
@@ -87,7 +104,6 @@ public final class PaneModel {
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         case .settings:
-            // TODO: implement settings pane — using browser as placeholder
             assertionFailure("Settings pane not yet implemented")
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
@@ -96,7 +112,7 @@ public final class PaneModel {
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         }
-        setupHeaderView()
+        setupContainerView()
         if case .browser(let bv) = content, address.kind == .browser {
             bv.navigate(to: address.url.absoluteString)
         }
@@ -108,14 +124,64 @@ public final class PaneModel {
         return bv
     }
 
-    private func setupHeaderView() {
+    // MARK: - Container Layout
+
+    private func setupContainerView() {
+        let cv = rawContentView
+        urlBar.translatesAutoresizingMaskIntoConstraints = false
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(headerView)
+
+        containerView.addSubview(urlBar)
+        containerView.addSubview(cv)
+        containerView.addSubview(headerView)
+
+        // URL bar at top
+        urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
+        let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)
+
+        // Content: either below URL bar or at top of container
+        contentTopToURLBarConstraint = cv.topAnchor.constraint(equalTo: urlBar.bottomAnchor)
+        contentTopToContainerConstraint = cv.topAnchor.constraint(equalTo: containerView.topAnchor)
+
         NSLayoutConstraint.activate([
-            headerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            headerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            urlBarTopConstraint!,
+            urlBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            urlBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            urlBarHeight,
+
+            cv.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            cv.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            cv.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+
+            // Header overlay (top-right, only shown when URL bar is hidden)
+            headerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
+            headerView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
             headerView.heightAnchor.constraint(equalToConstant: 22),
             headerView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
         ])
+
+        // Start with URL bar hidden
+        applyURLBarVisibility()
+        urlBar.setDisplayURL(address.description)
+    }
+
+    // MARK: - URL Bar Toggle
+
+    public func setURLBarVisible(_ visible: Bool) {
+        guard visible != isURLBarVisible else { return }
+        isURLBarVisible = visible
+        applyURLBarVisibility()
+    }
+
+    private func applyURLBarVisibility() {
+        urlBar.isHidden = !isURLBarVisible
+        // Deactivate first to avoid conflicting constraints
+        if isURLBarVisible {
+            contentTopToContainerConstraint?.isActive = false
+            contentTopToURLBarConstraint?.isActive = true
+        } else {
+            contentTopToURLBarConstraint?.isActive = false
+            contentTopToContainerConstraint?.isActive = true
+        }
     }
 }

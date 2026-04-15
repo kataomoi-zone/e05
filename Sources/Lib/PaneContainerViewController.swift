@@ -93,7 +93,7 @@ public final class PaneContainerViewController: NSViewController {
                 column.widthConstraint?.constant = visibleWidth * f
             }
             for pane in column.panes {
-                pane.contentView.setFrameSize(pane.contentView.frame.size)
+                pane.containerView.setFrameSize(pane.containerView.frame.size)
             }
         }
         isUpdatingLayout = false
@@ -174,9 +174,9 @@ public final class PaneContainerViewController: NSViewController {
 
         setupPaneCallbacks(pane: pane, column: column)
 
-        let cv = pane.contentView
+        let cv = pane.containerView
 
-        // Add contentView to column's containerView
+        // Add pane's containerView to column's containerView
         column.containerView.addArrangedSubview(cv)
         NSLayoutConstraint.activate([
             cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
@@ -219,8 +219,42 @@ public final class PaneContainerViewController: NSViewController {
             bv.onTitleChange = { [weak pane] title in
                 pane?.title = title
             }
-            // TODO: use onURLChange for header subtitle display
+            bv.onURLChange = { [weak pane] url in
+                guard let url else { return }
+                pane?.address = PaneAddress(url)
+                pane?.urlBar.setDisplayURL(url.absoluteString)
+                pane?.urlBar.setNavigationEnabled(
+                    back: pane?.browserView?.webView.canGoBack ?? false,
+                    forward: pane?.browserView?.webView.canGoForward ?? false
+                )
+            }
+        } else {
+            // Terminal/other panes: navigation buttons always disabled
+            pane.urlBar.setNavigationEnabled(back: false, forward: false)
         }
+
+        // URL bar: navigate callback
+        pane.urlBar.onNavigate = { [weak self, weak pane] input in
+            guard let self, let pane else { return }
+            self.handleURLBarNavigate(pane: pane, input: input)
+        }
+
+        // URL bar: ESC returns focus to pane content
+        pane.urlBar.onCancel = { [weak pane] in
+            guard let pane else { return }
+            pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
+        }
+
+        // URL bar: back/forward for browser panes
+        pane.urlBar.onBack = { [weak pane] in
+            pane?.browserView?.webView.goBack()
+        }
+        pane.urlBar.onForward = { [weak pane] in
+            pane?.browserView?.webView.goForward()
+        }
+
+        // Sync URL bar visibility with global state
+        pane.setURLBarVisible(urlBarVisible)
     }
 
     // MARK: - Vertical Split
@@ -263,7 +297,7 @@ public final class PaneContainerViewController: NSViewController {
             let newColIndex = min(columnIndex, columns.count - 1)
             setFocus(columnIndex: newColIndex, paneIndex: 0)
         } else {
-            pane.contentView.removeFromSuperview()
+            pane.containerView.removeFromSuperview()
             rebuildColumnView(column: column)
             let newPaneIndex = min(paneIndex, column.panes.count - 1)
             setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
@@ -492,7 +526,7 @@ public final class PaneContainerViewController: NSViewController {
                 column.containerView.addArrangedSubview(handle)
                 NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
             }
-            let cv = pane.contentView
+            let cv = pane.containerView
             column.containerView.addArrangedSubview(cv)
             NSLayoutConstraint.activate([
                 cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
@@ -525,8 +559,8 @@ public final class PaneContainerViewController: NSViewController {
             let bottomPane = column.panes[bottomIdx]
 
             // AppKit Y is up, so dragging down (negative deltaY) should grow the top pane
-            let newTopHeight = topPane.contentView.frame.height - deltaY
-            let newBottomHeight = bottomPane.contentView.frame.height + deltaY
+            let newTopHeight = topPane.containerView.frame.height - deltaY
+            let newBottomHeight = bottomPane.containerView.frame.height + deltaY
             guard newTopHeight >= self.minPaneHeight, newBottomHeight >= self.minPaneHeight else { return }
 
             // Replace all height constraints with ratio constraints relative to first pane.
@@ -534,7 +568,7 @@ public final class PaneContainerViewController: NSViewController {
             NSLayoutConstraint.deactivate(column.equalHeightConstraints)
             column.equalHeightConstraints.removeAll()
 
-            let firstCV = column.panes[0].contentView
+            let firstCV = column.panes[0].containerView
             // Use current frame heights (with the drag delta applied to the two panes)
             for (i, pane) in column.panes.enumerated() where i > 0 {
                 let currentHeight: CGFloat
@@ -543,14 +577,14 @@ public final class PaneContainerViewController: NSViewController {
                 } else if pane.id == bottomPane.id {
                     currentHeight = newBottomHeight
                 } else {
-                    currentHeight = pane.contentView.frame.height
+                    currentHeight = pane.containerView.frame.height
                 }
                 let firstHeight = (column.panes[0].id == topPane.id) ? newTopHeight :
                                   (column.panes[0].id == bottomPane.id) ? newBottomHeight :
                                   firstCV.frame.height
                 guard firstHeight > 0 else { continue }
                 let ratio = currentHeight / firstHeight
-                let c = pane.contentView.heightAnchor.constraint(
+                let c = pane.containerView.heightAnchor.constraint(
                     equalTo: firstCV.heightAnchor, multiplier: ratio
                 )
                 c.isActive = true
@@ -576,14 +610,14 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Focus Indicator
 
     private func applyFocusBorder(_ pane: PaneModel) {
-        let cv = pane.contentView
+        let cv = pane.containerView
         cv.wantsLayer = true
         cv.layer?.borderWidth = focusBorderWidth
         cv.layer?.borderColor = focusBorderColor.cgColor
     }
 
     private func clearFocusBorder(_ pane: PaneModel) {
-        let cv = pane.contentView
+        let cv = pane.containerView
         cv.layer?.borderWidth = 0
         cv.layer?.borderColor = nil
     }
@@ -632,27 +666,78 @@ public final class PaneContainerViewController: NSViewController {
         }
     }
 
+    // MARK: - URL Bar
+
+    /// Whether URL bars are visible across all panes.
+    private var urlBarVisible = false
+
+    /// Toggle URL bar visibility for all panes. When URL bar is shown, header overlay is suppressed.
+    public func toggleURLBarVisibility() {
+        urlBarVisible.toggle()
+        for pane in columns.flatMap(\.panes) {
+            pane.setURLBarVisible(urlBarVisible)
+        }
+        // When hiding URL bar, show header overlay for focused pane as fallback
+        if !urlBarVisible {
+            showHeaderForFocusedPane()
+        } else if let pane = focusedPane {
+            pane.headerView.hideImmediately()
+        }
+    }
+
+    /// Focus the URL bar of the focused pane (⌘+L).
+    public func focusURLBar() {
+        guard let pane = focusedPane else { return }
+        if !urlBarVisible {
+            toggleURLBarVisibility()
+        }
+        pane.urlBar.focusURLField()
+    }
+
+    /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
+    private func handleURLBarNavigate(pane: PaneModel, input: String) {
+        guard let newAddress = PaneAddress.fromUserInput(input),
+              newAddress.kind != .unknown else { return }
+
+        if pane.address.requiresContentSwitch(to: newAddress) {
+            // Cross-type: replace pane content (Step 4-3)
+            // For now, create a new column and remove the old pane
+            // TODO: in-place content replacement in Step 4-3
+            guard let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) }) else { return }
+            let column = columns[colIdx]
+            guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
+
+            let newPane = PaneModel(address: newAddress, ghosttyApp: ghosttyApp)
+            newPane.setURLBarVisible(urlBarVisible)
+            setupPaneCallbacks(pane: newPane, column: column)
+
+            // Replace in column
+            column.panes[paneIdx] = newPane
+            rebuildColumnView(column: column)
+            view.layoutSubtreeIfNeeded()
+            setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+        } else {
+            // Same type: navigate in place
+            // Browser → browser: load new URL. Terminal → terminal: no-op (address update only).
+            pane.address = newAddress
+            if let bv = pane.browserView {
+                bv.navigate(to: newAddress.url.absoluteString)
+            }
+            view.window?.makeFirstResponder(pane.preferredFirstResponder)
+        }
+    }
+
     // MARK: - Header
 
-    private var headerAlwaysVisible = false
     private var titleDebounceTimer: Timer?
     private var lastShownTitle: String = ""
     private static let titleDebounceInterval: TimeInterval = 0.1
 
-    public func toggleHeaderVisibility() {
-        headerAlwaysVisible.toggle()
-        guard let pane = focusedPane else { return }
-        if headerAlwaysVisible {
-            pane.headerView.show(title: pane.title, autoHide: false)
-        } else {
-            pane.headerView.hide()
-        }
-    }
-
     private func showHeaderForFocusedPane() {
+        guard !urlBarVisible else { return }
         guard let pane = focusedPane, !pane.title.isEmpty else { return }
         lastShownTitle = pane.title
-        pane.headerView.show(title: pane.title, autoHide: !headerAlwaysVisible)
+        pane.headerView.show(title: pane.title, autoHide: true)
     }
 
     private func hideHeaderForPane(_ pane: PaneModel) {
@@ -678,7 +763,8 @@ public final class PaneContainerViewController: NSViewController {
 
         guard titleChanged, isFocused else { return }
 
-        // Header overlay: debounced to filter transient title changes
+        // Header overlay: debounced, only when URL bar is hidden
+        guard !urlBarVisible else { return }
         titleDebounceTimer?.invalidate()
         titleDebounceTimer = Timer.scheduledTimer(
             withTimeInterval: Self.titleDebounceInterval, repeats: false
@@ -688,7 +774,7 @@ public final class PaneContainerViewController: NSViewController {
                 guard pane.id == self.focusedPane?.id else { return }
                 guard pane.title != self.lastShownTitle else { return }
                 self.lastShownTitle = pane.title
-                pane.headerView.show(title: pane.title, autoHide: !self.headerAlwaysVisible)
+                pane.headerView.show(title: pane.title, autoHide: true)
             }
         }
     }
