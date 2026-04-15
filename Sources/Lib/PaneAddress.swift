@@ -21,7 +21,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
             case "settings": return .settings
             default: return .unknown
             }
-        case "https", "http":
+        case "https", "http", "about":
             return .browser
         default:
             return .unknown
@@ -57,7 +57,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     /// Blank browser address (no page loaded).
     public static let blankBrowser = PaneAddress(URL(string: "about:blank")!)
 
-    private static let allowedSchemes: Set<String> = [internalScheme, "https", "http"]
+    private static let allowedSchemes: Set<String> = [internalScheme, "https", "http", "about"]
 
     /// Parse user input from the URL bar. Adds `https://` if no scheme is present.
     /// Only allows known schemes (e05, https, http). Unknown schemes return nil.

@@ -64,6 +64,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         urlField.translatesAutoresizingMaskIntoConstraints = false
         urlField.focusRingType = .none
         urlField.cell?.isScrollable = true
+        urlField.refusesFirstResponder = true
 
         addSubview(urlField)
     }
@@ -100,8 +101,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     /// Focus the URL field and select all text for quick editing.
     public func focusURLField() {
+        urlField.refusesFirstResponder = false
         window?.makeFirstResponder(urlField)
         urlField.selectText(nil)
+        urlField.refusesFirstResponder = true
     }
 
     // MARK: - Actions

@@ -26,6 +26,13 @@ struct PaneAddressTests {
         #expect(addr.kind == .browser)
     }
 
+    @Test("about:blank resolves to browser kind")
+    func aboutBlankKind() {
+        #expect(PaneAddress.blankBrowser.kind == .browser)
+        let addr = PaneAddress("about:blank")!
+        #expect(addr.kind == .browser)
+    }
+
     @Test("unknown e05 host resolves to unknown kind")
     func unknownInternalKind() {
         let addr = PaneAddress("e05://nonexistent")!

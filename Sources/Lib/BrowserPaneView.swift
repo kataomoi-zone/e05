@@ -69,12 +69,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 
     public func navigate(to urlString: String) {
         var normalized = urlString.trimmingCharacters(in: .whitespaces)
-        if !normalized.contains("://") {
+        // about: scheme uses "about:blank" format (no "://")
+        if !normalized.contains("://"), !normalized.hasPrefix("about:") {
             normalized = "https://" + normalized
         }
         guard let url = URL(string: normalized),
               let scheme = url.scheme,
-              ["https", "http"].contains(scheme)
+              ["https", "http", "about"].contains(scheme)
         else { return }
         webView.load(URLRequest(url: url))
     }
