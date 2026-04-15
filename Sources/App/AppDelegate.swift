@@ -45,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationWillTerminate(_: Notification) {
+        paneContainer?.saveSession()
+    }
+
     // MARK: - Key Bindings via Menu
 
     private func setupMenuKeyBindings() {
