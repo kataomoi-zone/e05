@@ -800,10 +800,13 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     /// Focus the URL bar of the focused pane (⌘+L).
-    public func focusURLBar() {
+    public func focusURLBar(prefill: String? = nil) {
         guard let pane = focusedPane else { return }
         if !urlBarVisible {
             toggleURLBarVisibility()
+        }
+        if let prefill {
+            pane.urlBar.setDisplayURL(prefill)
         }
         pane.urlBar.focusURLField()
     }
