@@ -54,8 +54,12 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLayout()
         guard !isUpdatingLayout else { return }
         isUpdatingLayout = true
-        // Update surface sizes for all panes on layout change
+        // Recalculate fraction-based presets on window resize
+        let visibleWidth = scrollView.contentView.bounds.width
         for pane in panes {
+            if case .fraction(let f) = pane.currentPreset, visibleWidth > 0 {
+                pane.widthConstraint?.constant = visibleWidth * f
+            }
             pane.terminalView.setFrameSize(pane.terminalView.frame.size)
         }
         isUpdatingLayout = false
@@ -142,9 +146,11 @@ public final class PaneContainerViewController: NSViewController {
             stackView.addArrangedSubview(tv)
         }
 
-        NSLayoutConstraint.activate([
-            tv.widthAnchor.constraint(equalToConstant: defaultPaneWidth),
-        ])
+        // New panes start at defaultPaneWidth with no preset (currentPreset=nil).
+        // User can cycle presets with ⌥⌃+/.
+        let wc = tv.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
+        wc.isActive = true
+        pane.widthConstraint = wc
 
         view.layoutSubtreeIfNeeded()
         setFocus(index: insertIndex)
@@ -196,6 +202,72 @@ public final class PaneContainerViewController: NSViewController {
     public func focusRight() {
         guard focusedIndex < panes.count - 1 else { return }
         setFocus(index: focusedIndex + 1)
+    }
+
+    // MARK: - Width Preset Cycle
+
+    /// Cycle the focused pane's width through the given preset list.
+    public func cycleWidthPreset(_ cycle: [PaneWidthPreset]) {
+        guard !cycle.isEmpty, let pane = panes[safe: focusedIndex] else { return }
+
+        let nextIndex: Int
+        if let current = pane.currentPreset,
+           let idx = cycle.firstIndex(of: current)
+        {
+            nextIndex = (idx + 1) % cycle.count
+        } else {
+            nextIndex = 0
+        }
+
+        let preset = cycle[nextIndex]
+        pane.currentPreset = preset
+        applyPreset(preset, to: pane)
+        view.layoutSubtreeIfNeeded()
+        scrollToPane(at: focusedIndex)
+    }
+
+    private func applyPreset(_ preset: PaneWidthPreset, to pane: PaneModel) {
+        guard let constraint = pane.widthConstraint else { return }
+        switch preset {
+        case .columns(let n):
+            guard let surface = pane.terminalView.surface,
+                  let scale = pane.terminalView.window?.backingScaleFactor
+            else { return }
+            let size = ghostty_surface_size(surface)
+            guard size.cell_width_px > 0 else { return }
+            constraint.constant = CGFloat(n) * CGFloat(size.cell_width_px) / scale
+        case .fraction(let f):
+            let visibleWidth = scrollView.contentView.bounds.width
+            guard visibleWidth > 0 else { return }
+            constraint.constant = visibleWidth * f
+        }
+    }
+
+    // MARK: - Pane Reorder
+
+    public func movePaneLeft() {
+        guard focusedIndex > 0 else { return }
+        let from = focusedIndex
+        let to = focusedIndex - 1
+        panes.swapAt(from, to)
+        // Move only the target view to its new position
+        let tv = panes[to].terminalView
+        stackView.removeArrangedSubview(tv)
+        stackView.insertArrangedSubview(tv, at: to)
+        view.layoutSubtreeIfNeeded()
+        setFocus(index: to)
+    }
+
+    public func movePaneRight() {
+        guard focusedIndex < panes.count - 1 else { return }
+        let from = focusedIndex
+        let to = focusedIndex + 1
+        panes.swapAt(from, to)
+        let tv = panes[to].terminalView
+        stackView.removeArrangedSubview(tv)
+        stackView.insertArrangedSubview(tv, at: to)
+        view.layoutSubtreeIfNeeded()
+        setFocus(index: to)
     }
 
     // MARK: - Focus Indicator

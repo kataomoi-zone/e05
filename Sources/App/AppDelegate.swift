@@ -91,11 +91,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusRightItem.keyEquivalentModifierMask = [.option, .control]
         paneMenu.addItem(focusRightItem)
 
+        paneMenu.addItem(.separator())
+
+        // ⌥⌃+Shift+H: Move pane left
+        let movePaneLeftItem = NSMenuItem(
+            title: "Move Pane Left",
+            action: #selector(handleMovePaneLeft),
+            keyEquivalent: "h"
+        )
+        movePaneLeftItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(movePaneLeftItem)
+
+        // ⌥⌃+Shift+L: Move pane right
+        let movePaneRightItem = NSMenuItem(
+            title: "Move Pane Right",
+            action: #selector(handleMovePaneRight),
+            keyEquivalent: "l"
+        )
+        movePaneRightItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(movePaneRightItem)
+
+        paneMenu.addItem(.separator())
+
+        // ⌥⌃+/: Cycle width preset
+        let cycleWidthItem = NSMenuItem(
+            title: "Cycle Width",
+            action: #selector(handleCycleWidth),
+            keyEquivalent: "/"
+        )
+        cycleWidthItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(cycleWidthItem)
+
         paneMenuItem.submenu = paneMenu
         mainMenu.addItem(paneMenuItem)
 
         NSApp.mainMenu = mainMenu
     }
+
+    // MARK: - Default Width Cycle
+
+    private let defaultWidthCycle: [PaneWidthPreset] = [
+        .columns(80),
+        .columns(120),
+        .fraction(1.0 / 2.0),
+        .fraction(1.0 / 3.0),
+    ]
 
     // MARK: - Actions
 
@@ -113,5 +153,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleFocusRight() {
         paneContainer?.focusRight()
+    }
+
+    @objc private func handleMovePaneLeft() {
+        paneContainer?.movePaneLeft()
+    }
+
+    @objc private func handleMovePaneRight() {
+        paneContainer?.movePaneRight()
+    }
+
+    @objc private func handleCycleWidth() {
+        paneContainer?.cycleWidthPreset(defaultWidthCycle)
     }
 }
