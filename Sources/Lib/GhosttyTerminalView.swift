@@ -5,13 +5,14 @@ import GhosttyKit
 @MainActor
 public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClient {
     private let ghosttyApp: GhosttyApp
-    private var surface: ghostty_surface_t?
+    public private(set) var surface: ghostty_surface_t?
     private var metalLayer: CAMetalLayer?
     private var markedTextStorage = NSMutableAttributedString()
     private var keyTextAccumulator: [String] = []
 
     public var onTitleChange: ((String) -> Void)?
     public var onClose: (() -> Void)?
+    public var onFocusChanged: ((Bool) -> Void)?
 
     public init(frame: NSRect, ghosttyApp: GhosttyApp) {
         self.ghosttyApp = ghosttyApp
@@ -107,13 +108,19 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
     public override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result { ghostty_surface_set_focus(surface, true) }
+        if result {
+            ghostty_surface_set_focus(surface, true)
+            onFocusChanged?(true)
+        }
         return result
     }
 
     public override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result { ghostty_surface_set_focus(surface, false) }
+        if result {
+            ghostty_surface_set_focus(surface, false)
+            onFocusChanged?(false)
+        }
         return result
     }
 

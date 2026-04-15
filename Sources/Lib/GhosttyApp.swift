@@ -8,7 +8,6 @@ public final class GhosttyApp {
     private(set) var config: ghostty_config_t?
 
     public var onSetTitle: ((ghostty_surface_t, String) -> Void)?
-    public var onCloseSurface: (() -> Void)?
 
     public init() {
         let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
@@ -84,11 +83,15 @@ public final class GhosttyApp {
             }
         }
 
-        // close_surface_cb: (void*, bool) -> Void
+        // close_surface_cb: (void* surfaceUserdata, bool processAlive) -> Void
+        // ud is the SURFACE's userdata (GhosttyTerminalView), not the app's.
+        // See ghostty embedded.zig Surface.close(): func(self.userdata, process_alive)
         runtime.close_surface_cb = { ud, processAlive in
             guard let ud else { return }
-            let mgr = Unmanaged<GhosttyApp>.fromOpaque(ud).takeUnretainedValue()
-            DispatchQueue.main.async { mgr.onCloseSurface?() }
+            let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+            DispatchQueue.main.async {
+                view.onClose?()
+            }
         }
 
         self.app = ghostty_app_new(&runtime, cfg)
@@ -120,6 +123,11 @@ public final class GhosttyApp {
             let title = String(cString: titlePtr)
             onSetTitle?(surface, title)
             return true
+        case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+            // GUI notification for abnormal exit or wait_after_command.
+            // The actual close is handled by close_surface_cb.
+            // TODO: show overlay message like ghostty macOS app
+            return false
         default:
             return false
         }

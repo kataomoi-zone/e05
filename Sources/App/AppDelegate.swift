@@ -5,7 +5,7 @@ import E05Lib
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private let ghosttyApp = GhosttyApp()
-    private var terminalView: GhosttyTerminalView?
+    private var paneContainer: PaneContainerViewController?
 
     func applicationDidFinishLaunching(_: Notification) {
         let window = NSWindow(
@@ -17,29 +17,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = "e05"
         window.contentMinSize = NSSize(width: 480, height: 320)
 
-        let tv = GhosttyTerminalView(
-            frame: NSRect(x: 0, y: 0, width: 960, height: 640),
-            ghosttyApp: ghosttyApp
-        )
-        tv.autoresizingMask = [.width, .height]
-        window.contentView = tv
-        self.terminalView = tv
+        let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
+        window.contentViewController = container
+        self.paneContainer = container
 
-        ghosttyApp.onSetTitle = { [weak self] _, title in
-            self?.window?.title = title
-        }
-        ghosttyApp.onCloseSurface = { [weak self] in
-            self?.window?.close()
+        ghosttyApp.onSetTitle = { [weak container] surface, title in
+            container?.handleTitleChange(surface: surface, title: title)
         }
 
         window.center()
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(tv)
         NSApp.activate()
         self.window = window
+
+        setupMenuKeyBindings()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         true
+    }
+
+    // MARK: - Key Bindings via Menu
+
+    private func setupMenuKeyBindings() {
+        let mainMenu = NSMenu()
+
+        // App menu (required for ⌘+Q)
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Quit e05",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // Pane menu
+        let paneMenuItem = NSMenuItem()
+        let paneMenu = NSMenu(title: "Pane")
+
+        let newPaneItem = NSMenuItem(
+            title: "New Pane",
+            action: #selector(handleNewPane),
+            keyEquivalent: "t"
+        )
+        paneMenu.addItem(newPaneItem)
+
+        let closePaneItem = NSMenuItem(
+            title: "Close Pane",
+            action: #selector(handleClosePane),
+            keyEquivalent: "w"
+        )
+        paneMenu.addItem(closePaneItem)
+
+        paneMenu.addItem(.separator())
+
+        // ⌥⌃+H: Focus left
+        let focusLeftItem = NSMenuItem(
+            title: "Focus Left",
+            action: #selector(handleFocusLeft),
+            keyEquivalent: "h"
+        )
+        focusLeftItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(focusLeftItem)
+
+        // ⌥⌃+L: Focus right
+        let focusRightItem = NSMenuItem(
+            title: "Focus Right",
+            action: #selector(handleFocusRight),
+            keyEquivalent: "l"
+        )
+        focusRightItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(focusRightItem)
+
+        paneMenuItem.submenu = paneMenu
+        mainMenu.addItem(paneMenuItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    // MARK: - Actions
+
+    @objc private func handleNewPane() {
+        paneContainer?.addPane()
+    }
+
+    @objc private func handleClosePane() {
+        paneContainer?.removeCurrentPane()
+    }
+
+    @objc private func handleFocusLeft() {
+        paneContainer?.focusLeft()
+    }
+
+    @objc private func handleFocusRight() {
+        paneContainer?.focusRight()
     }
 }
