@@ -103,7 +103,8 @@ public final class PaneContainerViewController: NSViewController {
     private func configureScrollView() {
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = false
-        scrollView.drawsBackground = false
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = NSColor(white: 0.5, alpha: 1.0) // neutral gray
         scrollView.horizontalScrollElasticity = .allowed
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
