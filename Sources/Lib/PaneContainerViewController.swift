@@ -29,6 +29,7 @@ private final class OverlayScrollView: NSScrollView {
 
 public final class PaneContainerViewController: NSViewController {
     private let ghosttyApp: GhosttyApp
+    public let browsingHistory = BrowsingHistory()
 
     private let scrollView = OverlayScrollView()
     private let stackView = NSStackView()
@@ -237,13 +238,22 @@ public final class PaneContainerViewController: NSViewController {
         }
 
         if let bv = pane.browserView {
-            bv.onTitleChange = { [weak pane] title in
+            bv.onTitleChange = { [weak self, weak pane] title in
                 pane?.title = title
+                // Update history title for the current URL
+                if let url = pane?.address.url.absoluteString {
+                    self?.browsingHistory.updateTitle(url: url, title: title)
+                }
             }
-            bv.onURLChange = { [weak pane] url in
+            bv.onURLChange = { [weak self, weak pane] url in
                 guard let url else { return }
+                let urlString = url.absoluteString
                 pane?.address = PaneAddress(url)
-                pane?.urlBar.setDisplayURL(url.absoluteString)
+                pane?.urlBar.setDisplayURL(urlString)
+                // Record visit (skips internal pages and duplicates)
+                if url.scheme == "https" || url.scheme == "http" {
+                    self?.browsingHistory.recordVisit(url: urlString, title: pane?.title ?? "")
+                }
             }
             bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
                 pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
