@@ -2,7 +2,7 @@ import AppKit
 import E05Lib
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var window: NSWindow?
     private let ghosttyApp = GhosttyApp()
     private var paneContainer: PaneContainerViewController?
@@ -75,6 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "t"
         )
         paneMenu.addItem(newColumnItem)
+
+        // ⌘+Shift+T: Undo close pane
+        let undoCloseItem = NSMenuItem(
+            title: "Reopen Closed Pane",
+            action: #selector(handleUndoClose),
+            keyEquivalent: "t"
+        )
+        undoCloseItem.keyEquivalentModifierMask = [.command, .shift]
+        paneMenu.addItem(undoCloseItem)
 
         let closePaneItem = NSMenuItem(
             title: "Close Pane",
@@ -220,10 +229,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .fraction(1.0 / 3.0),
     ]
 
+    // MARK: - Menu Validation
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(handleUndoClose) {
+            return paneContainer?.canUndoClosePane ?? false
+        }
+        return true
+    }
+
     // MARK: - Actions
 
     @objc private func handleNewColumn() {
         paneContainer?.addColumn()
+    }
+
+    @objc private func handleUndoClose() {
+        paneContainer?.undoClosePane()
     }
 
     @objc private func handleClosePane() {

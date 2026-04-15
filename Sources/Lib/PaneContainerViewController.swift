@@ -48,6 +48,23 @@ public final class PaneContainerViewController: NSViewController {
 
     nonisolated(unsafe) private var scrollEventMonitor: Any?
 
+    // MARK: - Undo Close
+
+    private static let undoTimeout: TimeInterval = 10
+
+    /// Recently closed pane with enough info to restore it to its original position.
+    private struct ClosedPane {
+        let pane: PaneModel
+        let columnIndex: Int
+        let paneIndex: Int
+        let columnWidth: CGFloat?
+        /// true if this was the only pane in the column (column was also removed)
+        let wasOnlyPaneInColumn: Bool
+        let timer: Timer
+    }
+
+    nonisolated(unsafe) private var recentlyClosed: [ClosedPane] = []
+
     // MARK: - Init
 
     public init(ghosttyApp: GhosttyApp) {
@@ -108,6 +125,9 @@ public final class PaneContainerViewController: NSViewController {
     deinit {
         if let monitor = scrollEventMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        for closed in recentlyClosed {
+            closed.timer.invalidate()
         }
     }
 
@@ -283,13 +303,21 @@ public final class PaneContainerViewController: NSViewController {
         let pane = column.panes.remove(at: paneIndex)
         clearFocusBorder(pane)
 
-        if column.panes.isEmpty {
+        let wasOnlyPane = column.panes.isEmpty
+        let columnWidth = column.widthConstraint?.constant
+
+        // Preserve surface BEFORE removing from view hierarchy
+        pane.terminalView?.keepSurfaceAlive = true
+
+        if wasOnlyPane {
             // Remove column
             columns.remove(at: columnIndex)
             column.containerView.removeFromSuperview()
 
             if columns.isEmpty {
                 for v in stackView.arrangedSubviews { v.removeFromSuperview() }
+                // Last pane closed — window will close, no undo possible
+                pane.terminalView?.keepSurfaceAlive = false
                 view.window?.close()
                 return
             }
@@ -302,6 +330,91 @@ public final class PaneContainerViewController: NSViewController {
             rebuildColumnView(column: column)
             let newPaneIndex = min(paneIndex, column.panes.count - 1)
             setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
+        }
+
+        stashClosedPane(pane, columnIndex: columnIndex, paneIndex: paneIndex,
+                         columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
+    }
+
+    private static let maxRecentlyClosed = 10
+
+    private func stashClosedPane(_ pane: PaneModel, columnIndex: Int, paneIndex: Int,
+                                  columnWidth: CGFloat?, wasOnlyPaneInColumn: Bool) {
+        // Evict oldest if at capacity — must explicitly release detached surfaces
+        while recentlyClosed.count >= Self.maxRecentlyClosed {
+            let evicted = recentlyClosed.removeFirst()
+            evicted.timer.invalidate()
+            evicted.pane.terminalView?.releaseDetachedSurface()
+        }
+
+        // keepSurfaceAlive is already set by removePane before removeFromSuperview.
+        // Browser panes don't need keepSurfaceAlive — WKWebView survives detachment.
+
+        let paneId = pane.id
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.undoTimeout, repeats: false) {
+            [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let idx = self.recentlyClosed.firstIndex(where: { $0.pane.id == paneId }) {
+                    let expired = self.recentlyClosed.remove(at: idx)
+                    expired.pane.terminalView?.releaseDetachedSurface()
+                }
+            }
+        }
+        let closed = ClosedPane(
+            pane: pane, columnIndex: columnIndex, paneIndex: paneIndex,
+            columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPaneInColumn, timer: timer
+        )
+        recentlyClosed.append(closed)
+    }
+
+    /// Whether there are recently closed panes available for undo.
+    public var canUndoClosePane: Bool { !recentlyClosed.isEmpty }
+
+    /// Restore the most recently closed pane. Surface is still alive — full restore.
+    public func undoClosePane() {
+        guard let closed = recentlyClosed.popLast() else { return }
+        closed.timer.invalidate()
+
+        let pane = closed.pane
+        // Re-enable normal surface lifecycle now that the view is re-entering the hierarchy
+        pane.terminalView?.keepSurfaceAlive = false
+
+        if closed.wasOnlyPaneInColumn {
+            // Re-create a column for this pane
+            let column = ColumnModel(pane: pane)
+            setupPaneCallbacks(pane: pane, column: column)
+
+            let cv = pane.containerView
+            column.containerView.addArrangedSubview(cv)
+            NSLayoutConstraint.activate([
+                cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+                cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+            ])
+
+            let wc = column.containerView.widthAnchor.constraint(
+                equalToConstant: closed.columnWidth ?? defaultPaneWidth
+            )
+            wc.isActive = true
+            column.widthConstraint = wc
+
+            let insertIndex = min(closed.columnIndex, columns.count)
+            columns.insert(column, at: insertIndex)
+            rebuildStackView()
+            view.layoutSubtreeIfNeeded()
+            setFocus(columnIndex: insertIndex, paneIndex: 0)
+        } else {
+            // Insert back into existing column
+            guard !columns.isEmpty else { return }
+            let colIndex = min(closed.columnIndex, columns.count - 1)
+            guard let column = columns[safe: colIndex] else { return }
+
+            let paneIndex = min(closed.paneIndex, column.panes.count)
+            setupPaneCallbacks(pane: pane, column: column)
+            column.panes.insert(pane, at: paneIndex)
+            rebuildColumnView(column: column)
+            view.layoutSubtreeIfNeeded()
+            setFocus(columnIndex: colIndex, paneIndex: paneIndex)
         }
     }
 

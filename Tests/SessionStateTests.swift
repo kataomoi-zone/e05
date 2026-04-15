@@ -72,10 +72,10 @@ struct SessionStateTests {
         #expect(decoded.urlBarVisible == false)
     }
 
-    @Test("load returns nil for missing file")
-    func loadMissing() {
-        // Ensure no stale session file interferes
-        SessionState.delete()
-        #expect(SessionState.load() == nil)
+    @Test("decode fails for invalid JSON")
+    func decodeInvalid() {
+        let invalidData = Data("not json".utf8)
+        let result = try? JSONDecoder().decode(SessionState.self, from: invalidData)
+        #expect(result == nil)
     }
 }

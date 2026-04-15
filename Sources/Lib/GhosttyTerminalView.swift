@@ -16,6 +16,10 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     public var onClose: (() -> Void)?
     public var onFocusChanged: ((Bool) -> Void)?
 
+    /// When true, surface is preserved when the view is removed from window.
+    /// Used by undo close to keep the terminal alive while detached.
+    public var keepSurfaceAlive = false
+
     public init(frame: NSRect, ghosttyApp: GhosttyApp) {
         self.ghosttyApp = ghosttyApp
         super.init(frame: frame)
@@ -43,8 +47,13 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
-            createSurface()
-        } else {
+            if surface != nil {
+                // Re-entering view hierarchy (e.g. undo close): refresh size
+                updateSize()
+            } else {
+                createSurface()
+            }
+        } else if !keepSurfaceAlive {
             destroySurface()
         }
     }
@@ -78,6 +87,13 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
         ghostty_surface_set_focus(s, false)
         ghostty_surface_free(s)
         surface = nil
+    }
+
+    /// Explicitly release a detached surface (e.g. undo close timeout).
+    /// Use when the view is not in the hierarchy so viewDidMoveToWindow won't fire.
+    public func releaseDetachedSurface() {
+        keepSurfaceAlive = false
+        destroySurface()
     }
 
     // MARK: - Layout
