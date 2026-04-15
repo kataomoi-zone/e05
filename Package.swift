@@ -6,16 +6,19 @@ let package = Package(
     platforms: [
         .macOS(.v14),
     ],
-    dependencies: [
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.0"),
-    ],
     targets: [
         .executableTarget(
             name: "e05",
-            dependencies: [
-                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
-            ],
-            path: "Sources"
+            dependencies: ["GhosttyKit"],
+            path: "Sources",
+            linkerSettings: [
+                .linkedLibrary("c++"),
+                .linkedFramework("Carbon"),
+            ]
+        ),
+        .binaryTarget(
+            name: "GhosttyKit",
+            path: "GhosttyKit.xcframework"
         ),
     ]
 )
