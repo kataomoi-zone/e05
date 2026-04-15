@@ -184,6 +184,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggleHeaderItem.keyEquivalentModifierMask = [.option, .control]
         paneMenu.addItem(toggleHeaderItem)
 
+        // ⌥⌃+B: New Browser Column
+        let newBrowserItem = NSMenuItem(
+            title: "New Browser Column",
+            action: #selector(handleNewBrowser),
+            keyEquivalent: "b"
+        )
+        newBrowserItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(newBrowserItem)
+
         paneMenuItem.submenu = paneMenu
         mainMenu.addItem(paneMenuItem)
 
@@ -251,5 +260,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleToggleHeader() {
         paneContainer?.toggleHeaderVisibility()
+    }
+
+    @objc private func handleNewBrowser() {
+        paneContainer?.addBrowserColumn()
     }
 }

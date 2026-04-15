@@ -19,6 +19,7 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("WebKit"),
             ]
         ),
         .testTarget(

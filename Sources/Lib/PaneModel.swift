@@ -6,13 +6,19 @@ public enum PaneWidthPreset: Equatable {
     case fraction(CGFloat)
 }
 
-/// A single terminal pane within a column.
+/// The content type of a pane.
+public enum PaneContent {
+    case terminal(GhosttyTerminalView)
+    case browser(BrowserPaneView)
+}
+
+/// A single pane within a column — either a terminal or a browser.
 @MainActor
 public final class PaneModel {
     public let id = UUID()
-    public let terminalView: GhosttyTerminalView
+    public let content: PaneContent
 
-    /// Terminal title from SET_TITLE action.
+    /// Terminal title or page title.
     public var title: String = ""
 
     /// Overlay header showing the title.
@@ -21,18 +27,56 @@ public final class PaneModel {
     // TODO: used for vertical drag resize (Step 5)
     public var heightConstraint: NSLayoutConstraint?
 
+    /// The NSView to add to the layout. Works for both terminal and browser.
+    public var contentView: NSView {
+        switch content {
+        case .terminal(let tv): return tv
+        case .browser(let bv): return bv
+        }
+    }
+
+    /// Convenience: returns GhosttyTerminalView if this is a terminal pane.
+    public var terminalView: GhosttyTerminalView? {
+        if case .terminal(let tv) = content { return tv }
+        return nil
+    }
+
+    /// Convenience: returns BrowserPaneView if this is a browser pane.
+    public var browserView: BrowserPaneView? {
+        if case .browser(let bv) = content { return bv }
+        return nil
+    }
+
+    /// The view that should become first responder when this pane is focused.
+    public var preferredFirstResponder: NSView {
+        switch content {
+        case .terminal(let tv): return tv
+        case .browser(let bv): return bv.webView
+        }
+    }
+
+    /// Create a terminal pane.
     public init(ghosttyApp: GhosttyApp) {
-        terminalView = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        self.content = .terminal(tv)
+        setupHeaderView()
+    }
+
+    /// Create a browser pane.
+    public init(browser: Void = ()) {
+        let bv = BrowserPaneView()
+        bv.translatesAutoresizingMaskIntoConstraints = false
+        self.content = .browser(bv)
         setupHeaderView()
     }
 
     private func setupHeaderView() {
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        terminalView.addSubview(headerView)
+        contentView.addSubview(headerView)
         NSLayoutConstraint.activate([
-            headerView.trailingAnchor.constraint(equalTo: terminalView.trailingAnchor, constant: -8),
-            headerView.topAnchor.constraint(equalTo: terminalView.topAnchor, constant: 8),
+            headerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            headerView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
             headerView.heightAnchor.constraint(equalToConstant: 22),
             headerView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
         ])

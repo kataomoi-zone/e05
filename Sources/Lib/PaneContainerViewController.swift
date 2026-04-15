@@ -93,7 +93,7 @@ public final class PaneContainerViewController: NSViewController {
                 column.widthConstraint?.constant = visibleWidth * f
             }
             for pane in column.panes {
-                pane.terminalView.setFrameSize(pane.terminalView.frame.size)
+                pane.contentView.setFrameSize(pane.contentView.frame.size)
             }
         }
         isUpdatingLayout = false
@@ -160,18 +160,27 @@ public final class PaneContainerViewController: NSViewController {
 
     @discardableResult
     public func addColumn() -> ColumnModel {
-        let pane = PaneModel(ghosttyApp: ghosttyApp)
+        insertColumn(with: PaneModel(ghosttyApp: ghosttyApp))
+    }
+
+    @discardableResult
+    public func addBrowserColumn() -> ColumnModel {
+        insertColumn(with: PaneModel(browser: ()))
+    }
+
+    @discardableResult
+    private func insertColumn(with pane: PaneModel) -> ColumnModel {
         let column = ColumnModel(pane: pane)
 
         setupPaneCallbacks(pane: pane, column: column)
 
-        let tv = pane.terminalView
+        let cv = pane.contentView
 
-        // Add terminalView to column's containerView
-        column.containerView.addArrangedSubview(tv)
+        // Add contentView to column's containerView
+        column.containerView.addArrangedSubview(cv)
         NSLayoutConstraint.activate([
-            tv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-            tv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+            cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+            cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
         ])
 
         // Width constraint on the containerView
@@ -189,19 +198,28 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     private func setupPaneCallbacks(pane: PaneModel, column: ColumnModel) {
-        pane.terminalView.onFocusChanged = { [weak self, weak pane] focused in
-            guard let self, let pane, focused else { return }
-            self.handleFocusChange(from: pane)
-        }
+        if let tv = pane.terminalView {
+            tv.onFocusChanged = { [weak self, weak pane] focused in
+                guard let self, let pane, focused else { return }
+                self.handleFocusChange(from: pane)
+            }
 
-        pane.terminalView.onClose = { [weak self, weak pane] in
-            guard let self, let pane else { return }
-            for (colIdx, col) in self.columns.enumerated() {
-                if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
-                    self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
-                    return
+            tv.onClose = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                for (colIdx, col) in self.columns.enumerated() {
+                    if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
+                        self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
+                        return
+                    }
                 }
             }
+        }
+
+        if let bv = pane.browserView {
+            bv.onTitleChange = { [weak pane] title in
+                pane?.title = title
+            }
+            // TODO: use onURLChange for header subtitle display
         }
     }
 
@@ -245,7 +263,7 @@ public final class PaneContainerViewController: NSViewController {
             let newColIndex = min(columnIndex, columns.count - 1)
             setFocus(columnIndex: newColIndex, paneIndex: 0)
         } else {
-            pane.terminalView.removeFromSuperview()
+            pane.contentView.removeFromSuperview()
             rebuildColumnView(column: column)
             let newPaneIndex = min(paneIndex, column.panes.count - 1)
             setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
@@ -256,7 +274,7 @@ public final class PaneContainerViewController: NSViewController {
     public func removeCurrentPane() {
         guard let column = columns[safe: focusedColumnIndex],
               let pane = column.focusedPane else { return }
-        if let surface = pane.terminalView.surface,
+        if let surface = pane.terminalView?.surface,
            ghostty_surface_needs_confirm_quit(surface)
         {
             let alert = NSAlert()
@@ -297,7 +315,7 @@ public final class PaneContainerViewController: NSViewController {
 
         let pane = column.panes[paneIndex]
         applyFocusBorder(pane)
-        view.window?.makeFirstResponder(pane.terminalView)
+        view.window?.makeFirstResponder(pane.preferredFirstResponder)
         updateHandleActiveStates()
         showHeaderForFocusedPane()
         scrollToColumn(at: columnIndex)
@@ -356,8 +374,8 @@ public final class PaneContainerViewController: NSViewController {
         switch preset {
         case .columns(let n):
             guard let pane = column.focusedPane,
-                  let surface = pane.terminalView.surface,
-                  let scale = pane.terminalView.window?.backingScaleFactor
+                  let surface = pane.terminalView?.surface,
+                  let scale = pane.terminalView?.window?.backingScaleFactor
             else { return }
             let size = ghostty_surface_size(surface)
             guard size.cell_width_px > 0 else { return }
@@ -467,26 +485,26 @@ public final class PaneContainerViewController: NSViewController {
             v.removeFromSuperview()
         }
 
-        var firstTV: NSView?
+        var firstCV: NSView?
         for (i, pane) in column.panes.enumerated() {
             if i > 0 {
                 let handle = makeVerticalResizeHandle(column: column, topIndex: i - 1, bottomIndex: i)
                 column.containerView.addArrangedSubview(handle)
                 NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
             }
-            let tv = pane.terminalView
-            column.containerView.addArrangedSubview(tv)
+            let cv = pane.contentView
+            column.containerView.addArrangedSubview(cv)
             NSLayoutConstraint.activate([
-                tv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-                tv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+                cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+                cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
             ])
             // Equal height constraints between all panes (deactivated on drag)
-            if let first = firstTV {
-                let c = tv.heightAnchor.constraint(equalTo: first.heightAnchor)
+            if let first = firstCV {
+                let c = cv.heightAnchor.constraint(equalTo: first.heightAnchor)
                 c.isActive = true
                 column.equalHeightConstraints.append(c)
             } else {
-                firstTV = tv
+                firstCV = cv
             }
         }
     }
@@ -507,8 +525,8 @@ public final class PaneContainerViewController: NSViewController {
             let bottomPane = column.panes[bottomIdx]
 
             // AppKit Y is up, so dragging down (negative deltaY) should grow the top pane
-            let newTopHeight = topPane.terminalView.frame.height - deltaY
-            let newBottomHeight = bottomPane.terminalView.frame.height + deltaY
+            let newTopHeight = topPane.contentView.frame.height - deltaY
+            let newBottomHeight = bottomPane.contentView.frame.height + deltaY
             guard newTopHeight >= self.minPaneHeight, newBottomHeight >= self.minPaneHeight else { return }
 
             // Replace all height constraints with ratio constraints relative to first pane.
@@ -516,7 +534,7 @@ public final class PaneContainerViewController: NSViewController {
             NSLayoutConstraint.deactivate(column.equalHeightConstraints)
             column.equalHeightConstraints.removeAll()
 
-            let firstTV = column.panes[0].terminalView
+            let firstCV = column.panes[0].contentView
             // Use current frame heights (with the drag delta applied to the two panes)
             for (i, pane) in column.panes.enumerated() where i > 0 {
                 let currentHeight: CGFloat
@@ -525,15 +543,15 @@ public final class PaneContainerViewController: NSViewController {
                 } else if pane.id == bottomPane.id {
                     currentHeight = newBottomHeight
                 } else {
-                    currentHeight = pane.terminalView.frame.height
+                    currentHeight = pane.contentView.frame.height
                 }
                 let firstHeight = (column.panes[0].id == topPane.id) ? newTopHeight :
                                   (column.panes[0].id == bottomPane.id) ? newBottomHeight :
-                                  firstTV.frame.height
+                                  firstCV.frame.height
                 guard firstHeight > 0 else { continue }
                 let ratio = currentHeight / firstHeight
-                let c = pane.terminalView.heightAnchor.constraint(
-                    equalTo: firstTV.heightAnchor, multiplier: ratio
+                let c = pane.contentView.heightAnchor.constraint(
+                    equalTo: firstCV.heightAnchor, multiplier: ratio
                 )
                 c.isActive = true
                 column.equalHeightConstraints.append(c)
@@ -558,16 +576,16 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Focus Indicator
 
     private func applyFocusBorder(_ pane: PaneModel) {
-        let tv = pane.terminalView
-        tv.wantsLayer = true
-        tv.layer?.borderWidth = focusBorderWidth
-        tv.layer?.borderColor = focusBorderColor.cgColor
+        let cv = pane.contentView
+        cv.wantsLayer = true
+        cv.layer?.borderWidth = focusBorderWidth
+        cv.layer?.borderColor = focusBorderColor.cgColor
     }
 
     private func clearFocusBorder(_ pane: PaneModel) {
-        let tv = pane.terminalView
-        tv.layer?.borderWidth = 0
-        tv.layer?.borderColor = nil
+        let cv = pane.contentView
+        cv.layer?.borderWidth = 0
+        cv.layer?.borderColor = nil
     }
 
     // MARK: - Scrolling
@@ -646,7 +664,7 @@ public final class PaneContainerViewController: NSViewController {
     /// filtering out rapid changes from shell command execution.
     public func handleTitleChange(surface: ghostty_surface_t, title: String) {
         let allPanes = columns.flatMap(\.panes)
-        guard let pane = allPanes.first(where: { $0.terminalView.surface == surface }) else { return }
+        guard let pane = allPanes.first(where: { $0.terminalView?.surface == surface }) else { return }
 
         let titleChanged = pane.title != title
         pane.title = title

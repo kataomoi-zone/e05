@@ -53,22 +53,30 @@ struct PaneHeaderViewTests {
 struct PaneResizeHandleTests {
     @Test("starts inactive")
     func startsInactive() {
-        let handle = PaneResizeHandle()
+        let handle = PaneResizeHandle(orientation: .horizontal)
         #expect(handle.isActive == false)
     }
 
     @Test("can be activated")
     func canActivate() {
-        let handle = PaneResizeHandle()
+        let handle = PaneResizeHandle(orientation: .horizontal)
         handle.isActive = true
         #expect(handle.isActive == true)
     }
 
-    @Test("width constraint is correct")
+    @Test("horizontal handle has width constraint")
     func widthConstraint() {
-        let handle = PaneResizeHandle()
+        let handle = PaneResizeHandle(orientation: .horizontal)
         let constraints = PaneResizeHandle.makeConstraints(for: handle)
         #expect(constraints.count == 1)
-        #expect(constraints[0].constant == 6) // handleWidth
+        #expect(constraints[0].constant == 6) // handleSize
+    }
+
+    @Test("vertical handle has height constraint")
+    func heightConstraint() {
+        let handle = PaneResizeHandle(orientation: .vertical)
+        let constraints = PaneResizeHandle.makeConstraints(for: handle)
+        #expect(constraints.count == 1)
+        #expect(constraints[0].constant == 6) // handleSize
     }
 }
