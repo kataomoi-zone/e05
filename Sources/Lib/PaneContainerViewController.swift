@@ -244,10 +244,9 @@ public final class PaneContainerViewController: NSViewController {
                 guard let url else { return }
                 pane?.address = PaneAddress(url)
                 pane?.urlBar.setDisplayURL(url.absoluteString)
-                pane?.urlBar.setNavigationEnabled(
-                    back: pane?.browserView?.webView.canGoBack ?? false,
-                    forward: pane?.browserView?.webView.canGoForward ?? false
-                )
+            }
+            bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
+                pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
             }
         } else {
             // Terminal/other panes: navigation buttons always disabled

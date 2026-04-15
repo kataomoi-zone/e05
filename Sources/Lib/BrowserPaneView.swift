@@ -10,9 +10,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     public var onTitleChange: ((String) -> Void)?
     /// Called when URL changes.
     public var onURLChange: ((URL?) -> Void)?
+    /// Called when back/forward availability changes.
+    public var onNavigationStateChange: ((Bool, Bool) -> Void)?
 
     private var titleObservation: NSKeyValueObservation?
     private var urlObservation: NSKeyValueObservation?
+    private var canGoBackObservation: NSKeyValueObservation?
+    private var canGoForwardObservation: NSKeyValueObservation?
 
     public override init(frame: NSRect) {
         let config = WKWebViewConfiguration()
@@ -62,6 +66,18 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
             guard let url = change.newValue ?? nil else { return }
             DispatchQueue.main.async { self?.onURLChange?(url) }
+        }
+        canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] _, _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
+            }
+        }
+        canGoForwardObservation = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] _, _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
+            }
         }
     }
 
