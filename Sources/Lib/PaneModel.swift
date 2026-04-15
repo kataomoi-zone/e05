@@ -73,24 +73,6 @@ public final class PaneModel {
     private var contentTopToURLBarConstraint: NSLayoutConstraint?
     private var contentTopToContainerConstraint: NSLayoutConstraint?
 
-    /// Create a terminal pane.
-    public init(ghosttyApp: GhosttyApp) {
-        self.address = .terminal
-        let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
-        tv.translatesAutoresizingMaskIntoConstraints = false
-        self.content = .terminal(tv)
-        setupContainerView()
-    }
-
-    /// Create a browser pane with an optional initial URL.
-    public init(url: URL? = nil) {
-        self.address = url.map { PaneAddress($0) } ?? .blankBrowser
-        let bv = Self.makeBrowserView()
-        self.content = .browser(bv)
-        setupContainerView()
-        if let url { bv.navigate(to: url.absoluteString) }
-    }
-
     /// Create a pane from a PaneAddress. Routes to the appropriate content type.
     public init(address: PaneAddress, ghosttyApp: GhosttyApp?) {
         self.address = address

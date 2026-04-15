@@ -275,6 +275,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleNewBrowser() {
-        paneContainer?.addBrowserColumn()
+        paneContainer?.addColumn(address: .blankBrowser)
     }
 }

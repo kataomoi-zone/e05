@@ -159,13 +159,8 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Column Management
 
     @discardableResult
-    public func addColumn() -> ColumnModel {
-        insertColumn(with: PaneModel(ghosttyApp: ghosttyApp))
-    }
-
-    @discardableResult
-    public func addBrowserColumn() -> ColumnModel {
-        insertColumn(with: PaneModel(url: nil))
+    public func addColumn(address: PaneAddress = .terminal) -> ColumnModel {
+        insertColumn(with: PaneModel(address: address, ghosttyApp: ghosttyApp))
     }
 
     @discardableResult
@@ -262,7 +257,7 @@ public final class PaneContainerViewController: NSViewController {
     public func splitVertical() {
         guard let column = columns[safe: focusedColumnIndex] else { return }
 
-        let newPane = PaneModel(ghosttyApp: ghosttyApp)
+        let newPane = PaneModel(address: .terminal, ghosttyApp: ghosttyApp)
         setupPaneCallbacks(pane: newPane, column: column)
 
         let insertPaneIndex = column.focusedPaneIndex + 1
