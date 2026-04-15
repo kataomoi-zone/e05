@@ -137,17 +137,6 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
             break
         }
 
-        // Cmd+V: paste
-        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "v" {
-            let pasteboard = NSPasteboard.general
-            if let text = pasteboard.string(forType: .string), let surface {
-                text.withCString { ptr in
-                    ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
-                }
-            }
-            return true
-        }
-
         return false
     }
 

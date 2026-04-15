@@ -45,24 +45,36 @@ public final class GhosttyApp {
             return mgr.handleAction(target, action)
         }
 
-        // read_clipboard_cb: (void*, ghostty_clipboard_e, void*) -> Bool
+        // read_clipboard_cb: (void* surfaceUD, ghostty_clipboard_e, void* state) -> Bool
+        // API: ghostty_surface_complete_clipboard_request(surface, text, state, confirm)
         runtime.read_clipboard_cb = { ud, clipboard, state in
-            guard let _ = ud, let state else { return false }
+            guard let ud, let state else {
+                NSLog("[e05] read_clipboard_cb: ud or state is nil")
+                return false
+            }
+            let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+            guard let surface = view.surface else { return false }
             let pasteboard = NSPasteboard.general
-            guard let text = pasteboard.string(forType: .string) else { return false }
-            text.withCString { ptr in
-                DispatchQueue.main.async {
-                    ghostty_surface_complete_clipboard_request(state, ptr, nil, true)
-                }
+            guard let text = pasteboard.string(forType: .string) else {
+                NSLog("[e05] read_clipboard_cb: no text in pasteboard")
+                return false
+            }
+            NSLog("[e05] read_clipboard_cb: pasting %d chars", text.count)
+            guard let cStr = strdup(text) else { return false }
+            DispatchQueue.main.async {
+                ghostty_surface_complete_clipboard_request(surface, cStr, state, true)
+                free(cStr)
             }
             return true
         }
 
-        // confirm_read_clipboard_cb: (void*, const char*, void*, ghostty_clipboard_request_e) -> Void
+        // confirm_read_clipboard_cb: (void* surfaceUD, const char*, void* state, ghostty_clipboard_request_e) -> Void
         runtime.confirm_read_clipboard_cb = { ud, text, state, request in
-            guard let state else { return }
+            guard let ud, let state else { return }
+            let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+            guard let surface = view.surface else { return }
             DispatchQueue.main.async {
-                ghostty_surface_complete_clipboard_request(state, text, nil, true)
+                ghostty_surface_complete_clipboard_request(surface, text, state, true)
             }
         }
 
