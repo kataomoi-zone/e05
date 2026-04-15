@@ -1,10 +1,36 @@
 import AppKit
 import GhosttyKit
 
+/// NSScrollView that forces overlay scrollers regardless of system preference.
+/// Overrides the getter to always return .overlay, and re-applies on system
+/// preference changes (e.g. mouse connect/disconnect).
+private final class OverlayScrollView: NSScrollView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(scrollerStyleDidChange),
+            name: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil
+        )
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
+    }
+
+    @objc private func scrollerStyleDidChange(_ notification: Notification) {
+        super.scrollerStyle = .overlay
+    }
+}
+
 public final class PaneContainerViewController: NSViewController {
     private let ghosttyApp: GhosttyApp
 
-    private let scrollView = NSScrollView()
+    private let scrollView = OverlayScrollView()
     private let stackView = NSStackView()
 
     public private(set) var panes: [PaneModel] = []
@@ -79,6 +105,8 @@ public final class PaneContainerViewController: NSViewController {
         scrollView.hasVerticalScroller = false
         scrollView.drawsBackground = false
         scrollView.horizontalScrollElasticity = .allowed
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
 
         stackView.orientation = .horizontal
         stackView.spacing = 0  // handles serve as spacing between panes
@@ -203,6 +231,7 @@ public final class PaneContainerViewController: NSViewController {
 
         if let previous = panes[safe: focusedIndex] {
             clearFocusBorder(previous)
+            hideHeaderForPane(previous)
         }
 
         focusedIndex = index
@@ -211,6 +240,7 @@ public final class PaneContainerViewController: NSViewController {
         applyFocusBorder(pane)
         view.window?.makeFirstResponder(pane.terminalView)
         updateHandleActiveStates()
+        showHeaderForFocusedPane()
         scrollToPane(at: index)
     }
 
@@ -400,22 +430,67 @@ public final class PaneContainerViewController: NSViewController {
     private func handleFocusChange(from pane: PaneModel) {
         guard let index = panes.firstIndex(where: { $0.id == pane.id }) else { return }
         guard index != focusedIndex else { return }
-
-        if let previous = panes[safe: focusedIndex] {
-            clearFocusBorder(previous)
-        }
-        focusedIndex = index
-        applyFocusBorder(panes[index])
-        updateHandleActiveStates()
-        scrollToPane(at: index)
+        setFocus(index: index)
     }
 
-    /// Update the window title when the focused pane's title changes.
+    // MARK: - Header
+
+    private var headerAlwaysVisible = false
+    private var titleDebounceTimer: Timer?
+    private var lastShownTitle: String = ""
+    private static let titleDebounceInterval: TimeInterval = 0.1
+
+    public func toggleHeaderVisibility() {
+        headerAlwaysVisible.toggle()
+        guard let pane = panes[safe: focusedIndex] else { return }
+        if headerAlwaysVisible {
+            pane.headerView.show(title: pane.title, autoHide: false)
+        } else {
+            pane.headerView.hide()
+        }
+    }
+
+    private func showHeaderForFocusedPane() {
+        guard let pane = panes[safe: focusedIndex], !pane.title.isEmpty else { return }
+        lastShownTitle = pane.title
+        pane.headerView.show(title: pane.title, autoHide: !headerAlwaysVisible)
+    }
+
+    private func hideHeaderForPane(_ pane: PaneModel) {
+        pane.headerView.hideImmediately()
+    }
+
+    /// Update a pane's title and show header if it's the focused pane.
+    /// Debounced: header only shows when the title is stable for a short time,
+    /// filtering out rapid changes from shell command execution.
     public func handleTitleChange(surface: ghostty_surface_t, title: String) {
-        guard let focused = panes[safe: focusedIndex],
-              focused.terminalView.surface == surface
-        else { return }
-        view.window?.title = title
+        guard let pane = panes.first(where: { $0.terminalView.surface == surface }) else { return }
+
+        let titleChanged = pane.title != title
+        pane.title = title
+
+        let isFocused = pane.id == panes[safe: focusedIndex]?.id
+
+        // Window title: immediate (matches ghostty behavior)
+        if isFocused {
+            view.window?.title = title
+        }
+
+        guard titleChanged, isFocused else { return }
+
+        // Header overlay: debounced to filter transient title changes
+        titleDebounceTimer?.invalidate()
+        titleDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.titleDebounceInterval, repeats: false
+        ) { [weak self, weak pane] _ in
+            DispatchQueue.main.async {
+                guard let self, let pane else { return }
+                guard pane.id == self.panes[safe: self.focusedIndex]?.id else { return }
+                guard pane.title != self.lastShownTitle else { return }
+                self.lastShownTitle = pane.title
+                pane.headerView.show(title: pane.title, autoHide: !self.headerAlwaysVisible)
+            }
+        }
     }
 }
 

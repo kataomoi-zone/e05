@@ -15,6 +15,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "e05"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        // Hide traffic lights — e05 manages pane lifecycle via ⌘+W/⌘+Q
+        window.standardWindowButton(.closeButton)?.isHidden = true
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+        window.isRestorable = false
         window.contentMinSize = NSSize(width: 480, height: 320)
 
         let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
@@ -122,6 +130,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cycleWidthItem.keyEquivalentModifierMask = [.option, .control]
         paneMenu.addItem(cycleWidthItem)
 
+        // ⌥⌃+T: Toggle header visibility
+        let toggleHeaderItem = NSMenuItem(
+            title: "Toggle Header",
+            action: #selector(handleToggleHeader),
+            keyEquivalent: "t"
+        )
+        toggleHeaderItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(toggleHeaderItem)
+
         paneMenuItem.submenu = paneMenu
         mainMenu.addItem(paneMenuItem)
 
@@ -165,5 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleCycleWidth() {
         paneContainer?.cycleWidthPreset(defaultWidthCycle)
+    }
+
+    @objc private func handleToggleHeader() {
+        paneContainer?.toggleHeaderVisibility()
     }
 }

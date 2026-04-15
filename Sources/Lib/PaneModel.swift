@@ -17,7 +17,25 @@ public final class PaneModel {
     /// Reference to the width constraint for dynamic updates.
     public var widthConstraint: NSLayoutConstraint?
 
+    /// Terminal title from SET_TITLE action.
+    public var title: String = ""
+
+    /// Overlay header showing the title.
+    public let headerView = PaneHeaderView()
+
     public init(ghosttyApp: GhosttyApp) {
         terminalView = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
+        setupHeaderView()
+    }
+
+    private func setupHeaderView() {
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        terminalView.addSubview(headerView)
+        NSLayoutConstraint.activate([
+            headerView.trailingAnchor.constraint(equalTo: terminalView.trailingAnchor, constant: -8),
+            headerView.topAnchor.constraint(equalTo: terminalView.topAnchor, constant: 8),
+            headerView.heightAnchor.constraint(equalToConstant: 22),
+            headerView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
+        ])
     }
 }
