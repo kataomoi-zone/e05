@@ -6,16 +6,11 @@ public enum PaneWidthPreset: Equatable {
     case fraction(CGFloat)
 }
 
-/// Lightweight wrapper around a GhosttyTerminalView for pane management.
+/// A single terminal pane within a column.
 @MainActor
 public final class PaneModel {
     public let id = UUID()
     public let terminalView: GhosttyTerminalView
-
-    /// Currently applied width preset. nil = default fixed width (no preset active).
-    public var currentPreset: PaneWidthPreset?
-    /// Reference to the width constraint for dynamic updates.
-    public var widthConstraint: NSLayoutConstraint?
 
     /// Terminal title from SET_TITLE action.
     public var title: String = ""
@@ -23,8 +18,12 @@ public final class PaneModel {
     /// Overlay header showing the title.
     public let headerView = PaneHeaderView()
 
+    // TODO: used for vertical drag resize (Step 5)
+    public var heightConstraint: NSLayoutConstraint?
+
     public init(ghosttyApp: GhosttyApp) {
         terminalView = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
+        terminalView.translatesAutoresizingMaskIntoConstraints = false
         setupHeaderView()
     }
 

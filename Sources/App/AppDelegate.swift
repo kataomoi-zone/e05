@@ -65,12 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paneMenuItem = NSMenuItem()
         let paneMenu = NSMenu(title: "Pane")
 
-        let newPaneItem = NSMenuItem(
-            title: "New Pane",
-            action: #selector(handleNewPane),
+        let newColumnItem = NSMenuItem(
+            title: "New Column",
+            action: #selector(handleNewColumn),
             keyEquivalent: "t"
         )
-        paneMenu.addItem(newPaneItem)
+        paneMenu.addItem(newColumnItem)
 
         let closePaneItem = NSMenuItem(
             title: "Close Pane",
@@ -78,6 +78,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "w"
         )
         paneMenu.addItem(closePaneItem)
+
+        // ⌥⌃+V: Split vertical
+        let splitVerticalItem = NSMenuItem(
+            title: "Split Vertical",
+            action: #selector(handleSplitVertical),
+            keyEquivalent: "v"
+        )
+        splitVerticalItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(splitVerticalItem)
 
         paneMenu.addItem(.separator())
 
@@ -99,25 +108,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusRightItem.keyEquivalentModifierMask = [.option, .control]
         paneMenu.addItem(focusRightItem)
 
+        // ⌥⌃+J: Focus down
+        let focusDownItem = NSMenuItem(
+            title: "Focus Down",
+            action: #selector(handleFocusDown),
+            keyEquivalent: "j"
+        )
+        focusDownItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(focusDownItem)
+
+        // ⌥⌃+K: Focus up
+        let focusUpItem = NSMenuItem(
+            title: "Focus Up",
+            action: #selector(handleFocusUp),
+            keyEquivalent: "k"
+        )
+        focusUpItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(focusUpItem)
+
         paneMenu.addItem(.separator())
 
-        // ⌥⌃+Shift+H: Move pane left
-        let movePaneLeftItem = NSMenuItem(
-            title: "Move Pane Left",
-            action: #selector(handleMovePaneLeft),
+        // ⌥⌃+Shift+H: Move column left
+        let moveColumnLeftItem = NSMenuItem(
+            title: "Move Column Left",
+            action: #selector(handleMoveColumnLeft),
             keyEquivalent: "h"
         )
-        movePaneLeftItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(movePaneLeftItem)
+        moveColumnLeftItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(moveColumnLeftItem)
 
-        // ⌥⌃+Shift+L: Move pane right
-        let movePaneRightItem = NSMenuItem(
-            title: "Move Pane Right",
-            action: #selector(handleMovePaneRight),
+        // ⌥⌃+Shift+L: Move column right
+        let moveColumnRightItem = NSMenuItem(
+            title: "Move Column Right",
+            action: #selector(handleMoveColumnRight),
             keyEquivalent: "l"
         )
-        movePaneRightItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(movePaneRightItem)
+        moveColumnRightItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(moveColumnRightItem)
+
+        // ⌥⌃+Shift+J: Move pane down
+        let movePaneDownItem = NSMenuItem(
+            title: "Move Pane Down",
+            action: #selector(handleMovePaneDown),
+            keyEquivalent: "j"
+        )
+        movePaneDownItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(movePaneDownItem)
+
+        // ⌥⌃+Shift+K: Move pane up
+        let movePaneUpItem = NSMenuItem(
+            title: "Move Pane Up",
+            action: #selector(handleMovePaneUp),
+            keyEquivalent: "k"
+        )
+        movePaneUpItem.keyEquivalentModifierMask = [.option, .control, .shift]
+        paneMenu.addItem(movePaneUpItem)
 
         paneMenu.addItem(.separator())
 
@@ -156,12 +201,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
-    @objc private func handleNewPane() {
-        paneContainer?.addPane()
+    @objc private func handleNewColumn() {
+        paneContainer?.addColumn()
     }
 
     @objc private func handleClosePane() {
         paneContainer?.removeCurrentPane()
+    }
+
+    @objc private func handleSplitVertical() {
+        paneContainer?.splitVertical()
     }
 
     @objc private func handleFocusLeft() {
@@ -172,12 +221,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         paneContainer?.focusRight()
     }
 
-    @objc private func handleMovePaneLeft() {
-        paneContainer?.movePaneLeft()
+    @objc private func handleFocusDown() {
+        paneContainer?.focusDown()
     }
 
-    @objc private func handleMovePaneRight() {
-        paneContainer?.movePaneRight()
+    @objc private func handleFocusUp() {
+        paneContainer?.focusUp()
+    }
+
+    @objc private func handleMoveColumnLeft() {
+        paneContainer?.moveColumnLeft()
+    }
+
+    @objc private func handleMoveColumnRight() {
+        paneContainer?.moveColumnRight()
+    }
+
+    @objc private func handleMovePaneDown() {
+        paneContainer?.movePaneDown()
+    }
+
+    @objc private func handleMovePaneUp() {
+        paneContainer?.movePaneUp()
     }
 
     @objc private func handleCycleWidth() {

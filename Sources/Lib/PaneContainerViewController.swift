@@ -33,8 +33,12 @@ public final class PaneContainerViewController: NSViewController {
     private let scrollView = OverlayScrollView()
     private let stackView = NSStackView()
 
-    public private(set) var panes: [PaneModel] = []
-    private var focusedIndex: Int = 0
+    public private(set) var columns: [ColumnModel] = []
+    private var focusedColumnIndex: Int = 0
+
+    private var focusedPane: PaneModel? {
+        columns[safe: focusedColumnIndex]?.focusedPane
+    }
 
     private let defaultPaneWidth: CGFloat = 640
     private let minPaneWidth: CGFloat = 100
@@ -65,7 +69,7 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLoad()
         configureScrollView()
         installScrollEventMonitor()
-        addPane()
+        addColumn()
     }
 
     public override func viewDidAppear() {
@@ -83,11 +87,13 @@ public final class PaneContainerViewController: NSViewController {
         isUpdatingLayout = true
         // Recalculate fraction-based presets on window resize
         let visibleWidth = scrollView.contentView.bounds.width
-        for pane in panes {
-            if case .fraction(let f) = pane.currentPreset, visibleWidth > 0 {
-                pane.widthConstraint?.constant = visibleWidth * f
+        for column in columns {
+            if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
+                column.widthConstraint?.constant = visibleWidth * f
             }
-            pane.terminalView.setFrameSize(pane.terminalView.frame.size)
+            for pane in column.panes {
+                pane.terminalView.setFrameSize(pane.terminalView.frame.size)
+            }
         }
         isUpdatingLayout = false
     }
@@ -149,12 +155,39 @@ public final class PaneContainerViewController: NSViewController {
         }
     }
 
-    // MARK: - Pane Management
+    // MARK: - Column Management
 
     @discardableResult
-    public func addPane() -> PaneModel {
+    public func addColumn() -> ColumnModel {
         let pane = PaneModel(ghosttyApp: ghosttyApp)
+        let column = ColumnModel(pane: pane)
 
+        setupPaneCallbacks(pane: pane, column: column)
+
+        let tv = pane.terminalView
+
+        // Add terminalView to column's containerView
+        column.containerView.addArrangedSubview(tv)
+        NSLayoutConstraint.activate([
+            tv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+            tv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+        ])
+
+        // Width constraint on the containerView
+        let wc = column.containerView.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
+        wc.isActive = true
+        column.widthConstraint = wc
+
+        let insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
+        columns.insert(column, at: insertIndex)
+
+        rebuildStackView()
+        view.layoutSubtreeIfNeeded()
+        setFocus(columnIndex: insertIndex, paneIndex: 0)
+        return column
+    }
+
+    private func setupPaneCallbacks(pane: PaneModel, column: ColumnModel) {
         pane.terminalView.onFocusChanged = { [weak self, weak pane] focused in
             guard let self, let pane, focused else { return }
             self.handleFocusChange(from: pane)
@@ -162,49 +195,66 @@ public final class PaneContainerViewController: NSViewController {
 
         pane.terminalView.onClose = { [weak self, weak pane] in
             guard let self, let pane else { return }
-            guard let index = self.panes.firstIndex(where: { $0.id == pane.id }) else { return }
-            self.removePane(at: index)
+            for (colIdx, col) in self.columns.enumerated() {
+                if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
+                    self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
+                    return
+                }
+            }
         }
-
-        let insertIndex = panes.isEmpty ? 0 : focusedIndex + 1
-        panes.insert(pane, at: insertIndex)
-
-        let tv = pane.terminalView
-        tv.translatesAutoresizingMaskIntoConstraints = false
-
-        // New panes start at defaultPaneWidth with no preset (currentPreset=nil).
-        // User can cycle presets with ⌥⌃+/.
-        let wc = tv.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
-        wc.isActive = true
-        pane.widthConstraint = wc
-
-        rebuildStackView()
-        view.layoutSubtreeIfNeeded()
-        setFocus(index: insertIndex)
-        return pane
     }
 
-    public func removePane(at index: Int) {
-        guard panes.indices.contains(index) else { return }
+    // MARK: - Vertical Split
 
-        let pane = panes.remove(at: index)
+    public func splitVertical() {
+        guard let column = columns[safe: focusedColumnIndex] else { return }
+
+        let newPane = PaneModel(ghosttyApp: ghosttyApp)
+        setupPaneCallbacks(pane: newPane, column: column)
+
+        let insertPaneIndex = column.focusedPaneIndex + 1
+        column.panes.insert(newPane, at: insertPaneIndex)
+
+        rebuildColumnView(column: column)
+        view.layoutSubtreeIfNeeded()
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: insertPaneIndex)
+    }
+
+    // MARK: - Pane Removal
+
+    private func removePane(columnIndex: Int, paneIndex: Int) {
+        guard let column = columns[safe: columnIndex],
+              column.panes.indices.contains(paneIndex) else { return }
+
+        let pane = column.panes.remove(at: paneIndex)
         clearFocusBorder(pane)
-        pane.terminalView.removeFromSuperview()
 
-        if panes.isEmpty {
-            for v in stackView.arrangedSubviews { v.removeFromSuperview() }
-            view.window?.close()
-            return
+        if column.panes.isEmpty {
+            // Remove column
+            columns.remove(at: columnIndex)
+            column.containerView.removeFromSuperview()
+
+            if columns.isEmpty {
+                for v in stackView.arrangedSubviews { v.removeFromSuperview() }
+                view.window?.close()
+                return
+            }
+
+            rebuildStackView()
+            let newColIndex = min(columnIndex, columns.count - 1)
+            setFocus(columnIndex: newColIndex, paneIndex: 0)
+        } else {
+            pane.terminalView.removeFromSuperview()
+            rebuildColumnView(column: column)
+            let newPaneIndex = min(paneIndex, column.panes.count - 1)
+            setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
         }
-
-        rebuildStackView()
-        let newIndex = min(index, panes.count - 1)
-        setFocus(index: newIndex)
     }
 
     /// Close the focused pane. Shows a confirmation dialog if a process is running.
     public func removeCurrentPane() {
-        guard let pane = panes[safe: focusedIndex] else { return }
+        guard let column = columns[safe: focusedColumnIndex],
+              let pane = column.focusedPane else { return }
         if let surface = pane.terminalView.surface,
            ghostty_surface_needs_confirm_quit(surface)
         {
@@ -215,56 +265,77 @@ public final class PaneContainerViewController: NSViewController {
             alert.addButton(withTitle: "Close")
             alert.addButton(withTitle: "Cancel")
             guard let window = view.window else { return }
-            let targetId = pane.id
+            let targetPaneId = pane.id
+            let targetColId = column.id
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard response == .alertFirstButtonReturn, let self else { return }
-                if let idx = self.panes.firstIndex(where: { $0.id == targetId }) {
-                    self.removePane(at: idx)
-                }
+                guard let colIdx = self.columns.firstIndex(where: { $0.id == targetColId }),
+                      let col = self.columns[safe: colIdx],
+                      let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId }) else { return }
+                self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
             }
             return
         }
-        removePane(at: focusedIndex)
+        removePane(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
     }
 
     // MARK: - Focus
 
-    public func setFocus(index: Int) {
-        guard panes.indices.contains(index) else { return }
+    public func setFocus(columnIndex: Int, paneIndex: Int) {
+        guard columns.indices.contains(columnIndex) else { return }
+        guard let column = columns[safe: columnIndex],
+              column.panes.indices.contains(paneIndex) else { return }
 
-        if let previous = panes[safe: focusedIndex] {
-            clearFocusBorder(previous)
-            hideHeaderForPane(previous)
+        if let previousPane = focusedPane {
+            clearFocusBorder(previousPane)
+            hideHeaderForPane(previousPane)
         }
 
-        focusedIndex = index
+        focusedColumnIndex = columnIndex
+        column.focusedPaneIndex = paneIndex
 
-        let pane = panes[index]
+        let pane = column.panes[paneIndex]
         applyFocusBorder(pane)
         view.window?.makeFirstResponder(pane.terminalView)
         updateHandleActiveStates()
         showHeaderForFocusedPane()
-        scrollToPane(at: index)
+        scrollToColumn(at: columnIndex)
     }
 
     public func focusLeft() {
-        guard focusedIndex > 0 else { return }
-        setFocus(index: focusedIndex - 1)
+        guard focusedColumnIndex > 0 else { return }
+        let newColIndex = focusedColumnIndex - 1
+        let paneIndex = columns[newColIndex].focusedPaneIndex
+        setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
     }
 
     public func focusRight() {
-        guard focusedIndex < panes.count - 1 else { return }
-        setFocus(index: focusedIndex + 1)
+        guard focusedColumnIndex < columns.count - 1 else { return }
+        let newColIndex = focusedColumnIndex + 1
+        let paneIndex = columns[newColIndex].focusedPaneIndex
+        setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
+    }
+
+    public func focusUp() {
+        guard let column = columns[safe: focusedColumnIndex],
+              column.focusedPaneIndex > 0 else { return }
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
+    }
+
+    public func focusDown() {
+        guard let column = columns[safe: focusedColumnIndex],
+              column.focusedPaneIndex < column.panes.count - 1 else { return }
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
     }
 
     // MARK: - Width Preset Cycle
 
-    /// Cycle the focused pane's width through the given preset list.
+    /// Cycle the focused column's width through the given preset list.
     public func cycleWidthPreset(_ cycle: [PaneWidthPreset]) {
-        guard !cycle.isEmpty, let pane = panes[safe: focusedIndex] else { return }
+        guard !cycle.isEmpty, let column = columns[safe: focusedColumnIndex] else { return }
 
         let nextIndex: Int
-        if let current = pane.currentPreset,
+        if let current = column.currentPreset,
            let idx = cycle.firstIndex(of: current)
         {
             nextIndex = (idx + 1) % cycle.count
@@ -273,17 +344,18 @@ public final class PaneContainerViewController: NSViewController {
         }
 
         let preset = cycle[nextIndex]
-        pane.currentPreset = preset
-        applyPreset(preset, to: pane)
+        column.currentPreset = preset
+        applyPreset(preset, to: column)
         view.layoutSubtreeIfNeeded()
-        scrollToPane(at: focusedIndex)
+        scrollToColumn(at: focusedColumnIndex)
     }
 
-    private func applyPreset(_ preset: PaneWidthPreset, to pane: PaneModel) {
-        guard let constraint = pane.widthConstraint else { return }
+    private func applyPreset(_ preset: PaneWidthPreset, to column: ColumnModel) {
+        guard let constraint = column.widthConstraint else { return }
         switch preset {
         case .columns(let n):
-            guard let surface = pane.terminalView.surface,
+            guard let pane = column.focusedPane,
+                  let surface = pane.terminalView.surface,
                   let scale = pane.terminalView.window?.backingScaleFactor
             else { return }
             let size = ghostty_surface_size(surface)
@@ -296,67 +368,84 @@ public final class PaneContainerViewController: NSViewController {
         }
     }
 
-    // MARK: - Pane Reorder
+    // MARK: - Column Reorder
 
-    public func movePaneLeft() {
-        guard focusedIndex > 0 else { return }
-        panes.swapAt(focusedIndex, focusedIndex - 1)
-        focusedIndex -= 1
+    public func moveColumnLeft() {
+        guard focusedColumnIndex > 0 else { return }
+        columns.swapAt(focusedColumnIndex, focusedColumnIndex - 1)
+        focusedColumnIndex -= 1
         rebuildStackView()
         view.layoutSubtreeIfNeeded()
-        setFocus(index: focusedIndex)
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: columns[focusedColumnIndex].focusedPaneIndex)
     }
 
-    public func movePaneRight() {
-        guard focusedIndex < panes.count - 1 else { return }
-        panes.swapAt(focusedIndex, focusedIndex + 1)
-        focusedIndex += 1
+    public func moveColumnRight() {
+        guard focusedColumnIndex < columns.count - 1 else { return }
+        columns.swapAt(focusedColumnIndex, focusedColumnIndex + 1)
+        focusedColumnIndex += 1
         rebuildStackView()
         view.layoutSubtreeIfNeeded()
-        setFocus(index: focusedIndex)
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: columns[focusedColumnIndex].focusedPaneIndex)
+    }
+
+    // MARK: - Pane Reorder within Column
+
+    public func movePaneUp() {
+        guard let column = columns[safe: focusedColumnIndex],
+              column.focusedPaneIndex > 0 else { return }
+        let idx = column.focusedPaneIndex
+        column.panes.swapAt(idx, idx - 1)
+        column.focusedPaneIndex = idx - 1
+        rebuildColumnView(column: column)
+        view.layoutSubtreeIfNeeded()
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
+    }
+
+    public func movePaneDown() {
+        guard let column = columns[safe: focusedColumnIndex],
+              column.focusedPaneIndex < column.panes.count - 1 else { return }
+        let idx = column.focusedPaneIndex
+        column.panes.swapAt(idx, idx + 1)
+        column.focusedPaneIndex = idx + 1
+        rebuildColumnView(column: column)
+        view.layoutSubtreeIfNeeded()
+        setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
     }
 
     // MARK: - Stack View Rebuild
 
-    /// Rebuild arrangedSubviews from panes array, inserting resize handles between panes.
-    /// Full rebuild (vs differential update) trades minor layout cost for correctness —
-    /// manual arrangedSubview index management was error-prone with handles interleaved.
+    /// Rebuild arrangedSubviews from columns array, inserting resize handles between columns.
     private func rebuildStackView() {
-        // Remove handles; pane views stay in superview (they have constraints)
         for v in stackView.arrangedSubviews.reversed() {
             stackView.removeArrangedSubview(v)
             if v is PaneResizeHandle { v.removeFromSuperview() }
         }
-        for (i, pane) in panes.enumerated() {
+        for (i, column) in columns.enumerated() {
             if i > 0 {
-                let handle = makeResizeHandle(leftIndex: i - 1, rightIndex: i)
+                let handle = makeColumnResizeHandle(leftIndex: i - 1, rightIndex: i)
                 stackView.addArrangedSubview(handle)
                 NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
             }
-            stackView.addArrangedSubview(pane.terminalView)
+            stackView.addArrangedSubview(column.containerView)
         }
     }
 
-    private func makeResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
+    private func makeColumnResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
         let handle = PaneResizeHandle()
-        let leftPane = panes[leftIndex]
-        let rightPane = panes[rightIndex]
-        handle.onDrag = { [weak self, weak leftPane, weak rightPane] deltaX in
-            guard let self, let leftPane, let rightPane else { return }
-            // Resize only the focused pane
-            let isLeftFocused = leftPane.id == self.panes[safe: self.focusedIndex]?.id
-            let isRightFocused = rightPane.id == self.panes[safe: self.focusedIndex]?.id
+        let leftColumn = columns[leftIndex]
+        let rightColumn = columns[rightIndex]
+        handle.onDrag = { [weak self, weak leftColumn, weak rightColumn] deltaX in
+            guard let self, let leftColumn, let rightColumn else { return }
+            let isLeftFocused = leftColumn.id == self.columns[safe: self.focusedColumnIndex]?.id
+            let isRightFocused = rightColumn.id == self.columns[safe: self.focusedColumnIndex]?.id
             guard isLeftFocused || isRightFocused else { return }
-            let focusedPane = isLeftFocused ? leftPane : rightPane
-            guard let constraint = focusedPane.widthConstraint else { return }
-            // Left pane: drag right → wider. Right pane: drag left → wider.
+            let focusedColumn = isLeftFocused ? leftColumn : rightColumn
+            guard let constraint = focusedColumn.widthConstraint else { return }
             let sign: CGFloat = isLeftFocused ? 1 : -1
             let newWidth = max(self.minPaneWidth, constraint.constant + deltaX * sign)
             let actualDelta = newWidth - constraint.constant
             constraint.constant = newWidth
-            focusedPane.currentPreset = nil
-            // When resizing via the LEFT handle, compensate scroll so the
-            // right edge appears fixed (stack view anchors from the left).
+            focusedColumn.currentPreset = nil
             if isRightFocused, actualDelta != 0 {
                 var origin = self.scrollView.contentView.bounds.origin
                 origin.x += actualDelta
@@ -366,18 +455,32 @@ public final class PaneContainerViewController: NSViewController {
         return handle
     }
 
-    /// Update which resize handles are active based on focused pane.
+    /// Rebuild the containerView of a column from its panes array.
+    private func rebuildColumnView(column: ColumnModel) {
+        for v in column.containerView.arrangedSubviews.reversed() {
+            column.containerView.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        for pane in column.panes {
+            let tv = pane.terminalView
+            column.containerView.addArrangedSubview(tv)
+            NSLayoutConstraint.activate([
+                tv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+                tv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+            ])
+        }
+    }
+
+    /// Update which resize handles are active based on focused column.
     private func updateHandleActiveStates() {
-        guard let focusedPane = panes[safe: focusedIndex] else { return }
+        guard let focusedColumn = columns[safe: focusedColumnIndex] else { return }
         for v in stackView.arrangedSubviews {
             guard let handle = v as? PaneResizeHandle else { continue }
             guard let handleIndex = stackView.arrangedSubviews.firstIndex(of: handle) else { continue }
-            // Handle at arrangedSubviews index i is between pane at i-1 and i+1.
-            // It's active if either adjacent arranged view is the focused pane's terminalView.
             let leftView = stackView.arrangedSubviews[safe: handleIndex - 1]
             let rightView = stackView.arrangedSubviews[safe: handleIndex + 1]
-            handle.isActive = leftView === focusedPane.terminalView
-                || rightView === focusedPane.terminalView
+            handle.isActive = leftView === focusedColumn.containerView
+                || rightView === focusedColumn.containerView
         }
     }
 
@@ -398,23 +501,23 @@ public final class PaneContainerViewController: NSViewController {
 
     // MARK: - Scrolling
 
-    private func scrollToPane(at index: Int) {
-        guard panes.indices.contains(index) else { return }
-        let targetView = panes[index].terminalView
+    private func scrollToColumn(at index: Int) {
+        guard let column = columns[safe: index] else { return }
+        let targetView = column.containerView
 
         view.layoutSubtreeIfNeeded()
 
-        let paneFrame = targetView.frame
+        let columnFrame = targetView.frame
         let visibleWidth = scrollView.contentView.bounds.width
         let contentWidth = stackView.frame.width
 
         if contentWidth <= visibleWidth { return }
 
         let targetX: CGFloat
-        if paneFrame.width >= visibleWidth {
-            targetX = paneFrame.minX
+        if columnFrame.width >= visibleWidth {
+            targetX = columnFrame.minX
         } else {
-            targetX = paneFrame.midX - visibleWidth / 2
+            targetX = columnFrame.midX - visibleWidth / 2
         }
 
         let maxScrollX = contentWidth - visibleWidth
@@ -431,9 +534,13 @@ public final class PaneContainerViewController: NSViewController {
 
     /// Called when a GhosttyTerminalView gains focus via click.
     private func handleFocusChange(from pane: PaneModel) {
-        guard let index = panes.firstIndex(where: { $0.id == pane.id }) else { return }
-        guard index != focusedIndex else { return }
-        setFocus(index: index)
+        for (colIdx, column) in columns.enumerated() {
+            if let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) {
+                guard colIdx != focusedColumnIndex || paneIdx != column.focusedPaneIndex else { return }
+                setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+                return
+            }
+        }
     }
 
     // MARK: - Header
@@ -445,7 +552,7 @@ public final class PaneContainerViewController: NSViewController {
 
     public func toggleHeaderVisibility() {
         headerAlwaysVisible.toggle()
-        guard let pane = panes[safe: focusedIndex] else { return }
+        guard let pane = focusedPane else { return }
         if headerAlwaysVisible {
             pane.headerView.show(title: pane.title, autoHide: false)
         } else {
@@ -454,7 +561,7 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     private func showHeaderForFocusedPane() {
-        guard let pane = panes[safe: focusedIndex], !pane.title.isEmpty else { return }
+        guard let pane = focusedPane, !pane.title.isEmpty else { return }
         lastShownTitle = pane.title
         pane.headerView.show(title: pane.title, autoHide: !headerAlwaysVisible)
     }
@@ -467,12 +574,13 @@ public final class PaneContainerViewController: NSViewController {
     /// Debounced: header only shows when the title is stable for a short time,
     /// filtering out rapid changes from shell command execution.
     public func handleTitleChange(surface: ghostty_surface_t, title: String) {
-        guard let pane = panes.first(where: { $0.terminalView.surface == surface }) else { return }
+        let allPanes = columns.flatMap(\.panes)
+        guard let pane = allPanes.first(where: { $0.terminalView.surface == surface }) else { return }
 
         let titleChanged = pane.title != title
         pane.title = title
 
-        let isFocused = pane.id == panes[safe: focusedIndex]?.id
+        let isFocused = pane.id == focusedPane?.id
 
         // Window title: immediate (matches ghostty behavior)
         if isFocused {
@@ -488,7 +596,7 @@ public final class PaneContainerViewController: NSViewController {
         ) { [weak self, weak pane] _ in
             DispatchQueue.main.async {
                 guard let self, let pane else { return }
-                guard pane.id == self.panes[safe: self.focusedIndex]?.id else { return }
+                guard pane.id == self.focusedPane?.id else { return }
                 guard pane.title != self.lastShownTitle else { return }
                 self.lastShownTitle = pane.title
                 pane.headerView.show(title: pane.title, autoHide: !self.headerAlwaysVisible)
