@@ -165,7 +165,7 @@ public final class PaneContainerViewController: NSViewController {
 
     @discardableResult
     public func addBrowserColumn() -> ColumnModel {
-        insertColumn(with: PaneModel(browser: ()))
+        insertColumn(with: PaneModel(url: nil))
     }
 
     @discardableResult

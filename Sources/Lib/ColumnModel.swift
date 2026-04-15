@@ -3,7 +3,7 @@ import AppKit
 /// A column in the horizontal scroll container, holding one or more vertically-stacked panes.
 @MainActor
 public final class ColumnModel {
-    public let id = UUID()
+    public let id = ULID()
     public var panes: [PaneModel]
     public var focusedPaneIndex: Int = 0
 

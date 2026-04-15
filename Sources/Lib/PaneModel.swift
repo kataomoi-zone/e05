@@ -15,8 +15,9 @@ public enum PaneContent {
 /// A single pane within a column — either a terminal or a browser.
 @MainActor
 public final class PaneModel {
-    public let id = UUID()
-    public let content: PaneContent
+    public let id = ULID()
+    public var address: PaneAddress
+    public private(set) var content: PaneContent
 
     /// Terminal title or page title.
     public var title: String = ""
@@ -57,18 +58,54 @@ public final class PaneModel {
 
     /// Create a terminal pane.
     public init(ghosttyApp: GhosttyApp) {
+        self.address = .terminal
         let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
         tv.translatesAutoresizingMaskIntoConstraints = false
         self.content = .terminal(tv)
         setupHeaderView()
     }
 
-    /// Create a browser pane.
-    public init(browser: Void = ()) {
-        let bv = BrowserPaneView()
-        bv.translatesAutoresizingMaskIntoConstraints = false
+    /// Create a browser pane with an optional initial URL.
+    public init(url: URL? = nil) {
+        self.address = url.map { PaneAddress($0) } ?? .blankBrowser
+        let bv = Self.makeBrowserView()
         self.content = .browser(bv)
         setupHeaderView()
+        if let url { bv.navigate(to: url.absoluteString) }
+    }
+
+    /// Create a pane from a PaneAddress. Routes to the appropriate content type.
+    public init(address: PaneAddress, ghosttyApp: GhosttyApp?) {
+        self.address = address
+        switch address.kind {
+        case .terminal:
+            guard let ghosttyApp else { fatalError("GhosttyApp required for terminal pane") }
+            let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
+            tv.translatesAutoresizingMaskIntoConstraints = false
+            self.content = .terminal(tv)
+        case .browser:
+            let bv = Self.makeBrowserView()
+            self.content = .browser(bv)
+        case .settings:
+            // TODO: implement settings pane — using browser as placeholder
+            assertionFailure("Settings pane not yet implemented")
+            let bv = Self.makeBrowserView()
+            self.content = .browser(bv)
+        case .unknown:
+            assertionFailure("Unknown address kind: \(address)")
+            let bv = Self.makeBrowserView()
+            self.content = .browser(bv)
+        }
+        setupHeaderView()
+        if case .browser(let bv) = content, address.kind == .browser {
+            bv.navigate(to: address.url.absoluteString)
+        }
+    }
+
+    private static func makeBrowserView() -> BrowserPaneView {
+        let bv = BrowserPaneView()
+        bv.translatesAutoresizingMaskIntoConstraints = false
+        return bv
     }
 
     private func setupHeaderView() {
