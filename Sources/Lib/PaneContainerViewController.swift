@@ -642,6 +642,26 @@ public final class PaneContainerViewController: NSViewController {
             }
             stackView.addArrangedSubview(column.containerView)
         }
+        // Add a trailing resize handle on the last column so single-pane layouts can be resized
+        if let lastIndex = columns.indices.last {
+            let handle = makeTrailingResizeHandle(columnIndex: lastIndex)
+            stackView.addArrangedSubview(handle)
+            NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
+        }
+    }
+
+    private func makeTrailingResizeHandle(columnIndex: Int) -> PaneResizeHandle {
+        let handle = PaneResizeHandle(orientation: .horizontal)
+        let column = columns[columnIndex]
+        // Active state is managed by updateHandleActiveStates (left-side neighbor === focused column).
+        // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
+        handle.onDrag = { [weak self, weak column] deltaX in
+            guard let self, let column, let constraint = column.widthConstraint else { return }
+            let newWidth = max(self.minPaneWidth, constraint.constant + deltaX)
+            constraint.constant = newWidth
+            column.currentPreset = nil
+        }
+        return handle
     }
 
     private func makeColumnResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
