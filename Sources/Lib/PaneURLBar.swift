@@ -9,6 +9,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     private let backButton: NSButton
     private let forwardButton: NSButton
     private let urlField: NSTextField
+    private let suggestionList = SuggestionListView()
+    private var searchDebounceTimer: Timer?
+    private static let searchDebounceInterval: TimeInterval = 0.15
 
     /// Called when user submits a URL (presses Enter).
     public var onNavigate: ((String) -> Void)?
@@ -18,6 +21,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onForward: (() -> Void)?
     /// Called when user presses ESC to dismiss URL field.
     public var onCancel: (() -> Void)?
+    /// Called when text changes in the URL field. Return suggestions to display.
+    public var onTextChanged: ((String) -> [Suggestion])?
 
     public override init(frame: NSRect) {
         backButton = NSButton(title: "\u{25C0}", target: nil, action: nil)
@@ -58,7 +63,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     }
 
     private func setupURLField() {
-        urlField.placeholderString = "Enter URL or e05://terminal..."
+        urlField.placeholderString = "Enter URL or search..."
         urlField.font = .systemFont(ofSize: 12)
         urlField.delegate = self
         urlField.translatesAutoresizingMaskIntoConstraints = false
@@ -86,6 +91,52 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         ])
     }
 
+    // MARK: - Suggestion List Positioning
+
+    /// Position the suggestion list below the URL field using frame-based layout.
+    /// Uses window's content view for z-ordering above all pane content.
+    private func positionSuggestionList() {
+        guard let windowContentView = window?.contentView else { return }
+
+        if suggestionList.superview !== windowContentView {
+            suggestionList.removeFromSuperview()
+            windowContentView.addSubview(suggestionList)
+        }
+
+        // Convert URL field's bottom-left to window content view coordinates
+        // AppKit Y=0 is bottom, so fieldFrame.minY is the bottom edge of the field
+        let fieldFrame = urlField.convert(urlField.bounds, to: windowContentView)
+
+        suggestionList.frame = NSRect(
+            x: fieldFrame.minX,
+            y: fieldFrame.minY - suggestionList.frame.height,
+            width: fieldFrame.width,
+            height: suggestionList.frame.height
+        )
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Remove observer for old window, add for new
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResizeNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(windowDidResize),
+                name: NSWindow.didResizeNotification, object: window
+            )
+        }
+        // Wire up suggestion click handler
+        suggestionList.onSelect = { [weak self] suggestion in
+            self?.acceptSuggestion(suggestion)
+        }
+    }
+
+    @objc private func windowDidResize(_ notification: Notification) {
+        if !suggestionList.isHidden {
+            positionSuggestionList()
+        }
+    }
+
     // MARK: - Public API
 
     /// Update the displayed URL text.
@@ -107,6 +158,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         urlField.refusesFirstResponder = true
     }
 
+    // MARK: - Suggestions
+
+    private func acceptSuggestion(_ suggestion: Suggestion) {
+        urlField.stringValue = suggestion.url
+        suggestionList.dismiss()
+        onNavigate?(suggestion.url)
+    }
+
     // MARK: - Actions
 
     @objc private func backAction() {
@@ -119,15 +178,54 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     // MARK: - NSTextFieldDelegate
 
+    public func controlTextDidChange(_ notification: Notification) {
+        let text = urlField.stringValue
+        guard !text.isEmpty else {
+            searchDebounceTimer?.invalidate()
+            suggestionList.dismiss()
+            return
+        }
+        // Debounce search to avoid SQLite query on every keystroke
+        searchDebounceTimer?.invalidate()
+        searchDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.searchDebounceInterval, repeats: false
+        ) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let suggestions = self.onTextChanged?(text) ?? []
+                self.suggestionList.update(suggestions: suggestions)
+                self.positionSuggestionList()
+            }
+        }
+    }
+
     public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(insertNewline(_:)) {
-            onNavigate?(urlField.stringValue)
+            if !suggestionList.isHidden, let suggestion = suggestionList.selectedSuggestion {
+                acceptSuggestion(suggestion)
+            } else {
+                onNavigate?(urlField.stringValue)
+            }
+            suggestionList.dismiss()
             return true
         }
         if selector == #selector(cancelOperation(_:)) {
+            suggestionList.dismiss()
             onCancel?()
             return true
         }
+        if selector == #selector(moveUp(_:)) {
+            suggestionList.selectPrevious()
+            return true
+        }
+        if selector == #selector(moveDown(_:)) {
+            suggestionList.selectNext()
+            return true
+        }
         return false
+    }
+
+    public func controlTextDidEndEditing(_ notification: Notification) {
+        suggestionList.dismiss()
     }
 }

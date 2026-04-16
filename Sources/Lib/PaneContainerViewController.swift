@@ -284,8 +284,35 @@ public final class PaneContainerViewController: NSViewController {
             pane?.browserView?.webView.goForward()
         }
 
+        // URL bar: fuzzy find suggestions from history + bookmarks
+        pane.urlBar.onTextChanged = { [weak self] query in
+            guard let self, !query.isEmpty else { return [] }
+            return self.searchSuggestions(query: query)
+        }
+
         // Sync URL bar visibility with global state
         pane.setURLBarVisible(urlBarVisible)
+    }
+
+    /// Search history and bookmarks for URL bar suggestions.
+    private func searchSuggestions(query: String) -> [Suggestion] {
+        // Bookmarks first (higher priority), then history
+        let bookmarkResults = bookmarks.search(query: query, limit: 5).map { entry in
+            Suggestion(url: entry.url, title: entry.title, isBookmark: true)
+        }
+        let historyResults = browsingHistory.search(query: query, limit: 10).map { entry in
+            Suggestion(url: entry.url, title: entry.title, isBookmark: false)
+        }
+
+        // Deduplicate: if a URL appears in both bookmarks and history, keep only the bookmark version
+        var seen = Set(bookmarkResults.map(\.url))
+        let dedupedHistory = historyResults.filter { suggestion in
+            if seen.contains(suggestion.url) { return false }
+            seen.insert(suggestion.url)
+            return true
+        }
+
+        return bookmarkResults + dedupedHistory
     }
 
     // MARK: - Vertical Split
