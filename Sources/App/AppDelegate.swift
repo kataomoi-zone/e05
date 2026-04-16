@@ -6,6 +6,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var window: NSWindow?
     private let ghosttyApp = GhosttyApp()
     private var paneContainer: PaneContainerViewController?
+    /// Actions retrieved from the pane container, cached at menu-build time.
+    /// Indexed by `NSMenuItem.tag` (= position in the actions array) so that
+    /// `validateMenuItem` and `performAction` can look up the right entry in
+    /// O(1) without iterating or string matching.
+    ///
+    /// Single-window assumption: the array is built once from the sole
+    /// `paneContainer` and never refreshed. If multi-window support is
+    /// added, this cache must become per-window (or re-fetched on focus
+    /// change) because the handler closures capture `[weak paneContainer]`.
+    /// The tag-based index also assumes a static action order — dynamic
+    /// action lists would require id-based lookup instead.
+    private var actions: [Action] = []
 
     func applicationDidFinishLaunching(_: Notification) {
         let window = NSWindow(
@@ -49,12 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         paneContainer?.saveSession()
     }
 
-    // MARK: - Key Bindings via Menu
+    // MARK: - Menu Construction from Action Registry
 
     private func setupMenuKeyBindings() {
         let mainMenu = NSMenu()
 
-        // App menu (required for ⌘+Q)
+        // App menu (required for ⌘+Q) — not Action-driven because
+        // NSApplication.terminate is a framework selector, not a pane op.
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(
@@ -65,180 +78,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // Pane menu
+        // Pane menu — built from the Action registry.
         let paneMenuItem = NSMenuItem()
         let paneMenu = NSMenu(title: "Pane")
 
-        let newColumnItem = NSMenuItem(
-            title: "New Column",
-            action: #selector(handleNewColumn),
-            keyEquivalent: "t"
-        )
-        paneMenu.addItem(newColumnItem)
-
-        // ⌘+Shift+T: Undo close pane
-        let undoCloseItem = NSMenuItem(
-            title: "Reopen Closed Pane",
-            action: #selector(handleUndoClose),
-            keyEquivalent: "t"
-        )
-        undoCloseItem.keyEquivalentModifierMask = [.command, .shift]
-        paneMenu.addItem(undoCloseItem)
-
-        let closePaneItem = NSMenuItem(
-            title: "Close Pane",
-            action: #selector(handleClosePane),
-            keyEquivalent: "w"
-        )
-        paneMenu.addItem(closePaneItem)
-
-        // ⌥⌃+V: Split vertical
-        let splitVerticalItem = NSMenuItem(
-            title: "Split Vertical",
-            action: #selector(handleSplitVertical),
-            keyEquivalent: "v"
-        )
-        splitVerticalItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(splitVerticalItem)
-
-        paneMenu.addItem(.separator())
-
-        // ⌥⌃+H: Focus left
-        let focusLeftItem = NSMenuItem(
-            title: "Focus Left",
-            action: #selector(handleFocusLeft),
-            keyEquivalent: "h"
-        )
-        focusLeftItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(focusLeftItem)
-
-        // ⌥⌃+L: Focus right
-        let focusRightItem = NSMenuItem(
-            title: "Focus Right",
-            action: #selector(handleFocusRight),
-            keyEquivalent: "l"
-        )
-        focusRightItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(focusRightItem)
-
-        // ⌥⌃+J: Focus down
-        let focusDownItem = NSMenuItem(
-            title: "Focus Down",
-            action: #selector(handleFocusDown),
-            keyEquivalent: "j"
-        )
-        focusDownItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(focusDownItem)
-
-        // ⌥⌃+K: Focus up
-        let focusUpItem = NSMenuItem(
-            title: "Focus Up",
-            action: #selector(handleFocusUp),
-            keyEquivalent: "k"
-        )
-        focusUpItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(focusUpItem)
-
-        paneMenu.addItem(.separator())
-
-        // ⌥⌃+Shift+H: Move column left
-        let moveColumnLeftItem = NSMenuItem(
-            title: "Move Column Left",
-            action: #selector(handleMoveColumnLeft),
-            keyEquivalent: "h"
-        )
-        moveColumnLeftItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(moveColumnLeftItem)
-
-        // ⌥⌃+Shift+L: Move column right
-        let moveColumnRightItem = NSMenuItem(
-            title: "Move Column Right",
-            action: #selector(handleMoveColumnRight),
-            keyEquivalent: "l"
-        )
-        moveColumnRightItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(moveColumnRightItem)
-
-        // ⌥⌃+Shift+J: Move pane down
-        let movePaneDownItem = NSMenuItem(
-            title: "Move Pane Down",
-            action: #selector(handleMovePaneDown),
-            keyEquivalent: "j"
-        )
-        movePaneDownItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(movePaneDownItem)
-
-        // ⌥⌃+Shift+K: Move pane up
-        let movePaneUpItem = NSMenuItem(
-            title: "Move Pane Up",
-            action: #selector(handleMovePaneUp),
-            keyEquivalent: "k"
-        )
-        movePaneUpItem.keyEquivalentModifierMask = [.option, .control, .shift]
-        paneMenu.addItem(movePaneUpItem)
-
-        paneMenu.addItem(.separator())
-
-        // ⌥⌃+/: Cycle width preset
-        let cycleWidthItem = NSMenuItem(
-            title: "Cycle Width",
-            action: #selector(handleCycleWidth),
-            keyEquivalent: "/"
-        )
-        cycleWidthItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(cycleWidthItem)
-
-        // ⌘+Shift+L: Toggle URL bar visibility
-        let toggleURLBarItem = NSMenuItem(
-            title: "Toggle URL Bar",
-            action: #selector(handleToggleURLBar),
-            keyEquivalent: "l"
-        )
-        toggleURLBarItem.keyEquivalentModifierMask = [.command, .shift]
-        paneMenu.addItem(toggleURLBarItem)
-
-        // ⌘+L: Focus URL bar
-        let focusURLBarItem = NSMenuItem(
-            title: "Focus URL Bar",
-            action: #selector(handleFocusURLBar),
-            keyEquivalent: "l"
-        )
-        paneMenu.addItem(focusURLBarItem)
-
-        // ⌥⌃+F: Toggle fold for focused column
-        let toggleFoldItem = NSMenuItem(
-            title: "Toggle Fold",
-            action: #selector(handleToggleFold),
-            keyEquivalent: "f"
-        )
-        toggleFoldItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(toggleFoldItem)
-
-        // ⌘+D: Toggle bookmark
-        let bookmarkItem = NSMenuItem(
-            title: "Toggle Bookmark",
-            action: #selector(handleToggleBookmark),
-            keyEquivalent: "d"
-        )
-        paneMenu.addItem(bookmarkItem)
-
-        // ⌥⌘+I: Toggle Web Inspector
-        let inspectorItem = NSMenuItem(
-            title: "Toggle Web Inspector",
-            action: #selector(handleToggleInspector),
-            keyEquivalent: "i"
-        )
-        inspectorItem.keyEquivalentModifierMask = [.option, .command]
-        paneMenu.addItem(inspectorItem)
-
-        // ⌥⌃+B: New Browser Column
-        let newBrowserItem = NSMenuItem(
-            title: "New Browser Column",
-            action: #selector(handleNewBrowser),
-            keyEquivalent: "b"
-        )
-        newBrowserItem.keyEquivalentModifierMask = [.option, .control]
-        paneMenu.addItem(newBrowserItem)
+        self.actions = paneContainer?.actions() ?? []
+        for (index, action) in actions.enumerated() {
+            if action.separatorBefore {
+                paneMenu.addItem(.separator())
+            }
+            let item = NSMenuItem(
+                title: action.title,
+                action: #selector(performAction(_:)),
+                keyEquivalent: action.keyEquivalent ?? ""
+            )
+            item.keyEquivalentModifierMask = action.modifierMask
+            item.tag = index
+            paneMenu.addItem(item)
+        }
 
         paneMenuItem.submenu = paneMenu
         mainMenu.addItem(paneMenuItem)
@@ -246,109 +103,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         NSApp.mainMenu = mainMenu
     }
 
-    // MARK: - Default Width Cycle
-
-    private let defaultWidthCycle: [PaneWidthPreset] = [
-        .columns(80),
-        .columns(120),
-        .fraction(1.0 / 2.0),
-        .fraction(1.0 / 3.0),
-    ]
-
     // MARK: - Menu Validation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(handleUndoClose) {
-            return paneContainer?.canUndoClosePane ?? false
+        guard menuItem.action == #selector(performAction(_:)),
+              actions.indices.contains(menuItem.tag) else {
+            return true
         }
-        if menuItem.action == #selector(handleToggleInspector) {
-            let isOpen = paneContainer?.isFocusedInspectorOpen ?? false
-            menuItem.title = isOpen ? "Hide Web Inspector" : "Show Web Inspector"
-            return paneContainer?.isFocusedPaneBrowser ?? false
+        let action = actions[menuItem.tag]
+        guard let validate = action.validate else { return true }
+        let result = validate()
+        if let title = result.title {
+            menuItem.title = title
         }
-        if menuItem.action == #selector(handleToggleBookmark) {
-            let isBookmarked = paneContainer?.isFocusedPaneBookmarked ?? false
-            menuItem.title = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
-            return paneContainer?.isFocusedPaneBrowser ?? false
-        }
-        return true
+        return result.enabled
     }
 
-    // MARK: - Actions
+    // MARK: - Unified Action Dispatch
 
-    @objc private func handleNewColumn() {
-        paneContainer?.addColumn()
-    }
-
-    @objc private func handleUndoClose() {
-        paneContainer?.undoClosePane()
-    }
-
-    @objc private func handleClosePane() {
-        paneContainer?.removeCurrentPane()
-    }
-
-    @objc private func handleSplitVertical() {
-        paneContainer?.splitVertical()
-    }
-
-    @objc private func handleFocusLeft() {
-        paneContainer?.focusLeft()
-    }
-
-    @objc private func handleFocusRight() {
-        paneContainer?.focusRight()
-    }
-
-    @objc private func handleFocusDown() {
-        paneContainer?.focusDown()
-    }
-
-    @objc private func handleFocusUp() {
-        paneContainer?.focusUp()
-    }
-
-    @objc private func handleMoveColumnLeft() {
-        paneContainer?.moveColumnLeft()
-    }
-
-    @objc private func handleMoveColumnRight() {
-        paneContainer?.moveColumnRight()
-    }
-
-    @objc private func handleMovePaneDown() {
-        paneContainer?.movePaneDown()
-    }
-
-    @objc private func handleMovePaneUp() {
-        paneContainer?.movePaneUp()
-    }
-
-    @objc private func handleCycleWidth() {
-        paneContainer?.cycleWidthPreset(defaultWidthCycle)
-    }
-
-    @objc private func handleToggleURLBar() {
-        paneContainer?.toggleURLBarVisibility()
-    }
-
-    @objc private func handleFocusURLBar() {
-        paneContainer?.focusURLBar()
-    }
-
-    @objc private func handleToggleInspector() {
-        paneContainer?.toggleInspector()
-    }
-
-    @objc private func handleToggleFold() {
-        paneContainer?.toggleFold()
-    }
-
-    @objc private func handleToggleBookmark() {
-        paneContainer?.toggleBookmark()
-    }
-
-    @objc private func handleNewBrowser() {
-        paneContainer?.addColumn(address: .blankBrowser)
+    @objc private func performAction(_ sender: NSMenuItem) {
+        guard actions.indices.contains(sender.tag) else { return }
+        actions[sender.tag].handler()
     }
 }

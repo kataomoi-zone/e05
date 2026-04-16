@@ -1175,6 +1175,165 @@ public final class PaneContainerViewController: NSViewController {
         captureSession().save()
     }
 
+    // MARK: - Action Registry
+
+    /// All user-facing actions, in menu display order. Both the menu bar
+    /// and the command palette (`:` prefix) consume this same array.
+    public func actions() -> [Action] {
+        [
+            Action(
+                id: "new_column",
+                title: "New Column",
+                keyEquivalent: "t",
+                handler: { [weak self] in self?.addColumn() }
+            ),
+            Action(
+                id: "undo_close",
+                title: "Reopen Closed Pane",
+                keyEquivalent: "t",
+                modifierMask: [.command, .shift],
+                handler: { [weak self] in self?.undoClosePane() },
+                validate: { [weak self] in (self?.canUndoClosePane ?? false, nil) }
+            ),
+            Action(
+                id: "close_pane",
+                title: "Close Pane",
+                keyEquivalent: "w",
+                handler: { [weak self] in self?.removeCurrentPane() }
+            ),
+            Action(
+                id: "split_vertical",
+                title: "Split Vertical",
+                keyEquivalent: "v",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.splitVertical() }
+            ),
+            Action(
+                id: "focus_left",
+                title: "Focus Left",
+                keyEquivalent: "h",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.focusLeft() },
+                separatorBefore: true
+            ),
+            Action(
+                id: "focus_right",
+                title: "Focus Right",
+                keyEquivalent: "l",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.focusRight() }
+            ),
+            Action(
+                id: "focus_down",
+                title: "Focus Down",
+                keyEquivalent: "j",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.focusDown() }
+            ),
+            Action(
+                id: "focus_up",
+                title: "Focus Up",
+                keyEquivalent: "k",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.focusUp() }
+            ),
+            Action(
+                id: "move_column_left",
+                title: "Move Column Left",
+                keyEquivalent: "h",
+                modifierMask: [.option, .control, .shift],
+                handler: { [weak self] in self?.moveColumnLeft() },
+                separatorBefore: true
+            ),
+            Action(
+                id: "move_column_right",
+                title: "Move Column Right",
+                keyEquivalent: "l",
+                modifierMask: [.option, .control, .shift],
+                handler: { [weak self] in self?.moveColumnRight() }
+            ),
+            Action(
+                id: "move_pane_down",
+                title: "Move Pane Down",
+                keyEquivalent: "j",
+                modifierMask: [.option, .control, .shift],
+                handler: { [weak self] in self?.movePaneDown() }
+            ),
+            Action(
+                id: "move_pane_up",
+                title: "Move Pane Up",
+                keyEquivalent: "k",
+                modifierMask: [.option, .control, .shift],
+                handler: { [weak self] in self?.movePaneUp() }
+            ),
+            Action(
+                id: "cycle_width",
+                title: "Cycle Width",
+                keyEquivalent: "/",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.cycleWidthPreset(Self.defaultWidthCycle) },
+                separatorBefore: true
+            ),
+            Action(
+                id: "toggle_url_bar",
+                title: "Toggle URL Bar",
+                keyEquivalent: "l",
+                modifierMask: [.command, .shift],
+                handler: { [weak self] in self?.toggleURLBarVisibility() }
+            ),
+            Action(
+                id: "focus_url_bar",
+                title: "Focus URL Bar",
+                keyEquivalent: "l",
+                handler: { [weak self] in self?.focusURLBar() }
+            ),
+            Action(
+                id: "toggle_fold",
+                title: "Toggle Fold",
+                keyEquivalent: "f",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.toggleFold() }
+            ),
+            Action(
+                id: "toggle_bookmark",
+                title: "Toggle Bookmark",
+                keyEquivalent: "d",
+                handler: { [weak self] in _ = self?.toggleBookmark() },
+                validate: { [weak self] in
+                    let isBookmarked = self?.isFocusedPaneBookmarked ?? false
+                    let title = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
+                    return (self?.isFocusedPaneBrowser ?? false, title)
+                }
+            ),
+            Action(
+                id: "toggle_inspector",
+                title: "Toggle Web Inspector",
+                keyEquivalent: "i",
+                modifierMask: [.option, .command],
+                handler: { [weak self] in self?.toggleInspector() },
+                validate: { [weak self] in
+                    let isOpen = self?.isFocusedInspectorOpen ?? false
+                    let title = isOpen ? "Hide Web Inspector" : "Show Web Inspector"
+                    return (self?.isFocusedPaneBrowser ?? false, title)
+                }
+            ),
+            Action(
+                id: "new_browser",
+                title: "New Browser Column",
+                keyEquivalent: "b",
+                modifierMask: [.option, .control],
+                handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
+            ),
+        ]
+    }
+
+    private static let defaultWidthCycle: [PaneWidthPreset] = [
+        .columns(80),
+        .columns(120),
+        .fraction(1.0 / 2.0),
+        .fraction(1.0 / 3.0),
+    ]
+
     /// Restore session from a saved state.
     private func restoreSession(_ session: SessionState) {
         urlBarVisible = session.urlBarVisible
