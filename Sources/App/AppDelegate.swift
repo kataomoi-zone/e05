@@ -205,6 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         paneMenu.addItem(focusURLBarItem)
 
+        // ⌘+D: Toggle bookmark
+        let bookmarkItem = NSMenuItem(
+            title: "Toggle Bookmark",
+            action: #selector(handleToggleBookmark),
+            keyEquivalent: "d"
+        )
+        paneMenu.addItem(bookmarkItem)
+
         // ⌥⌃+B: New Browser Column
         let newBrowserItem = NSMenuItem(
             title: "New Browser Column",
@@ -234,6 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(handleUndoClose) {
             return paneContainer?.canUndoClosePane ?? false
+        }
+        if menuItem.action == #selector(handleToggleBookmark) {
+            let isBookmarked = paneContainer?.isFocusedPaneBookmarked ?? false
+            menuItem.title = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
+            return paneContainer?.isFocusedPaneBrowser ?? false
         }
         return true
     }
@@ -298,6 +311,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func handleFocusURLBar() {
         paneContainer?.focusURLBar()
+    }
+
+    @objc private func handleToggleBookmark() {
+        paneContainer?.toggleBookmark()
     }
 
     @objc private func handleNewBrowser() {

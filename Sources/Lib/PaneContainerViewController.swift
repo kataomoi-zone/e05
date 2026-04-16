@@ -30,6 +30,7 @@ private final class OverlayScrollView: NSScrollView {
 public final class PaneContainerViewController: NSViewController {
     private let ghosttyApp: GhosttyApp
     public let browsingHistory = BrowsingHistory()
+    public let bookmarks = Bookmarks()
 
     private let scrollView = OverlayScrollView()
     private let stackView = NSStackView()
@@ -818,6 +819,36 @@ public final class PaneContainerViewController: NSViewController {
             pane.urlBar.setDisplayURL(prefill)
         }
         pane.urlBar.focusURLField()
+    }
+
+    // MARK: - Bookmarks
+
+    /// Toggle bookmark for the focused browser pane's current URL.
+    /// Returns true if bookmarked, false if removed, nil if not a browser pane.
+    @discardableResult
+    public func toggleBookmark() -> Bool? {
+        guard isFocusedPaneBrowser, let pane = focusedPane else { return nil }
+        let url = pane.address.url.absoluteString
+        if bookmarks.isBookmarked(url: url) {
+            bookmarks.remove(url: url)
+            return false
+        } else {
+            bookmarks.add(url: url, title: pane.title)
+            return true
+        }
+    }
+
+    /// Whether the focused pane is a browser pane with http/https.
+    public var isFocusedPaneBrowser: Bool {
+        guard let pane = focusedPane else { return false }
+        return pane.browserView != nil && pane.address.kind == .browser
+    }
+
+    /// Whether the focused pane's URL is bookmarked.
+    public var isFocusedPaneBookmarked: Bool {
+        guard let pane = focusedPane,
+              pane.address.kind == .browser else { return false }
+        return bookmarks.isBookmarked(url: pane.address.url.absoluteString)
     }
 
     /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
