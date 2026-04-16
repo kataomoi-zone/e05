@@ -11,6 +11,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     private let foldButton: NSButton
     private let urlField: NSTextField
     private let suggestionList = SuggestionListView()
+    /// Domain objects backing the current dropdown. `SuggestionListView`
+    /// only knows about cell models (index-addressable), so we retain the
+    /// originals here and translate between index ↔ `Suggestion` at the
+    /// boundary.
+    private var currentSuggestions: [Suggestion] = []
     private var searchDebounceTimer: Timer?
     private static let searchDebounceInterval: TimeInterval = 0.15
 
@@ -168,9 +173,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
                 name: NSWindow.didResizeNotification, object: window
             )
         }
-        // Wire up suggestion click handler
-        suggestionList.onSelect = { [weak self] suggestion in
-            self?.acceptSuggestion(suggestion)
+        // Wire up suggestion click handler. The list reports an index into
+        // the cell model array — we look up the matching Suggestion in our
+        // own backing array before acting on it.
+        suggestionList.onSelectIndex = { [weak self] index in
+            guard let self, self.currentSuggestions.indices.contains(index) else { return }
+            self.acceptSuggestion(self.currentSuggestions[index])
         }
     }
 
@@ -215,6 +223,19 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         onNavigate?(suggestion.url)
     }
 
+    /// Project a `Suggestion` into the presentation-only model consumed by
+    /// `SuggestionListView`. The primary line uses `displayTitle` (which
+    /// already prefixes bookmarks with `★`); the URL becomes the secondary
+    /// line. No accessory is set for URL-bar suggestions — that slot is
+    /// reserved for the command-palette action keyboard shortcuts.
+    private static func cellModel(from suggestion: Suggestion) -> SuggestionCellModel {
+        SuggestionCellModel(
+            primary: suggestion.displayTitle,
+            secondary: suggestion.url,
+            accessory: nil
+        )
+    }
+
     // MARK: - Actions
 
     @objc private func backAction() {
@@ -254,7 +275,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 let suggestions = self.onTextChanged?(text) ?? []
-                self.suggestionList.update(suggestions: suggestions)
+                self.currentSuggestions = suggestions
+                self.suggestionList.update(items: suggestions.map(Self.cellModel(from:)))
                 self.positionSuggestionList()
             }
         }
@@ -262,8 +284,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
         if selector == #selector(insertNewline(_:)) {
-            if !suggestionList.isHidden, let suggestion = suggestionList.selectedSuggestion {
-                acceptSuggestion(suggestion)
+            if !suggestionList.isHidden,
+               let index = suggestionList.selectedIndex,
+               currentSuggestions.indices.contains(index) {
+                acceptSuggestion(currentSuggestions[index])
             } else {
                 onNavigate?(urlField.stringValue)
             }

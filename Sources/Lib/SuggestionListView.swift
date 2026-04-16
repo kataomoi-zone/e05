@@ -75,12 +75,38 @@ public struct Suggestion: Equatable {
     }
 }
 
-/// Dropdown list of URL suggestions shown below the URL bar.
+/// Presentation-only model consumed by `SuggestionListView`.
+///
+/// The list view is deliberately domain-agnostic: it never sees `Suggestion`
+/// or `Action` types. Callers convert their own domain values into this
+/// model before handing them off, which keeps the list view reusable for
+/// future item kinds (action palette, file pickers, etc.) without touching
+/// its internals.
+///
+/// - `primary`: top-line text (e.g. page title, action name).
+/// - `secondary`: bottom-line text (e.g. URL). Empty string when absent.
+/// - `accessory`: trailing-edge text (e.g. keyboard shortcut "⌥⌃L").
+///   `nil` hides the label entirely.
+public struct SuggestionCellModel: Equatable {
+    public let primary: String
+    public let secondary: String
+    public let accessory: String?
+
+    public init(primary: String, secondary: String, accessory: String? = nil) {
+        self.primary = primary
+        self.secondary = secondary
+        self.accessory = accessory
+    }
+}
+
+/// Dropdown list shown below the URL bar. Renders `SuggestionCellModel`
+/// values; selection is reported as an index so the caller retains
+/// ownership of the original domain objects.
 @MainActor
 public final class SuggestionListView: NSView {
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
-    private var suggestions: [Suggestion] = []
+    private var items: [SuggestionCellModel] = []
     // Derived from the cell's Auto Layout fitting size so that rowHeight
     // equals (title intrinsic + 2pt gap + URL intrinsic) exactly. Using a
     // hard-coded constant left ~6pt of slack between the labels and the
@@ -93,14 +119,19 @@ public final class SuggestionListView: NSView {
     // (one per pane) just burns cycles.
     private static let rowHeight: CGFloat = {
         let cell = SuggestionCellView()
-        cell.titleLabel.stringValue = "X"
-        cell.urlLabel.stringValue = "X"
+        cell.primaryLabel.stringValue = "X"
+        cell.secondaryLabel.stringValue = "X"
+        // accessoryLabel is centerY-pinned and never taller than the
+        // primary+secondary stack, so it doesn't affect fitting height.
         return ceil(cell.fittingSize.height)
     }()
     private let maxVisibleRows = 8
 
-    /// Called when user selects a suggestion.
-    public var onSelect: ((Suggestion) -> Void)?
+    /// Called when the user selects an item; receives the row index into
+    /// the `items` array last passed to `update(items:)`. Callers map this
+    /// index back to their own domain object (a `Suggestion`, `Action`,
+    /// etc.) to enact the selection.
+    public var onSelectIndex: ((Int) -> Void)?
 
     public override init(frame: NSRect) {
         super.init(frame: frame)
@@ -179,23 +210,23 @@ public final class SuggestionListView: NSView {
 
     // MARK: - Public API
 
-    /// Update the suggestions list and resize.
-    public func update(suggestions: [Suggestion]) {
-        self.suggestions = suggestions
+    /// Update the list contents and resize. An empty array hides the view.
+    public func update(items: [SuggestionCellModel]) {
+        self.items = items
         tableView.reloadData()
 
-        if suggestions.isEmpty {
+        if items.isEmpty {
             isHidden = true
             return
         }
 
         isHidden = false
-        let visibleRows = min(suggestions.count, maxVisibleRows)
+        let visibleRows = min(items.count, maxVisibleRows)
         // Only expose a scroller when content actually overflows the visible
         // window. With N <= maxVisibleRows every row is already on screen so
         // the scroller serves no purpose — and autohide can't be fully
         // trusted across system settings and layout timing.
-        scrollView.hasVerticalScroller = suggestions.count > maxVisibleRows
+        scrollView.hasVerticalScroller = items.count > maxVisibleRows
         // Height = (rowHeight * visible rows) + 12pt of outer inset (6pt top
         // + 6pt bottom, matching the scrollView's leading/trailing pin). The
         // scrollView itself is sized at rowHeight * N so its clipView matches
@@ -210,40 +241,39 @@ public final class SuggestionListView: NSView {
         needsLayout = true
         layoutSubtreeIfNeeded()
 
-        // Auto-select first row
-        if !suggestions.isEmpty {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        }
+        // Auto-select first row. Non-empty is guaranteed by the early
+        // return above (`items.isEmpty → isHidden = true; return`).
+        tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     }
 
     /// Move selection up.
     public func selectPrevious() {
-        guard !suggestions.isEmpty else { return }
+        guard !items.isEmpty else { return }
         let current = tableView.selectedRow
-        let next = current > 0 ? current - 1 : suggestions.count - 1
+        let next = current > 0 ? current - 1 : items.count - 1
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
         tableView.scrollRowToVisible(next)
     }
 
     /// Move selection down.
     public func selectNext() {
-        guard !suggestions.isEmpty else { return }
+        guard !items.isEmpty else { return }
         let current = tableView.selectedRow
-        let next = current < suggestions.count - 1 ? current + 1 : 0
+        let next = current < items.count - 1 ? current + 1 : 0
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
         tableView.scrollRowToVisible(next)
     }
 
-    /// Get the currently selected suggestion.
-    public var selectedSuggestion: Suggestion? {
+    /// Row index of the currently selected item, or `nil` when nothing is
+    /// selected (empty list or selection cleared by AppKit).
+    public var selectedIndex: Int? {
         let row = tableView.selectedRow
-        guard suggestions.indices.contains(row) else { return nil }
-        return suggestions[row]
+        return items.indices.contains(row) ? row : nil
     }
 
     /// Hide the suggestion list.
     public func dismiss() {
-        suggestions = []
+        items = []
         tableView.reloadData()
         isHidden = true
     }
@@ -251,8 +281,8 @@ public final class SuggestionListView: NSView {
     // MARK: - Actions
 
     @objc private func handleClick() {
-        guard let suggestion = selectedSuggestion else { return }
-        onSelect?(suggestion)
+        guard let index = selectedIndex else { return }
+        onSelectIndex?(index)
     }
 }
 
@@ -260,7 +290,7 @@ public final class SuggestionListView: NSView {
 
 extension SuggestionListView: NSTableViewDataSource {
     public func numberOfRows(in _: NSTableView) -> Int {
-        suggestions.count
+        items.count
     }
 }
 
@@ -277,8 +307,9 @@ extension SuggestionListView: NSTableViewDataSource {
 /// `NSTableView`'s `viewFor:` delegate accepts any `NSView`.
 @MainActor
 private final class SuggestionCellView: NSView {
-    let titleLabel = NSTextField(labelWithString: "")
-    let urlLabel = NSTextField(labelWithString: "")
+    let primaryLabel = NSTextField(labelWithString: "")
+    let secondaryLabel = NSTextField(labelWithString: "")
+    let accessoryLabel = NSTextField(labelWithString: "")
 
     // Flipped (top-down) coordinates match the enclosing NSTableView/
     // NSTableRowView so topAnchor/bottomAnchor constraints map to their
@@ -293,34 +324,67 @@ private final class SuggestionCellView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
+    func apply(_ model: SuggestionCellModel) {
+        primaryLabel.stringValue = model.primary
+        secondaryLabel.stringValue = model.secondary
+        secondaryLabel.isHidden = model.secondary.isEmpty
+        if let accessory = model.accessory {
+            accessoryLabel.stringValue = accessory
+            accessoryLabel.isHidden = false
+        } else {
+            accessoryLabel.stringValue = ""
+            accessoryLabel.isHidden = true
+        }
+    }
+
     private func configure() {
-        titleLabel.font = .systemFont(ofSize: 12)
-        titleLabel.textColor = .white
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        primaryLabel.font = .systemFont(ofSize: 12)
+        primaryLabel.textColor = .white
+        primaryLabel.lineBreakMode = .byTruncatingTail
+        primaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        urlLabel.font = .systemFont(ofSize: 11)
-        urlLabel.textColor = NSColor(white: 0.75, alpha: 1.0)
-        urlLabel.lineBreakMode = .byTruncatingTail
-        urlLabel.translatesAutoresizingMaskIntoConstraints = false
+        secondaryLabel.font = .systemFont(ofSize: 11)
+        secondaryLabel.textColor = NSColor(white: 0.75, alpha: 1.0)
+        secondaryLabel.lineBreakMode = .byTruncatingTail
+        secondaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(titleLabel)
-        addSubview(urlLabel)
+        // Accessory sits at the trailing edge and is used for keyboard
+        // shortcut hints in the coming command-palette mode. Kept dim and
+        // shorter than the primary text so it reads as metadata.
+        accessoryLabel.font = .systemFont(ofSize: 11)
+        accessoryLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
+        accessoryLabel.alignment = .right
+        accessoryLabel.lineBreakMode = .byTruncatingTail
+        accessoryLabel.translatesAutoresizingMaskIntoConstraints = false
+        accessoryLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Let the accessory keep its intrinsic width; primary/secondary
+        // compress first when the row is too narrow.
+        accessoryLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        // Flush layout: title pinned to the cell top, URL pinned 2pt below the
-        // title. No top/bottom padding — any padding here would make the
-        // single-hit dropdown taller than its content and surface a bogus
-        // scrollbar. The bottom constraint is `lessThanOrEqual` so that font
-        // metric variance can't force the cell to stretch past rowHeight.
+        addSubview(primaryLabel)
+        addSubview(secondaryLabel)
+        addSubview(accessoryLabel)
+
+        // Flush layout: title pinned to the cell top, secondary pinned 2pt
+        // below. No top/bottom padding — padding here would make the single-
+        // hit dropdown taller than its content and surface a bogus scrollbar.
+        // The bottom constraint is `lessThanOrEqual` so that font metric
+        // variance can't force the cell to stretch past rowHeight. Accessory
+        // is vertically centred and aligned to the trailing edge; primary/
+        // secondary trailing constraints target the accessory's leading
+        // anchor with an 8pt gap so long titles don't collide with shortcuts.
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            primaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            primaryLabel.topAnchor.constraint(equalTo: topAnchor),
+            primaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
-            urlLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            urlLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            urlLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
-            urlLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            secondaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            secondaryLabel.topAnchor.constraint(equalTo: primaryLabel.bottomAnchor, constant: 2),
+            secondaryLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            secondaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
+
+            accessoryLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            accessoryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 }
@@ -376,8 +440,7 @@ extension SuggestionListView: NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int) -> NSView? {
-        guard suggestions.indices.contains(row) else { return nil }
-        let suggestion = suggestions[row]
+        guard items.indices.contains(row) else { return nil }
 
         let cellID = NSUserInterfaceItemIdentifier("SuggestionCell")
         let cell: SuggestionCellView
@@ -388,8 +451,7 @@ extension SuggestionListView: NSTableViewDelegate {
             cell.identifier = cellID
         }
 
-        cell.titleLabel.stringValue = suggestion.displayTitle
-        cell.urlLabel.stringValue = suggestion.url
+        cell.apply(items[row])
         return cell
     }
 }
