@@ -1,6 +1,20 @@
 import AppKit
 import WebKit
 
+/// WKWebView subclass that reports focus changes via callback.
+@MainActor
+final class FocusReportingWebView: WKWebView {
+    var onFocusGained: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        // Covers click and tab navigation. Click on already-focused webView
+        // doesn't fire this, but the pane is already focused in that case.
+        if result { onFocusGained?() }
+        return result
+    }
+}
+
 /// Browser pane wrapping a WKWebView. Hosts the Web Inspector inline when attached.
 ///
 /// Layout structure:
@@ -24,6 +38,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     public var onURLChange: ((URL?) -> Void)?
     /// Called when back/forward availability changes.
     public var onNavigationStateChange: ((Bool, Bool) -> Void)?
+    /// Called when the browser content gains focus (click or key navigation).
+    public var onFocusChanged: (() -> Void)?
 
     private var titleObservation: NSKeyValueObservation?
     private var urlObservation: NSKeyValueObservation?
@@ -34,12 +50,17 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         let config = WKWebViewConfiguration()
         // Enable Web Inspector — required for _inspector to work.
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        webView = WKWebView(frame: .zero, configuration: config)
+        let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
+        webView = focusReportingWebView
 
         super.init(frame: frame)
         wantsLayer = true
         appearance = NSAppearance(named: .darkAqua)
         layer?.backgroundColor = NSColor(white: 0.15, alpha: 1.0).cgColor
+
+        focusReportingWebView.onFocusGained = { [weak self] in
+            self?.onFocusChanged?()
+        }
 
         setupHostAndWebView()
         setupObservers()

@@ -256,6 +256,10 @@ public final class PaneContainerViewController: NSViewController {
                     self?.browsingHistory.recordVisit(url: urlString, title: pane?.title ?? "")
                 }
             }
+            bv.onFocusChanged = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                self.handleFocusChange(from: pane)
+            }
             bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
                 pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
             }
