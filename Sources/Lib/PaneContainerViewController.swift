@@ -288,6 +288,12 @@ public final class PaneContainerViewController: NSViewController {
             pane?.browserView?.webView.goForward()
         }
 
+        // URL bar: clicking moves focus to this pane
+        pane.urlBar.onClicked = { [weak self, weak pane] in
+            guard let self, let pane else { return }
+            self.handleFocusChange(from: pane)
+        }
+
         // URL bar: fuzzy find suggestions from history + bookmarks
         pane.urlBar.onTextChanged = { [weak self] query in
             guard let self, !query.isEmpty else { return [] }

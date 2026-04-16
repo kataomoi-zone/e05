@@ -23,6 +23,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onCancel: (() -> Void)?
     /// Called when text changes in the URL field. Return suggestions to display.
     public var onTextChanged: ((String) -> [Suggestion])?
+    /// Called when the URL bar is clicked (for pane focus management).
+    public var onClicked: (() -> Void)?
 
     public override init(frame: NSRect) {
         backButton = NSButton(title: "\u{25C0}", target: nil, action: nil)
@@ -137,6 +139,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         }
     }
 
+    public override func mouseDown(with event: NSEvent) {
+        // Click on URL bar's own area (empty space, not subviews)
+        onClicked?()
+        super.mouseDown(with: event)
+    }
+
     // MARK: - Public API
 
     /// Update the displayed URL text.
@@ -169,14 +177,21 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // MARK: - Actions
 
     @objc private func backAction() {
+        onClicked?()
         onBack?()
     }
 
     @objc private func forwardAction() {
+        onClicked?()
         onForward?()
     }
 
     // MARK: - NSTextFieldDelegate
+
+    public func controlTextDidBeginEditing(_ notification: Notification) {
+        // User started editing the URL field — treat as pane focus
+        onClicked?()
+    }
 
     public func controlTextDidChange(_ notification: Notification) {
         let text = urlField.stringValue
