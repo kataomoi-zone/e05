@@ -1,10 +1,22 @@
 import AppKit
 import WebKit
 
-/// Pure WKWebView wrapper for browser panes. URL bar is handled by PaneURLBar.
+/// Browser pane wrapping a WKWebView. Hosts the Web Inspector inline when attached.
+///
+/// Layout structure:
+/// - BrowserPaneView (Auto Layout)
+///   └── browserHostView (manual frames — WebKit manages WKWebView + Inspector sizes)
+///       ├── webView
+///       └── Inspector (added by WebKit when attached)
+///
+/// The browserHostView is required because WebKit manipulates frames directly when
+/// Inspector is attached. Using Auto Layout on webView would conflict with this.
 @MainActor
 public final class BrowserPaneView: NSView, WKNavigationDelegate {
     public let webView: WKWebView
+
+    /// Container for webView + Inspector. WebKit manages the split inside this.
+    private let browserHostView = NSView()
 
     /// Called when page title changes.
     public var onTitleChange: ((String) -> Void)?
@@ -20,6 +32,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 
     public override init(frame: NSRect) {
         let config = WKWebViewConfiguration()
+        // Enable Web Inspector — required for _inspector to work.
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         webView = WKWebView(frame: .zero, configuration: config)
 
         super.init(frame: frame)
@@ -27,7 +41,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         appearance = NSAppearance(named: .darkAqua)
         layer?.backgroundColor = NSColor(white: 0.15, alpha: 1.0).cgColor
 
-        setupWebView()
+        setupHostAndWebView()
         setupObservers()
     }
 
@@ -38,9 +52,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 
     // MARK: - Setup
 
-    private func setupWebView() {
+    private func setupHostAndWebView() {
+        // browserHostView uses Auto Layout to fill BrowserPaneView
+        browserHostView.translatesAutoresizingMaskIntoConstraints = false
+        browserHostView.wantsLayer = true
+        addSubview(browserHostView)
+        NSLayoutConstraint.activate([
+            browserHostView.topAnchor.constraint(equalTo: topAnchor),
+            browserHostView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            browserHostView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            browserHostView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        // webView uses autoresizing mask inside browserHostView (not Auto Layout).
+        // This lets WebKit manage webView.frame directly when Inspector is attached.
         webView.navigationDelegate = self
-        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        webView.autoresizingMask = [.width, .height]
+        webView.frame = browserHostView.bounds
         if #available(macOS 12.0, *) {
             webView.underPageBackgroundColor = NSColor(white: 0.15, alpha: 1.0)
         }
@@ -48,14 +77,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
             "<html><body style='margin:0;background:#262626;'></body></html>",
             baseURL: nil
         )
-        addSubview(webView)
+        browserHostView.addSubview(webView)
+    }
 
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: topAnchor),
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+    public override func layout() {
+        super.layout()
+        // Only update webView frame when Inspector is NOT attached.
+        // When attached, WebKit manages both webView and inspector frames.
+        if !isInspectorOpen {
+            webView.frame = browserHostView.bounds
+        }
     }
 
     private func setupObservers() {
@@ -94,6 +125,41 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
               ["https", "http", "about"].contains(scheme)
         else { return }
         webView.load(URLRequest(url: url))
+    }
+
+    // MARK: - Web Inspector
+
+    /// Private API selectors on _WKInspector.
+    private enum InspectorSelector {
+        static let attach = NSSelectorFromString("attach")
+        static let show = NSSelectorFromString("show")
+        static let close = NSSelectorFromString("close")
+    }
+    private static let inspectorKey = "_inspector"
+
+    /// Whether the Web Inspector is currently open.
+    public private(set) var isInspectorOpen = false
+
+    /// Toggle Web Inspector. Opens inline inside this view (Safari/Chrome-style split).
+    public func toggleInspector() {
+        guard let inspector = webView.value(forKey: Self.inspectorKey) as? NSObject else {
+            NSLog("[e05-browser] _inspector not available")
+            return
+        }
+        // Update state BEFORE side effects so layout() sees the correct value during reentrant calls
+        if isInspectorOpen {
+            isInspectorOpen = false
+            inspector.perform(InspectorSelector.close)
+            webView.frame = browserHostView.bounds
+            NSLog("[e05-browser] Inspector closed")
+        } else {
+            isInspectorOpen = true
+            // attach BEFORE show so Inspector opens inline from the start
+            // (avoids the flash of a separate window when remembered state is detached)
+            inspector.perform(InspectorSelector.attach)
+            inspector.perform(InspectorSelector.show)
+            NSLog("[e05-browser] Inspector opened (inline)")
+        }
     }
 
     // MARK: - Focus

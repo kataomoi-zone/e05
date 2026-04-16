@@ -213,6 +213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         paneMenu.addItem(bookmarkItem)
 
+        // ⌥⌘+I: Toggle Web Inspector
+        let inspectorItem = NSMenuItem(
+            title: "Toggle Web Inspector",
+            action: #selector(handleToggleInspector),
+            keyEquivalent: "i"
+        )
+        inspectorItem.keyEquivalentModifierMask = [.option, .command]
+        paneMenu.addItem(inspectorItem)
+
         // ⌥⌃+B: New Browser Column
         let newBrowserItem = NSMenuItem(
             title: "New Browser Column",
@@ -242,6 +251,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(handleUndoClose) {
             return paneContainer?.canUndoClosePane ?? false
+        }
+        if menuItem.action == #selector(handleToggleInspector) {
+            let isOpen = paneContainer?.isFocusedInspectorOpen ?? false
+            menuItem.title = isOpen ? "Hide Web Inspector" : "Show Web Inspector"
+            return paneContainer?.isFocusedPaneBrowser ?? false
         }
         if menuItem.action == #selector(handleToggleBookmark) {
             let isBookmarked = paneContainer?.isFocusedPaneBookmarked ?? false
@@ -311,6 +325,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func handleFocusURLBar() {
         paneContainer?.focusURLBar()
+    }
+
+    @objc private func handleToggleInspector() {
+        paneContainer?.toggleInspector()
     }
 
     @objc private func handleToggleBookmark() {

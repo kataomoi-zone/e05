@@ -848,6 +848,18 @@ public final class PaneContainerViewController: NSViewController {
         pane.urlBar.focusURLField()
     }
 
+    // MARK: - Web Inspector
+
+    /// Toggle Web Inspector inline in the focused browser pane.
+    public func toggleInspector() {
+        focusedPane?.browserView?.toggleInspector()
+    }
+
+    /// Whether the focused browser pane's Web Inspector is currently open.
+    public var isFocusedInspectorOpen: Bool {
+        focusedPane?.browserView?.isInspectorOpen ?? false
+    }
+
     // MARK: - Bookmarks
 
     /// Toggle bookmark for the focused browser pane's current URL.
