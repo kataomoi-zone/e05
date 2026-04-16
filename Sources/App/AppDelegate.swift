@@ -205,6 +205,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         paneMenu.addItem(focusURLBarItem)
 
+        // ⌥⌃+F: Toggle fold for focused column
+        let toggleFoldItem = NSMenuItem(
+            title: "Toggle Fold",
+            action: #selector(handleToggleFold),
+            keyEquivalent: "f"
+        )
+        toggleFoldItem.keyEquivalentModifierMask = [.option, .control]
+        paneMenu.addItem(toggleFoldItem)
+
         // ⌘+D: Toggle bookmark
         let bookmarkItem = NSMenuItem(
             title: "Toggle Bookmark",
@@ -329,6 +338,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func handleToggleInspector() {
         paneContainer?.toggleInspector()
+    }
+
+    @objc private func handleToggleFold() {
+        paneContainer?.toggleFold()
     }
 
     @objc private func handleToggleBookmark() {

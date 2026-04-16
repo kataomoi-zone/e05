@@ -113,6 +113,9 @@ public final class PaneContainerViewController: NSViewController {
         isUpdatingLayout = true
         let visibleWidth = scrollView.contentView.bounds.width
         for column in columns {
+            // Folded columns keep their fixed strip width regardless of window size
+            // — the saved unfoldedWidth is what the fraction preset will restore to.
+            if column.isFolded { continue }
             // Recalculate fraction-based width presets on window resize
             if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
                 column.widthConstraint?.constant = visibleWidth * f
@@ -206,6 +209,9 @@ public final class PaneContainerViewController: NSViewController {
             cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
         ])
 
+        // Folded label overlay — shown only when column is folded
+        attachFoldedLabel(to: column)
+
         // Width constraint on the containerView
         let wc = column.containerView.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
         wc.isActive = true
@@ -218,6 +224,33 @@ public final class PaneContainerViewController: NSViewController {
         view.layoutSubtreeIfNeeded()
         setFocus(columnIndex: insertIndex, paneIndex: 0)
         return column
+    }
+
+    /// Attach the folded label overlay to a column's containerView with full-bounds
+    /// constraints and wire up click callbacks. Called on column creation (both via
+    /// `insertColumn(with:)` and `undoClosePane` for restored single-pane columns).
+    private func attachFoldedLabel(to column: ColumnModel) {
+        column.containerView.addSubview(column.foldedLabelView)
+        NSLayoutConstraint.activate([
+            column.foldedLabelView.topAnchor.constraint(equalTo: column.containerView.topAnchor),
+            column.foldedLabelView.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
+            column.foldedLabelView.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+            column.foldedLabelView.bottomAnchor.constraint(equalTo: column.containerView.bottomAnchor),
+        ])
+
+        // Clicking the folded strip focuses the column; expand button unfolds it.
+        column.foldedLabelView.onClicked = { [weak self, weak column] in
+            guard let self, let column, let pane = column.focusedPane else { return }
+            self.handleFocusChange(from: pane)
+        }
+        column.foldedLabelView.onExpandClicked = { [weak self, weak column] in
+            guard let self, let column else { return }
+            // Focus the column first, then toggle fold
+            if let pane = column.focusedPane {
+                self.handleFocusChange(from: pane)
+            }
+            self.toggleFold()
+        }
     }
 
     private func setupPaneCallbacks(pane: PaneModel, column: ColumnModel) {
@@ -292,6 +325,15 @@ public final class PaneContainerViewController: NSViewController {
         pane.urlBar.onClicked = { [weak self, weak pane] in
             guard let self, let pane else { return }
             self.handleFocusChange(from: pane)
+        }
+
+        // URL bar: fold button triggers column fold
+        // Focus the pane first so toggleFold always targets the clicked pane's
+        // column, independent of urlBar callback ordering with onClicked.
+        pane.urlBar.onFold = { [weak self, weak pane] in
+            guard let self, let pane else { return }
+            self.handleFocusChange(from: pane)
+            self.toggleFold()
         }
 
         // URL bar: fuzzy find suggestions from history + bookmarks
@@ -438,6 +480,9 @@ public final class PaneContainerViewController: NSViewController {
                 cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
                 cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
             ])
+
+            // Folded label overlay — same setup as insertColumn(with:)
+            attachFoldedLabel(to: column)
 
             let wc = column.containerView.widthAnchor.constraint(
                 equalToConstant: closed.columnWidth ?? defaultPaneWidth
@@ -722,6 +767,13 @@ public final class PaneContainerViewController: NSViewController {
                 firstCV = cv
             }
         }
+
+        // addArrangedSubview appends to subviews (back to front), which would sink
+        // the foldedLabelView behind pane views. Re-hoist it to the front so the
+        // overlay stays on top when the column is folded.
+        if column.foldedLabelView.superview === column.containerView {
+            column.containerView.addSubview(column.foldedLabelView, positioned: .above, relativeTo: nil)
+        }
     }
 
     private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int) -> PaneResizeHandle {
@@ -791,16 +843,32 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Focus Indicator
 
     private func applyFocusBorder(_ pane: PaneModel) {
+        // Apply to pane.containerView
         let cv = pane.containerView
         cv.wantsLayer = true
         cv.layer?.borderWidth = focusBorderWidth
         cv.layer?.borderColor = focusBorderColor.cgColor
+
+        // If pane is in a folded column, also border the folded label so the
+        // focus is visible while panes are hidden.
+        if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }),
+           column.isFolded
+        {
+            column.foldedLabelView.wantsLayer = true
+            column.foldedLabelView.layer?.borderWidth = focusBorderWidth
+            column.foldedLabelView.layer?.borderColor = focusBorderColor.cgColor
+        }
     }
 
     private func clearFocusBorder(_ pane: PaneModel) {
         let cv = pane.containerView
         cv.layer?.borderWidth = 0
         cv.layer?.borderColor = nil
+
+        if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }) {
+            column.foldedLabelView.layer?.borderWidth = 0
+            column.foldedLabelView.layer?.borderColor = nil
+        }
     }
 
     // MARK: - Scrolling
@@ -876,6 +944,54 @@ public final class PaneContainerViewController: NSViewController {
             pane.urlBar.setDisplayURL(prefill)
         }
         pane.urlBar.focusURLField()
+    }
+
+    // MARK: - Fold
+
+    private static let foldedColumnWidth: CGFloat = 30
+
+    /// Toggle fold state of the focused column. Folded columns collapse to a narrow strip
+    /// with vertical title text (Watchtower-style).
+    public func toggleFold() {
+        guard let column = columns[safe: focusedColumnIndex],
+              let constraint = column.widthConstraint else { return }
+
+        if column.isFolded {
+            // Unfold: restore previous width and show panes + handles
+            constraint.constant = column.unfoldedWidth
+            column.isFolded = false
+            column.foldedLabelView.isHidden = true
+            for sub in column.containerView.arrangedSubviews {
+                sub.isHidden = false
+            }
+        } else {
+            // Fold: save current width, shrink column, hide panes + vertical handles
+            column.unfoldedWidth = constraint.constant
+            constraint.constant = Self.foldedColumnWidth
+            column.isFolded = true
+            // Prefer the focused pane's title; fall back to its address when
+            // the page hasn't reported a title yet (e.g. blank browser pane).
+            let base: String
+            if let pane = column.focusedPane {
+                base = pane.title.isEmpty ? pane.address.description : pane.title
+            } else {
+                base = ""
+            }
+            // Append pane count if the column has multiple panes
+            column.foldedLabelView.text = column.panes.count > 1
+                ? "\(base) (\(column.panes.count))"
+                : base
+            column.foldedLabelView.isHidden = false
+            // Hide all arranged subviews (pane containers + vertical resize handles)
+            for sub in column.containerView.arrangedSubviews {
+                sub.isHidden = true
+            }
+        }
+        view.layoutSubtreeIfNeeded()
+        // Re-apply focus indicators so folded label gets the border (or removes it)
+        if let pane = column.focusedPane {
+            applyFocusBorder(pane)
+        }
     }
 
     // MARK: - Web Inspector

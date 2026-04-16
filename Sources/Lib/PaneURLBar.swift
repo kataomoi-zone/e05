@@ -8,6 +8,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private let backButton: NSButton
     private let forwardButton: NSButton
+    private let foldButton: NSButton
     private let urlField: NSTextField
     private let suggestionList = SuggestionListView()
     private var searchDebounceTimer: Timer?
@@ -25,10 +26,19 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onTextChanged: ((String) -> [Suggestion])?
     /// Called when the URL bar is clicked (for pane focus management).
     public var onClicked: (() -> Void)?
+    /// Called when user clicks the fold button.
+    public var onFold: (() -> Void)?
 
     public override init(frame: NSRect) {
-        backButton = Self.makeIconButton(symbol: "chevron.backward", fallback: "\u{25C0}")
-        forwardButton = Self.makeIconButton(symbol: "chevron.forward", fallback: "\u{25B6}")
+        backButton = Self.makeIconButton(symbol: "chevron.backward",
+                                         fallback: "\u{25C0}",
+                                         accessibility: "Back")
+        forwardButton = Self.makeIconButton(symbol: "chevron.forward",
+                                            fallback: "\u{25B6}",
+                                            accessibility: "Forward")
+        foldButton = Self.makeIconButton(symbol: "arrow.right.and.line.vertical.and.arrow.left",
+                                         fallback: "\u{25C4}\u{25BA}",
+                                         accessibility: "Fold column")
         urlField = NSTextField()
 
         super.init(frame: frame)
@@ -50,9 +60,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private static let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
 
-    private static func makeIconButton(symbol: String, fallback: String) -> NSButton {
+    private static func makeIconButton(symbol: String, fallback: String, accessibility: String) -> NSButton {
         let button = HoverIconButton()
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
             .withSymbolConfiguration(iconConfig)
         {
             button.image = image
@@ -66,7 +76,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // MARK: - Setup
 
     private func setupButtons() {
-        for button in [backButton, forwardButton] {
+        for button in [backButton, forwardButton, foldButton] {
             button.bezelStyle = .inline
             button.isBordered = false
             button.font = .systemFont(ofSize: 10)
@@ -78,9 +88,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         forwardButton.target = self
         forwardButton.action = #selector(forwardAction)
         forwardButton.toolTip = "Forward"
+        foldButton.target = self
+        foldButton.action = #selector(foldAction)
+        foldButton.toolTip = "Fold column"
 
         addSubview(backButton)
         addSubview(forwardButton)
+        addSubview(foldButton)
     }
 
     private func setupURLField() {
@@ -109,9 +123,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
             forwardButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
             urlField.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 4),
-            urlField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            urlField.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -4),
             urlField.centerYAnchor.constraint(equalTo: centerYAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 22),
+
+            foldButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            foldButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            foldButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            foldButton.heightAnchor.constraint(equalToConstant: buttonSize),
         ])
     }
 
@@ -206,6 +225,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     @objc private func forwardAction() {
         onClicked?()
         onForward?()
+    }
+
+    @objc private func foldAction() {
+        onClicked?()
+        onFold?()
     }
 
     // MARK: - NSTextFieldDelegate
