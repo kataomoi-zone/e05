@@ -347,24 +347,33 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     /// Search history and bookmarks for URL bar suggestions.
+    ///
+    /// Collects all bookmarks plus the last 500 history entries, deduplicates
+    /// by URL (bookmark wins), and runs the combined pool through
+    /// `Suggestion.rank` which uses `FuzzyMatcher` + a bookmark score bonus.
+    /// Fuzzy matching replaces the old SQLite `LIKE '%q%'` scan — now
+    /// queries like `gite05` can find `github.com/kawarimidoll/e05`.
+    ///
+    /// Cost: O(B + H × |query| × avg(|url| + |title|)) where B = bookmarks,
+    /// H ≤ 500. Runs synchronously on the main thread, acceptable under
+    /// `PaneURLBar`'s ~150ms debounce. If the history cap ever grows
+    /// meaningfully past 500, hoist this onto a background Task to avoid
+    /// main-thread blocking while typing.
     private func searchSuggestions(query: String) -> [Suggestion] {
-        // Bookmarks first (higher priority), then history
-        let bookmarkResults = bookmarks.search(query: query, limit: 5).map { entry in
-            Suggestion(url: entry.url, title: entry.title, isBookmark: true)
-        }
-        let historyResults = browsingHistory.search(query: query, limit: 10).map { entry in
-            Suggestion(url: entry.url, title: entry.title, isBookmark: false)
-        }
+        let bookmarkEntries = bookmarks.all()
+        let historyEntries = browsingHistory.mostRecent(limit: 500)
+        let bookmarkURLs = Set(bookmarkEntries.map(\.url))
 
-        // Deduplicate: if a URL appears in both bookmarks and history, keep only the bookmark version
-        var seen = Set(bookmarkResults.map(\.url))
-        let dedupedHistory = historyResults.filter { suggestion in
-            if seen.contains(suggestion.url) { return false }
-            seen.insert(suggestion.url)
-            return true
+        var candidates: [Suggestion] = bookmarkEntries.map {
+            Suggestion(url: $0.url, title: $0.title, isBookmark: true)
         }
+        candidates.append(contentsOf: historyEntries.compactMap { entry in
+            bookmarkURLs.contains(entry.url)
+                ? nil
+                : Suggestion(url: entry.url, title: entry.title, isBookmark: false)
+        })
 
-        return bookmarkResults + dedupedHistory
+        return Suggestion.rank(query: query, candidates: candidates)
     }
 
     // MARK: - Vertical Split
