@@ -27,8 +27,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onClicked: (() -> Void)?
 
     public override init(frame: NSRect) {
-        backButton = NSButton(title: "\u{25C0}", target: nil, action: nil)
-        forwardButton = NSButton(title: "\u{25B6}", target: nil, action: nil)
+        backButton = Self.makeIconButton(symbol: "chevron.backward", fallback: "\u{25C0}")
+        forwardButton = Self.makeIconButton(symbol: "chevron.forward", fallback: "\u{25B6}")
         urlField = NSTextField()
 
         super.init(frame: frame)
@@ -46,19 +46,38 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         fatalError()
     }
 
+    // MARK: - Icon Button Factory
+
+    private static let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+
+    private static func makeIconButton(symbol: String, fallback: String) -> NSButton {
+        let button = HoverIconButton()
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(iconConfig)
+        {
+            button.image = image
+            button.imagePosition = .imageOnly
+        } else {
+            button.title = fallback
+        }
+        return button
+    }
+
     // MARK: - Setup
 
     private func setupButtons() {
         for button in [backButton, forwardButton] {
             button.bezelStyle = .inline
             button.isBordered = false
-            button.font = .systemFont(ofSize: 12)
+            button.font = .systemFont(ofSize: 10)
             button.translatesAutoresizingMaskIntoConstraints = false
         }
         backButton.target = self
         backButton.action = #selector(backAction)
+        backButton.toolTip = "Back"
         forwardButton.target = self
         forwardButton.action = #selector(forwardAction)
+        forwardButton.toolTip = "Forward"
 
         addSubview(backButton)
         addSubview(forwardButton)
@@ -77,14 +96,17 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     }
 
     private func setupLayout() {
+        let buttonSize: CGFloat = 22
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             backButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 24),
+            backButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            backButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
             forwardButton.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 2),
             forwardButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            forwardButton.widthAnchor.constraint(equalToConstant: 24),
+            forwardButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            forwardButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
             urlField.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 4),
             urlField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
