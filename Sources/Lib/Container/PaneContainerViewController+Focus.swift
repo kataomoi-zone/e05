@@ -4,7 +4,7 @@ import GhosttyKit
 extension PaneContainerViewController {
     // MARK: - Focus
 
-    public func setFocus(columnIndex: Int, paneIndex: Int) {
+    public func setFocus(columnIndex: Int, paneIndex: Int, scroll: Bool = true) {
         guard columns.indices.contains(columnIndex) else { return }
         guard let column = columns[safe: columnIndex],
               column.panes.indices.contains(paneIndex) else { return }
@@ -29,7 +29,9 @@ extension PaneContainerViewController {
         }
         updateHandleActiveStates()
         showHeaderForFocusedPane()
-        scrollToColumn(at: columnIndex)
+        if scroll {
+            scrollToColumn(at: columnIndex)
+        }
     }
 
     public func focusLeft() {

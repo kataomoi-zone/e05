@@ -287,10 +287,12 @@ extension PaneContainerViewController {
             column.containerView.removeFromSuperview()
 
             if columns.isEmpty {
-                for v in stackView.arrangedSubviews { v.removeFromSuperview() }
-                // Last pane closed — window will close, no undo possible
+                // Workspace is now empty — its surface is going with it, so
+                // release it eagerly (undo across workspace close isn't
+                // supported: closeCurrentWorkspace flushes the undo stack).
                 pane.terminalView?.keepSurfaceAlive = false
-                view.window?.close()
+                for v in stackView.arrangedSubviews { v.removeFromSuperview() }
+                closeCurrentWorkspace()
                 return
             }
 
@@ -334,18 +336,27 @@ extension PaneContainerViewController {
             }
         }
         let closed = ClosedPane(
-            pane: pane, columnIndex: columnIndex, paneIndex: paneIndex,
+            pane: pane, workspaceId: currentWorkspace.id,
+            columnIndex: columnIndex, paneIndex: paneIndex,
             columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPaneInColumn, timer: timer
         )
         recentlyClosed.append(closed)
     }
 
-    /// Whether there are recently closed panes available for undo.
-    public var canUndoClosePane: Bool { !recentlyClosed.isEmpty }
+    /// Whether the current workspace has any recently closed panes available
+    /// for undo. Stash entries belonging to other workspaces are invisible
+    /// here — undo is intentionally scoped per-workspace.
+    public var canUndoClosePane: Bool {
+        recentlyClosed.contains { $0.workspaceId == currentWorkspace.id }
+    }
 
-    /// Restore the most recently closed pane. Surface is still alive — full restore.
+    /// Restore the most recently closed pane in the current workspace.
+    /// Surface is still alive — full restore. No-op if all stash entries
+    /// belong to other workspaces.
     public func undoClosePane() {
-        guard let closed = recentlyClosed.popLast() else { return }
+        guard let idx = recentlyClosed.lastIndex(where: { $0.workspaceId == currentWorkspace.id })
+        else { return }
+        let closed = recentlyClosed.remove(at: idx)
         closed.timer.invalidate()
 
         let pane = closed.pane

@@ -14,6 +14,10 @@ public final class WorkspaceModel {
     public var columns: [ColumnModel] = []
     public var focusedColumnIndex: Int = 0
 
+    /// Last-known horizontal scroll offset. Restored on switch so switching
+    /// back lands the user where they were, not at the focused column.
+    public var scrollX: CGFloat = 0
+
     public init(accentColorIndex: Int) {
         self.accentColorIndex = accentColorIndex
     }

@@ -174,7 +174,40 @@ extension PaneContainerViewController {
                 modifierMask: [.command, .shift],
                 handler: { [weak self] in self?.toggleCommandPalette() }
             ),
+            Action(
+                id: "workspace_new",
+                title: "New Workspace",
+                handler: { [weak self] in self?.createWorkspace() },
+                validate: { [weak self] in (self?.canCreateWorkspace ?? false, nil) },
+                separatorBefore: true
+            ),
+            Action(
+                id: "workspace_close",
+                title: "Close Current Workspace",
+                handler: { [weak self] in self?.closeCurrentWorkspace() }
+            ),
         ]
+
+        // Dynamic workspace actions: switch / move-pane, one entry per
+        // non-current workspace. Capture the workspace id at registration
+        // time so that deleting/reordering workspaces while the palette is
+        // open can't misdirect the handler.
+        for (i, ws) in workspaces.enumerated() where i != focusedWorkspaceIndex {
+            let wsId = ws.id
+            result.append(Action(
+                id: "workspace_switch_\(wsId)",
+                title: "Switch to Workspace \(i + 1)",
+                handler: { [weak self] in self?.switchWorkspace(toId: wsId) }
+            ))
+        }
+        for (i, ws) in workspaces.enumerated() where i != focusedWorkspaceIndex {
+            let wsId = ws.id
+            result.append(Action(
+                id: "workspace_move_pane_\(wsId)",
+                title: "Move Pane to Workspace \(i + 1)",
+                handler: { [weak self] in self?.movePane(toWorkspaceId: wsId) }
+            ))
+        }
 
         // Dynamic actions: one "Focus: <title>" entry per pane. Generated
         // from the current pane layout so the command palette can jump to

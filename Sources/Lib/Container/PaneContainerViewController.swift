@@ -15,7 +15,8 @@ public final class PaneContainerViewController: NSViewController {
     var focusedWorkspaceIndex: Int = 0
 
     var currentWorkspace: WorkspaceModel {
-        workspaces[focusedWorkspaceIndex]
+        precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
+        return workspaces[focusedWorkspaceIndex]
     }
 
     public internal(set) var columns: [ColumnModel] {
@@ -47,6 +48,10 @@ public final class PaneContainerViewController: NSViewController {
     /// Recently closed pane with enough info to restore it to its original position.
     struct ClosedPane {
         let pane: PaneModel
+        /// Id of the workspace the pane belonged to. Restore and flush paths
+        /// scope themselves by this id so closing one workspace doesn't strand
+        /// stash entries belonging to another.
+        let workspaceId: ULID
         let columnIndex: Int
         let paneIndex: Int
         let columnWidth: CGFloat?
