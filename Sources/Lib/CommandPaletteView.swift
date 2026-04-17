@@ -91,6 +91,19 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
         }
     }
 
+    // MARK: - Cursor
+
+    public override func cursorUpdate(with event: NSEvent) {
+        // Prevent background elements from changing the cursor over the
+        // palette's non-input areas (divider, padding).
+        let local = convert(event.locationInWindow, from: nil)
+        if inputField.frame.contains(local) {
+            NSCursor.iBeam.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
     // MARK: - Flipped coordinates
 
     // Use top-down coordinates so Y=0 is the top of the palette.

@@ -311,6 +311,20 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     }
 
     public func controlTextDidEndEditing(_ notification: Notification) {
-        suggestionList.dismiss()
+        // Delay dismiss so that a click on the suggestion list can fire
+        // handleClick before the list disappears. Without this delay,
+        // clicking a suggestion triggers controlTextDidEndEditing (URL
+        // field loses focus) → dismiss → list gone → click lost.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // If the new first responder is inside the suggestion list,
+            // the user clicked a row — don't dismiss yet; handleClick
+            // will dismiss after accepting the selection.
+            if let responder = self.window?.firstResponder as? NSView,
+               responder.isDescendant(of: self.suggestionList) {
+                return
+            }
+            self.suggestionList.dismiss()
+        }
     }
 }

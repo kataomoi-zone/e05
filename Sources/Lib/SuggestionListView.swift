@@ -322,6 +322,45 @@ public final class SuggestionListView: NSView {
         isHidden = true
     }
 
+    // MARK: - Hover Tracking
+
+    private var trackingArea: NSTrackingArea?
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .cursorUpdate],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    public override func cursorUpdate(with event: NSEvent) {
+        // Override background elements' cursor — show arrow over the list.
+        NSCursor.arrow.set()
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let point = tableView.convert(event.locationInWindow, from: nil)
+        let row = tableView.row(at: point)
+        if row >= 0, row != tableView.selectedRow {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        // Restore selection to first row when mouse leaves the list.
+        if !items.isEmpty {
+            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
+    }
+
     // MARK: - Actions
 
     @objc private func handleClick() {
