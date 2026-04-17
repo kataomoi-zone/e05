@@ -3,13 +3,14 @@ import AppKit
 /// A group of columns (one horizontal layout). The app owns multiple workspaces
 /// for niri / ribari style vertical navigation — switching workspaces replaces
 /// the visible column set wholesale.
+///
+/// Accent color is *not* a property of the model: it's determined by the
+/// workspace's current position in the container's `workspaces` array, so
+/// number ↔ color stays in sync with the displayed "Workspace N" labels
+/// even when workspaces are created or closed.
 @MainActor
 public final class WorkspaceModel {
     public let id = ULID()
-
-    /// 1-based index into the fixed accent color palette. Assigned on creation
-    /// and preserved across deletions so color ↔ workspace mapping stays stable.
-    public var accentColorIndex: Int
 
     public var columns: [ColumnModel] = []
     public var focusedColumnIndex: Int = 0
@@ -18,7 +19,5 @@ public final class WorkspaceModel {
     /// back lands the user where they were, not at the focused column.
     public var scrollX: CGFloat = 0
 
-    public init(accentColorIndex: Int) {
-        self.accentColorIndex = accentColorIndex
-    }
+    public init() {}
 }

@@ -11,16 +11,27 @@ extension PaneContainerViewController {
         workspaces.count < Self.maxWorkspaces
     }
 
-    // MARK: - Accent color assignment
+    // MARK: - Accent color palette
 
-    /// Lowest 1-based color index not currently used. Keeps the color ↔
-    /// workspace mapping stable: deleting workspace #2 and creating a new
-    /// one reuses color index 2.
-    static func nextAccentColorIndex(used: Set<Int>, maxCount: Int = maxWorkspaces) -> Int {
-        for i in 1...maxCount where !used.contains(i) {
-            return i
-        }
-        return 1
+    /// Fixed palette mapped positionally: `palette[i]` is the color for the
+    /// workspace displayed as "Workspace \(i + 1)". Because it tracks array
+    /// position — not an id baked into the workspace itself — number and
+    /// color stay aligned when workspaces are added or removed.
+    public static let accentColorPalette: [NSColor] = [
+        .systemBlue,
+        .systemGreen,
+        .systemOrange,
+        .systemPurple,
+        .systemRed,
+    ]
+
+    /// Accent color for the workspace at `position`. Returns the first
+    /// palette entry for out-of-range indices so callers (e.g. the focus
+    /// border during a transient empty-state) stay total. Falls back all
+    /// the way to `.systemBlue` if the palette itself is empty, keeping
+    /// this function total even under that theoretically impossible state.
+    public static func accentColor(forWorkspaceAt position: Int) -> NSColor {
+        accentColorPalette[safe: position] ?? accentColorPalette.first ?? .systemBlue
     }
 
     // MARK: - Switching
@@ -62,8 +73,7 @@ extension PaneContainerViewController {
         outgoing.scrollX = scrollView.contentView.bounds.origin.x
         preserveSurfaces(in: outgoing)
 
-        let accent = Self.nextAccentColorIndex(used: Set(workspaces.map(\.accentColorIndex)))
-        let newWorkspace = WorkspaceModel(accentColorIndex: accent)
+        let newWorkspace = WorkspaceModel()
 
         detachCurrentWorkspaceViews()
         workspaces.append(newWorkspace)
@@ -198,7 +208,7 @@ extension PaneContainerViewController {
     /// Remove the current workspace's column container views from the shared
     /// stack view. `removeArrangedSubview` alone leaves them as subviews, so
     /// `removeFromSuperview` is required to clear them fully.
-    private func detachCurrentWorkspaceViews() {
+    func detachCurrentWorkspaceViews() {
         for column in currentWorkspace.columns {
             column.containerView.removeFromSuperview()
         }

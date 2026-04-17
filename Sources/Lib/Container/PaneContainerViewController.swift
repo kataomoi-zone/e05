@@ -11,7 +11,7 @@ public final class PaneContainerViewController: NSViewController {
     let scrollView = OverlayScrollView()
     let stackView = NSStackView()
 
-    public internal(set) var workspaces: [WorkspaceModel] = [WorkspaceModel(accentColorIndex: 1)]
+    public internal(set) var workspaces: [WorkspaceModel] = [WorkspaceModel()]
     var focusedWorkspaceIndex: Int = 0
 
     var currentWorkspace: WorkspaceModel {
@@ -37,7 +37,9 @@ public final class PaneContainerViewController: NSViewController {
     let minPaneWidth: CGFloat = 100
     let minPaneHeight: CGFloat = 50
     let focusBorderWidth: CGFloat = 2
-    let focusBorderColor: NSColor = .systemBlue
+    var focusBorderColor: NSColor {
+        Self.accentColor(forWorkspaceAt: focusedWorkspaceIndex)
+    }
 
     nonisolated(unsafe) var scrollEventMonitor: Any?
 
