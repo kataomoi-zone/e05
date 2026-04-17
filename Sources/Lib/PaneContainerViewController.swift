@@ -634,7 +634,14 @@ public final class PaneContainerViewController: NSViewController {
 
         let pane = column.panes[paneIndex]
         applyFocusBorder(pane)
-        view.window?.makeFirstResponder(pane.preferredFirstResponder)
+        if pane.isBlankBrowser {
+            if !pane.isURLBarVisible {
+                pane.setURLBarVisible(true)
+            }
+            pane.urlBar.focusURLField()
+        } else {
+            view.window?.makeFirstResponder(pane.preferredFirstResponder)
+        }
         updateHandleActiveStates()
         showHeaderForFocusedPane()
         scrollToColumn(at: columnIndex)

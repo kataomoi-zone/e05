@@ -61,6 +61,11 @@ public final class PaneModel {
         return nil
     }
 
+    /// Whether this is a blank browser pane (no URL loaded yet).
+    public var isBlankBrowser: Bool {
+        address == .blankBrowser
+    }
+
     /// The view that should become first responder when this pane is focused.
     public var preferredFirstResponder: NSView {
         switch content {
@@ -95,7 +100,8 @@ public final class PaneModel {
             self.content = .browser(bv)
         }
         setupContainerView()
-        if case .browser(let bv) = content, address.kind == .browser {
+        if case .browser(let bv) = content, address.kind == .browser,
+           !isBlankBrowser {
             bv.navigate(to: address.url.absoluteString)
         }
     }
@@ -144,7 +150,7 @@ public final class PaneModel {
 
         // Start with URL bar hidden
         applyURLBarVisibility()
-        urlBar.setDisplayURL(address.description)
+        urlBar.setDisplayURL(isBlankBrowser ? "" : address.description)
     }
 
     // MARK: - URL Bar Toggle
