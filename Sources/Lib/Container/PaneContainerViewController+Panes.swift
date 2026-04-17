@@ -131,6 +131,9 @@ extension PaneContainerViewController {
             bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
                 pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
             }
+            bv.onDownloadStarted = { [weak self] wkDownload in
+                self?.downloadsManager.adopt(wkDownload)
+            }
         } else {
             // Terminal/other panes: navigation buttons always disabled
             pane.urlBar.setNavigationEnabled(back: false, forward: false)

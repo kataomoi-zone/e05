@@ -40,6 +40,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     public var onNavigationStateChange: ((Bool, Bool) -> Void)?
     /// Called when the browser content gains focus (click or key navigation).
     public var onFocusChanged: (() -> Void)?
+    /// Called when a navigation response resolves to a download. The
+    /// container wires this to `DownloadsManager.adopt(_:)`; the browser
+    /// stays decoupled from the download store.
+    public var onDownloadStarted: ((WKDownload) -> Void)?
 
     private var titleObservation: NSKeyValueObservation?
     private var urlObservation: NSKeyValueObservation?
@@ -186,4 +190,45 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     // MARK: - Focus
 
     public override var acceptsFirstResponder: Bool { true }
+
+    // MARK: - Download Interception
+
+    /// Decide whether a response should become a download. Explicit
+    /// `Content-Disposition: attachment` is the only signal; WKWebView
+    /// already renders PDFs / images / media inline by default.
+    public func webView(
+        _: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+    ) {
+        if Self.shouldDownload(navigationResponse.response) {
+            decisionHandler(.download)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    public func webView(
+        _: WKWebView,
+        navigationResponse _: WKNavigationResponse,
+        didBecome download: WKDownload
+    ) {
+        onDownloadStarted?(download)
+    }
+
+    private static func shouldDownload(_ response: URLResponse) -> Bool {
+        guard let http = response as? HTTPURLResponse,
+              let disposition = http.value(forHTTPHeaderField: "Content-Disposition") else {
+            return false
+        }
+        // Only match the disposition-type token (before the first ";"),
+        // per RFC 6266. A plain contains("attachment") would false-
+        // positive on inline responses whose filename happens to
+        // contain the word, e.g. `inline; filename="attachment.pdf"`.
+        let type = disposition.split(separator: ";", maxSplits: 1)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            ?? ""
+        return type == "attachment"
+    }
 }

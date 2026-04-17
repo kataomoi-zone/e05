@@ -5,6 +5,8 @@ public final class PaneContainerViewController: NSViewController {
     let ghosttyApp: GhosttyApp
     public let browsingHistory = BrowsingHistory()
     public let bookmarks = Bookmarks()
+    public let downloadsStore: DownloadsStore
+    public let downloadsManager: DownloadsManager
 
     let scrollView = OverlayScrollView()
     let stackView = NSStackView()
@@ -61,6 +63,9 @@ public final class PaneContainerViewController: NSViewController {
 
     public init(ghosttyApp: GhosttyApp) {
         self.ghosttyApp = ghosttyApp
+        let store = DownloadsStore()
+        self.downloadsStore = store
+        self.downloadsManager = DownloadsManager(store: store)
         super.init(nibName: nil, bundle: nil)
     }
 
