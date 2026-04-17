@@ -1,0 +1,254 @@
+import AppKit
+import GhosttyKit
+
+extension PaneContainerViewController {
+    // MARK: - URL Bar
+
+    /// Search history and bookmarks for URL bar suggestions.
+    ///
+    /// Collects all bookmarks plus the last 500 history entries, deduplicates
+    /// by URL (bookmark wins), and runs the combined pool through
+    /// `Suggestion.rank` which uses `FuzzyMatcher` + a bookmark score bonus.
+    /// Fuzzy matching replaces the old SQLite `LIKE '%q%'` scan — now
+    /// queries like `gite05` can find `github.com/kawarimidoll/e05`.
+    ///
+    /// Cost: O(B + H × |query| × avg(|url| + |title|)) where B = bookmarks,
+    /// H ≤ 500. Runs synchronously on the main thread, acceptable under
+    /// `PaneURLBar`'s ~150ms debounce. If the history cap ever grows
+    /// meaningfully past 500, hoist this onto a background Task to avoid
+    /// main-thread blocking while typing.
+    func searchSuggestions(query: String) -> [Suggestion] {
+        let bookmarkEntries = bookmarks.all()
+        let historyEntries = browsingHistory.mostRecent(limit: 500)
+        let bookmarkURLs = Set(bookmarkEntries.map(\.url))
+
+        var candidates: [Suggestion] = bookmarkEntries.map {
+            Suggestion(url: $0.url, title: $0.title, isBookmark: true)
+        }
+        candidates.append(contentsOf: historyEntries.compactMap { entry in
+            bookmarkURLs.contains(entry.url)
+                ? nil
+                : Suggestion(url: entry.url, title: entry.title, isBookmark: false)
+        })
+
+        var results = Suggestion.rank(query: query, candidates: candidates)
+
+        // Insert a search-engine entry so the user can always search even
+        // when history/bookmarks match (Brave-style). Placed after the top
+        // few strong matches but before weaker tail results.
+        if let searchAddr = PaneAddress.searchURL(query: query) {
+            let searchEntry = Suggestion(
+                url: searchAddr.url.absoluteString,
+                title: "\(query) \u{2014} DuckDuckGo Search",
+                isBookmark: false
+            )
+            let insertAt = min(3, results.count)  // after top 3 matches
+            results.insert(searchEntry, at: insertAt)
+        }
+
+        return results
+    }
+
+    /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
+    func handleURLBarNavigate(pane: PaneModel, input: String) {
+        let newAddress: PaneAddress
+        if let parsed = PaneAddress.fromUserInput(input), parsed.kind != .unknown {
+            newAddress = parsed
+        } else if let search = PaneAddress.searchURL(query: input) {
+            newAddress = search
+        } else {
+            return
+        }
+
+        if pane.address.requiresContentSwitch(to: newAddress) {
+            // Cross-type: replace pane content (Step 4-3)
+            // For now, create a new column and remove the old pane
+            // TODO: in-place content replacement in Step 4-3
+            guard let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) }) else { return }
+            let column = columns[colIdx]
+            guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
+
+            let newPane = PaneModel(address: newAddress, ghosttyApp: ghosttyApp)
+            newPane.setURLBarVisible(urlBarVisible)
+            setupPaneCallbacks(pane: newPane, column: column)
+
+            // Replace in column
+            column.panes[paneIdx] = newPane
+            rebuildColumnView(column: column)
+            view.layoutSubtreeIfNeeded()
+            setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+        } else {
+            // Same type: navigate in place
+            // Browser → browser: load new URL. Terminal → terminal: no-op (address update only).
+            pane.address = newAddress
+            if let bv = pane.browserView {
+                bv.navigate(to: newAddress.url.absoluteString)
+            }
+            view.window?.makeFirstResponder(pane.preferredFirstResponder)
+        }
+    }
+
+    /// Focus the URL bar of the focused pane (⌘+L).
+    public func focusURLBar(prefill: String? = nil) {
+        guard let pane = focusedPane else { return }
+        if !urlBarVisible {
+            toggleURLBarVisibility()
+        }
+        if let prefill {
+            pane.urlBar.setDisplayURL(prefill)
+        }
+        pane.urlBar.focusURLField()
+    }
+
+    /// Toggle URL bar visibility for all panes. When URL bar is shown, header overlay is suppressed.
+    public func toggleURLBarVisibility() {
+        urlBarVisible.toggle()
+        for pane in columns.flatMap(\.panes) {
+            pane.setURLBarVisible(urlBarVisible)
+        }
+        // When hiding URL bar, show header overlay for focused pane as fallback
+        if !urlBarVisible {
+            showHeaderForFocusedPane()
+        } else if let pane = focusedPane {
+            pane.headerView.hideImmediately()
+        }
+    }
+
+    // MARK: - Fold
+
+    static let foldedColumnWidth: CGFloat = 30
+
+    /// Toggle fold state of the focused column. Folded columns collapse to a narrow strip
+    /// with vertical title text (Watchtower-style).
+    public func toggleFold() {
+        guard let column = columns[safe: focusedColumnIndex],
+              let constraint = column.widthConstraint else { return }
+
+        if column.isFolded {
+            // Unfold: restore previous width and show panes + handles
+            constraint.constant = column.unfoldedWidth
+            column.isFolded = false
+            column.foldedLabelView.isHidden = true
+            for sub in column.containerView.arrangedSubviews {
+                sub.isHidden = false
+            }
+        } else {
+            // Fold: save current width, shrink column, hide panes + vertical handles
+            column.unfoldedWidth = constraint.constant
+            constraint.constant = Self.foldedColumnWidth
+            column.isFolded = true
+            // Prefer the focused pane's title; fall back to its address when
+            // the page hasn't reported a title yet (e.g. blank browser pane).
+            let base: String
+            if let pane = column.focusedPane {
+                base = pane.title.isEmpty ? pane.address.description : pane.title
+            } else {
+                base = ""
+            }
+            // Append pane count if the column has multiple panes
+            column.foldedLabelView.text = column.panes.count > 1
+                ? "\(base) (\(column.panes.count))"
+                : base
+            column.foldedLabelView.isHidden = false
+            // Hide all arranged subviews (pane containers + vertical resize handles)
+            for sub in column.containerView.arrangedSubviews {
+                sub.isHidden = true
+            }
+        }
+        view.layoutSubtreeIfNeeded()
+        // Re-apply focus indicators so folded label gets the border (or removes it)
+        if let pane = column.focusedPane {
+            applyFocusBorder(pane)
+        }
+    }
+
+    // MARK: - Web Inspector
+
+    /// Toggle Web Inspector inline in the focused browser pane.
+    public func toggleInspector() {
+        focusedPane?.browserView?.toggleInspector()
+    }
+
+    /// Whether the focused browser pane's Web Inspector is currently open.
+    public var isFocusedInspectorOpen: Bool {
+        focusedPane?.browserView?.isInspectorOpen ?? false
+    }
+
+    // MARK: - Bookmarks
+
+    /// Toggle bookmark for the focused browser pane's current URL.
+    /// Returns true if bookmarked, false if removed, nil if not a browser pane.
+    @discardableResult
+    public func toggleBookmark() -> Bool? {
+        guard isFocusedPaneBrowser, let pane = focusedPane else { return nil }
+        let url = pane.address.url.absoluteString
+        if bookmarks.isBookmarked(url: url) {
+            bookmarks.remove(url: url)
+            return false
+        } else {
+            bookmarks.add(url: url, title: pane.title)
+            return true
+        }
+    }
+
+    /// Whether the focused pane is a browser pane with http/https.
+    public var isFocusedPaneBrowser: Bool {
+        guard let pane = focusedPane else { return false }
+        return pane.browserView != nil && pane.address.kind == .browser
+    }
+
+    /// Whether the focused pane's URL is bookmarked.
+    public var isFocusedPaneBookmarked: Bool {
+        guard let pane = focusedPane,
+              pane.address.kind == .browser else { return false }
+        return bookmarks.isBookmarked(url: pane.address.url.absoluteString)
+    }
+
+    // MARK: - Header
+
+    func showHeaderForFocusedPane() {
+        guard !urlBarVisible else { return }
+        guard let pane = focusedPane, !pane.title.isEmpty else { return }
+        lastShownTitle = pane.title
+        pane.headerView.show(title: pane.title, autoHide: true)
+    }
+
+    func hideHeaderForPane(_ pane: PaneModel) {
+        pane.headerView.hideImmediately()
+    }
+
+    /// Update a pane's title and show header if it's the focused pane.
+    /// Debounced: header only shows when the title is stable for a short time,
+    /// filtering out rapid changes from shell command execution.
+    public func handleTitleChange(surface: ghostty_surface_t, title: String) {
+        let allPanes = columns.flatMap(\.panes)
+        guard let pane = allPanes.first(where: { $0.terminalView?.surface == surface }) else { return }
+
+        let titleChanged = pane.title != title
+        pane.title = title
+
+        let isFocused = pane.id == focusedPane?.id
+
+        // Window title: immediate (matches ghostty behavior)
+        if isFocused {
+            view.window?.title = title
+        }
+
+        guard titleChanged, isFocused else { return }
+
+        // Header overlay: debounced, only when URL bar is hidden
+        guard !urlBarVisible else { return }
+        titleDebounceTimer?.invalidate()
+        titleDebounceTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.titleDebounceInterval, repeats: false
+        ) { [weak self, weak pane] _ in
+            DispatchQueue.main.async {
+                guard let self, let pane else { return }
+                guard pane.id == self.focusedPane?.id else { return }
+                guard pane.title != self.lastShownTitle else { return }
+                self.lastShownTitle = pane.title
+                pane.headerView.show(title: pane.title, autoHide: true)
+            }
+        }
+    }
+}
