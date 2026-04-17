@@ -81,4 +81,23 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     public func requiresContentSwitch(to other: PaneAddress) -> Bool {
         kind != other.kind
     }
+
+    // MARK: - Search
+
+    /// Default search engine URL template. `%s` is replaced with the percent-encoded query.
+    // TODO: make configurable via e05 config (Phase 11)
+    private static let searchTemplate = "https://duckduckgo.com/?q=%s"
+
+    /// Build a browser address for a search query using the default search engine.
+    public static func searchURL(query: String) -> PaneAddress? {
+        // .urlQueryAllowed keeps `+` unencoded, but servers may interpret it as
+        // a space (form encoding). Remove `+` so "C++" encodes to "C%2B%2B".
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove("+")
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            return nil
+        }
+        let urlString = searchTemplate.replacingOccurrences(of: "%s", with: encoded)
+        return PaneAddress(urlString)
+    }
 }

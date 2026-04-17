@@ -374,7 +374,22 @@ public final class PaneContainerViewController: NSViewController {
                 : Suggestion(url: entry.url, title: entry.title, isBookmark: false)
         })
 
-        return Suggestion.rank(query: query, candidates: candidates)
+        var results = Suggestion.rank(query: query, candidates: candidates)
+
+        // Insert a search-engine entry so the user can always search even
+        // when history/bookmarks match (Brave-style). Placed after the top
+        // few strong matches but before weaker tail results.
+        if let searchAddr = PaneAddress.searchURL(query: query) {
+            let searchEntry = Suggestion(
+                url: searchAddr.url.absoluteString,
+                title: "\(query) \u{2014} DuckDuckGo Search",
+                isBookmark: false
+            )
+            let insertAt = min(3, results.count)  // after top 3 matches
+            results.insert(searchEntry, at: insertAt)
+        }
+
+        return results
     }
 
     // MARK: - Command Palette
@@ -1124,8 +1139,14 @@ public final class PaneContainerViewController: NSViewController {
 
     /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
     private func handleURLBarNavigate(pane: PaneModel, input: String) {
-        guard let newAddress = PaneAddress.fromUserInput(input),
-              newAddress.kind != .unknown else { return }
+        let newAddress: PaneAddress
+        if let parsed = PaneAddress.fromUserInput(input), parsed.kind != .unknown {
+            newAddress = parsed
+        } else if let search = PaneAddress.searchURL(query: input) {
+            newAddress = search
+        } else {
+            return
+        }
 
         if pane.address.requiresContentSwitch(to: newAddress) {
             // Cross-type: replace pane content (Step 4-3)

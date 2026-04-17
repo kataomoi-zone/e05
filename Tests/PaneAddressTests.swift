@@ -90,4 +90,29 @@ struct PaneAddressTests {
         let addr = PaneAddress.terminal
         #expect(addr.description == "e05://terminal")
     }
+
+    // MARK: - Search
+
+    @Test("searchURL builds DuckDuckGo URL with encoded query")
+    func searchURLBasic() {
+        let addr = PaneAddress.searchURL(query: "swift concurrency")
+        #expect(addr != nil)
+        #expect(addr?.kind == .browser)
+        #expect(addr?.url.absoluteString == "https://duckduckgo.com/?q=swift%20concurrency")
+    }
+
+    @Test("searchURL encodes special characters")
+    func searchURLSpecialChars() {
+        let addr = PaneAddress.searchURL(query: "c++ templates")
+        #expect(addr != nil)
+        #expect(addr?.url.absoluteString.contains("c%2B%2B%20templates") == true)
+    }
+
+    @Test("searchURL handles Japanese input")
+    func searchURLJapanese() {
+        let addr = PaneAddress.searchURL(query: "日本語検索")
+        #expect(addr != nil)
+        #expect(addr?.kind == .browser)
+        #expect(addr?.url.absoluteString.hasPrefix("https://duckduckgo.com/?q=") == true)
+    }
 }
