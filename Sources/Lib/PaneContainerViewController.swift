@@ -89,6 +89,7 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLoad()
         configureScrollView()
         installScrollEventMonitor()
+        setupCommandPalette()
 
         if let session = SessionState.load() {
             restoreSession(session)
@@ -374,6 +375,75 @@ public final class PaneContainerViewController: NSViewController {
         })
 
         return Suggestion.rank(query: query, candidates: candidates)
+    }
+
+    // MARK: - Command Palette
+
+    private let commandPalette = CommandPaletteView()
+    /// Actions from the most recent `searchActions` call, retained so that
+    /// the command palette can look up the handler by index on Execute.
+    private var cachedActionResults: [Action] = []
+    /// Snapshot of `actions()` taken when the palette opens. The action
+    /// list doesn't change while the palette is visible, so caching at
+    /// `show` time avoids re-building the full array (with all its
+    /// closure captures) on every keystroke.
+    private var cachedAllActions: [Action] = []
+
+    /// Wire up command palette callbacks. Called once from `viewDidLoad`
+    /// (not per-toggle) because the palette is a long-lived `let` property.
+    private func setupCommandPalette() {
+        commandPalette.onSearch = { [weak self] query in
+            self?.searchActions(query: query) ?? []
+        }
+        commandPalette.onExecute = { [weak self] index in
+            guard let self, self.cachedActionResults.indices.contains(index) else { return }
+            self.cachedActionResults[index].handler()
+        }
+        commandPalette.onDismiss = { [weak self] in
+            self?.focusCurrentPane()
+        }
+    }
+
+    /// Toggle the global command palette overlay.
+    public func toggleCommandPalette() {
+        guard let window = view.window else { return }
+        if !commandPalette.isVisible {
+            // Snapshot the action list once per show — it won't change
+            // while the palette is open.
+            cachedAllActions = actions()
+        }
+        commandPalette.toggle(in: window)
+    }
+
+    /// Re-focus the currently active pane's content view.
+    private func focusCurrentPane() {
+        guard let column = columns[safe: focusedColumnIndex],
+              let pane = column.panes[safe: column.focusedPaneIndex] else { return }
+        view.window?.makeFirstResponder(pane.preferredFirstResponder)
+    }
+
+    /// Search the action registry for the command palette.
+    /// Returns `SuggestionCellModel` values for display; the matched
+    /// `Action` objects are cached in `cachedActionResults` for execution.
+    private func searchActions(query: String) -> [SuggestionCellModel] {
+        let matched: [Action]
+        if query.isEmpty {
+            matched = cachedAllActions
+        } else {
+            matched = FuzzyMatcher.rank(
+                query: query,
+                items: cachedAllActions,
+                keys: { [$0.title, $0.id] }
+            ).map(\.item)
+        }
+        cachedActionResults = matched
+        return matched.map { action in
+            SuggestionCellModel(
+                primary: action.title,
+                secondary: "",
+                accessory: action.keyLabel
+            )
+        }
     }
 
     // MARK: - Vertical Split
@@ -1323,6 +1393,13 @@ public final class PaneContainerViewController: NSViewController {
                 keyEquivalent: "b",
                 modifierMask: [.option, .control],
                 handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
+            ),
+            Action(
+                id: "command_palette",
+                title: "Command Palette",
+                keyEquivalent: "p",
+                modifierMask: [.command, .shift],
+                handler: { [weak self] in self?.toggleCommandPalette() }
             ),
         ]
     }

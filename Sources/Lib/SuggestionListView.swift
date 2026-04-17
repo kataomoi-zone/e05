@@ -117,13 +117,25 @@ public final class SuggestionListView: NSView {
     // Computed once per session via static let — font metrics never change
     // during an app run, so recomputing on every SuggestionListView init
     // (one per pane) just burns cycles.
-    private static let rowHeight: CGFloat = {
+    /// Two-line row: primary + 2pt gap + secondary.
+    private static let twoLineRowHeight: CGFloat = {
         let cell = SuggestionCellView()
         cell.primaryLabel.stringValue = "X"
         cell.secondaryLabel.stringValue = "X"
         // accessoryLabel is centerY-pinned and never taller than the
         // primary+secondary stack, so it doesn't affect fitting height.
         return ceil(cell.fittingSize.height)
+    }()
+    /// Single-line row: primary only (action palette, no URL). Computed
+    /// directly from the primary label's font metrics because
+    /// `fittingSize.height` on the full cell ignores `isHidden` — Auto
+    /// Layout constraints stay active for hidden views, so the hidden
+    /// secondary label's intrinsic height is still counted, producing
+    /// the same value as `twoLineRowHeight`.
+    private static let singleLineRowHeight: CGFloat = {
+        let label = NSTextField(labelWithString: "X")
+        label.font = SuggestionCellView.primaryFont
+        return ceil(label.intrinsicContentSize.height) + 4
     }()
     private let maxVisibleRows = 8
 
@@ -156,7 +168,7 @@ public final class SuggestionListView: NSView {
         tableView.addTableColumn(column)
         tableView.headerView = nil
         tableView.backgroundColor = .clear
-        tableView.rowHeight = Self.rowHeight
+        tableView.rowHeight = Self.twoLineRowHeight
         tableView.intercellSpacing = .zero
         tableView.selectionHighlightStyle = .regular
         // macOS 11+ defaults NSTableView.style to .automatic which resolves to
@@ -208,15 +220,43 @@ public final class SuggestionListView: NSView {
         ])
     }
 
+    // MARK: - Row Height
+
+    /// Whether the current batch of items uses single-line or two-line
+    /// cells. In practice, action mode items all have empty secondary
+    /// and URL mode items all have non-empty secondary, so a per-batch
+    /// flag (rather than per-row) keeps the height uniform and avoids
+    /// jarring mixed-height rows.
+    private var useSingleLineHeight = false
+
+    /// The row height for the current batch.
+    private var effectiveRowHeight: CGFloat {
+        useSingleLineHeight ? Self.singleLineRowHeight : Self.twoLineRowHeight
+    }
+
+    /// Cached content height set in `update(items:)`. Used by the direct
+    /// `frame.size.height` assignment for frame-based hosts (`PaneURLBar`,
+    /// `CommandPaletteView`). Also exposed via `intrinsicContentSize` in
+    /// case a future host uses Auto Layout to embed this view.
+    private var contentHeight: CGFloat = 0
+
+    public override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: contentHeight)
+    }
+
     // MARK: - Public API
 
     /// Update the list contents and resize. An empty array hides the view.
     public func update(items: [SuggestionCellModel]) {
         self.items = items
+        useSingleLineHeight = items.allSatisfy { $0.secondary.isEmpty }
+        tableView.rowHeight = effectiveRowHeight
         tableView.reloadData()
 
         if items.isEmpty {
             isHidden = true
+            contentHeight = 0
+            invalidateIntrinsicContentSize()
             return
         }
 
@@ -233,7 +273,11 @@ public final class SuggestionListView: NSView {
         // the documentView exactly — no bogus scrollbar — while the extra
         // 12pt becomes visible breathing room on the SuggestionListView
         // background layer.
-        frame.size.height = CGFloat(visibleRows) * Self.rowHeight + 12
+        contentHeight = CGFloat(visibleRows) * effectiveRowHeight + 12
+        frame.size.height = contentHeight
+        // Notify Auto Layout hosts (CommandPaletteView) that our preferred
+        // height changed. Frame-based hosts (PaneURLBar) ignore this.
+        invalidateIntrinsicContentSize()
         // Setting .frame directly doesn't propagate through Auto Layout to
         // our pinned scrollView. If the previous update filled 8 rows and
         // this one has 1, scrollView stays at the old height, clipping the
@@ -321,6 +365,8 @@ private final class SuggestionCellView: NSView {
         configure()
     }
 
+    static let primaryFont: NSFont = .systemFont(ofSize: 12)
+
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
@@ -338,7 +384,7 @@ private final class SuggestionCellView: NSView {
     }
 
     private func configure() {
-        primaryLabel.font = .systemFont(ofSize: 12)
+        primaryLabel.font = Self.primaryFont
         primaryLabel.textColor = .white
         primaryLabel.lineBreakMode = .byTruncatingTail
         primaryLabel.translatesAutoresizingMaskIntoConstraints = false
