@@ -73,6 +73,14 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
             return addr
         }
 
+        // about: scheme uses "about:blank" format (no "://")
+        if trimmed.hasPrefix("about:") {
+            return PaneAddress(trimmed)
+        }
+
+        // Bare word without dot or slash is not a URL (e.g. "hello", "swift concurrency")
+        guard trimmed.contains(".") || trimmed.contains("/") else { return nil }
+
         // Bare hostname/path → default to https
         return PaneAddress("https://" + trimmed)
     }

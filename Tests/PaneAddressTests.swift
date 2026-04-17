@@ -64,6 +64,18 @@ struct PaneAddressTests {
         #expect(PaneAddress.fromUserInput("   ") == nil)
     }
 
+    @Test("fromUserInput returns nil for bare words without dot or slash")
+    func fromUserInputBareWord() {
+        #expect(PaneAddress.fromUserInput("hello") == nil)
+        #expect(PaneAddress.fromUserInput("swift concurrency") == nil)
+    }
+
+    @Test("fromUserInput accepts about: scheme")
+    func fromUserInputAboutScheme() {
+        let addr = PaneAddress.fromUserInput("about:blank")
+        #expect(addr?.kind == .browser)
+    }
+
     @Test("fromUserInput rejects disallowed schemes")
     func fromUserInputDisallowedScheme() {
         #expect(PaneAddress.fromUserInput("ftp://example.com") == nil)
