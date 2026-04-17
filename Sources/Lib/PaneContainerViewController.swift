@@ -1248,9 +1248,11 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Action Registry
 
     /// All user-facing actions, in menu display order. Both the menu bar
-    /// and the command palette (`:` prefix) consume this same array.
+    /// and the command palette consume this same array. Static actions
+    /// (keybindings) come first, followed by dynamic "Focus: <title>"
+    /// entries generated from the current pane layout.
     public func actions() -> [Action] {
-        [
+        var result: [Action] = [
             Action(
                 id: "new_column",
                 title: "New Column",
@@ -1402,6 +1404,39 @@ public final class PaneContainerViewController: NSViewController {
                 handler: { [weak self] in self?.toggleCommandPalette() }
             ),
         ]
+
+        // Dynamic actions: one "Focus: <title>" entry per pane. Generated
+        // from the current pane layout so the command palette can jump to
+        // any pane by fuzzy-searching its title.
+        for (colIdx, column) in columns.enumerated() {
+            for (paneIdx, pane) in column.panes.enumerated() {
+                let label = pane.title.isEmpty
+                    ? "Pane \(colIdx + 1)-\(paneIdx + 1)"
+                    : pane.title
+                // Capture pane.id instead of positional indices. The handler
+                // resolves the current position at execution time so that
+                // pane close/reorder between palette show and selection
+                // doesn't silently focus the wrong pane.
+                let targetId = pane.id
+                result.append(Action(
+                    id: "focus_pane_\(targetId)",
+                    title: "Focus: \(label)",
+                    handler: { [weak self] in
+                        guard let self,
+                              let colIdx = self.columns.firstIndex(where: {
+                                  $0.panes.contains(where: { $0.id == targetId })
+                              }),
+                              let paneIdx = self.columns[colIdx].panes.firstIndex(where: {
+                                  $0.id == targetId
+                              })
+                        else { return }
+                        self.setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+                    }
+                ))
+            }
+        }
+
+        return result
     }
 
     private static let defaultWidthCycle: [PaneWidthPreset] = [
