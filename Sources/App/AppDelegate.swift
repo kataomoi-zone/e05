@@ -100,6 +100,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         paneMenuItem.submenu = paneMenu
         mainMenu.addItem(paneMenuItem)
 
+        // Edit menu — standard text editing actions (⌘+A, ⌘+C, ⌘+V, ⌘+X).
+        // These dispatch via the responder chain: NSTextField handles them
+        // when focused; GhosttyTerminalView does not respond, so the items
+        // auto-disable and ⌘+V falls through to ghostty's own keybind.
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redoItem = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         NSApp.mainMenu = mainMenu
     }
 
