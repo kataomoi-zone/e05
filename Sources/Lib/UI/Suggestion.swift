@@ -45,7 +45,7 @@ public struct Suggestion: Equatable {
         query: String,
         candidates: [Suggestion],
         bookmarkBonus: Int = 50,
-        maxResults: Int = 15
+        maxResults: Int = 8  // keep in sync with SuggestionListView.maxVisibleRows
     ) -> [Suggestion] {
         let ranked = FuzzyMatcher.rank(
             query: query,
