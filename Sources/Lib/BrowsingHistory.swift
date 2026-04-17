@@ -111,9 +111,16 @@ public final class BrowsingHistory {
 
     // MARK: - Read
 
-    /// Get the most recent history entries.
+    /// Get the most recent history entries, deduplicated by URL (keeps latest visit).
+    /// Note: `id` corresponds to the row with the latest `visited_at` per URL.
     public func mostRecent(limit: Int = 100) -> [Entry] {
-        query(sql: "SELECT id, url, title, visited_at FROM history ORDER BY visited_at DESC LIMIT ?",
+        query(sql: """
+            SELECT h.id, h.url, h.title, h.visited_at FROM history h
+            INNER JOIN (
+                SELECT url, MAX(visited_at) AS max_visited FROM history GROUP BY url
+            ) latest ON h.url = latest.url AND h.visited_at = latest.max_visited
+            ORDER BY h.visited_at DESC LIMIT ?
+            """,
               bind: { sqlite3_bind_int($0, 1, Int32(limit)) })
     }
 
