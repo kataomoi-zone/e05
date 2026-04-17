@@ -5,9 +5,16 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Sessio
 
 /// Serializable session layout state for save/restore.
 public struct SessionState: Codable {
-    public var columns: [ColumnState]
-    public var focusedColumnIndex: Int
+    public var workspaces: [WorkspaceState]
+    public var focusedWorkspaceIndex: Int
     public var urlBarVisible: Bool
+
+    public struct WorkspaceState: Codable {
+        public var columns: [ColumnState]
+        public var focusedColumnIndex: Int
+        /// Horizontal scroll offset (in points) at the time of capture.
+        public var scrollX: Double
+    }
 
     public struct ColumnState: Codable {
         public var panes: [PaneState]
