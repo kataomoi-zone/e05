@@ -11,8 +11,22 @@ public final class PaneContainerViewController: NSViewController {
     let scrollView = OverlayScrollView()
     let stackView = NSStackView()
 
-    public internal(set) var columns: [ColumnModel] = []
-    var focusedColumnIndex: Int = 0
+    public internal(set) var workspaces: [WorkspaceModel] = [WorkspaceModel(accentColorIndex: 1)]
+    var focusedWorkspaceIndex: Int = 0
+
+    var currentWorkspace: WorkspaceModel {
+        workspaces[focusedWorkspaceIndex]
+    }
+
+    public internal(set) var columns: [ColumnModel] {
+        get { currentWorkspace.columns }
+        set { currentWorkspace.columns = newValue }
+    }
+
+    var focusedColumnIndex: Int {
+        get { currentWorkspace.focusedColumnIndex }
+        set { currentWorkspace.focusedColumnIndex = newValue }
+    }
 
     var focusedPane: PaneModel? {
         columns[safe: focusedColumnIndex]?.focusedPane
