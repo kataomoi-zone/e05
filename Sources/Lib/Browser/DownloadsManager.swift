@@ -5,12 +5,14 @@ import os.log
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DownloadsManager")
 
 /// Lifecycle state of a single download. Stored as raw Int in the DB.
+/// New cases must use fresh rawValues — existing rows carry historical
+/// numbers and must continue to decode to the same state.
 public enum DownloadState: Int {
     case downloading = 0
     case completed = 1
     case failed = 2
     case cancelled = 3
-    // case paused — reserved for v2 pause/resume support
+    case paused = 4
 }
 
 /// In-memory representation of a single download. The `wkDownload` is
@@ -66,6 +68,24 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     /// KVO observations per active download, keyed by id.
     private var progressObservations: [Int64: NSKeyValueObservation] = [:]
 
+    /// Headless WKWebView used solely as the entry point for
+    /// `resumeDownload(fromResumeData:)`. It's never attached to a
+    /// view hierarchy — the API just requires a WKWebView instance to
+    /// kick off the resumed transfer. Using a shared dedicated one
+    /// keeps resume independent of whatever BrowserPaneView the
+    /// original download came from (that pane may have been closed).
+    ///
+    /// Configuration inherits `WKWebsiteDataStore.default()` (the
+    /// persistent store) so resumed transfers carry the same
+    /// cookies / auth tokens the originating pane used. If
+    /// BrowserPaneView ever switches to non-persistent or per-profile
+    /// data stores, this needs to be revisited — otherwise auth-
+    /// gated downloads would 401 after pause.
+    private let resumeWebView: WKWebView = {
+        let config = WKWebViewConfiguration()
+        return WKWebView(frame: .zero, configuration: config)
+    }()
+
     /// Called after any mutation. Listeners re-read via `all()`.
     public var onUpdate: (() -> Void)?
 
@@ -73,6 +93,27 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         self.store = store
         super.init()
         loadFromDB()
+    }
+
+    // MARK: - Sidecar paths
+
+    /// Directory holding resume-data sidecar files, one per paused
+    /// download. `~/.config/e05/resume/<id>.resume`.
+    private static var resumeDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/e05/resume")
+    }
+
+    /// Sidecar URL for a given download id. Exposed so tests can
+    /// verify the path format without running a real download.
+    public static func sidecarURL(for id: Int64) -> URL {
+        resumeDir.appendingPathComponent("\(id).resume")
+    }
+
+    private static func ensureResumeDir() {
+        try? FileManager.default.createDirectory(
+            at: resumeDir, withIntermediateDirectories: true
+        )
     }
 
     // MARK: - Startup
@@ -90,6 +131,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
                 errorMessage: entry.errorMessage, wkDownload: nil
             )
         }
+        var demotedActive = 0
         for d in downloads where d.state == .downloading {
             d.state = .cancelled
             d.errorMessage = "App was closed during download"
@@ -97,6 +139,28 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
             store.updateState(
                 id: d.id, state: d.state.rawValue,
                 completedAt: d.completedAt, errorMessage: d.errorMessage
+            )
+            demotedActive += 1
+        }
+        // Paused entries need their sidecar to resume. If it was
+        // deleted out-of-band (manual rm, disk wipe, etc.) demote
+        // the row to failed so the UI reflects reality.
+        var demotedPaused = 0
+        for d in downloads where d.state == .paused {
+            if !FileManager.default.fileExists(atPath: Self.sidecarURL(for: d.id).path) {
+                d.state = .failed
+                d.errorMessage = "Resume data missing"
+                d.completedAt = Date()
+                store.updateState(
+                    id: d.id, state: d.state.rawValue,
+                    completedAt: d.completedAt, errorMessage: d.errorMessage
+                )
+                demotedPaused += 1
+            }
+        }
+        if demotedActive > 0 || demotedPaused > 0 {
+            logger.info(
+                "loadFromDB demoted entries: \(demotedActive) downloading→cancelled, \(demotedPaused) paused→failed"
             )
         }
     }
@@ -140,6 +204,28 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         guard let id = activeByWKDownload[ObjectIdentifier(download)],
               let entry = downloads.first(where: { $0.id == id }) else {
             return nil
+        }
+
+        // Resumed downloads keep their original destination so WebKit
+        // appends partial bytes to the existing file. Skip dedup and
+        // totalBytes overwrite — the 206 Partial Content response
+        // reports only the remaining chunk, not the full file size.
+        if !entry.destination.isEmpty {
+            let url = URL(fileURLWithPath: entry.destination)
+            let observation = download.progress.observe(
+                \.fractionCompleted, options: [.new]
+            ) { [weak self, weak entry] progress, _ in
+                Task { @MainActor in
+                    guard let self, let entry else { return }
+                    entry.bytesWritten = Int64(progress.completedUnitCount)
+                    if entry.totalBytes == 0 {
+                        entry.totalBytes = Int64(progress.totalUnitCount)
+                    }
+                    self.onUpdate?()
+                }
+            }
+            progressObservations[id] = observation
+            return url
         }
 
         let sanitized = Self.sanitize(filename: suggestedFilename)
@@ -255,14 +341,134 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         wk.cancel(nil)  // triggers didFailWithError with NSURLErrorCancelled
     }
 
-    /// Remove an entry from both the list and the DB. Cancels first if
-    /// the download is still active so the partial file is cleaned up
-    /// by WKDownload before we drop the record.
-    public func remove(id: Int64) {
-        if let entry = downloads.first(where: { $0.id == id }),
-           entry.state == .downloading {
-            cancel(id: id)
+    /// Pause an active download. Saves a sidecar file with the WebKit
+    /// resume data so `resume(id:)` can pick up where we left off.
+    ///
+    /// If the server doesn't advertise Range support, WebKit returns
+    /// nil resume data from `cancel()`. We surface that as a plain
+    /// cancellation with an explanatory errorMessage so the user
+    /// understands why Pause wasn't honored, instead of silently
+    /// falling back to "restart from zero on resume".
+    public func pause(id: Int64) {
+        guard let entry = downloads.first(where: { $0.id == id }),
+              entry.state == .downloading,
+              let wk = entry.wkDownload else { return }
+
+        // Detach from live tracking BEFORE cancel so the
+        // didFailWithError callback that WebKit fires as a side
+        // effect of cancellation no-ops (its guard on
+        // activeByWKDownload will miss).
+        activeByWKDownload.removeValue(forKey: ObjectIdentifier(wk))
+        progressObservations.removeValue(forKey: id)?.invalidate()
+        entry.wkDownload = nil
+
+        Task { @MainActor in
+            let resumeData = await wk.cancel()
+            if let data = resumeData {
+                Self.ensureResumeDir()
+                do {
+                    try data.write(to: Self.sidecarURL(for: id), options: .atomic)
+                    entry.state = .paused
+                    store.updateState(
+                        id: id, state: entry.state.rawValue,
+                        completedAt: nil, errorMessage: nil
+                    )
+                } catch {
+                    entry.state = .failed
+                    entry.errorMessage = "Failed to save resume data: \(error.localizedDescription)"
+                    entry.completedAt = Date()
+                    store.updateState(
+                        id: id, state: entry.state.rawValue,
+                        completedAt: entry.completedAt, errorMessage: entry.errorMessage
+                    )
+                }
+            } else {
+                entry.state = .cancelled
+                entry.errorMessage = "Pause unsupported (server lacks Range support)"
+                entry.completedAt = Date()
+                store.updateState(
+                    id: id, state: entry.state.rawValue,
+                    completedAt: entry.completedAt, errorMessage: entry.errorMessage
+                )
+            }
+            onUpdate?()
+        }
+    }
+
+    /// Resume a paused download from its sidecar resume data.
+    ///
+    /// Flips `state` to `.downloading` synchronously *before* the
+    /// async `resumeDownload` call so a second invocation (rapid
+    /// Resume clicks, external onUpdate handler calling back into
+    /// resume) finds the entry no longer `.paused` and bails. Without
+    /// the guard we'd race two `WKDownload` instances against the
+    /// same partial file.
+    public func resume(id: Int64) {
+        guard let entry = downloads.first(where: { $0.id == id }),
+              entry.state == .paused else { return }
+
+        let sidecar = Self.sidecarURL(for: id)
+        guard let data = try? Data(contentsOf: sidecar) else {
+            // Sidecar missing or unreadable — treat same as
+            // loadFromDB's recovery path.
+            entry.state = .failed
+            entry.errorMessage = "Resume data missing"
+            entry.completedAt = Date()
+            store.updateState(
+                id: id, state: entry.state.rawValue,
+                completedAt: entry.completedAt, errorMessage: entry.errorMessage
+            )
+            onUpdate?()
             return
+        }
+
+        // Claim the entry synchronously to block re-entry.
+        entry.state = .downloading
+        entry.errorMessage = nil
+        store.updateState(
+            id: id, state: entry.state.rawValue,
+            completedAt: nil, errorMessage: nil
+        )
+        onUpdate?()
+
+        Task { @MainActor in
+            let newDownload = await resumeWebView.resumeDownload(fromResumeData: data)
+            newDownload.delegate = self
+            activeByWKDownload[ObjectIdentifier(newDownload)] = id
+            entry.wkDownload = newDownload
+            // Sidecar is "consumed" — once the new download starts,
+            // the old resume data is stale (a fresh pause would
+            // produce its own). If this resumed transfer itself
+            // fails, the user restarts from zero.
+            try? FileManager.default.removeItem(at: sidecar)
+            // `decideDestinationUsing` (the resumed-path branch) will
+            // install a fresh progress observation, so no setup is
+            // needed here.
+        }
+    }
+
+    /// Remove an entry from both the list and the DB. For active
+    /// downloads, cancels the transfer (fire-and-forget) before
+    /// dropping the record so WebKit tears down its internal state.
+    /// The partial file on disk is left alone — cleanup is the user's
+    /// responsibility (and what Finder is for).
+    public func remove(id: Int64) {
+        guard let entry = downloads.first(where: { $0.id == id }) else { return }
+        switch entry.state {
+        case .downloading:
+            if let wk = entry.wkDownload {
+                // Detach first so the didFailWithError callback fires
+                // by cancel() lookups the entry we're about to drop
+                // and no-ops. Same pattern as pause().
+                activeByWKDownload.removeValue(forKey: ObjectIdentifier(wk))
+                progressObservations.removeValue(forKey: id)?.invalidate()
+                entry.wkDownload = nil
+                Task { @MainActor in _ = await wk.cancel() }
+            }
+        case .paused:
+            try? FileManager.default.removeItem(at: Self.sidecarURL(for: id))
+        case .completed, .failed, .cancelled:
+            break
         }
         downloads.removeAll { $0.id == id }
         store.delete(id: id)
@@ -271,7 +477,11 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
 
     /// Clear all non-active entries.
     public func clearCompleted() {
-        downloads.removeAll { $0.state != .downloading }
+        // Keep both downloading and paused rows — only terminal states
+        // (completed / failed / cancelled) are considered "done" and
+        // eligible for clearing.
+        let retainedStates: Set<DownloadState> = [.downloading, .paused]
+        downloads.removeAll { !retainedStates.contains($0.state) }
         store.deleteCompleted()
         onUpdate?()
     }

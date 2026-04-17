@@ -121,7 +121,13 @@ public final class DownloadsPaneView: NSView {
             tableView.reloadData(forRowIndexes: indexes, columnIndexes: IndexSet(integer: 0))
         }
         emptyLabel.isHidden = !rows.isEmpty
-        clearButton.isEnabled = rows.contains { $0.state != .downloading }
+        // Enable "Clear Completed" only when at least one row is in a
+        // terminal state. Downloading and paused rows must stay —
+        // pausing a download and then accidentally wiping it out
+        // would be a nasty footgun.
+        clearButton.isEnabled = rows.contains {
+            $0.state != .downloading && $0.state != .paused
+        }
     }
 
     // MARK: - Actions
@@ -160,6 +166,8 @@ extension DownloadsPaneView: NSTableViewDelegate {
         cell.configure(
             with: rows[row],
             onCancel: { [weak self] id in self?.manager.cancel(id: id) },
+            onPause: { [weak self] id in self?.manager.pause(id: id) },
+            onResume: { [weak self] id in self?.manager.resume(id: id) },
             onShowInFinder: { path in
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             },
@@ -223,6 +231,8 @@ private final class DownloadCellView: NSView {
     private var currentURL: String = ""
 
     private var onCancel: ((Int64) -> Void)?
+    private var onPause: ((Int64) -> Void)?
+    private var onResume: ((Int64) -> Void)?
     private var onShowInFinder: ((String) -> Void)?
     private var onOpen: ((String) -> Void)?
     private var onDelete: ((Int64) -> Void)?
@@ -309,6 +319,8 @@ private final class DownloadCellView: NSView {
     func configure(
         with download: Download,
         onCancel: @escaping (Int64) -> Void,
+        onPause: @escaping (Int64) -> Void,
+        onResume: @escaping (Int64) -> Void,
         onShowInFinder: @escaping (String) -> Void,
         onOpen: @escaping (String) -> Void,
         onDelete: @escaping (Int64) -> Void,
@@ -318,6 +330,8 @@ private final class DownloadCellView: NSView {
         currentDestination = download.destination
         currentURL = download.url
         self.onCancel = onCancel
+        self.onPause = onPause
+        self.onResume = onResume
         self.onShowInFinder = onShowInFinder
         self.onOpen = onOpen
         self.onDelete = onDelete
@@ -328,8 +342,12 @@ private final class DownloadCellView: NSView {
         urlLabel.toolTip = download.url
         statusLabel.stringValue = Self.statusLine(for: download)
 
-        // Progress bar only for active downloads; hidden otherwise.
-        if download.state == .downloading {
+        // Progress bar is visible for downloading + paused (paused
+        // shows a static frozen bar at the last recorded progress so
+        // the user sees how far through they are). Terminal states
+        // hide it entirely.
+        switch download.state {
+        case .downloading:
             progressBar.isHidden = false
             if download.totalBytes > 0 {
                 progressBar.isIndeterminate = false
@@ -338,7 +356,14 @@ private final class DownloadCellView: NSView {
                 progressBar.isIndeterminate = true
                 progressBar.startAnimation(nil)
             }
-        } else {
+        case .paused:
+            progressBar.isHidden = false
+            progressBar.isIndeterminate = false
+            progressBar.stopAnimation(nil)
+            progressBar.doubleValue = download.totalBytes > 0
+                ? Double(download.bytesWritten) / Double(download.totalBytes)
+                : 0
+        case .completed, .failed, .cancelled:
             progressBar.isHidden = true
             progressBar.stopAnimation(nil)
         }
@@ -355,6 +380,13 @@ private final class DownloadCellView: NSView {
                 return "\(percent)% · \(formatBytes(download.bytesWritten)) / \(formatBytes(download.totalBytes))"
             }
             return formatBytes(download.bytesWritten)
+        case .paused:
+            if download.totalBytes > 0 {
+                let percent = Int((Double(download.bytesWritten) / Double(download.totalBytes)) * 100)
+                return "Paused · \(percent)% · \(formatBytes(download.bytesWritten)) / \(formatBytes(download.totalBytes))"
+            }
+            let size = formatBytes(download.bytesWritten)
+            return size.isEmpty ? "Paused" : "Paused · \(size)"
         case .completed:
             let size = formatBytes(download.bytesWritten)
             return size.isEmpty
@@ -391,8 +423,25 @@ private final class DownloadCellView: NSView {
                 action: #selector(handleCopyURL)
             ))
             actionsStack.addArrangedSubview(makeButton(
+                symbol: "pause.circle", tooltip: "Pause",
+                action: #selector(handlePause)
+            ))
+            actionsStack.addArrangedSubview(makeButton(
                 symbol: "xmark", tooltip: "Cancel",
                 action: #selector(handleCancel)
+            ))
+        case .paused:
+            actionsStack.addArrangedSubview(makeButton(
+                symbol: "doc.on.doc", tooltip: "Copy URL",
+                action: #selector(handleCopyURL)
+            ))
+            actionsStack.addArrangedSubview(makeButton(
+                symbol: "play.circle", tooltip: "Resume",
+                action: #selector(handleResume)
+            ))
+            actionsStack.addArrangedSubview(makeButton(
+                symbol: "xmark", tooltip: "Remove from list",
+                action: #selector(handleDelete)
             ))
         case .completed:
             actionsStack.addArrangedSubview(makeButton(
@@ -440,6 +489,8 @@ private final class DownloadCellView: NSView {
     }
 
     @objc private func handleCancel() { onCancel?(currentID) }
+    @objc private func handlePause() { onPause?(currentID) }
+    @objc private func handleResume() { onResume?(currentID) }
     @objc private func handleShowInFinder() { onShowInFinder?(currentDestination) }
     @objc private func handleOpen() { onOpen?(currentDestination) }
     @objc private func handleDelete() { onDelete?(currentID) }

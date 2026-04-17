@@ -174,11 +174,21 @@ public final class DownloadsStore {
         sqlite3_step(stmt)
     }
 
-    /// Delete all non-active rows (completed, failed, cancelled).
-    /// State 0 (`.downloading`) is preserved.
+    /// Delete all terminal rows (completed, failed, cancelled).
+    /// Both `.downloading` and `.paused` are preserved so "Clear
+    /// Completed" doesn't yank paused downloads out from under the
+    /// user. Raw values are bound via placeholders so renaming or
+    /// renumbering `DownloadState` cases here stays in sync.
     public func deleteCompleted() {
         guard let db else { return }
-        sqlite3_exec(db, "DELETE FROM downloads WHERE state != 0", nil, nil, nil)
+        let sql = "DELETE FROM downloads WHERE state NOT IN (?, ?)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+              let stmt else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, Int32(DownloadState.downloading.rawValue))
+        sqlite3_bind_int(stmt, 2, Int32(DownloadState.paused.rawValue))
+        sqlite3_step(stmt)
     }
 
     public func deleteAll() {

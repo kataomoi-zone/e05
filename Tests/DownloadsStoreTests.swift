@@ -108,12 +108,16 @@ struct DownloadsStoreTests {
         #expect(entries.first?.filename == "2")
     }
 
-    @Test("deleteCompleted removes non-active entries only")
-    func deleteCompletedPreservesDownloading() {
+    @Test("deleteCompleted keeps downloading and paused, drops terminal states")
+    func deleteCompletedPreservesActiveAndPaused() {
         let store = DownloadsStore(inMemory: true)
         _ = store.insert(
             url: "https://a/active", filename: "a", destination: "/tmp/a",
             state: DownloadState.downloading.rawValue
+        )
+        _ = store.insert(
+            url: "https://a/paused", filename: "p", destination: "/tmp/p",
+            state: DownloadState.paused.rawValue
         )
         _ = store.insert(
             url: "https://a/done", filename: "d", destination: "/tmp/d",
@@ -130,9 +134,25 @@ struct DownloadsStoreTests {
 
         store.deleteCompleted()
 
-        let entries = store.all()
-        #expect(entries.count == 1)
-        #expect(entries.first?.state == DownloadState.downloading.rawValue)
+        let states = Set(store.all().map(\.state))
+        #expect(states == [
+            DownloadState.downloading.rawValue,
+            DownloadState.paused.rawValue,
+        ])
+    }
+
+    @Test("paused state round-trips through the store")
+    func pausedStateRoundTrip() {
+        let store = DownloadsStore(inMemory: true)
+        let id = store.insert(
+            url: "https://a/p", filename: "p.zip", destination: "/tmp/p.zip",
+            state: DownloadState.paused.rawValue
+        )
+        store.updateState(
+            id: id, state: DownloadState.paused.rawValue,
+            completedAt: nil, errorMessage: nil
+        )
+        #expect(store.all().first?.state == DownloadState.paused.rawValue)
     }
 
     @Test("all is ordered by startedAt descending")
@@ -175,5 +195,16 @@ struct DownloadsManagerHelperTests {
     @Test("sanitize strips null bytes")
     func sanitizeNullByte() {
         #expect(DownloadsManager.sanitize(filename: "ok\0.txt") == "ok.txt")
+    }
+
+    @Test("sidecarURL places <id>.resume under ~/.config/e05/resume")
+    func sidecarURLLocation() {
+        let url = DownloadsManager.sidecarURL(for: 42)
+        #expect(url.lastPathComponent == "42.resume")
+        #expect(url.deletingLastPathComponent().lastPathComponent == "resume")
+        #expect(
+            url.deletingLastPathComponent().deletingLastPathComponent()
+                .lastPathComponent == "e05"
+        )
     }
 }
