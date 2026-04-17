@@ -68,7 +68,7 @@ extension PaneContainerViewController {
             let column = columns[colIdx]
             guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
 
-            let newPane = PaneModel(address: newAddress, ghosttyApp: ghosttyApp)
+            let newPane = makePane(address: newAddress)
             newPane.setURLBarVisible(urlBarVisible)
             setupPaneCallbacks(pane: newPane, column: column)
 

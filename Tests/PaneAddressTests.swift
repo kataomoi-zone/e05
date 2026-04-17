@@ -14,6 +14,24 @@ struct PaneAddressTests {
         #expect(PaneAddress.settings.kind == .settings)
     }
 
+    @Test("history address resolves to history kind")
+    func historyKind() {
+        #expect(PaneAddress.history.kind == .history)
+        #expect(PaneAddress.history.description == "e05://history")
+    }
+
+    @Test("bookmarks address resolves to bookmarks kind")
+    func bookmarksKind() {
+        #expect(PaneAddress.bookmarks.kind == .bookmarks)
+        #expect(PaneAddress.bookmarks.description == "e05://bookmarks")
+    }
+
+    @Test("fromUserInput resolves e05://history and e05://bookmarks")
+    func fromUserInputSpecialPanes() {
+        #expect(PaneAddress.fromUserInput("e05://history")?.kind == .history)
+        #expect(PaneAddress.fromUserInput("e05://bookmarks")?.kind == .bookmarks)
+    }
+
     @Test("https URL resolves to browser kind")
     func httpsKind() {
         let addr = PaneAddress("https://example.com")!

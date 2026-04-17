@@ -89,6 +89,19 @@ public final class PaneContainerViewController: NSViewController {
         }
     }
 
+    /// Factory: construct a `PaneModel` with all dependencies the container
+    /// owns. Using this instead of `PaneModel.init` directly keeps call
+    /// sites agnostic of the full dependency list — adding a new
+    /// dependency (e.g. for `e05://downloads`) touches only this method.
+    func makePane(address: PaneAddress) -> PaneModel {
+        PaneModel(
+            address: address,
+            ghosttyApp: ghosttyApp,
+            browsingHistory: browsingHistory,
+            bookmarks: bookmarks
+        )
+    }
+
     public override func viewDidAppear() {
         super.viewDidAppear()
         DispatchQueue.main.async { [weak self] in

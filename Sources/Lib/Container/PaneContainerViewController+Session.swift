@@ -62,7 +62,7 @@ extension PaneContainerViewController {
             // Add remaining panes in the column
             for paneState in colState.panes.dropFirst() {
                 let address = PaneAddress(paneState.address) ?? .terminal
-                let pane = PaneModel(address: address, ghosttyApp: ghosttyApp)
+                let pane = makePane(address: address)
                 setupPaneCallbacks(pane: pane, column: column)
                 column.panes.append(pane)
             }

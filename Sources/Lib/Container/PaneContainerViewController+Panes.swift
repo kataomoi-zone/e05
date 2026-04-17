@@ -6,7 +6,7 @@ extension PaneContainerViewController {
 
     @discardableResult
     public func addColumn(address: PaneAddress = .terminal) -> ColumnModel {
-        insertColumn(with: PaneModel(address: address, ghosttyApp: ghosttyApp))
+        insertColumn(with: makePane(address: address))
     }
 
     @discardableResult
@@ -83,6 +83,26 @@ extension PaneContainerViewController {
                         return
                     }
                 }
+            }
+        }
+
+        if let lv = pane.listView {
+            lv.onOpen = { [weak self, weak pane] url in
+                guard let self, let pane else { return }
+                self.handleURLBarNavigate(pane: pane, input: url)
+            }
+            lv.onOpenInNewColumn = { [weak self] url in
+                // Route through fromUserInput so disallowed schemes
+                // (javascript:, data:, ...) are rejected even if they
+                // somehow landed in the history / bookmarks DB.
+                guard let self,
+                      let addr = PaneAddress.fromUserInput(url),
+                      addr.kind != .unknown else { return }
+                self.addColumn(address: addr)
+            }
+            lv.onFocusChanged = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                self.handleFocusChange(from: pane)
             }
         }
 
@@ -225,7 +245,7 @@ extension PaneContainerViewController {
     public func splitVertical() {
         guard let column = columns[safe: focusedColumnIndex] else { return }
 
-        let newPane = PaneModel(address: .terminal, ghosttyApp: ghosttyApp)
+        let newPane = makePane(address: .terminal)
         setupPaneCallbacks(pane: newPane, column: column)
 
         let insertPaneIndex = column.focusedPaneIndex + 1

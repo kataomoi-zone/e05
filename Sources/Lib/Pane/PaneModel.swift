@@ -10,6 +10,10 @@ public enum PaneWidthPreset: Equatable {
 public enum PaneContent {
     case terminal(GhosttyTerminalView)
     case browser(BrowserPaneView)
+    /// Generic list pane (history, bookmarks, future downloads).
+    /// The concrete data is supplied by a `ListPaneDataSource` held by
+    /// the `ListPaneView` itself.
+    case list(ListPaneView)
 }
 
 /// A single pane within a column — either a terminal or a browser.
@@ -41,11 +45,12 @@ public final class PaneModel {
         return v
     }()
 
-    /// The raw content NSView (terminal or browser).
+    /// The raw content NSView (terminal / browser / list).
     public var rawContentView: NSView {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv
+        case .list(let lv): return lv
         }
     }
 
@@ -61,6 +66,12 @@ public final class PaneModel {
         return nil
     }
 
+    /// Convenience: returns ListPaneView if this is a list pane.
+    public var listView: ListPaneView? {
+        if case .list(let lv) = content { return lv }
+        return nil
+    }
+
     /// Whether this is a blank browser pane (no URL loaded yet).
     public var isBlankBrowser: Bool {
         address == .blankBrowser
@@ -71,6 +82,7 @@ public final class PaneModel {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv.webView
+        case .list(let lv): return lv.focusTarget
         }
     }
 
@@ -79,7 +91,16 @@ public final class PaneModel {
     private var contentTopToContainerConstraint: NSLayoutConstraint?
 
     /// Create a pane from a PaneAddress. Routes to the appropriate content type.
-    public init(address: PaneAddress, ghosttyApp: GhosttyApp?) {
+    ///
+    /// Dependencies (`ghosttyApp`, `browsingHistory`, `bookmarks`) are
+    /// optional so tests and non-relevant call sites can omit them; each
+    /// kind asserts the deps it actually needs.
+    public init(
+        address: PaneAddress,
+        ghosttyApp: GhosttyApp?,
+        browsingHistory: BrowsingHistory? = nil,
+        bookmarks: Bookmarks? = nil
+    ) {
         self.address = address
         switch address.kind {
         case .terminal:
@@ -90,6 +111,20 @@ public final class PaneModel {
         case .browser:
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
+        case .history:
+            guard let browsingHistory else {
+                fatalError("BrowsingHistory required for history pane")
+            }
+            let lv = ListPaneView(dataSource: HistoryDataSource(history: browsingHistory))
+            self.content = .list(lv)
+            self.title = "History"
+        case .bookmarks:
+            guard let bookmarks else {
+                fatalError("Bookmarks required for bookmarks pane")
+            }
+            let lv = ListPaneView(dataSource: BookmarksDataSource(bookmarks: bookmarks))
+            self.content = .list(lv)
+            self.title = "Bookmarks"
         case .settings:
             assertionFailure("Settings pane not yet implemented")
             let bv = Self.makeBrowserView()
