@@ -98,6 +98,65 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
         kind != other.kind
     }
 
+    /// Parse user input as a direct-navigable address.
+    ///
+    /// Accepts two shapes:
+    /// 1. Explicit-scheme inputs (`https://…`, `http://…`, `e05://…`,
+    ///    `about:…`) that resolve to a known `Kind`.
+    /// 2. Bare hostname inputs that *look* like a domain or IP —
+    ///    Brave/Chromium behavior, where `httpbin.org` or
+    ///    `192.168.1.1:8080` navigates directly while `hello world`
+    ///    falls through to search. Heuristic: no whitespace, the
+    ///    host portion contains a dot, and the last dot-separated
+    ///    label is either 2+ alphabetic characters (TLD-ish) or
+    ///    all digits (IPv4 octet).
+    ///
+    /// This matches Chromium's well-known "omnibox treats
+    /// `README.md` as `https://README.md/`" quirk: `.md` is a real
+    /// ccTLD and the heuristic can't distinguish filename intent
+    /// from hostname intent. The URL bar mitigates this by showing
+    /// the search suggestion alongside the Open URL row, so the
+    /// user can still pick search explicitly.
+    public static func asDirectNavigation(_ input: String) -> PaneAddress? {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
+
+        // Explicit-scheme path
+        if trimmed.contains("://") || trimmed.hasPrefix("about:") {
+            guard let addr = fromUserInput(trimmed), addr.kind != .unknown else {
+                return nil
+            }
+            return addr
+        }
+
+        // Bare hostname path — must plausibly be a domain or IP.
+        guard looksLikeHostname(trimmed) else { return nil }
+        return fromUserInput(trimmed)
+    }
+
+    /// Heuristic: does `input` look like a bare hostname (optionally
+    /// with port/path/query)? Called only from `asDirectNavigation`.
+    /// Assumes `input` is already trimmed and whitespace-free.
+    private static func looksLikeHostname(_ input: String) -> Bool {
+        // Strip path/query/fragment to isolate the host[:port] portion.
+        let hostAndPort = input.prefix { $0 != "/" && $0 != "?" && $0 != "#" }
+        // Strip port.
+        let host = hostAndPort.split(separator: ":", maxSplits: 1).first.map(String.init)
+            ?? String(hostAndPort)
+
+        guard host.contains(".") else { return false }
+        // Reject leading/trailing dots (`example.`, `.com`) — those
+        // are typographically more like a sentence fragment.
+        guard !host.hasPrefix("."), !host.hasSuffix(".") else { return false }
+
+        let labels = host.split(separator: ".")
+        guard let last = labels.last else { return false }
+        let isTLDish = last.count >= 2 && last.allSatisfy(\.isLetter)
+        let isIPv4Octet = !last.isEmpty && last.allSatisfy(\.isNumber)
+        return isTLDish || isIPv4Octet
+    }
+
     // MARK: - Search
 
     /// Default search engine URL template. `%s` is replaced with the percent-encoded query.

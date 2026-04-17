@@ -33,6 +33,19 @@ extension PaneContainerViewController {
 
         var results = Suggestion.rank(query: query, candidates: candidates)
 
+        // Brave-style: when the input itself is a direct-navigable URL
+        // (explicit scheme https/http/e05/about, or a bare host/IP
+        // that passes PaneAddress.looksLikeHostname), surface an
+        // "Open URL" row at the very top. Auto-selecting index 0 then
+        // makes Enter open the typed URL instead of deferring to the
+        // DuckDuckGo search fallback below. Any existing row with the
+        // same URL is removed first so the entry doesn't appear twice
+        // when the typed URL is also present in history/bookmarks.
+        if let direct = directOpenSuggestion(query: query) {
+            results.removeAll { $0.url == direct.url }
+            results.insert(direct, at: 0)
+        }
+
         // Insert a search-engine entry so the user can always search even
         // when history/bookmarks match (Brave-style). Placed after the top
         // few strong matches but before weaker tail results.
@@ -46,7 +59,42 @@ extension PaneContainerViewController {
             results.insert(searchEntry, at: insertAt)
         }
 
+        // Cap total output to the dropdown's visible-row budget.
+        // Suggestion.rank already applies its own cap, but the direct
+        // and search insertions push the count past it so we re-trim
+        // here to keep the list scroll-free.
+        if results.count > Self.maxSuggestionRows {
+            results = Array(results.prefix(Self.maxSuggestionRows))
+        }
+
         return results
+    }
+
+    /// Upper bound on the number of rows shown in the URL bar dropdown.
+    /// Kept in sync with `SuggestionListView.maxVisibleRows` so the list
+    /// never scrolls.
+    static let maxSuggestionRows = 8
+
+    /// Build the optional "Open URL" suggestion shown at the top of the
+    /// dropdown when the user typed a direct-navigable URL.
+    ///
+    /// Direct-navigable covers both explicit-scheme inputs
+    /// (`https://…`, `http://…`, `e05://…`, `about:…`) that resolve to
+    /// a known `PaneAddress.Kind`, and bare hostnames / IPv4 addresses
+    /// that pass `PaneAddress.looksLikeHostname` (2+ alphabetic TLD or
+    /// all-digit last label). See `PaneAddress.asDirectNavigation` for
+    /// the full heuristic and its Chromium `README.md` quirk.
+    ///
+    /// Title is the plain role label "Open URL" so the cell matches
+    /// the rest of the list (primary = what the row represents,
+    /// secondary = URL) instead of embedding the URL twice.
+    func directOpenSuggestion(query: String) -> Suggestion? {
+        guard let addr = PaneAddress.asDirectNavigation(query) else { return nil }
+        return Suggestion(
+            url: addr.url.absoluteString,
+            title: "Open URL",
+            isBookmark: false
+        )
     }
 
     /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
