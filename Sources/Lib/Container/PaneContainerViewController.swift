@@ -103,7 +103,8 @@ public final class PaneContainerViewController: NSViewController {
             address: address,
             ghosttyApp: ghosttyApp,
             browsingHistory: browsingHistory,
-            bookmarks: bookmarks
+            bookmarks: bookmarks,
+            downloadsManager: downloadsManager
         )
     }
 

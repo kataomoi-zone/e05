@@ -106,6 +106,13 @@ extension PaneContainerViewController {
             }
         }
 
+        if let dv = pane.downloadsView {
+            dv.onFocusChanged = { [weak self, weak pane] in
+                guard let self, let pane else { return }
+                self.handleFocusChange(from: pane)
+            }
+        }
+
         if let bv = pane.browserView {
             bv.onTitleChange = { [weak self, weak pane] title in
                 pane?.title = title

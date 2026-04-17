@@ -6,6 +6,7 @@ import Foundation
 /// - `e05://terminal` — terminal pane
 /// - `e05://history` — browsing history list pane
 /// - `e05://bookmarks` — bookmarks list pane
+/// - `e05://downloads` — download manager pane
 /// - `e05://settings` — settings pane (future)
 /// - `https://...`, `http://...` — browser pane
 public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
@@ -22,6 +23,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
             case "terminal": return .terminal
             case "history": return .history
             case "bookmarks": return .bookmarks
+            case "downloads": return .downloads
             case "settings": return .settings
             default: return .unknown
             }
@@ -39,6 +41,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
         case browser
         case history
         case bookmarks
+        case downloads
         case settings
         case unknown
     }
@@ -61,6 +64,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
     public static let history = PaneAddress(URL(string: "\(internalScheme)://history")!)
     public static let bookmarks = PaneAddress(URL(string: "\(internalScheme)://bookmarks")!)
+    public static let downloads = PaneAddress(URL(string: "\(internalScheme)://downloads")!)
     public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
     /// Blank browser address (no page loaded).
     public static let blankBrowser = PaneAddress(URL(string: "about:blank")!)

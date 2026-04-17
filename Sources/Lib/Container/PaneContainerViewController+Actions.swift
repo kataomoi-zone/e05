@@ -163,6 +163,11 @@ extension PaneContainerViewController {
                 handler: { [weak self] in self?.addColumn(address: .bookmarks) }
             ),
             Action(
+                id: "open_downloads",
+                title: "Open Downloads",
+                handler: { [weak self] in self?.addColumn(address: .downloads) }
+            ),
+            Action(
                 id: "command_palette",
                 title: "Command Palette",
                 keyEquivalent: "p",

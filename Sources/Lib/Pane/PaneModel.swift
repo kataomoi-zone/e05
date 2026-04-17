@@ -10,10 +10,13 @@ public enum PaneWidthPreset: Equatable {
 public enum PaneContent {
     case terminal(GhosttyTerminalView)
     case browser(BrowserPaneView)
-    /// Generic list pane (history, bookmarks, future downloads).
-    /// The concrete data is supplied by a `ListPaneDataSource` held by
-    /// the `ListPaneView` itself.
+    /// Generic list pane (history, bookmarks). The concrete data is
+    /// supplied by a `ListPaneDataSource` held by `ListPaneView`.
     case list(ListPaneView)
+    /// Download manager pane. Dedicated view because downloads carry
+    /// live state (progress, cancellable sessions) that don't fit
+    /// the static-list model.
+    case downloads(DownloadsPaneView)
 }
 
 /// A single pane within a column — either a terminal or a browser.
@@ -45,12 +48,13 @@ public final class PaneModel {
         return v
     }()
 
-    /// The raw content NSView (terminal / browser / list).
+    /// The raw content NSView (terminal / browser / list / downloads).
     public var rawContentView: NSView {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv
         case .list(let lv): return lv
+        case .downloads(let dv): return dv
         }
     }
 
@@ -72,6 +76,12 @@ public final class PaneModel {
         return nil
     }
 
+    /// Convenience: returns DownloadsPaneView if this is a downloads pane.
+    public var downloadsView: DownloadsPaneView? {
+        if case .downloads(let dv) = content { return dv }
+        return nil
+    }
+
     /// Whether this is a blank browser pane (no URL loaded yet).
     public var isBlankBrowser: Bool {
         address == .blankBrowser
@@ -83,6 +93,7 @@ public final class PaneModel {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv.webView
         case .list(let lv): return lv.focusTarget
+        case .downloads(let dv): return dv.focusTarget
         }
     }
 
@@ -99,7 +110,8 @@ public final class PaneModel {
         address: PaneAddress,
         ghosttyApp: GhosttyApp?,
         browsingHistory: BrowsingHistory? = nil,
-        bookmarks: Bookmarks? = nil
+        bookmarks: Bookmarks? = nil,
+        downloadsManager: DownloadsManager? = nil
     ) {
         self.address = address
         switch address.kind {
@@ -125,6 +137,13 @@ public final class PaneModel {
             let lv = ListPaneView(dataSource: BookmarksDataSource(bookmarks: bookmarks))
             self.content = .list(lv)
             self.title = "Bookmarks"
+        case .downloads:
+            guard let downloadsManager else {
+                fatalError("DownloadsManager required for downloads pane")
+            }
+            let dv = DownloadsPaneView(manager: downloadsManager)
+            self.content = .downloads(dv)
+            self.title = "Downloads"
         case .settings:
             assertionFailure("Settings pane not yet implemented")
             let bv = Self.makeBrowserView()

@@ -26,10 +26,17 @@ struct PaneAddressTests {
         #expect(PaneAddress.bookmarks.description == "e05://bookmarks")
     }
 
-    @Test("fromUserInput resolves e05://history and e05://bookmarks")
+    @Test("downloads address resolves to downloads kind")
+    func downloadsKind() {
+        #expect(PaneAddress.downloads.kind == .downloads)
+        #expect(PaneAddress.downloads.description == "e05://downloads")
+    }
+
+    @Test("fromUserInput resolves e05 special panes")
     func fromUserInputSpecialPanes() {
         #expect(PaneAddress.fromUserInput("e05://history")?.kind == .history)
         #expect(PaneAddress.fromUserInput("e05://bookmarks")?.kind == .bookmarks)
+        #expect(PaneAddress.fromUserInput("e05://downloads")?.kind == .downloads)
     }
 
     @Test("https URL resolves to browser kind")
