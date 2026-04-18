@@ -10,6 +10,7 @@ import AppKit
 @MainActor
 public final class DownloadsPaneView: NSView {
     private let manager: DownloadsManager
+    private var listenerToken: DownloadsListenerToken?
     private let scrollView = NSScrollView()
     private let tableView = FocusReportingTableView()
     private let headerLabel = NSTextField(labelWithString: "Downloads")
@@ -28,16 +29,18 @@ public final class DownloadsPaneView: NSView {
         super.init(frame: .zero)
         setup()
         refresh()
-        manager.onUpdate = { [weak self] in self?.refresh() }
+        listenerToken = manager.addListener { [weak self] in self?.refresh() }
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
-    // NOTE: No deinit cleanup for `manager.onUpdate`. The callback
-    // captures `[weak self]`, so after deallocation the closure
-    // becomes a no-op. Clearing the callback from a nonisolated
-    // deinit would cross the MainActor boundary anyway.
+    // NOTE: No deinit cleanup for the listener registration. The closure
+    // captures `[weak self]`, so post-dealloc invocations are no-ops.
+    // Removing the registration from a nonisolated deinit would require
+    // hopping to the MainActor, and this view is scheduled for removal
+    // in Phase 8-2 stage 3-D anyway (functionality moves into the
+    // sidebar).
 
     // MARK: - Setup
 

@@ -55,9 +55,18 @@ public final class Download {
     }
 }
 
+/// Opaque handle returned by `DownloadsManager.addListener(_:)`. Pass
+/// it back to `removeListener(_:)` to unregister a callback.
+public final class DownloadsListenerToken {
+    fileprivate let id = UUID()
+    fileprivate init() {}
+}
+
 /// Coordinates active `WKDownload` sessions with the persistent
-/// `DownloadsStore`. Fires `onUpdate` after every mutation so the UI
-/// (future `DownloadsPaneView`) can refresh without polling.
+/// `DownloadsStore`. Fires registered listeners after every mutation so
+/// observers (downloads pane, sidebar badge, future status bar) can
+/// refresh without polling. Listeners are multiplexed via
+/// `addListener`/`removeListener` — there is no single-slot property.
 @MainActor
 public final class DownloadsManager: NSObject, WKDownloadDelegate {
     private let store: DownloadsStore
@@ -67,6 +76,9 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     private var activeByWKDownload: [ObjectIdentifier: Int64] = [:]
     /// KVO observations per active download, keyed by id.
     private var progressObservations: [Int64: NSKeyValueObservation] = [:]
+    /// Registered mutation observers, keyed by token id. Insertion order
+    /// isn't guaranteed on dispatch since listeners should be independent.
+    private var listeners: [UUID: () -> Void] = [:]
 
     /// Headless WKWebView used solely as the entry point for
     /// `resumeDownload(fromResumeData:)`. It's never attached to a
@@ -86,8 +98,31 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         return WKWebView(frame: .zero, configuration: config)
     }()
 
-    /// Called after any mutation. Listeners re-read via `all()`.
-    public var onUpdate: (() -> Void)?
+    /// Register a mutation observer. Listeners re-read via `all()` or
+    /// `activeCount`. Returns a token; pass it to `removeListener(_:)`
+    /// to unregister. Listeners are invoked synchronously on the main
+    /// actor right after each mutation.
+    @discardableResult
+    public func addListener(_ block: @escaping () -> Void) -> DownloadsListenerToken {
+        let token = DownloadsListenerToken()
+        listeners[token.id] = block
+        return token
+    }
+
+    /// Unregister a previously added listener. No-op if the token is
+    /// unknown (already removed or from a different manager).
+    public func removeListener(_ token: DownloadsListenerToken) {
+        listeners.removeValue(forKey: token.id)
+    }
+
+    private func fireListeners() {
+        // Snapshot the values before iterating. A listener that
+        // registers or unregisters from within its callback would
+        // otherwise mutate the dictionary mid-iteration, which Swift's
+        // Dictionary traps on. The snapshot cost is negligible for
+        // the listener counts we expect (≤ single digits).
+        for block in Array(listeners.values) { block() }
+    }
 
     public init(store: DownloadsStore) {
         self.store = store
@@ -199,7 +234,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         )
         downloads.insert(entry, at: 0)
         activeByWKDownload[ObjectIdentifier(wkDownload)] = id
-        onUpdate?()
+        fireListeners()
     }
 
     // MARK: - WKDownloadDelegate
@@ -229,7 +264,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
                     if entry.totalBytes == 0 {
                         entry.totalBytes = Int64(progress.totalUnitCount)
                     }
-                    self.onUpdate?()
+                    self.fireListeners()
                 }
             }
             progressObservations[id] = observation
@@ -269,12 +304,12 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
                 guard let self, let entry else { return }
                 entry.bytesWritten = Int64(progress.completedUnitCount)
                 entry.totalBytes = Int64(progress.totalUnitCount)
-                self.onUpdate?()
+                self.fireListeners()
             }
         }
         progressObservations[id] = observation
 
-        onUpdate?()
+        fireListeners()
         return destinationURL
     }
 
@@ -309,7 +344,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
             id: id, state: entry.state.rawValue,
             completedAt: entry.completedAt, errorMessage: nil
         )
-        onUpdate?()
+        fireListeners()
     }
 
     public func download(
@@ -336,7 +371,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
             id: id, state: entry.state.rawValue,
             completedAt: entry.completedAt, errorMessage: entry.errorMessage
         )
-        onUpdate?()
+        fireListeners()
     }
 
     // MARK: - User actions
@@ -399,7 +434,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
                     completedAt: entry.completedAt, errorMessage: entry.errorMessage
                 )
             }
-            onUpdate?()
+            fireListeners()
         }
     }
 
@@ -407,10 +442,10 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     ///
     /// Flips `state` to `.downloading` synchronously *before* the
     /// async `resumeDownload` call so a second invocation (rapid
-    /// Resume clicks, external onUpdate handler calling back into
-    /// resume) finds the entry no longer `.paused` and bails. Without
-    /// the guard we'd race two `WKDownload` instances against the
-    /// same partial file.
+    /// Resume clicks, external listener calling back into resume)
+    /// finds the entry no longer `.paused` and bails. Without the
+    /// guard we'd race two `WKDownload` instances against the same
+    /// partial file.
     public func resume(id: Int64) {
         guard let entry = downloads.first(where: { $0.id == id }),
               entry.state == .paused else { return }
@@ -426,7 +461,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
                 id: id, state: entry.state.rawValue,
                 completedAt: entry.completedAt, errorMessage: entry.errorMessage
             )
-            onUpdate?()
+            fireListeners()
             return
         }
 
@@ -437,7 +472,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
             id: id, state: entry.state.rawValue,
             completedAt: nil, errorMessage: nil
         )
-        onUpdate?()
+        fireListeners()
 
         Task { @MainActor in
             let newDownload = await resumeWebView.resumeDownload(fromResumeData: data)
@@ -480,7 +515,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         }
         downloads.removeAll { $0.id == id }
         store.delete(id: id)
-        onUpdate?()
+        fireListeners()
     }
 
     /// Clear all non-active entries.
@@ -491,7 +526,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         let retainedStates: Set<DownloadState> = [.downloading, .paused]
         downloads.removeAll { !retainedStates.contains($0.state) }
         store.deleteCompleted()
-        onUpdate?()
+        fireListeners()
     }
 
     // MARK: - Helpers
