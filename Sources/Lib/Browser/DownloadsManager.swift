@@ -168,6 +168,14 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     /// Snapshot of the current download list, ordered newest first.
     public func all() -> [Download] { downloads }
 
+    /// Count of downloads currently in-flight or paused. Iterates `downloads`
+    /// without allocating an intermediate array (unlike `all().filter { ... }.count`,
+    /// which materializes a temporary Array). O(n) in download count; called
+    /// on demand by observers like the sidebar badge.
+    public var activeCount: Int {
+        downloads.lazy.filter { $0.state == .downloading || $0.state == .paused }.count
+    }
+
     // MARK: - Intake
 
     /// Adopt a `WKDownload` that just emerged from a navigation

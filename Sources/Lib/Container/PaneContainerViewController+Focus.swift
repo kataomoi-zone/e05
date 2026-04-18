@@ -401,19 +401,67 @@ extension PaneContainerViewController {
 
     // MARK: - Event Handlers
 
-    /// Called when a GhosttyTerminalView gains focus via click.
+    /// Called when a pane's content view (terminal/browser/list/downloads)
+    /// gains focus — typically via click, but can also fire from programmatic
+    /// `makeFirstResponder` (e.g. sidebar-driven focus). Delegates to
+    /// `focusPane(id:)` so cross-workspace focus changes (clicking a pane
+    /// after AppKit restores first responder on a non-current workspace)
+    /// resolve correctly. The previous current-WS-only scan would silently
+    /// drop focus updates for panes parked in non-current workspaces.
     func handleFocusChange(from pane: PaneModel) {
         NSLog("[e05/ws] handleFocusChange paneId=%@ addr=%@",
               String(describing: pane.id), pane.address.description)
-        for (colIdx, column) in columns.enumerated() {
-            if let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) {
-                guard colIdx != focusedColumnIndex || paneIdx != column.focusedPaneIndex else {
-                    NSLog("[e05/ws] handleFocusChange guard: already focused")
+        // O(1) short-circuit: already the focused pane → nothing to do.
+        // Any other case falls through to focusPane, which handles both
+        // same-WS and cross-WS cases (and its own reentrancy guard).
+        if focusedPane?.id == pane.id {
+            NSLog("[e05/ws] handleFocusChange guard: already focused")
+            return
+        }
+        focusPane(id: pane.id)
+    }
+
+    /// Focus a pane by id across all workspaces.
+    ///
+    /// - Same workspace: synchronous `setFocus`.
+    /// - Different workspace: pre-seeds the target workspace's focused
+    ///   indices and triggers `switchWorkspace(to:)`. The real focus
+    ///   application happens ~0.25s later inside animateSlide's completion
+    ///   handler (via `restoreFocusInCurrentWorkspace`). Pre-seeding is
+    ///   essential — without it, switchWorkspace would restore the target
+    ///   workspace's *previous* focused pane instead of the requested one.
+    ///
+    /// Avoids a double setFocus (visible border flicker + scroll animation
+    /// thrash) that would happen if this method also applied setFocus
+    /// synchronously in the cross-WS branch.
+    ///
+    /// Callers that need post-focus state (e.g. the sidebar) should observe
+    /// via `onFocusChanged`, not read `focusedPane` immediately after.
+    ///
+    /// No-op while a workspace switch animation is in flight — protects
+    /// against reentrancy (e.g. sidebar click-spam during a slide).
+    /// Silently returns if no pane matches.
+    public func focusPane(id: ULID) {
+        guard !isAnimatingWorkspaceSwitch else {
+            NSLog("[e05/ws] focusPane skipped: workspace switch animation in flight")
+            return
+        }
+        for (wsIdx, ws) in workspaces.enumerated() {
+            for (colIdx, col) in ws.columns.enumerated() {
+                if let paneIdx = col.panes.firstIndex(where: { $0.id == id }) {
+                    if wsIdx != focusedWorkspaceIndex {
+                        // Pre-seed indices so animateSlide's completion
+                        // (restoreFocusInCurrentWorkspace → setFocus) lands
+                        // on the right pane. switchWorkspace itself drives
+                        // the single setFocus at animation end.
+                        ws.focusedColumnIndex = colIdx
+                        col.focusedPaneIndex = paneIdx
+                        switchWorkspace(to: wsIdx)
+                    } else {
+                        setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+                    }
                     return
                 }
-                NSLog("[e05/ws] handleFocusChange → setFocus(col=%d, pane=%d)", colIdx, paneIdx)
-                setFocus(columnIndex: colIdx, paneIndex: paneIdx)
-                return
             }
         }
     }

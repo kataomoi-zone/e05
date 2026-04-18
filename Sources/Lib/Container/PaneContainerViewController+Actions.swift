@@ -225,34 +225,33 @@ extension PaneContainerViewController {
             ))
         }
 
-        // Dynamic actions: one "Focus: <title>" entry per pane. Generated
-        // from the current pane layout so the command palette can jump to
-        // any pane by fuzzy-searching its title.
-        for (colIdx, column) in columns.enumerated() {
-            for (paneIdx, pane) in column.panes.enumerated() {
-                let label = pane.title.isEmpty
-                    ? "Pane \(colIdx + 1)-\(paneIdx + 1)"
-                    : pane.title
-                // Capture pane.id instead of positional indices. The handler
-                // resolves the current position at execution time so that
-                // pane close/reorder between palette show and selection
-                // doesn't silently focus the wrong pane.
-                let targetId = pane.id
-                result.append(Action(
-                    id: "focus_pane_\(targetId)",
-                    title: "Focus: \(label)",
-                    handler: { [weak self] in
-                        guard let self,
-                              let colIdx = self.columns.firstIndex(where: {
-                                  $0.panes.contains(where: { $0.id == targetId })
-                              }),
-                              let paneIdx = self.columns[colIdx].panes.firstIndex(where: {
-                                  $0.id == targetId
-                              })
-                        else { return }
-                        self.setFocus(columnIndex: colIdx, paneIndex: paneIdx)
-                    }
-                ))
+        // Dynamic actions: one "Focus: <title>" entry per pane across ALL
+        // workspaces. `focusPane(id:)` switches workspace as needed, so the
+        // command palette can jump anywhere by fuzzy-searching title. Labels
+        // are prefixed with the workspace number for non-current workspaces
+        // so users can disambiguate identical titles across workspaces.
+        for (wsIdx, ws) in workspaces.enumerated() {
+            for (colIdx, column) in ws.columns.enumerated() {
+                for (paneIdx, pane) in column.panes.enumerated() {
+                    let base = pane.title.isEmpty
+                        ? "Pane \(colIdx + 1)-\(paneIdx + 1)"
+                        : pane.title
+                    let label = wsIdx == focusedWorkspaceIndex
+                        ? base
+                        : "WS \(wsIdx + 1) · \(base)"
+                    // Capture pane.id instead of positional indices. The handler
+                    // resolves the current position at execution time so that
+                    // pane close/reorder between palette show and selection
+                    // doesn't silently focus the wrong pane.
+                    let targetId = pane.id
+                    result.append(Action(
+                        id: "focus_pane_\(targetId)",
+                        title: "Focus: \(label)",
+                        handler: { [weak self] in
+                            self?.focusPane(id: targetId)
+                        }
+                    ))
+                }
             }
         }
 
