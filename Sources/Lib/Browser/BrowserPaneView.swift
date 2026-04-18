@@ -95,9 +95,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         webView.translatesAutoresizingMaskIntoConstraints = true
         webView.autoresizingMask = [.width, .height]
         webView.frame = browserHostView.bounds
-        if #available(macOS 12.0, *) {
-            webView.underPageBackgroundColor = NSColor(white: 0.15, alpha: 1.0)
-        }
+        webView.underPageBackgroundColor = NSColor(white: 0.15, alpha: 1.0)
         webView.loadHTMLString(
             "<html><body style='margin:0;background:#262626;'></body></html>",
             baseURL: nil
