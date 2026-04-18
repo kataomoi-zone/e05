@@ -14,14 +14,22 @@ import AppKit
 ///
 /// Stage 3-A introduced the mode area: `worklane` is shown for
 /// `SidebarMode.tabs`, `placeholder` for the other three modes. Both
-/// share the same rect and are toggled via `isHidden`. Stages 3-B /
-/// 3-C / 3-D will replace the placeholder with real list views.
+/// share the same rect and are toggled via `isHidden`. Stage 3-B adds
+/// an optional `bookmarksView` slot in the same rect for
+/// `SidebarMode.bookmarks`; stages 3-C / 3-D will add analogous slots
+/// for history and downloads.
 @MainActor
 final class SidebarOverlayView: NSView {
     let header = SidebarHeaderView()
     let worklane = WorklaneSectionView()
     let placeholder = PlaceholderContentView()
     let places = PlacesSectionView()
+
+    /// Current bookmarks-mode view, installed by the view controller
+    /// once the container reference (which owns the `Bookmarks` store)
+    /// is available. Nil until then; `applyMode(.bookmarks)` tolerates
+    /// the absence by falling through to the placeholder.
+    private(set) var bookmarksView: NSView?
 
     private let glass = NSGlassEffectView()
     private let content = NSView()
@@ -87,5 +95,23 @@ final class SidebarOverlayView: NSView {
         // Default state: Tabs mode visible, placeholder hidden. The view
         // controller re-synchronises this on its first `applyMode` call.
         placeholder.isHidden = true
+    }
+
+    /// Install the bookmarks-mode view into the shared mode area. Called
+    /// by the view controller after `container` is available (the view
+    /// needs the `Bookmarks` store from the container to subscribe for
+    /// mutations). Starts hidden; `applyMode(.bookmarks)` toggles it.
+    func setBookmarksView(_ view: NSView) {
+        bookmarksView?.removeFromSuperview()
+        bookmarksView = view
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
+            view.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
+        ])
     }
 }

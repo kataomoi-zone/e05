@@ -27,9 +27,12 @@ final class SidebarViewController: NSViewController {
         applyMode(currentMode)
     }
 
-    /// Wire up container-dependent state. Called by `installSidebar()`
-    /// once `container` has been set. Safe to call repeatedly; the
-    /// listener slot is replaced on each call.
+    /// Wire up container-dependent state. Called exactly once by
+    /// `installSidebar()` after `container` has been set. The Downloads
+    /// listener registration is guarded against double-install for
+    /// defensive hygiene, but the bookmarks view is unconditionally
+    /// replaced — earlier bookmarks views' listeners would leak if this
+    /// ever gets called more than once.
     func attachContainer() {
         guard let container else { return }
         if let previous = downloadsListenerToken {
@@ -39,6 +42,32 @@ final class SidebarViewController: NSViewController {
             self?.refreshDownloadsBadge()
         }
         refreshDownloadsBadge()
+
+        let bookmarksView = BookmarksSidebarView(bookmarks: container.bookmarks)
+        bookmarksView.onOpen = { [weak container] urlString in
+            guard let container, let url = URL(string: urlString) else { return }
+            // UX policy: always open in a new browser column in the
+            // current workspace.
+            container.addColumn(address: PaneAddress(url))
+        }
+        bookmarksView.onOpenInNewWorkspace = { [weak container] urlString in
+            guard let container, let url = URL(string: urlString),
+                  container.canCreateWorkspace else { return }
+            // UX policy: always open in a newly created workspace.
+            // `createWorkspace()` auto-adds a terminal column; the
+            // bookmark's browser column lands alongside it. Replacing
+            // the auto-terminal is deferred until we see the ergonomics
+            // in practice. Guarded on `canCreateWorkspace` so that at
+            // the workspace cap we no-op instead of falling through to
+            // `addColumn` which would silently land the bookmark in
+            // the current workspace.
+            container.createWorkspace()
+            container.addColumn(address: PaneAddress(url))
+        }
+        overlay.setBookmarksView(bookmarksView)
+        // Re-apply the current mode so the newly installed bookmarks
+        // view's visibility matches the state machine.
+        applyMode(currentMode)
     }
 
     // NOTE: No deinit cleanup for the Downloads listener. The closure
@@ -86,10 +115,14 @@ final class SidebarViewController: NSViewController {
     private func applyMode(_ mode: SidebarMode) {
         overlay.places.setCurrentMode(mode)
         overlay.worklane.isHidden = mode != .tabs
-        overlay.placeholder.isHidden = mode == .tabs
-        // Always assign — clearing on `.tabs` too — so the hidden
-        // placeholder never carries a stale string from the previously
-        // active mode.
+        overlay.bookmarksView?.isHidden = mode != .bookmarks
+        // Placeholder covers the modes that don't have a real content
+        // view yet (history, downloads). Tabs and bookmarks always
+        // have a real view by the time a user can select them.
+        overlay.placeholder.isHidden = mode == .tabs || mode == .bookmarks
+        // Always assign — clearing on modes with a real view — so the
+        // hidden placeholder never carries a stale string from the
+        // previously active mode.
         overlay.placeholder.message = mode.placeholderMessage
     }
 

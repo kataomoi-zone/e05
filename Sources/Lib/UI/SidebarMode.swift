@@ -34,16 +34,16 @@ enum SidebarMode: CaseIterable {
         }
     }
 
-    /// Text shown in the placeholder view while this mode's real list
-    /// view is not yet wired. Empty for `.tabs` because that mode
-    /// renders the worklane instead of the placeholder; the string is
-    /// still assigned unconditionally so that the placeholder never
-    /// carries stale text from a previous mode (which accessibility
-    /// tooling or future fade animations could expose).
+    /// Text shown in the placeholder view for modes that don't have a
+    /// real content view wired yet. Empty for modes backed by a real
+    /// view (`.tabs` → worklane, `.bookmarks` → bookmarks list) since
+    /// the placeholder is hidden in those cases anyway; the string is
+    /// still assigned unconditionally so the placeholder never carries
+    /// stale text from a previous mode (which accessibility tooling or
+    /// future fade animations could expose).
     var placeholderMessage: String {
         switch self {
-        case .tabs: return ""
-        case .bookmarks: return "Bookmarks (coming soon)"
+        case .tabs, .bookmarks: return ""
         case .history: return "History (coming soon)"
         case .downloads: return "Downloads (coming soon)"
         }
