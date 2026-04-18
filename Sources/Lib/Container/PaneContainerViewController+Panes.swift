@@ -77,6 +77,13 @@ extension PaneContainerViewController {
 
             tv.onClose = { [weak self, weak pane] in
                 guard let self, let pane else { return }
+                // TODO(Phase 8-1f): scans the current workspace only.
+                // `removePane` also assumes current-WS state
+                // (columns[safe:], stackView, closeCurrentWorkspace,
+                // setFocus). A terminal exiting in a non-current workspace
+                // leaves a dead pane until the user switches to that WS
+                // and closes it manually. Full fix requires a
+                // `removePane(in:workspace:)` variant — see commit c90565f.
                 for (colIdx, col) in self.columns.enumerated() {
                     if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
                         self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
