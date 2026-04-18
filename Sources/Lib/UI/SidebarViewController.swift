@@ -65,8 +65,31 @@ final class SidebarViewController: NSViewController {
             container.addColumn(address: PaneAddress(url))
         }
         overlay.setBookmarksView(bookmarksView)
-        // Re-apply the current mode so the newly installed bookmarks
-        // view's visibility matches the state machine.
+
+        let historyView = HistorySidebarView(history: container.browsingHistory)
+        historyView.onOpen = { [weak container] urlString in
+            guard let container, let url = URL(string: urlString) else { return }
+            // UX policy: open history entries in a new browser column
+            // of the current workspace, matching bookmarks. A future
+            // variant could instead navigate the focused column to
+            // preserve the browser-history-as-session-recovery metaphor,
+            // but that would conflict with users who use history as a
+            // scratchpad for side-by-side comparison.
+            container.addColumn(address: PaneAddress(url))
+        }
+        historyView.onOpenInNewWorkspace = { [weak container] urlString in
+            guard let container, let url = URL(string: urlString),
+                  container.canCreateWorkspace else { return }
+            // UX policy: open in a newly created workspace. Same guard
+            // story as bookmarks — at the workspace cap we no-op to
+            // avoid accidentally polluting the current workspace.
+            container.createWorkspace()
+            container.addColumn(address: PaneAddress(url))
+        }
+        overlay.setHistoryView(historyView)
+
+        // Re-apply the current mode so the newly installed mode views'
+        // visibility matches the state machine.
         applyMode(currentMode)
     }
 
@@ -116,10 +139,11 @@ final class SidebarViewController: NSViewController {
         overlay.places.setCurrentMode(mode)
         overlay.worklane.isHidden = mode != .tabs
         overlay.bookmarksView?.isHidden = mode != .bookmarks
+        overlay.historyView?.isHidden = mode != .history
         // Placeholder covers the modes that don't have a real content
-        // view yet (history, downloads). Tabs and bookmarks always
+        // view yet (downloads). Tabs, bookmarks, and history always
         // have a real view by the time a user can select them.
-        overlay.placeholder.isHidden = mode == .tabs || mode == .bookmarks
+        overlay.placeholder.isHidden = mode == .tabs || mode == .bookmarks || mode == .history
         // Always assign — clearing on modes with a real view — so the
         // hidden placeholder never carries a stale string from the
         // previously active mode.

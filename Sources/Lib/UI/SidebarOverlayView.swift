@@ -16,8 +16,9 @@ import AppKit
 /// `SidebarMode.tabs`, `placeholder` for the other three modes. Both
 /// share the same rect and are toggled via `isHidden`. Stage 3-B adds
 /// an optional `bookmarksView` slot in the same rect for
-/// `SidebarMode.bookmarks`; stages 3-C / 3-D will add analogous slots
-/// for history and downloads.
+/// `SidebarMode.bookmarks`, and stage 3-C extends that pattern with a
+/// `historyView` slot for `SidebarMode.history`. Stage 3-D will add
+/// the matching downloads slot.
 @MainActor
 final class SidebarOverlayView: NSView {
     let header = SidebarHeaderView()
@@ -30,6 +31,12 @@ final class SidebarOverlayView: NSView {
     /// is available. Nil until then; `applyMode(.bookmarks)` tolerates
     /// the absence by falling through to the placeholder.
     private(set) var bookmarksView: NSView?
+
+    /// Current history-mode view, installed by the view controller
+    /// once the container reference (which owns the `BrowsingHistory`
+    /// store) is available. Nil until then; `applyMode(.history)`
+    /// tolerates the absence by falling through to the placeholder.
+    private(set) var historyView: NSView?
 
     private let glass = NSGlassEffectView()
     private let content = NSView()
@@ -104,6 +111,23 @@ final class SidebarOverlayView: NSView {
     func setBookmarksView(_ view: NSView) {
         bookmarksView?.removeFromSuperview()
         bookmarksView = view
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
+            view.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
+        ])
+    }
+
+    /// Install the history-mode view into the shared mode area. Mirrors
+    /// `setBookmarksView`: same rect, same hidden-by-default state; the
+    /// view controller flips visibility on mode change.
+    func setHistoryView(_ view: NSView) {
+        historyView?.removeFromSuperview()
+        historyView = view
         view.translatesAutoresizingMaskIntoConstraints = false
         view.isHidden = true
         content.addSubview(view)
