@@ -30,10 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        // Hide traffic lights — e05 manages pane lifecycle via ⌘+W/⌘+Q
-        window.standardWindowButton(.closeButton)?.isHidden = true
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
+        // Traffic lights stay visible and use their OS default position —
+        // the sidebar (stage 1 onward) pins open and renders its header
+        // under the buttons via `titlebarAppearsTransparent`. Stage 4 will
+        // toggle visibility in sync with the sidebar state machine.
         window.isRestorable = false
         window.contentMinSize = NSSize(width: 480, height: 320)
 

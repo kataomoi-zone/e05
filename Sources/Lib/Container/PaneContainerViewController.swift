@@ -15,6 +15,12 @@ public final class PaneContainerViewController: NSViewController {
     var workspaceVCs: [WorkspaceViewController] = []
     var focusedWorkspaceIndex: Int = 0
 
+    /// Sidebar child VC. Set exactly once in `viewDidLoad` via
+    /// `installSidebar()`, then non-nil for the rest of the VC's life.
+    /// The implicitly-unwrapped type encodes that invariant so stage 2+
+    /// state-sync call sites don't need `guard let` boilerplate.
+    var sidebarVC: SidebarViewController!
+
     var currentWorkspace: WorkspaceModel {
         precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
         return workspaces[focusedWorkspaceIndex]
@@ -133,6 +139,11 @@ public final class PaneContainerViewController: NSViewController {
         if columns.isEmpty {
             addColumn()
         }
+        // Install sidebar last so its view sits on top of every workspace
+        // VC that restoreSession / installInitialWorkspaceVC added. Workspace
+        // views already carry a `sidebarWidth` leading inset via
+        // `installWorkspaceView`, so there is no overlap to manage.
+        installSidebar()
     }
 
     /// Seed the container with a `WorkspaceViewController` for the default
@@ -181,7 +192,10 @@ public final class PaneContainerViewController: NSViewController {
         let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
         NSLayoutConstraint.activate([
             top,
-            wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            // Stage 4 will capture this leading constraint (per workspace VC)
+            // to animate sidebar reveal/hide by tweening the constant between
+            // 0 (hidden) and sidebarWidth (pinnedOpen). For now it's fixed.
+            wv.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.sidebarWidth),
             wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             wv.heightAnchor.constraint(equalTo: view.heightAnchor),
         ])
