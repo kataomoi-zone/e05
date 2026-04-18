@@ -4,7 +4,19 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "BrowsingHistory")
 
+/// Opaque handle returned by `BrowsingHistory.addListener(_:)`. Pass it
+/// back to `removeListener(_:)` to unregister a callback.
+public final class BrowsingHistoryListenerToken {
+    fileprivate let id = UUID()
+    fileprivate init() {}
+}
+
 /// Persistent browsing history stored in SQLite (~/.config/e05/history.db).
+///
+/// Mutation observers can register via `addListener(_:)` so UI (the
+/// sidebar history list, future status indicators) refreshes when
+/// recordVisit / updateTitle / delete / deleteAll happens anywhere in
+/// the process without having to poll.
 @MainActor
 public final class BrowsingHistory {
     // nonisolated(unsafe): accessed in deinit which is nonisolated
@@ -12,6 +24,9 @@ public final class BrowsingHistory {
 
     /// In-memory cache to avoid DB query on every recordVisit call.
     private var lastRecordedURL: String?
+
+    /// Registered mutation observers, keyed by token id.
+    private var listeners: [UUID: () -> Void] = [:]
 
     public struct Entry: Equatable {
         public let id: Int64
@@ -53,6 +68,33 @@ public final class BrowsingHistory {
         }
     }
 
+    // MARK: - Observers
+
+    /// Register a mutation observer. Fires after every successful
+    /// recordVisit (dedup skips do not fire), updateTitle, delete, and
+    /// deleteAll. Returns a token; pass it to `removeListener(_:)` to
+    /// unsubscribe. Listeners are invoked synchronously on the main
+    /// actor right after the mutation's SQL statement commits.
+    @discardableResult
+    public func addListener(_ block: @escaping () -> Void) -> BrowsingHistoryListenerToken {
+        let token = BrowsingHistoryListenerToken()
+        listeners[token.id] = block
+        return token
+    }
+
+    /// Unregister a previously added listener. No-op if the token is
+    /// unknown (already removed or from a different manager).
+    public func removeListener(_ token: BrowsingHistoryListenerToken) {
+        listeners.removeValue(forKey: token.id)
+    }
+
+    private func fireListeners() {
+        // Snapshot the values before iterating so a listener that
+        // registers or unregisters from within its callback doesn't
+        // mutate the dictionary mid-iteration.
+        for block in Array(listeners.values) { block() }
+    }
+
     private func createTable() {
         guard let db else { return }
         let sql = """
@@ -92,6 +134,7 @@ public final class BrowsingHistory {
             logger.error("Failed to insert history: \(String(cString: sqlite3_errmsg(db)))")
         } else {
             lastRecordedURL = url
+            fireListeners()
         }
     }
 
@@ -107,6 +150,7 @@ public final class BrowsingHistory {
         _ = title.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
         _ = url.withCString { sqlite3_bind_text(stmt, 2, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_step(stmt)
+        fireListeners()
     }
 
     // MARK: - Read
@@ -155,6 +199,7 @@ public final class BrowsingHistory {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, id)
         sqlite3_step(stmt)
+        fireListeners()
     }
 
     /// Delete all history.
@@ -162,6 +207,7 @@ public final class BrowsingHistory {
         guard let db else { return }
         sqlite3_exec(db, "DELETE FROM history", nil, nil, nil)
         lastRecordedURL = nil
+        fireListeners()
     }
 
     // MARK: - Internal
