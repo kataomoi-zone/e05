@@ -57,7 +57,11 @@ extension PaneContainerViewController {
     /// The two conventions intentionally differ: palette-driven switches
     /// read like spatial navigation, cycle-driven switches read like
     /// sequential navigation. Both are correct for their use case.
-    public func switchWorkspace(to index: Int, slidingUp: Bool? = nil) {
+    public func switchWorkspace(
+        to index: Int,
+        slidingUp: Bool? = nil,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
         NSLog("[e05/ws] switchWorkspace(to:%d) entry: focused=%d, wsCount=%d, targetCol=%d targetPane=%d",
               index, focusedWorkspaceIndex, workspaces.count,
               workspaces[safe: index]?.focusedColumnIndex ?? -1,
@@ -82,6 +86,7 @@ extension PaneContainerViewController {
         restoreScroll(in: currentWorkspace)
         animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp) { [weak self] in
             self?.restoreFocusInCurrentWorkspace()
+            completion?()
         }
     }
 

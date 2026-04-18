@@ -392,10 +392,28 @@ extension PaneContainerViewController {
         let maxScrollX = contentWidth - visibleWidth
         let clampedX = max(0, min(maxScrollX, targetX))
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            scrollView.contentView.animator().bounds.origin.x = clampedX
+        // Defer the animator call so it lands on a fresh run-loop tick.
+        // Mouse-event-driven paths (direct pane click, sidebar row click)
+        // call scrollToColumn from inside `NSView.mouseDown(with:)`; an
+        // NSAnimationContext opened there collapses to an instantaneous
+        // transition because AppKit flushes layout within the same event
+        // dispatch. Deferring to main-async lets the mouse event return
+        // first, then the animator produces a visible ease-out.
+        //
+        // Command-palette path already runs outside mouseDown so the
+        // ~0ms defer is a no-op for it; no regression there.
+        //
+        // Overlapping calls (rapid-fire clicks) are resolved by
+        // CoreAnimation animator reuse — writing the same property from
+        // a new animator cancels the previous one, producing a smooth
+        // re-target instead of a frame jump. No explicit coalescing needed.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                self.scrollView.contentView.animator().bounds.origin.x = clampedX
+            }
         }
     }
 
@@ -454,9 +472,25 @@ extension PaneContainerViewController {
                         // (restoreFocusInCurrentWorkspace → setFocus) lands
                         // on the right pane. switchWorkspace itself drives
                         // the single setFocus at animation end.
+                        //
+                        // restoreFocusInCurrentWorkspace calls setFocus
+                        // with scroll=false so the workspace's saved
+                        // scrollX is preserved on normal Ctrl+Tab. For
+                        // cross-WS pane focus we *do* want to scroll to
+                        // the target column once the slide finishes, so
+                        // kick scrollToColumn from the completion handler.
                         ws.focusedColumnIndex = colIdx
                         col.focusedPaneIndex = paneIdx
-                        switchWorkspace(to: wsIdx)
+                        switchWorkspace(to: wsIdx) { [weak self] in
+                            // Safe to reuse the captured colIdx across the
+                            // ~250ms slide: scrollToColumn guards with
+                            // `columns[safe: colIdx]`, so if the layout
+                            // changed mid-animation (blocked by
+                            // `isAnimatingWorkspaceSwitch` for most
+                            // mutations anyway) the call degrades to a
+                            // no-op instead of a crash.
+                            self?.scrollToColumn(at: colIdx)
+                        }
                     } else {
                         setFocus(columnIndex: colIdx, paneIndex: paneIdx)
                     }
