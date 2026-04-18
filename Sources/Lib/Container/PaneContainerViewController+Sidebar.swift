@@ -27,6 +27,11 @@ extension PaneContainerViewController {
             sv.widthAnchor.constraint(equalToConstant: Self.sidebarWidth),
         ])
         sidebarVC = vc
+        // `attachContainer()` wires the DownloadsManager listener for
+        // the places-section badge. Called after `sidebarVC` is set so
+        // the sidebar reads through the same weak back-reference as
+        // subsequent reloads.
+        sidebarVC.attachContainer()
         sidebarVC.reloadWorklane()
     }
 
