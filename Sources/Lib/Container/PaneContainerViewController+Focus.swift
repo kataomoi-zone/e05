@@ -45,6 +45,12 @@ extension PaneContainerViewController {
         if scroll {
             scrollToColumn(at: columnIndex)
         }
+        // Funnel point for sidebar refresh: every pane/column/workspace
+        // mutation (addColumn, removePane, splitVertical, switchWorkspace,
+        // createWorkspace, closeCurrentWorkspace, movePane, moveColumn*,
+        // movePane*, undoClosePane) eventually calls setFocus, so hooking
+        // here covers them all without sprinkling notify calls.
+        notifySidebarWorklaneDidChange()
     }
 
     public func focusLeft() {

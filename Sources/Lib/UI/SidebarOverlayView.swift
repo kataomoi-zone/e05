@@ -2,8 +2,8 @@ import AppKit
 
 /// Root visual container of the sidebar. Wraps an `NSGlassEffectView`
 /// (macOS 26 Tahoe Liquid Glass) whose `contentView` hosts the stage-1
-/// header. Future stages fill the middle and bottom regions with the
-/// worklane tree and places sections.
+/// header and stage-2 worklane section. Future stages add the places
+/// section below the worklane.
 ///
 /// Subviews must be added to `contentView` — adding siblings outside of
 /// it carries no z-order guarantee (Apple, WWDC25 session 310). When
@@ -14,6 +14,7 @@ import AppKit
 @MainActor
 final class SidebarOverlayView: NSView {
     let header = SidebarHeaderView()
+    let worklane = WorklaneSectionView()
 
     private let glass = NSGlassEffectView()
     private let content = NSView()
@@ -23,7 +24,7 @@ final class SidebarOverlayView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         setupGlass()
-        setupHeader()
+        setupContent()
     }
 
     @available(*, unavailable)
@@ -48,12 +49,20 @@ final class SidebarOverlayView: NSView {
         ])
     }
 
-    private func setupHeader() {
+    private func setupContent() {
         content.addSubview(header)
+        content.addSubview(worklane)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: content.topAnchor),
             header.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+
+            worklane.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            worklane.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
+            worklane.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
+            // worklane grows downward within content; stage 3 will pin its
+            // bottom against the places section.
+            worklane.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -4),
         ])
     }
 }
