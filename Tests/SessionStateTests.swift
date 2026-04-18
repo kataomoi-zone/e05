@@ -110,4 +110,34 @@ struct SessionStateTests {
         let result = try? JSONDecoder().decode(SessionState.self, from: invalidData)
         #expect(result == nil)
     }
+
+    @Test("sidebarPinned round-trips for both true and false")
+    func sidebarPinnedRoundTrip() throws {
+        for pinned in [true, false] {
+            let session = SessionState(
+                workspaces: [
+                    SessionState.WorkspaceState(
+                        columns: [
+                            SessionState.ColumnState(
+                                panes: [SessionState.PaneState(address: "e05://terminal")],
+                                focusedPaneIndex: 0,
+                                width: 640,
+                                heightRatios: []
+                            ),
+                        ],
+                        focusedColumnIndex: 0,
+                        scrollX: 0
+                    ),
+                ],
+                focusedWorkspaceIndex: 0,
+                urlBarVisible: false,
+                sidebarPinned: pinned
+            )
+
+            let data = try JSONEncoder().encode(session)
+            let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+
+            #expect(decoded.sidebarPinned == pinned)
+        }
+    }
 }
