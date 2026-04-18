@@ -186,6 +186,22 @@ extension PaneContainerViewController {
                 title: "Close Current Workspace",
                 handler: { [weak self] in self?.closeCurrentWorkspace() }
             ),
+            Action(
+                id: "workspace_next",
+                title: "Next Workspace",
+                keyEquivalent: "\t",
+                modifierMask: [.control],
+                handler: { [weak self] in self?.switchWorkspaceNext() },
+                validate: { [weak self] in ((self?.workspaces.count ?? 0) > 1, nil) }
+            ),
+            Action(
+                id: "workspace_prev",
+                title: "Previous Workspace",
+                keyEquivalent: "\t",
+                modifierMask: [.control, .shift],
+                handler: { [weak self] in self?.switchWorkspacePrevious() },
+                validate: { [weak self] in ((self?.workspaces.count ?? 0) > 1, nil) }
+            ),
         ]
 
         // Dynamic workspace actions: switch / move-pane, one entry per

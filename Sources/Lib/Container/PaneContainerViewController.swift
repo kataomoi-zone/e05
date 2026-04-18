@@ -54,6 +54,7 @@ public final class PaneContainerViewController: NSViewController {
     }
 
     nonisolated(unsafe) var scrollEventMonitor: Any?
+    nonisolated(unsafe) var workspaceKeyMonitor: Any?
 
     // MARK: - Undo Close
 
@@ -123,6 +124,7 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLoad()
         installInitialWorkspaceVC()
         installScrollEventMonitor()
+        installWorkspaceKeyMonitor()
         setupCommandPalette()
 
         if let session = SessionState.load() {
@@ -308,6 +310,9 @@ public final class PaneContainerViewController: NSViewController {
         if let monitor = scrollEventMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        if let monitor = workspaceKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
         for closed in recentlyClosed {
             closed.timer.invalidate()
         }
@@ -329,6 +334,47 @@ public final class PaneContainerViewController: NSViewController {
                 return nil
             }
 
+            return event
+        }
+    }
+
+    /// Intercept Ctrl+Tab / Ctrl+Shift+Tab at the app level. WKWebView's
+    /// `performKeyEquivalent` swallows Ctrl+Tab before it reaches the menu
+    /// system, so a menu-item key equivalent alone wouldn't fire when a
+    /// browser pane has focus. A local event monitor runs ahead of the
+    /// responder chain and catches the combo regardless of focus.
+    private func installWorkspaceKeyMonitor() {
+        let tabKeyCode: UInt16 = 48
+        let relevantMask: NSEvent.ModifierFlags = [.control, .command, .option, .shift]
+        workspaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self, event.keyCode == tabKeyCode else { return event }
+
+            // Don't hijack Ctrl+Tab while text input owns first responder
+            // (command palette field, URL bar, etc.). NSTextField delegates
+            // key handling to an NSTextView field editor, which inherits
+            // from NSText — catching `NSText` covers both.
+            if let responder = self.view.window?.firstResponder,
+               responder is NSText {
+                return event
+            }
+            // Also bail while the command palette is showing, even if its
+            // field editor hasn't taken first responder yet — switching
+            // workspace while the palette is open leaves the palette
+            // stranded over a different workspace's content.
+            if self.commandPalette.isVisible {
+                return event
+            }
+
+            let flags = event.modifierFlags.intersection(relevantMask)
+            if flags == .control {
+                self.switchWorkspaceNext()
+                return nil
+            }
+            if flags == [.control, .shift] {
+                self.switchWorkspacePrevious()
+                return nil
+            }
             return event
         }
     }
