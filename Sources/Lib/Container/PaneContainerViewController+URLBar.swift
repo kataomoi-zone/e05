@@ -154,7 +154,8 @@ extension PaneContainerViewController {
         // Apply to panes across ALL workspaces so the setting is consistent
         // after workspace switch. Previously this only touched the current
         // workspace, leaving the URL bar of other workspaces out of sync.
-        for pane in workspaces.flatMap({ $0.columns.flatMap(\.panes) }) {
+        // `lazy` avoids a materialized intermediate Array on each toggle.
+        for pane in workspaces.lazy.flatMap({ $0.columns.lazy.flatMap { $0.panes } }) {
             pane.setURLBarVisible(urlBarVisible)
         }
         // When hiding URL bar, show header overlay for focused pane as fallback
@@ -278,7 +279,12 @@ extension PaneContainerViewController {
         // would silently drop title updates for other workspaces, leaving
         // their panes with an empty title and falling back to "Pane N-M" in
         // the command palette's "Focus: <title>" entries.
-        let allPanes = workspaces.flatMap { $0.columns.flatMap(\.panes) }
+        //
+        // Use `lazy.flatMap` + `first(where:)` so iteration short-circuits as
+        // soon as the target pane is found — avoiding a full materialized
+        // Array every time SET_TITLE fires (which happens on every prompt
+        // redraw, progress bar update, etc.).
+        let allPanes = workspaces.lazy.flatMap { $0.columns.lazy.flatMap { $0.panes } }
         guard let pane = allPanes.first(where: { $0.terminalView?.surface == surface }) else { return }
 
         let titleChanged = pane.title != title
