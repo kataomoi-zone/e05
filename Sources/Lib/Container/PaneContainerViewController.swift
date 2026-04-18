@@ -8,16 +8,28 @@ public final class PaneContainerViewController: NSViewController {
     public let downloadsStore: DownloadsStore
     public let downloadsManager: DownloadsManager
 
-    let scrollView = OverlayScrollView()
-    let stackView = NSStackView()
-
     public internal(set) var workspaces: [WorkspaceModel] = [WorkspaceModel()]
+    /// Parallel to `workspaces`: the child view controller hosting each
+    /// workspace's scrollView + stackView. Kept in lockstep on every
+    /// create/close/restore path so `workspaces[i]` ↔ `workspaceVCs[i]`.
+    var workspaceVCs: [WorkspaceViewController] = []
     var focusedWorkspaceIndex: Int = 0
 
     var currentWorkspace: WorkspaceModel {
         precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
         return workspaces[focusedWorkspaceIndex]
     }
+
+    var currentWorkspaceVC: WorkspaceViewController {
+        precondition(!workspaceVCs.isEmpty, "workspaceVCs invariant violated: must contain at least one element")
+        return workspaceVCs[focusedWorkspaceIndex]
+    }
+
+    /// Visible scrollView — always the current workspace's. Non-current
+    /// workspaces retain their own scrollViews in detached state so a
+    /// switch restores scroll position without reconstruction.
+    var scrollView: OverlayScrollView { currentWorkspaceVC.scrollView }
+    var stackView: NSStackView { currentWorkspaceVC.stackView }
 
     public internal(set) var columns: [ColumnModel] {
         get { currentWorkspace.columns }
@@ -98,12 +110,18 @@ public final class PaneContainerViewController: NSViewController {
     // MARK: - Lifecycle
 
     public override func loadView() {
-        view = NSView()
+        let v = NSView()
+        // `NSViewController.transition` drives its slide animation through
+        // Core Animation on the container's backing layer. Without a layer
+        // the animation becomes a no-op and we'd see exactly the "screen
+        // doesn't change" symptom that 2→1 exhibited.
+        v.wantsLayer = true
+        view = v
     }
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        configureScrollView()
+        installInitialWorkspaceVC()
         installScrollEventMonitor()
         setupCommandPalette()
 
@@ -114,6 +132,71 @@ public final class PaneContainerViewController: NSViewController {
             addColumn()
         }
     }
+
+    /// Seed the container with a `WorkspaceViewController` for the default
+    /// `workspaces[0]` and install its view full-bounds. `restoreSession`
+    /// may later replace this VC wholesale if a persisted session exists.
+    private func installInitialWorkspaceVC() {
+        NSLog("[e05/ws] installInitialWorkspaceVC entry: view.bounds=%@", String(describing: view.bounds))
+        let vc = WorkspaceViewController(workspace: workspaces[0])
+        addChild(vc)
+        workspaceVCs.append(vc)
+        installWorkspaceView(vc, makeCurrent: true)
+        NSLog("[e05/ws] installInitialWorkspaceVC done: workspaceVCs.count=%d, subviews=%d",
+              workspaceVCs.count, view.subviews.count)
+    }
+
+    /// Describe each subview of the container's view for debugging. Maps
+    /// each subview back to its owning WorkspaceVC (if any) so we can tell
+    /// which workspace's view ended up where in the hierarchy.
+    func dumpSubviews(_ tag: String) {
+        let subs = view.subviews.enumerated().map { (i, sv) -> String in
+            if let vc = workspaceVCs.first(where: { $0.isViewLoaded && $0.view === sv }) {
+                return "[\(i)]ws=\(vc.workspace.id)"
+            }
+            return "[\(i)]other=\(type(of: sv))"
+        }
+        NSLog("[e05/ws] %@ subviews=%@", tag, subs.joined(separator: " "))
+    }
+
+    /// Add `vc.view` as a constraint-pinned subview of the container. All
+    /// workspaces stay installed simultaneously; the `topConstraint.constant`
+    /// determines whether each view is visible (0), below (+height), or
+    /// above (-height). Switching animates that constant. This replaces
+    /// the `NSViewController.transition` path (which dropped its completion
+    /// handler silently after the first call) with a plain layout animation.
+    func installWorkspaceView(_ vc: WorkspaceViewController, makeCurrent: Bool = false) {
+        let wv = vc.view
+        wv.translatesAutoresizingMaskIntoConstraints = false
+        // Non-current workspaces stay hidden to avoid visual overlap when
+        // the initial `view.bounds.height` is still 0 (viewDidLoad runs
+        // before the window is sized). `viewDidLayout` will later push
+        // their top constants to ±window.height.
+        wv.isHidden = !makeCurrent
+        view.addSubview(wv)
+
+        let initialConstant: CGFloat = makeCurrent ? 0 : max(view.bounds.height, 1)
+        let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
+        NSLayoutConstraint.activate([
+            top,
+            wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            wv.heightAnchor.constraint(equalTo: view.heightAnchor),
+        ])
+        vc.topConstraint = top
+
+        NSLog("[e05/ws] installWorkspaceView wsId=%@ current=%@ topConstant=%f bounds.h=%f hidden=%@",
+              String(describing: vc.workspace.id),
+              makeCurrent ? "yes" : "no",
+              initialConstant,
+              view.bounds.height,
+              wv.isHidden ? "yes" : "no")
+    }
+
+    /// Flag flipped by `animateSlide` so that `viewDidLayout` doesn't stomp
+    /// on mid-animation top-constraint values while the window resizes or
+    /// another layout pass is triggered.
+    var isAnimatingWorkspaceSwitch = false
 
     /// Factory: construct a `PaneModel` with all dependencies the container
     /// owns. Using this instead of `PaneModel.init` directly keeps call
@@ -129,10 +212,53 @@ public final class PaneContainerViewController: NSViewController {
         )
     }
 
+    private var hasAppearedOnce = false
+
+    /// Focus target captured during `restoreSession`, re-applied once the
+    /// window becomes key. The viewDidLoad-time `restoreFocus` loses its
+    /// `makeFirstResponder` call to AppKit's default initial-responder
+    /// search (which lands on the leftmost pane), and that fallback's
+    /// `onFocusChanged` callback rewrites `ws.focusedColumnIndex` to 0.
+    /// Snapshotting the intended target lets us re-apply from the clean
+    /// value, not whatever ended up in memory after the clobber.
+    var pendingInitialFocus: (workspaceIndex: Int, columnIndex: Int, paneIndex: Int)?
+
     public override func viewDidAppear() {
         super.viewDidAppear()
         DispatchQueue.main.async { [weak self] in
             self?.scrollView.scrollerStyle = .overlay
+        }
+        if !hasAppearedOnce {
+            hasAppearedOnce = true
+            if let target = pendingInitialFocus {
+                pendingInitialFocus = nil
+                NSLog("[e05/ws] viewDidAppear re-applying focus → ws=%d col=%d pane=%d",
+                      target.workspaceIndex, target.columnIndex, target.paneIndex)
+                // Wipe every border in the current workspace first. Between
+                // restoreFocus and viewDidAppear, AppKit's key-window init
+                // can hand first responder to the leftmost terminal pane,
+                // whose `onFocusChanged` callback applies a border on *that*
+                // pane. If we only setFocus target, the terminal keeps its
+                // stray border — hence "両方のペインに枠線" / [f][] symptom.
+                if workspaces.indices.contains(target.workspaceIndex) {
+                    let ws = workspaces[target.workspaceIndex]
+                    clearAllFocusBorders(in: ws)
+                    if ws.columns.indices.contains(target.columnIndex) {
+                        ws.focusedColumnIndex = target.columnIndex
+                        ws.columns[target.columnIndex].focusedPaneIndex = target.paneIndex
+                    }
+                }
+                if focusedWorkspaceIndex == target.workspaceIndex {
+                    setFocus(columnIndex: target.columnIndex, paneIndex: target.paneIndex, scroll: false)
+                }
+                // Re-apply scrollX now that the stackView actually has a
+                // content size. The viewDidLoad-time `restoreScroll` call
+                // ran when stackView.width was 0, so NSClipView clamped the
+                // requested offset to 0. Re-applying here with the saved
+                // `workspace.scrollX` puts the viewport where it was saved.
+                restoreScroll(in: currentWorkspace)
+                NSLog("[e05/ws] viewDidAppear restoreScroll x=%f", currentWorkspace.scrollX)
+            }
         }
     }
 
@@ -155,6 +281,26 @@ public final class PaneContainerViewController: NSViewController {
                 pane.containerView.setFrameSize(pane.containerView.frame.size)
             }
         }
+
+        // Park non-current workspace views at ±window.height so they stay
+        // fully offscreen even after window resize. The sign stays stable
+        // (above vs below) unless the workspace is the current one. Skipped
+        // mid-animation to avoid snapping interpolated constants.
+        // The `!=` guards keep this pass idempotent — rewriting the same
+        // constant would dirty the constraint engine and risk scheduling
+        // another layout loop.
+        if !isAnimatingWorkspaceSwitch {
+            let h = view.bounds.height
+            for (i, vc) in workspaceVCs.enumerated() {
+                guard let top = vc.topConstraint else { continue }
+                let desired: CGFloat = i == focusedWorkspaceIndex
+                    ? 0
+                    : (top.constant < 0 ? -h : h)
+                if top.constant != desired {
+                    top.constant = desired
+                }
+            }
+        }
         isUpdatingLayout = false
     }
 
@@ -167,38 +313,7 @@ public final class PaneContainerViewController: NSViewController {
         }
     }
 
-    // MARK: - Scroll View
-
-    private func configureScrollView() {
-        scrollView.hasHorizontalScroller = true
-        scrollView.hasVerticalScroller = false
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = NSColor(white: 0.5, alpha: 1.0) // neutral gray
-        scrollView.horizontalScrollElasticity = .allowed
-        scrollView.verticalScrollElasticity = .none
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.scrollerStyle = .overlay
-        scrollView.autohidesScrollers = true
-
-        stackView.orientation = .horizontal
-        stackView.spacing = 0  // handles serve as spacing between panes
-        stackView.detachesHiddenViews = false
-
-        scrollView.documentView = stackView
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            stackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-        ])
-    }
+    // MARK: - Scroll Event Monitor
 
     /// Intercept horizontal scroll events before GhosttyTerminalView consumes them.
     private func installScrollEventMonitor() {

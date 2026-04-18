@@ -36,25 +36,119 @@ extension PaneContainerViewController {
 
     // MARK: - Switching
 
-    /// Switch to the workspace at `index`. Detaches the current workspace's
-    /// column views from the shared stack view and rebuilds it from the
-    /// target's columns. Terminal surfaces in the outgoing workspace stay
-    /// alive across the detach, so switching back preserves scrollback and
-    /// process state.
-    public func switchWorkspace(to index: Int) {
+    /// Switch to the workspace at `index` with a vertical slide animation
+    /// (`.slideUp` when moving to a higher index, `.slideDown` when lower —
+    /// matches the ribari mental model of a vertical workspace list).
+    /// Terminal surfaces in the outgoing workspace stay alive because each
+    /// workspace's columns live in their own stackView and are never
+    /// detached; only the child VC's view toggles visibility.
+    /// Switch to the workspace at `index`.
+    ///
+    /// - Parameter slidingUp:
+    ///   - `nil` (default): direction is derived from index comparison
+    ///     (higher index = slide up). This is what command-palette-driven
+    ///     "Switch to Workspace N" uses — the visual direction matches the
+    ///     spatial relationship between the current and target workspaces.
+    ///   - `true` / `false`: caller pins the direction. Next/Previous cycles
+    ///     (`switchWorkspaceNext` / `switchWorkspacePrevious`) use this so
+    ///     a wrap (e.g. 3 → 1) still slides in the "forward" direction
+    ///     rather than reversing.
+    ///
+    /// The two conventions intentionally differ: palette-driven switches
+    /// read like spatial navigation, cycle-driven switches read like
+    /// sequential navigation. Both are correct for their use case.
+    public func switchWorkspace(to index: Int, slidingUp: Bool? = nil) {
+        NSLog("[e05/ws] switchWorkspace(to:%d) entry: focused=%d, wsCount=%d, targetCol=%d targetPane=%d",
+              index, focusedWorkspaceIndex, workspaces.count,
+              workspaces[safe: index]?.focusedColumnIndex ?? -1,
+              workspaces[safe: index]?.columns[safe: workspaces[safe: index]?.focusedColumnIndex ?? 0]?.focusedPaneIndex ?? -1)
         guard index != focusedWorkspaceIndex,
-              workspaces.indices.contains(index) else { return }
+              workspaces.indices.contains(index) else {
+            NSLog("[e05/ws] switchWorkspace guard failed")
+            return
+        }
 
         let outgoing = currentWorkspace
         outgoing.scrollX = scrollView.contentView.bounds.origin.x
         preserveSurfaces(in: outgoing)
 
-        detachCurrentWorkspaceViews()
+        clearAllFocusBorders(in: outgoing)
+        clearAllFocusBorders(in: workspaces[index])
+
+        let fromVC = workspaceVCs[focusedWorkspaceIndex]
+        let toVC = workspaceVCs[index]
+        let resolvedSlidingUp = slidingUp ?? (index > focusedWorkspaceIndex)
         focusedWorkspaceIndex = index
-        rebuildStackView()
-        view.layoutSubtreeIfNeeded()
-        restoreFocusInCurrentWorkspace()
         restoreScroll(in: currentWorkspace)
+        animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp) { [weak self] in
+            self?.restoreFocusInCurrentWorkspace()
+        }
+    }
+
+    /// Animate a vertical slide from `fromVC` to `toVC` by tweening each
+    /// VC's top constraint. All workspace views stay installed; only the
+    /// constraint constant changes. Using constraints (instead of manual
+    /// `view.frame` animation with autoresizing) lets AppKit's layout pass
+    /// interpolate each intermediate frame coherently — the flaky behavior
+    /// where some slides appeared instantaneous was `animator().frame` on
+    /// autoresize-managed views losing its animation to geometry sync.
+    func animateSlide(
+        fromVC: WorkspaceViewController,
+        toVC: WorkspaceViewController,
+        slidingUp: Bool,
+        duration: TimeInterval = 0.25,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
+        guard let fromTop = fromVC.topConstraint,
+              let toTop = toVC.topConstraint else {
+            NSLog("[e05/ws] animateSlide missing constraints — from=%@ to=%@",
+                  fromVC.topConstraint == nil ? "nil" : "ok",
+                  toVC.topConstraint == nil ? "nil" : "ok")
+            completion?()
+            return
+        }
+
+        let h = view.bounds.height
+
+        // Flip the guard first — the layout pass triggered by
+        // `layoutSubtreeIfNeeded` below would otherwise run `viewDidLayout`,
+        // which resets every non-current VC's constant to ±h. Without this
+        // guard, our just-set start position gets clobbered and the
+        // animation runs from 0→0 (the "instantaneous switch" symptom).
+        isAnimatingWorkspaceSwitch = true
+
+        // Snap target to its start position and unhide it so the animation
+        // below has a visible view to interpolate. `layoutSubtreeIfNeeded`
+        // commits the start-frame layout before the animator kicks in.
+        toTop.constant = slidingUp ? h : -h
+        toVC.view.isHidden = false
+        view.layoutSubtreeIfNeeded()
+
+        NSLog("[e05/ws] animateSlide start: slidingUp=%@ fromConst=%f toStart=%f h=%f",
+              slidingUp ? "yes" : "no", fromTop.constant, toTop.constant, h)
+
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = duration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            ctx.allowsImplicitAnimation = true
+            fromTop.animator().constant = slidingUp ? -h : h
+            toTop.animator().constant = 0
+            view.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.isAnimatingWorkspaceSwitch = false
+                NSLog("[e05/ws] animateSlide end: subviews=%d", self.view.subviews.count)
+                // Order matters: move first responder to the target pane
+                // BEFORE hiding the from-view. Otherwise AppKit sees the
+                // current first responder land inside a hidden view, picks
+                // the next-candidate (leftmost pane), and that pane's
+                // `onFocusChanged` callback overwrites `ws.focusedColumnIndex`
+                // to 0 before `restoreFocusInCurrentWorkspace` can run.
+                completion?()
+                fromVC.view.isHidden = true
+            }
+        })
     }
 
     public func switchWorkspace(toId id: ULID) {
@@ -62,27 +156,56 @@ extension PaneContainerViewController {
         switchWorkspace(to: idx)
     }
 
+    /// Advance to the next workspace with a consistent "slide up from below"
+    /// direction, wrapping past the last one. Fixed direction matters when
+    /// cycling — 3→1 should still feel like moving forward, not back.
+    public func switchWorkspaceNext() {
+        guard workspaces.count > 1 else { return }
+        let next = (focusedWorkspaceIndex + 1) % workspaces.count
+        switchWorkspace(to: next, slidingUp: true)
+    }
+
+    /// Backwards counterpart. Always slides down (incoming from above).
+    public func switchWorkspacePrevious() {
+        guard workspaces.count > 1 else { return }
+        let prev = (focusedWorkspaceIndex - 1 + workspaces.count) % workspaces.count
+        switchWorkspace(to: prev, slidingUp: false)
+    }
+
     // MARK: - Creation
 
     /// Create a new workspace with an auto-assigned accent color and an
-    /// initial terminal column, then switch focus to it.
+    /// initial terminal column, then slide it up into view.
     public func createWorkspace() {
-        guard canCreateWorkspace else { return }
+        NSLog("[e05/ws] createWorkspace entry: focused=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
+        guard canCreateWorkspace else {
+            NSLog("[e05/ws] createWorkspace guard failed (max reached)")
+            return
+        }
 
         let outgoing = currentWorkspace
         outgoing.scrollX = scrollView.contentView.bounds.origin.x
         preserveSurfaces(in: outgoing)
+        clearAllFocusBorders(in: outgoing)
 
         let newWorkspace = WorkspaceModel()
+        let newVC = WorkspaceViewController(workspace: newWorkspace)
+        addChild(newVC)
+        installWorkspaceView(newVC, makeCurrent: false)
 
-        detachCurrentWorkspaceViews()
+        let fromVC = currentWorkspaceVC
         workspaces.append(newWorkspace)
-        focusedWorkspaceIndex = workspaces.count - 1
+        workspaceVCs.append(newVC)
+        let newIndex = workspaces.count - 1
 
-        // Invariant: every workspace owns at least one column. `addColumn`
-        // inserts into `currentWorkspace.columns` (now the new workspace)
-        // and calls `rebuildStackView` + `setFocus` itself.
+        // Advance focus so `addColumn` / `rebuildStackView` target the new
+        // workspace's stackView via the computed accessors.
+        focusedWorkspaceIndex = newIndex
         addColumn(address: .terminal)
+
+        animateSlide(fromVC: fromVC, toVC: newVC, slidingUp: true) { [weak self] in
+            self?.restoreFocusInCurrentWorkspace()
+        }
     }
 
     // MARK: - Closing
@@ -91,55 +214,77 @@ extension PaneContainerViewController {
     /// stashed surfaces belong to the workspace we're discarding) and
     /// terminates the app when the last workspace is gone.
     public func closeCurrentWorkspace() {
+        NSLog("[e05/ws] closeCurrentWorkspace entry: focused=%d, wsCount=%d",
+              focusedWorkspaceIndex, workspaces.count)
         let closing = currentWorkspace
+        let closingVC = currentWorkspaceVC
+        let closingIndex = focusedWorkspaceIndex
 
         for column in closing.columns {
             for pane in column.panes {
-                // Let the normal surface-free path run when views are detached.
                 pane.terminalView?.keepSurfaceAlive = false
                 clearFocusBorder(pane)
             }
-            column.containerView.removeFromSuperview()
         }
 
         flushRecentlyClosed(in: closing)
 
-        workspaces.remove(at: focusedWorkspaceIndex)
+        workspaces.remove(at: closingIndex)
+        workspaceVCs.remove(at: closingIndex)
 
         if workspaces.isEmpty {
-            // Last workspace: close the window. viewDidUnload / applicationWill
-            // Terminate handles final cleanup of the now-orphan workspace state.
+            closingVC.view.removeFromSuperview()
+            closingVC.removeFromParent()
             view.window?.close()
             return
         }
 
-        focusedWorkspaceIndex = min(focusedWorkspaceIndex, workspaces.count - 1)
-        rebuildStackView()
-        view.layoutSubtreeIfNeeded()
-        restoreFocusInCurrentWorkspace()
+        let newIndex = min(closingIndex, workspaces.count - 1)
+        focusedWorkspaceIndex = newIndex
+        let toVC = workspaceVCs[newIndex]
+
+        // Direction: closing index 0 contracts toward top (slide up). Any
+        // higher index slides down, revealing what was above it.
+        let slidingUp = closingIndex == 0
         restoreScroll(in: currentWorkspace)
+
+        animateSlide(fromVC: closingVC, toVC: toVC, slidingUp: slidingUp) { [weak self] in
+            closingVC.view.removeFromSuperview()
+            closingVC.removeFromParent()
+            self?.restoreFocusInCurrentWorkspace()
+        }
     }
 
     // MARK: - Move pane across workspaces
 
     /// Move the focused pane into the target workspace as a new single-pane
-    /// column at its right edge. The pane's surface is preserved across the
-    /// move. If the source column/workspace is left empty, it collapses per
-    /// the standard invariants.
+    /// column at its right edge, then slide to the target. The pane's
+    /// surface is preserved across the move. If the source column/workspace
+    /// is left empty, it collapses per the standard invariants.
     public func movePane(toWorkspaceId id: ULID) {
+        NSLog("[e05/ws] movePane(toWorkspaceId) entry: focused=%d", focusedWorkspaceIndex)
         guard let target = workspaces.firstIndex(where: { $0.id == id }),
               target != focusedWorkspaceIndex,
               let column = columns[safe: focusedColumnIndex],
-              let pane = column.focusedPane else { return }
+              let pane = column.focusedPane else {
+            NSLog("[e05/ws] movePane guard failed")
+            return
+        }
         let paneIndex = column.focusedPaneIndex
         let sourceIndex = focusedWorkspaceIndex
         let sourceWs = workspaces[sourceIndex]
+        let sourceVC = workspaceVCs[sourceIndex]
 
         // Preserve surfaces on the outgoing side — both the pane being moved
-        // and any other panes left behind in source-workspace columns that
-        // will detach when we switch away.
-        sourceWs.scrollX = scrollView.contentView.bounds.origin.x
+        // and any other panes left behind in source-workspace columns.
+        sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x
         preserveSurfaces(in: sourceWs)
+
+        // Blanket-clear focus borders on both sides so neither workspace's
+        // stray pane keeps a border visible while the slide is animating,
+        // matching the convention used by `switchWorkspace`.
+        clearAllFocusBorders(in: sourceWs)
+        clearAllFocusBorders(in: workspaces[target])
 
         // 1. Detach pane from source column.
         clearFocusBorder(pane)
@@ -147,39 +292,29 @@ extension PaneContainerViewController {
         column.panes.remove(at: paneIndex)
 
         var adjustedTarget = target
+        var sourceDestroyed = false
 
         if column.panes.isEmpty {
             // Source column empty → remove it (propagate to workspace removal)
             column.containerView.removeFromSuperview()
-            workspaces[sourceIndex].columns.removeAll { $0 === column }
+            sourceWs.columns.removeAll { $0 === column }
 
-            if workspaces[sourceIndex].columns.isEmpty {
+            if sourceWs.columns.isEmpty {
                 workspaces.remove(at: sourceIndex)
+                workspaceVCs.remove(at: sourceIndex)
+                sourceDestroyed = true
                 if adjustedTarget > sourceIndex { adjustedTarget -= 1 }
             } else {
-                let srcWs = workspaces[sourceIndex]
-                srcWs.focusedColumnIndex = min(srcWs.focusedColumnIndex, srcWs.columns.count - 1)
+                sourceWs.focusedColumnIndex = min(sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
+                // Rebuild source VC's stackView to drop the removed column's handle.
+                rebuildStackView(in: sourceVC)
             }
         } else {
             column.focusedPaneIndex = min(paneIndex, column.panes.count - 1)
             rebuildColumnView(column: column)
         }
 
-        // 2. Detach whatever column views remain in the (still-extant) source
-        //    workspace before rebuilding for the target. `sourceIndex !=
-        //    adjustedTarget` would be redundant: the function-entry guard
-        //    ensures `target != focusedWorkspaceIndex == sourceIndex`, and
-        //    adjustedTarget only shifts when source is removed (in which
-        //    case indices.contains rejects it).
-        if workspaces.indices.contains(sourceIndex) {
-            for col in workspaces[sourceIndex].columns {
-                col.containerView.removeFromSuperview()
-            }
-        }
-
-        // 3. Switch to target workspace and append a fresh single-pane column.
-        focusedWorkspaceIndex = adjustedTarget
-
+        // 2. Build a new single-pane column in the target workspace.
         let newColumn = ColumnModel(pane: pane)
         setupPaneCallbacks(pane: pane, column: newColumn)
         let cv = pane.containerView
@@ -193,26 +328,31 @@ extension PaneContainerViewController {
         wc.isActive = true
         newColumn.widthConstraint = wc
 
-        let targetWs = currentWorkspace
+        let targetWs = workspaces[adjustedTarget]
+        let targetVC = workspaceVCs[adjustedTarget]
         targetWs.columns.append(newColumn)
         let newIdx = targetWs.columns.count - 1
         targetWs.focusedColumnIndex = newIdx
 
-        rebuildStackView()
-        view.layoutSubtreeIfNeeded()
-        setFocus(columnIndex: newIdx, paneIndex: 0)
+        rebuildStackView(in: targetVC)
+
+        focusedWorkspaceIndex = adjustedTarget
+        restoreScroll(in: currentWorkspace)
+
+        // Direction uses pre-adjustment target vs. sourceIndex — stable even
+        // when source was destroyed (its removal doesn't change this comparison).
+        let slidingUp = target > sourceIndex
+        animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) { [weak self] in
+            guard let self else { return }
+            if sourceDestroyed {
+                sourceVC.view.removeFromSuperview()
+                sourceVC.removeFromParent()
+            }
+            self.setFocus(columnIndex: newIdx, paneIndex: 0)
+        }
     }
 
     // MARK: - Helpers
-
-    /// Remove the current workspace's column container views from the shared
-    /// stack view. `removeArrangedSubview` alone leaves them as subviews, so
-    /// `removeFromSuperview` is required to clear them fully.
-    func detachCurrentWorkspaceViews() {
-        for column in currentWorkspace.columns {
-            column.containerView.removeFromSuperview()
-        }
-    }
 
     /// Release stashed undo-close surfaces belonging to the given workspace.
     /// Called when that workspace is being torn down — their (colIdx, paneIdx)
@@ -234,11 +374,29 @@ extension PaneContainerViewController {
     /// suppressed here so the workspace's saved offset isn't clobbered.
     func restoreFocusInCurrentWorkspace() {
         let ws = currentWorkspace
+        NSLog("[e05/ws] restoreFocusInCurrentWorkspace: wsId=%@ columns=%d wsFocusedCol=%d wsIdx=%d",
+              String(describing: ws.id), ws.columns.count, ws.focusedColumnIndex, focusedWorkspaceIndex)
         guard !ws.columns.isEmpty else { return }
         let colIdx = min(max(ws.focusedColumnIndex, 0), ws.columns.count - 1)
         let column = ws.columns[colIdx]
         let paneIdx = min(max(column.focusedPaneIndex, 0), column.panes.count - 1)
+        NSLog("[e05/ws] restoreFocus → setFocus(col=%d, pane=%d)", colIdx, paneIdx)
         setFocus(columnIndex: colIdx, paneIndex: paneIdx, scroll: false)
+    }
+
+    /// Drop the focus border from every pane in `workspace`. Called before
+    /// a workspace switch so that (a) the outgoing pane's border doesn't
+    /// persist when we come back, and (b) the incoming workspace can start
+    /// from a clean slate before `setFocus` re-applies on the current pane.
+    /// Using the blanket sweep instead of relying on `setFocus`'s previous-
+    /// pane logic makes the code resilient to any past state where a border
+    /// ended up on a pane that no longer matches the computed `focusedPane`.
+    func clearAllFocusBorders(in workspace: WorkspaceModel) {
+        for column in workspace.columns {
+            for pane in column.panes {
+                clearFocusBorder(pane)
+            }
+        }
     }
 
     /// Mark all terminal surfaces in the workspace as "keep alive" so that

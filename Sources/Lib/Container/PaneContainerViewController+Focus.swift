@@ -5,11 +5,20 @@ extension PaneContainerViewController {
     // MARK: - Focus
 
     public func setFocus(columnIndex: Int, paneIndex: Int, scroll: Bool = true) {
-        guard columns.indices.contains(columnIndex) else { return }
+        NSLog("[e05/ws] setFocus entry col=%d pane=%d scroll=%@ currentWs=%d",
+              columnIndex, paneIndex, scroll ? "yes" : "no", focusedWorkspaceIndex)
+        guard columns.indices.contains(columnIndex) else {
+            NSLog("[e05/ws] setFocus guard: bad columnIndex")
+            return
+        }
         guard let column = columns[safe: columnIndex],
-              column.panes.indices.contains(paneIndex) else { return }
+              column.panes.indices.contains(paneIndex) else {
+            NSLog("[e05/ws] setFocus guard: bad paneIndex")
+            return
+        }
 
         if let previousPane = focusedPane {
+            NSLog("[e05/ws] setFocus clearing previous pane=%@", String(describing: previousPane.id))
             clearFocusBorder(previousPane)
             hideHeaderForPane(previousPane)
         }
@@ -18,6 +27,7 @@ extension PaneContainerViewController {
         column.focusedPaneIndex = paneIndex
 
         let pane = column.panes[paneIndex]
+        NSLog("[e05/ws] setFocus applying pane=%@ addr=%@", String(describing: pane.id), pane.address.description)
         applyFocusBorder(pane)
         if pane.isBlankBrowser {
             if !pane.isURLBarVisible {
@@ -25,7 +35,10 @@ extension PaneContainerViewController {
             }
             pane.urlBar.focusURLField()
         } else {
-            view.window?.makeFirstResponder(pane.preferredFirstResponder)
+            let result = view.window?.makeFirstResponder(pane.preferredFirstResponder) ?? false
+            NSLog("[e05/ws] setFocus makeFirstResponder result=%@ actualFirstResponder=%@",
+                  result ? "true" : "false",
+                  String(describing: view.window?.firstResponder))
         }
         updateHandleActiveStates()
         showHeaderForFocusedPane()
@@ -146,31 +159,39 @@ extension PaneContainerViewController {
 
     // MARK: - Stack View Rebuild
 
-    /// Rebuild arrangedSubviews from columns array, inserting resize handles between columns.
+    /// Rebuild arrangedSubviews from the current workspace's columns.
     func rebuildStackView() {
-        for v in stackView.arrangedSubviews.reversed() {
-            stackView.removeArrangedSubview(v)
+        rebuildStackView(in: currentWorkspaceVC)
+    }
+
+    /// Rebuild a specific workspace's stackView. Used by `movePane` so that
+    /// the source workspace (which may no longer be current after the move)
+    /// gets its handles refreshed.
+    func rebuildStackView(in vc: WorkspaceViewController) {
+        let sv = vc.stackView
+        let cols = vc.workspace.columns
+        for v in sv.arrangedSubviews.reversed() {
+            sv.removeArrangedSubview(v)
             if v is PaneResizeHandle { v.removeFromSuperview() }
         }
-        for (i, column) in columns.enumerated() {
+        for (i, column) in cols.enumerated() {
             if i > 0 {
-                let handle = makeColumnResizeHandle(leftIndex: i - 1, rightIndex: i)
-                stackView.addArrangedSubview(handle)
+                let handle = makeColumnResizeHandle(leftColumn: cols[i - 1], rightColumn: column)
+                sv.addArrangedSubview(handle)
                 NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
             }
-            stackView.addArrangedSubview(column.containerView)
+            sv.addArrangedSubview(column.containerView)
         }
         // Add a trailing resize handle on the last column so single-pane layouts can be resized
-        if let lastIndex = columns.indices.last {
-            let handle = makeTrailingResizeHandle(columnIndex: lastIndex)
-            stackView.addArrangedSubview(handle)
+        if let lastColumn = cols.last {
+            let handle = makeTrailingResizeHandle(column: lastColumn)
+            sv.addArrangedSubview(handle)
             NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
         }
     }
 
-    private func makeTrailingResizeHandle(columnIndex: Int) -> PaneResizeHandle {
+    private func makeTrailingResizeHandle(column: ColumnModel) -> PaneResizeHandle {
         let handle = PaneResizeHandle(orientation: .horizontal)
-        let column = columns[columnIndex]
         // Active state is managed by updateHandleActiveStates (left-side neighbor === focused column).
         // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
         handle.onDrag = { [weak self, weak column] deltaX in
@@ -182,10 +203,8 @@ extension PaneContainerViewController {
         return handle
     }
 
-    private func makeColumnResizeHandle(leftIndex: Int, rightIndex: Int) -> PaneResizeHandle {
+    private func makeColumnResizeHandle(leftColumn: ColumnModel, rightColumn: ColumnModel) -> PaneResizeHandle {
         let handle = PaneResizeHandle(orientation: .horizontal)
-        let leftColumn = columns[leftIndex]
-        let rightColumn = columns[rightIndex]
         handle.onDrag = { [weak self, weak leftColumn, weak rightColumn] deltaX in
             guard let self, let leftColumn, let rightColumn else { return }
             let isLeftFocused = leftColumn.id == self.columns[safe: self.focusedColumnIndex]?.id
@@ -316,14 +335,15 @@ extension PaneContainerViewController {
     // MARK: - Focus Indicator
 
     func applyFocusBorder(_ pane: PaneModel) {
-        // Apply to pane.containerView
         let cv = pane.containerView
         cv.wantsLayer = true
         cv.layer?.borderWidth = focusBorderWidth
         cv.layer?.borderColor = focusBorderColor.cgColor
+        NSLog("[e05/ws] applyFocusBorder paneId=%@ layerExists=%@ borderWidth=%f",
+              String(describing: pane.id),
+              cv.layer == nil ? "no" : "yes",
+              cv.layer?.borderWidth ?? -1)
 
-        // If pane is in a folded column, also border the folded label so the
-        // focus is visible while panes are hidden.
         if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }),
            column.isFolded
         {
@@ -335,8 +355,12 @@ extension PaneContainerViewController {
 
     func clearFocusBorder(_ pane: PaneModel) {
         let cv = pane.containerView
+        let hadBorder = (cv.layer?.borderWidth ?? 0) > 0
         cv.layer?.borderWidth = 0
         cv.layer?.borderColor = nil
+        if hadBorder {
+            NSLog("[e05/ws] clearFocusBorder paneId=%@ (had border)", String(describing: pane.id))
+        }
 
         if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }) {
             column.foldedLabelView.layer?.borderWidth = 0
@@ -379,9 +403,15 @@ extension PaneContainerViewController {
 
     /// Called when a GhosttyTerminalView gains focus via click.
     func handleFocusChange(from pane: PaneModel) {
+        NSLog("[e05/ws] handleFocusChange paneId=%@ addr=%@",
+              String(describing: pane.id), pane.address.description)
         for (colIdx, column) in columns.enumerated() {
             if let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) {
-                guard colIdx != focusedColumnIndex || paneIdx != column.focusedPaneIndex else { return }
+                guard colIdx != focusedColumnIndex || paneIdx != column.focusedPaneIndex else {
+                    NSLog("[e05/ws] handleFocusChange guard: already focused")
+                    return
+                }
+                NSLog("[e05/ws] handleFocusChange → setFocus(col=%d, pane=%d)", colIdx, paneIdx)
                 setFocus(columnIndex: colIdx, paneIndex: paneIdx)
                 return
             }
