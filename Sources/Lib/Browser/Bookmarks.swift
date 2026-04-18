@@ -4,11 +4,26 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Bookmarks")
 
+/// Opaque handle returned by `Bookmarks.addListener(_:)`. Pass it back
+/// to `removeListener(_:)` to unregister a callback.
+public final class BookmarksListenerToken {
+    fileprivate let id = UUID()
+    fileprivate init() {}
+}
+
 /// Persistent bookmarks stored in SQLite (~/.config/e05/bookmarks.db).
+///
+/// Mutation observers can register via `addListener(_:)` so UI (the
+/// sidebar bookmarks list, future status indicators) refreshes when
+/// add / remove / deleteAll happens anywhere in the process without
+/// having to poll.
 @MainActor
 public final class Bookmarks {
     // nonisolated(unsafe): accessed in deinit which is nonisolated
     nonisolated(unsafe) private var db: OpaquePointer?
+
+    /// Registered mutation observers, keyed by token id.
+    private var listeners: [UUID: () -> Void] = [:]
 
     public struct Entry: Equatable {
         public let id: Int64
@@ -64,6 +79,32 @@ public final class Bookmarks {
         }
     }
 
+    // MARK: - Observers
+
+    /// Register a mutation observer. Fires after every add / remove /
+    /// deleteAll. Returns a token; pass it to `removeListener(_:)` to
+    /// unsubscribe. Listeners are invoked synchronously on the main
+    /// actor right after the mutation's SQL statement commits.
+    @discardableResult
+    public func addListener(_ block: @escaping () -> Void) -> BookmarksListenerToken {
+        let token = BookmarksListenerToken()
+        listeners[token.id] = block
+        return token
+    }
+
+    /// Unregister a previously added listener. No-op if the token is
+    /// unknown (already removed or from a different manager).
+    public func removeListener(_ token: BookmarksListenerToken) {
+        listeners.removeValue(forKey: token.id)
+    }
+
+    private func fireListeners() {
+        // Snapshot the values before iterating so a listener that
+        // registers or unregisters from within its callback doesn't
+        // mutate the dictionary mid-iteration.
+        for block in Array(listeners.values) { block() }
+    }
+
     // MARK: - Write
 
     /// Add a bookmark. If the URL already exists, updates the title.
@@ -84,6 +125,7 @@ public final class Bookmarks {
             logger.error("Failed to add bookmark: \(String(cString: sqlite3_errmsg(db)))")
             return false
         }
+        fireListeners()
         return true
     }
 
@@ -97,6 +139,7 @@ public final class Bookmarks {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_int64(stmt, 1, id)
         sqlite3_step(stmt)
+        fireListeners()
     }
 
     /// Remove a bookmark by URL.
@@ -109,6 +152,7 @@ public final class Bookmarks {
         defer { sqlite3_finalize(stmt) }
         _ = url.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
         sqlite3_step(stmt)
+        fireListeners()
     }
 
     // MARK: - Read
@@ -156,6 +200,7 @@ public final class Bookmarks {
     public func deleteAll() {
         guard let db else { return }
         sqlite3_exec(db, "DELETE FROM bookmarks", nil, nil, nil)
+        fireListeners()
     }
 
     // MARK: - Internal
