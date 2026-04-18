@@ -151,7 +151,10 @@ extension PaneContainerViewController {
     /// Toggle URL bar visibility for all panes. When URL bar is shown, header overlay is suppressed.
     public func toggleURLBarVisibility() {
         urlBarVisible.toggle()
-        for pane in columns.flatMap(\.panes) {
+        // Apply to panes across ALL workspaces so the setting is consistent
+        // after workspace switch. Previously this only touched the current
+        // workspace, leaving the URL bar of other workspaces out of sync.
+        for pane in workspaces.flatMap({ $0.columns.flatMap(\.panes) }) {
             pane.setURLBarVisible(urlBarVisible)
         }
         // When hiding URL bar, show header overlay for focused pane as fallback
@@ -269,7 +272,13 @@ extension PaneContainerViewController {
     /// Debounced: header only shows when the title is stable for a short time,
     /// filtering out rapid changes from shell command execution.
     public func handleTitleChange(surface: ghostty_surface_t, title: String) {
-        let allPanes = columns.flatMap(\.panes)
+        // Search across ALL workspaces — ghostty's SET_TITLE event can arrive
+        // for any terminal surface that's still alive (including panes parked
+        // in non-current workspaces). Limiting to `columns` (= current WS)
+        // would silently drop title updates for other workspaces, leaving
+        // their panes with an empty title and falling back to "Pane N-M" in
+        // the command palette's "Focus: <title>" entries.
+        let allPanes = workspaces.flatMap { $0.columns.flatMap(\.panes) }
         guard let pane = allPanes.first(where: { $0.terminalView?.surface == surface }) else { return }
 
         let titleChanged = pane.title != title

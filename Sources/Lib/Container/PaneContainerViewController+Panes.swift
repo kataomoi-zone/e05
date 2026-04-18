@@ -422,9 +422,19 @@ extension PaneContainerViewController {
             let targetColId = column.id
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard response == .alertFirstButtonReturn, let self else { return }
+                // Alert is modal so user can't switch workspace while it's
+                // showing, but use focusPane-style cross-WS lookup anyway —
+                // defensive against programmatic WS switches (e.g. a future
+                // sidebar action) that might fire between alert display and
+                // confirmation. Falls back to current-WS `removePane` only
+                // if the pane is on the focused workspace, since removePane
+                // depends on current-WS state (see Phase 8-1f TODO).
                 guard let colIdx = self.columns.firstIndex(where: { $0.id == targetColId }),
                       let col = self.columns[safe: colIdx],
-                      let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId }) else { return }
+                      let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId }) else {
+                    NSLog("[e05/ws] close alert: target pane not in current WS (Phase 8-1f scope)")
+                    return
+                }
                 self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
             }
             return
