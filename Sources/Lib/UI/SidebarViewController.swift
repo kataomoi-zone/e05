@@ -284,16 +284,23 @@ final class SidebarViewController: NSViewController {
     /// Edge hit zone mouse-enter entry point. Registers the hover and
     /// schedules a `.hidden → .hoverPeek` transition after
     /// `hoverInDelay` if the cursor is still inside and the reveal is
-    /// permitted by `hoverTriggerAllowed`.
+    /// permitted by `hoverTriggerAllowed`. Same-value calls are
+    /// dropped: `scheduleHoverIn/Out` unconditionally bumps
+    /// `stateGeneration`, so letting layout-driven probe callers
+    /// reassert the current value would invalidate the opposite
+    /// direction's in-flight asyncAfter and produce missed transitions.
     func setEdgeHovered(_ value: Bool) {
+        guard edgeHovered != value else { return }
         edgeHovered = value
         hoverInsideDidChange()
     }
 
     /// Sidebar overlay mouse-enter entry point (mirrors
     /// `setEdgeHovered`). Keeps `.hoverPeek` alive while the user
-    /// interacts with sidebar contents.
+    /// interacts with sidebar contents. Same-value calls are dropped
+    /// for the same reason as `setEdgeHovered`.
     func setSidebarHovered(_ value: Bool) {
+        guard sidebarHovered != value else { return }
         sidebarHovered = value
         hoverInsideDidChange()
     }

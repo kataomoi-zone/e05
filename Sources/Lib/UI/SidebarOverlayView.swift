@@ -197,6 +197,7 @@ final class SidebarOverlayView: NSView {
         )
         addTrackingArea(area)
         hoverTrackingArea = area
+        syncHoverWithCurrentCursor()
     }
 
     override func mouseEntered(with _: NSEvent) { onHoverEnter?() }
@@ -210,5 +211,22 @@ final class SidebarOverlayView: NSView {
         // collapse the moment the user tries to interact with a cell.
         if cursorIsStillInsideBounds() { return }
         onHoverExit?()
+    }
+
+    /// Mirrors the probe in `EdgeHoverHitZoneView`: AppKit skips the
+    /// synthesised `mouseEntered` when a freshly rebuilt tracking area
+    /// already contains the cursor (e.g. the hoverPeek animation brings
+    /// the sidebar out from under a stationary pointer). Probe only in
+    /// the inside direction — firing `onHoverExit` here would race with
+    /// the sidebar state machine's pending hover-in/hover-out timers
+    /// and invalidate them via the shared generation counter, which
+    /// regressed the edge-hover path entirely. Real exits still arrive
+    /// through `mouseExited`.
+    private func syncHoverWithCurrentCursor() {
+        guard let window else { return }
+        let mouseInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(mouseInView) {
+            onHoverEnter?()
+        }
     }
 }

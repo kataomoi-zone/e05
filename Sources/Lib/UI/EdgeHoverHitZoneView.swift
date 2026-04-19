@@ -50,8 +50,29 @@ final class EdgeHoverHitZoneView: NSView {
         )
         addTrackingArea(area)
         trackingArea = area
+        syncHoverWithCurrentCursor()
     }
 
     override func mouseEntered(with _: NSEvent) { onEnter?() }
     override func mouseExited(with _: NSEvent) { onExit?() }
+
+    /// AppKit skips the synthesised `mouseEntered` when a freshly
+    /// installed tracking area already contains the cursor — classically
+    /// observed as "edge hover does nothing at launch; ⌘B reveals the
+    /// sidebar and afterwards edge hover starts working". Probe the
+    /// cursor ourselves after every rebuild and, if it's already inside,
+    /// fire `onEnter` so the state machine can catch up. Do *not* probe
+    /// `onExit`: `updateTrackingAreas` runs on every layout pass, and a
+    /// spurious exit would bump the sidebar's state generation and
+    /// invalidate a pending `scheduleHoverIn` asyncAfter — the exact
+    /// regression that turned this fix into "edge hover never fires".
+    /// `mouseExited` continues to handle real cursor exits through the
+    /// normal event path.
+    private func syncHoverWithCurrentCursor() {
+        guard let window else { return }
+        let mouseInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if bounds.contains(mouseInView) {
+            onEnter?()
+        }
+    }
 }
