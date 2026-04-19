@@ -41,7 +41,6 @@ final class SidebarViewController: NSViewController {
         downloadsListenerToken = container.downloadsManager.addListener { [weak self] in
             self?.refreshDownloadsBadge()
         }
-        refreshDownloadsBadge()
 
         let bookmarksView = BookmarksSidebarView(bookmarks: container.bookmarks)
         bookmarksView.onOpen = { [weak container] urlString in
@@ -88,9 +87,40 @@ final class SidebarViewController: NSViewController {
         }
         overlay.setHistoryView(historyView)
 
+        let downloadsView = DownloadsSidebarView(manager: container.downloadsManager)
+        downloadsView.onCancel = { [weak container] id in
+            container?.downloadsManager.cancel(id: id)
+        }
+        downloadsView.onPause = { [weak container] id in
+            container?.downloadsManager.pause(id: id)
+        }
+        downloadsView.onResume = { [weak container] id in
+            container?.downloadsManager.resume(id: id)
+        }
+        downloadsView.onRemove = { [weak container] id in
+            container?.downloadsManager.remove(id: id)
+        }
+        downloadsView.onShowInFinder = { path in
+            // Empty `destination` means the download never reached the
+            // `decideDestinationUsing` step (e.g. failed mid-negotiation)
+            // — bailing avoids handing Finder an invalid file URL.
+            guard !path.isEmpty else { return }
+            NSWorkspace.shared.activateFileViewerSelecting(
+                [URL(fileURLWithPath: path)]
+            )
+        }
+        overlay.setDownloadsView(downloadsView)
+
         // Re-apply the current mode so the newly installed mode views'
         // visibility matches the state machine.
         applyMode(currentMode)
+
+        // Refresh the downloads badge after the sidebar view has been
+        // installed and the mode has been applied. The first refresh
+        // must happen once `PlacesSectionView` is in its final layout
+        // or `DownloadsBadgeView.widthAnchor >= height` clamps the pill
+        // to a 16pt square, truncating the digit label.
+        refreshDownloadsBadge()
     }
 
     // NOTE: No deinit cleanup for the Downloads listener. The closure
@@ -140,10 +170,16 @@ final class SidebarViewController: NSViewController {
         overlay.worklane.isHidden = mode != .tabs
         overlay.bookmarksView?.isHidden = mode != .bookmarks
         overlay.historyView?.isHidden = mode != .history
-        // Placeholder covers the modes that don't have a real content
-        // view yet (downloads). Tabs, bookmarks, and history always
-        // have a real view by the time a user can select them.
-        overlay.placeholder.isHidden = mode == .tabs || mode == .bookmarks || mode == .history
+        overlay.downloadsView?.isHidden = mode != .downloads
+        // Placeholder is a fallback for modes whose real content view
+        // hasn't been installed yet (e.g. attachContainer hasn't run).
+        // Once every mode carries a real view, this collapses to an
+        // unconditional `true`.
+        let hasRealView = (mode == .tabs)
+            || (mode == .bookmarks && overlay.bookmarksView != nil)
+            || (mode == .history && overlay.historyView != nil)
+            || (mode == .downloads && overlay.downloadsView != nil)
+        overlay.placeholder.isHidden = hasRealView
         // Always assign — clearing on modes with a real view — so the
         // hidden placeholder never carries a stale string from the
         // previously active mode.

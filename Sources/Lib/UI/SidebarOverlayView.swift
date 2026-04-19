@@ -38,6 +38,12 @@ final class SidebarOverlayView: NSView {
     /// tolerates the absence by falling through to the placeholder.
     private(set) var historyView: NSView?
 
+    /// Current downloads-mode view, installed by the view controller
+    /// once the container reference (which owns the `DownloadsManager`)
+    /// is available. Nil until then; `applyMode(.downloads)` tolerates
+    /// the absence by falling through to the placeholder.
+    private(set) var downloadsView: NSView?
+
     private let glass = NSGlassEffectView()
     private let content = NSView()
 
@@ -128,6 +134,24 @@ final class SidebarOverlayView: NSView {
     func setHistoryView(_ view: NSView) {
         historyView?.removeFromSuperview()
         historyView = view
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        content.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
+            view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
+            view.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
+        ])
+    }
+
+    /// Install the downloads-mode view into the shared mode area.
+    /// Mirrors `setBookmarksView` / `setHistoryView`: same rect, same
+    /// hidden-by-default state; the view controller flips visibility on
+    /// mode change.
+    func setDownloadsView(_ view: NSView) {
+        downloadsView?.removeFromSuperview()
+        downloadsView = view
         view.translatesAutoresizingMaskIntoConstraints = false
         view.isHidden = true
         content.addSubview(view)

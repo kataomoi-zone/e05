@@ -44,8 +44,7 @@ enum SidebarMode: CaseIterable {
     /// expose).
     var placeholderMessage: String {
         switch self {
-        case .tabs, .bookmarks, .history: return ""
-        case .downloads: return "Downloads (coming soon)"
+        case .tabs, .bookmarks, .history, .downloads: return ""
         }
     }
 }
