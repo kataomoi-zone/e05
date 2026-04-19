@@ -8,10 +8,10 @@ public struct SessionState: Codable {
     public var workspaces: [WorkspaceState]
     public var focusedWorkspaceIndex: Int
     public var urlBarVisible: Bool
-    /// Sidebar pin state. Persisted so the user's choice between
-    /// hover-only (false, default) and pinned-open (true) survives restart.
-    /// Wired through by the Phase 8-2 stage-4 state machine; until then,
-    /// `captureSession` always writes the default false.
+    /// Sidebar pin state. Persists the user's choice between
+    /// hover-only (false, default) and pinned-open (true) across
+    /// restarts. `.hoverPeek` is ephemeral — only explicit pinning
+    /// survives a session round-trip.
     public var sidebarPinned: Bool = false
 
     public struct WorkspaceState: Codable {

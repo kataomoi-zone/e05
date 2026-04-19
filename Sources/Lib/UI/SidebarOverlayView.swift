@@ -2,29 +2,37 @@ import AppKit
 
 /// Root visual container of the sidebar. Wraps an `NSGlassEffectView`
 /// (macOS 26 Tahoe Liquid Glass) whose `contentView` hosts the header,
-/// the mode-dependent content area (worklane or per-mode placeholder),
-/// and the bottom places section.
+/// the mode-dependent content area (worklane / per-mode views /
+/// placeholder), and the bottom places section.
 ///
-/// Subviews must be added to `contentView` — adding siblings outside of
-/// it carries no z-order guarantee (Apple, WWDC25 session 310). When
-/// stage 5 introduces multiple glass panels (per-workspace accent bars),
-/// wrap them in `NSGlassEffectContainerView` so AppKit merges them
-/// liquidly; stages 1–3 have a single glass so the container would add
-/// no value.
+/// Subviews must be added to `contentView` — adding siblings outside
+/// of it carries no z-order guarantee (Apple, WWDC25 session 310).
+/// Multiple glass panels (e.g. per-workspace accent bars) would need
+/// an `NSGlassEffectContainerView` so AppKit merges them liquidly; the
+/// current single-glass layout doesn't benefit from one.
 ///
-/// Stage 3-A introduced the mode area: `worklane` is shown for
-/// `SidebarMode.tabs`, `placeholder` for the other three modes. Both
-/// share the same rect and are toggled via `isHidden`. Stage 3-B adds
-/// an optional `bookmarksView` slot in the same rect for
-/// `SidebarMode.bookmarks`, and stage 3-C extends that pattern with a
-/// `historyView` slot for `SidebarMode.history`. Stage 3-D will add
-/// the matching downloads slot.
+/// The mode area hosts four visually exclusive views (`worklane`,
+/// `bookmarksView`, `historyView`, `downloadsView`) plus a
+/// `placeholder` fallback, all sharing the same rect. `applyMode`
+/// flips `isHidden` on exactly one.
 @MainActor
 final class SidebarOverlayView: NSView {
     let header = SidebarHeaderView()
     let worklane = WorklaneSectionView()
     let placeholder = PlaceholderContentView()
     let places = PlacesSectionView()
+
+    /// Called when the cursor enters the sidebar's visible footprint.
+    /// The state machine uses this together with `onHoverExit` to keep
+    /// `.hoverPeek` alive while the user is interacting with the sidebar
+    /// contents (clicking a bookmark, scrolling, resizing a window).
+    var onHoverEnter: (() -> Void)?
+    /// Called when the cursor actually leaves the sidebar. Spurious
+    /// `mouseExited` events from nested subview tracking areas are
+    /// filtered out before this fires (see `cursorIsStillInside`).
+    var onHoverExit: (() -> Void)?
+
+    private var hoverTrackingArea: NSTrackingArea?
 
     /// Current bookmarks-mode view, installed by the view controller
     /// once the container reference (which owns the `Bookmarks` store)
@@ -161,5 +169,40 @@ final class SidebarOverlayView: NSView {
             view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
             view.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
         ])
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let old = hoverTrackingArea { removeTrackingArea(old) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with _: NSEvent) { onHoverEnter?() }
+
+    override func mouseExited(with _: NSEvent) {
+        // Nested tracking areas (hover-reveal buttons in sidebar cells,
+        // pin button, row hover) fire spurious parent `mouseExited` when
+        // the cursor crosses into their subrect. Re-check the global
+        // cursor position against our bounds and suppress the exit if
+        // the cursor is still inside — otherwise `.hoverPeek` would
+        // collapse the moment the user tries to interact with a cell.
+        if cursorIsStillInside() { return }
+        onHoverExit?()
+    }
+
+    private func cursorIsStillInside() -> Bool {
+        // Teardown / window removal: treat as still-inside so we do not
+        // fire a phantom exit as the sidebar is dismantled.
+        guard let window else { return true }
+        let screenLoc = NSEvent.mouseLocation
+        let windowLoc = window.convertPoint(fromScreen: screenLoc)
+        let localLoc = convert(windowLoc, from: nil)
+        return NSMouseInRect(localLoc, bounds, isFlipped)
     }
 }

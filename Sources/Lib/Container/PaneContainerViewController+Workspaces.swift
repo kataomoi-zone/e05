@@ -104,6 +104,11 @@ extension PaneContainerViewController {
         duration: TimeInterval = 0.25,
         completion: (@MainActor @Sendable () -> Void)? = nil
     ) {
+        // Sidebar reveal/hide and workspace slide operate on disjoint
+        // constraints (`leading` vs `top`), so the two animations can
+        // run concurrently without stomping. Bailing here used to leave
+        // `toVC.view.isHidden = true` even after `focusedWorkspaceIndex`
+        // advanced, producing a blank window until the next switch.
         guard let fromTop = fromVC.topConstraint,
               let toTop = toVC.topConstraint else {
             NSLog("[e05/ws] animateSlide missing constraints — from=%@ to=%@",

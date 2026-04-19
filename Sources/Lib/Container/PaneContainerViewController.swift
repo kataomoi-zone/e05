@@ -21,6 +21,17 @@ public final class PaneContainerViewController: NSViewController {
     /// state-sync call sites don't need `guard let` boilerplate.
     var sidebarVC: SidebarViewController!
 
+    /// Leading constraint of the sidebar view. Captured in
+    /// `installSidebar` so the state machine can animate it between
+    /// `-sidebarWidth` (hidden, parked off-screen) and `0` (revealed,
+    /// flush with the window's leading edge).
+    weak var sidebarLeadingConstraint: NSLayoutConstraint?
+
+    /// Edge hover hit zone view. Installed by `installSidebar`; fires
+    /// hover-in/out events into the sidebar state machine so the
+    /// cursor can reveal a hidden sidebar by approaching the left edge.
+    weak var edgeHitZone: EdgeHoverHitZoneView?
+
     var currentWorkspace: WorkspaceModel {
         precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
         return workspaces[focusedWorkspaceIndex]
@@ -133,17 +144,20 @@ public final class PaneContainerViewController: NSViewController {
         installWorkspaceKeyMonitor()
         setupCommandPalette()
 
+        var initiallyPinned = false
         if let session = SessionState.load() {
+            initiallyPinned = session.sidebarPinned
             restoreSession(session)
         }
         if columns.isEmpty {
             addColumn()
         }
-        // Install sidebar last so its view sits on top of every workspace
-        // VC that restoreSession / installInitialWorkspaceVC added. Workspace
-        // views already carry a `sidebarWidth` leading inset via
-        // `installWorkspaceView`, so there is no overlap to manage.
-        installSidebar()
+        // Install sidebar last so its view sits on top of every
+        // workspace VC. The pinned flag decides whether the sidebar
+        // starts flush (push layout, workspace offset by
+        // `sidebarWidth`) or parked off-screen (hidden, workspace
+        // flush against the leading edge).
+        installSidebar(initiallyPinned: initiallyPinned)
     }
 
     /// Seed the container with a `WorkspaceViewController` for the default
@@ -190,16 +204,22 @@ public final class PaneContainerViewController: NSViewController {
 
         let initialConstant: CGFloat = makeCurrent ? 0 : max(view.bounds.height, 1)
         let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
+        // Leading starts flush with the sidebar state's push value.
+        // `viewDidLoad` runs before `installSidebar`, so the first
+        // call resolves to 0 (sidebarVC nil). After `installSidebar`,
+        // `createWorkspace` / `restoreSession` addenda need to honour
+        // the current push so a new workspace doesn't slip under a
+        // pinned sidebar.
+        let push = sidebarVC?.currentState.pushesContent == true ? Self.sidebarWidth : 0
+        let leading = wv.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: push)
         NSLayoutConstraint.activate([
             top,
-            // Stage 4 will capture this leading constraint (per workspace VC)
-            // to animate sidebar reveal/hide by tweening the constant between
-            // 0 (hidden) and sidebarWidth (pinnedOpen). For now it's fixed.
-            wv.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.sidebarWidth),
+            leading,
             wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             wv.heightAnchor.constraint(equalTo: view.heightAnchor),
         ])
         vc.topConstraint = top
+        vc.leadingConstraint = leading
 
         NSLog("[e05/ws] installWorkspaceView wsId=%@ current=%@ topConstant=%f bounds.h=%f hidden=%@",
               String(describing: vc.workspace.id),
@@ -236,6 +256,15 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidAppear()
         DispatchQueue.main.async { [weak self] in
             self?.scrollView.scrollerStyle = .overlay
+        }
+        // Re-sync traffic lights against the sidebar state now that the
+        // window is attached. In `installSidebar` the window may still
+        // be nil (the contentViewController assignment hadn't wired
+        // the view into the window hierarchy yet), in which case
+        // `applyTrafficLights` early-returned. Running the seeding
+        // again here picks up the final state for `.hidden` starts.
+        if let sidebarVC {
+            applySidebarLayout(state: sidebarVC.currentState, animated: false, completion: nil)
         }
         if !hasAppearedOnce {
             hasAppearedOnce = true
@@ -277,17 +306,28 @@ public final class PaneContainerViewController: NSViewController {
         super.viewDidLayout()
         guard !isUpdatingLayout else { return }
         isUpdatingLayout = true
-        let visibleWidth = scrollView.contentView.bounds.width
-        for column in columns {
-            // Folded columns keep their fixed strip width regardless of window size
-            // — the saved unfoldedWidth is what the fraction preset will restore to.
-            if column.isFolded { continue }
-            // Recalculate fraction-based width presets on window resize
-            if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
-                column.widthConstraint?.constant = visibleWidth * f
-            }
-            for pane in column.panes {
-                pane.containerView.setFrameSize(pane.containerView.frame.size)
+        // Refresh every workspace's column widths, not just the current
+        // one. Sidebar reveal/hide shifts every workspace VC's leading,
+        // so a non-current workspace with a `.fraction` preset would
+        // otherwise keep its width frozen at the old visibleWidth (e.g.
+        // pinned-sidebar value) until the next time it becomes current
+        // AND the layout engine happens to re-run. That manifested as a
+        // broken aspect ratio when ⌘B + Ctrl+Tab were mashed: the
+        // workspace that was mid-switch got its column stranded at the
+        // narrower, pinned-width value.
+        for vc in workspaceVCs where vc.isViewLoaded {
+            let visibleWidth = vc.scrollView.contentView.bounds.width
+            for column in vc.workspace.columns {
+                // Folded columns keep their fixed strip width regardless
+                // of window size — the saved unfoldedWidth is what the
+                // fraction preset will restore to.
+                if column.isFolded { continue }
+                if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
+                    column.widthConstraint?.constant = visibleWidth * f
+                }
+                for pane in column.panes {
+                    pane.containerView.setFrameSize(pane.containerView.frame.size)
+                }
             }
         }
 

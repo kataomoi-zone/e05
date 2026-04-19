@@ -160,6 +160,16 @@ extension PaneContainerViewController {
                 handler: { [weak self] in self?.toggleCommandPalette() }
             ),
             Action(
+                id: "toggle_sidebar_pin",
+                title: "Toggle Sidebar Pin",
+                keyEquivalent: "b",
+                handler: { [weak self] in self?.sidebarVC?.togglePin() },
+                validate: { [weak self] in
+                    let pinned = self?.sidebarVC?.currentState == .pinnedOpen
+                    return (true, pinned ? "Unpin Sidebar" : "Pin Sidebar")
+                }
+            ),
+            Action(
                 id: "workspace_new",
                 title: "New Workspace",
                 handler: { [weak self] in self?.createWorkspace() },

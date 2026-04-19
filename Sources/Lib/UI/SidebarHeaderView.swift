@@ -1,10 +1,10 @@
 import AppKit
 
-/// Top 36pt strip inside the sidebar overlay. The left portion sits under
-/// the OS traffic lights (which remain at their default position thanks to
-/// `titlebarAppearsTransparent`), while the trailing edge hosts the pin
-/// toggle button. Stage 1 wires the button as a placeholder only — the real
-/// hover ↔ pinned state machine lands in stage 4.
+/// Top 36pt strip inside the sidebar overlay. The left portion sits
+/// under the OS traffic lights (which stay at their default position
+/// thanks to `titlebarAppearsTransparent`); the trailing edge hosts the
+/// pin toggle button. Click invokes `onTogglePin`, which the view
+/// controller routes into the `SidebarState` machine.
 @MainActor
 final class SidebarHeaderView: NSView {
     static let height: CGFloat = 36
@@ -15,16 +15,27 @@ final class SidebarHeaderView: NSView {
         b.isBordered = false
         b.bezelStyle = .regularSquare
         b.imagePosition = .imageOnly
-        b.image = NSImage(systemSymbolName: "pin", accessibilityDescription: "Toggle sidebar pin")
         b.imageScaling = .scaleProportionallyDown
-        b.toolTip = "Toggle sidebar pin"
         return b
     }()
+
+    /// Invoked when the user clicks the pin toggle. The view controller
+    /// owns the state machine — this view only reports intent.
+    var onTogglePin: (() -> Void)?
+
+    /// Drives the pin icon glyph and accessibility text. When `true`,
+    /// the filled pin emphasises the "currently pinned" state; when
+    /// `false`, the outline pin signals the action the click will take
+    /// (pin the sidebar).
+    var isPinned: Bool = false {
+        didSet { updatePinAppearance() }
+    }
 
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setupLayout()
+        updatePinAppearance()
     }
 
     @available(*, unavailable)
@@ -44,9 +55,14 @@ final class SidebarHeaderView: NSView {
         ])
     }
 
-    // Stage 1 placeholder — the real pin/unpin toggle ships in stage 4
-    // once the `SidebarState` state machine is in place.
+    private func updatePinAppearance() {
+        let symbol = isPinned ? "pin.fill" : "pin"
+        let description = isPinned ? "Unpin sidebar" : "Pin sidebar"
+        pinButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+        pinButton.toolTip = description
+    }
+
     @objc private func pinTapped(_: NSButton) {
-        NSLog("[e05/sidebar] pin button tapped (placeholder, wiring in stage 4)")
+        onTogglePin?()
     }
 }

@@ -57,7 +57,8 @@ extension PaneContainerViewController {
         return SessionState(
             workspaces: workspaceStates,
             focusedWorkspaceIndex: focusedWorkspaceIndex,
-            urlBarVisible: urlBarVisible
+            urlBarVisible: urlBarVisible,
+            sidebarPinned: sidebarVC?.currentState == .pinnedOpen
         )
     }
 

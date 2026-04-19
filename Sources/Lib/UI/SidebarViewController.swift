@@ -1,15 +1,16 @@
 import AppKit
 
-/// Stage 1 sidebar view controller: always-on (equivalent to
-/// `SidebarState.pinnedOpen`), fixed 260pt wide. Hosts a
-/// `SidebarOverlayView` for Liquid Glass background + header + mode
-/// area + places section. The hover / hidden / pinned state machine is
-/// introduced in stage 4.
+/// Sidebar view controller hosting the Liquid Glass overlay, the
+/// worklane / mode views, and the places section. Owns the three-state
+/// machine (`SidebarState`) driving reveal/hide: `.hidden` is the
+/// default off state, `.hoverPeek` is a transient overlay triggered by
+/// the edge hit zone, and `.pinnedOpen` is the user-pinned push layout.
 ///
-/// Stage 2 added the worklane tree and `reloadWorklane()`. Stage 3-A
-/// adds mode switching (`currentMode`, `setMode`) and subscribes to
-/// `DownloadsManager` mutations so the Downloads row badge tracks the
-/// active count live.
+/// The state machine lives here; the container (`PaneContainerViewController`)
+/// is responsible for applying visual effects (sidebar leading,
+/// workspace leading, traffic light visibility) via
+/// `applySidebarLayout(state:animated:completion:)`, keeping the
+/// Auto Layout machinery outside this class.
 @MainActor
 final class SidebarViewController: NSViewController {
     /// Back-reference to the pane container. Set by `installSidebar()`
@@ -21,18 +22,69 @@ final class SidebarViewController: NSViewController {
     private(set) var currentMode: SidebarMode = .tabs
     private var downloadsListenerToken: DownloadsListenerToken?
 
+    // MARK: - State machine
+
+    /// Current sidebar state. Mutated only via `transition(to:animated:)`
+    /// so that every state change goes through a single code path that
+    /// drives the container layout and traffic-light sync.
+    private(set) var currentState: SidebarState = .hidden
+
+    /// Monotonic counter bumped on every scheduled timer. A deferred
+    /// hover-in/out closure compares its captured counter against the
+    /// live value and no-ops when it has been superseded. Three common
+    /// races this defuses: (a) rapid re-entries/exits at the edge, (b)
+    /// pin toggles that invalidate a pending hide, (c) workspace switch
+    /// animations that demand sidebar changes wait.
+    private var stateGeneration: Int = 0
+
+    /// Cursor is currently inside the edge hit zone. ORed with
+    /// `sidebarHovered` to form the composite `mouseInside` predicate.
+    private var edgeHovered: Bool = false
+    /// Cursor is currently inside the sidebar overlay's visible rect.
+    /// Spurious `mouseExited` from nested subview tracking areas is
+    /// filtered by `SidebarOverlayView.cursorIsStillInside` before this
+    /// flag flips.
+    private var sidebarHovered: Bool = false
+
+    /// Flag mirroring `PaneContainerViewController.isAnimatingSidebar`.
+    /// Kept in lockstep so that workspace switch animations know to
+    /// defer, and hover timers see a consistent value under reentry.
+    private(set) var isAnimating: Bool = false
+
+    /// Local event monitor that watches for primary-button release.
+    /// Installed on demand when `scheduleHoverOut` fires while a drag
+    /// is in progress, so the cursor leaving the sidebar mid-drag
+    /// doesn't leave the state machine stuck in `.hoverPeek` once the
+    /// user finally releases the mouse. Monitor is removed as soon as
+    /// it fires (one-shot) or in `deinit` if still active.
+    nonisolated(unsafe) private var dragEndMonitor: Any?
+
+    /// Hover-in delay (seconds). Short enough to feel instant on
+    /// intentional edge hover yet long enough to shrug off an accidental
+    /// cursor fly-by crossing the edge strip.
+    static let hoverInDelay: TimeInterval = 0.05
+    /// Hover-out delay (seconds). Gives the user a grace window to
+    /// re-enter the sidebar after straying over the boundary (e.g. when
+    /// drag-scrolling a bookmark list with momentum).
+    static let hoverOutDelay: TimeInterval = 0.3
+
+    // MARK: - Lifecycle
+
     override func loadView() {
         view = overlay
         overlay.places.onSelect = { [weak self] mode in self?.setMode(mode) }
+        overlay.onHoverEnter = { [weak self] in self?.setSidebarHovered(true) }
+        overlay.onHoverExit = { [weak self] in self?.setSidebarHovered(false) }
+        overlay.header.onTogglePin = { [weak self] in self?.togglePin() }
         applyMode(currentMode)
     }
 
     /// Wire up container-dependent state. Called exactly once by
     /// `installSidebar()` after `container` has been set. The Downloads
     /// listener registration is guarded against double-install for
-    /// defensive hygiene, but the bookmarks view is unconditionally
-    /// replaced — earlier bookmarks views' listeners would leak if this
-    /// ever gets called more than once.
+    /// defensive hygiene, but the mode views are unconditionally
+    /// replaced — earlier views' listeners would leak if this ever gets
+    /// called more than once.
     func attachContainer() {
         guard let container else { return }
         if let previous = downloadsListenerToken {
@@ -189,6 +241,169 @@ final class SidebarViewController: NSViewController {
     private func refreshDownloadsBadge() {
         guard let container else { return }
         overlay.places.setDownloadsBadge(count: container.downloadsManager.activeCount)
+    }
+
+    // MARK: - State machine entry points
+
+    /// Seed the initial state when the sidebar is first installed.
+    /// Applies layout and traffic lights without animation (cold start
+    /// should not slide the sidebar into view) and leaves state timers
+    /// clean. Called from `PaneContainerViewController.installSidebar`.
+    func applyInitialState(pinned: Bool) {
+        currentState = pinned ? .pinnedOpen : .hidden
+        overlay.header.isPinned = (currentState == .pinnedOpen)
+        container?.applySidebarLayout(state: currentState, animated: false, completion: nil)
+    }
+
+    /// Toggle between `.pinnedOpen` and the state before pinning. From
+    /// `.hidden` / `.hoverPeek`, a pin takes the sidebar to
+    /// `.pinnedOpen`; from `.pinnedOpen` a toggle sends it to `.hidden`
+    /// (the "default" off state). Wired to the ⌘B action and the pin
+    /// button.
+    func togglePin() {
+        switch currentState {
+        case .hidden, .hoverPeek:
+            transition(to: .pinnedOpen, animated: true)
+        case .pinnedOpen:
+            transition(to: .hidden, animated: true)
+        }
+    }
+
+    /// Edge hit zone mouse-enter entry point. Registers the hover and
+    /// schedules a `.hidden → .hoverPeek` transition after
+    /// `hoverInDelay` if the cursor is still inside and the reveal is
+    /// permitted by `hoverTriggerAllowed`.
+    func setEdgeHovered(_ value: Bool) {
+        edgeHovered = value
+        hoverInsideDidChange()
+    }
+
+    /// Sidebar overlay mouse-enter entry point (mirrors
+    /// `setEdgeHovered`). Keeps `.hoverPeek` alive while the user
+    /// interacts with sidebar contents.
+    func setSidebarHovered(_ value: Bool) {
+        sidebarHovered = value
+        hoverInsideDidChange()
+    }
+
+    private var mouseInside: Bool { edgeHovered || sidebarHovered }
+
+    private func hoverInsideDidChange() {
+        if mouseInside {
+            scheduleHoverIn()
+        } else {
+            scheduleHoverOut()
+        }
+    }
+
+    private func scheduleHoverIn() {
+        // Bump the generation so any pending hide from a prior exit is
+        // invalidated before the delay we're about to register.
+        stateGeneration &+= 1
+        guard currentState == .hidden, hoverTriggerAllowed else { return }
+        let gen = stateGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverInDelay) { [weak self] in
+            guard let self, gen == self.stateGeneration else { return }
+            guard self.mouseInside, self.hoverTriggerAllowed else { return }
+            guard self.currentState == .hidden else { return }
+            self.transition(to: .hoverPeek, animated: true)
+        }
+    }
+
+    private func scheduleHoverOut() {
+        stateGeneration &+= 1
+        guard currentState == .hoverPeek else { return }
+        let gen = stateGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverOutDelay) { [weak self] in
+            guard let self, gen == self.stateGeneration else { return }
+            guard !self.mouseInside else { return }
+            // If the user is mid-drag (e.g. resizing a pane near the
+            // sidebar edge), collapsing the sidebar out from under them
+            // feels abrupt. Defer the hide until the primary button
+            // comes back up via a one-shot `leftMouseUp` monitor.
+            // Right/middle buttons are pane-internal and don't affect
+            // sidebar state, so we intentionally only guard on bit 0.
+            if NSEvent.pressedMouseButtons & 1 != 0 {
+                self.installDragEndMonitor()
+                return
+            }
+            guard self.currentState == .hoverPeek else { return }
+            self.transition(to: .hidden, animated: true)
+        }
+    }
+
+    /// Install a one-shot local monitor for primary-button release.
+    /// When it fires, re-evaluate the hover state so the sidebar can
+    /// close as soon as the drag ends (provided the cursor is still
+    /// outside the sidebar/edge zone). Idempotent: a second call while
+    /// one is already in flight is a no-op.
+    private func installDragEndMonitor() {
+        guard dragEndMonitor == nil else { return }
+        dragEndMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            self.removeDragEndMonitor()
+            self.hoverInsideDidChange()
+            return event
+        }
+    }
+
+    private func removeDragEndMonitor() {
+        if let m = dragEndMonitor {
+            NSEvent.removeMonitor(m)
+            dragEndMonitor = nil
+        }
+    }
+
+    deinit {
+        // `addLocalMonitorForEvents` tokens leak the backing closure if
+        // not removed. Swift 6 deinit is nonisolated; `removeMonitor`
+        // is thread-safe, and the `nonisolated(unsafe)` property lets
+        // us touch it without a MainActor hop.
+        if let m = dragEndMonitor {
+            NSEvent.removeMonitor(m)
+        }
+    }
+
+    /// Whether hover triggers should currently fire. Disabled while the
+    /// command palette is visible, the focused pane's URL bar holds
+    /// first responder, a modal window is showing, or a workspace
+    /// switch / sidebar animation is in flight.
+    private var hoverTriggerAllowed: Bool {
+        guard let container else { return false }
+        if container.commandPalette.isVisible { return false }
+        if container.isAnimatingWorkspaceSwitch { return false }
+        if isAnimating { return false }
+        if NSApp.modalWindow != nil { return false }
+        // Text-field first responder — URL bar, command palette input,
+        // any suggestion field. NSTextField delegates to an
+        // NSTextView-based field editor; both inherit from NSText.
+        if let responder = view.window?.firstResponder, responder is NSText {
+            return false
+        }
+        return true
+    }
+
+    private func transition(to newState: SidebarState, animated: Bool) {
+        guard newState != currentState else { return }
+        guard let container else {
+            currentState = newState
+            overlay.header.isPinned = (newState == .pinnedOpen)
+            return
+        }
+        stateGeneration &+= 1
+        let gen = stateGeneration
+        currentState = newState
+        overlay.header.isPinned = (newState == .pinnedOpen)
+        isAnimating = animated
+        container.applySidebarLayout(state: newState, animated: animated) { [weak self] in
+            // Generation guard: if pin toggles stack (pin → unpin while
+            // the first fade is still running), an earlier completion
+            // fires mid-animation for the newer transition. Checking
+            // the captured generation lets only the latest transition's
+            // completion flip `isAnimating` back off.
+            guard let self, gen == self.stateGeneration else { return }
+            self.isAnimating = false
+        }
     }
 
     /// Fallback-aware display title. Terminal and browser panes frequently
