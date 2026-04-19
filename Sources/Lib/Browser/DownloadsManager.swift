@@ -376,12 +376,38 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
 
     // MARK: - User actions
 
-    /// Cancel an active download. Silently ignored for entries without a
-    /// live WKDownload (e.g. records loaded from DB after restart).
+    /// Cancel an in-flight transfer.
+    ///
+    /// - `.downloading`: delegates to WebKit, which fires
+    ///   `didFailWithError` with `NSURLErrorCancelled` and flips the
+    ///   entry to `.cancelled`.
+    /// - `.paused`: paused entries have no live `WKDownload` (pause
+    ///   nils it out after writing the sidecar), so WebKit can't do
+    ///   the transition for us. Mirror `pause`'s own cancellation
+    ///   branch: drop the sidecar and push the entry to `.cancelled`
+    ///   directly. The row then sits in a terminal state where the UI
+    ///   shows remove (×) instead of cancel, matching the invariant
+    ///   "you can't drop a live transfer without first cancelling it".
+    /// - Terminal states (`completed` / `failed` / `cancelled`): no-op;
+    ///   `remove(id:)` is the appropriate next action.
     public func cancel(id: Int64) {
-        guard let entry = downloads.first(where: { $0.id == id }),
-              let wk = entry.wkDownload else { return }
-        wk.cancel(nil)  // triggers didFailWithError with NSURLErrorCancelled
+        guard let entry = downloads.first(where: { $0.id == id }) else { return }
+        switch entry.state {
+        case .downloading:
+            guard let wk = entry.wkDownload else { return }
+            wk.cancel(nil)
+        case .paused:
+            try? FileManager.default.removeItem(at: Self.sidecarURL(for: id))
+            entry.state = .cancelled
+            entry.completedAt = Date()
+            store.updateState(
+                id: id, state: entry.state.rawValue,
+                completedAt: entry.completedAt, errorMessage: nil
+            )
+            fireListeners()
+        case .completed, .failed, .cancelled:
+            break
+        }
     }
 
     /// Pause an active download. Saves a sidecar file with the WebKit

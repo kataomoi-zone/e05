@@ -11,10 +11,14 @@ import AppKit
 /// - a 2pt accent-coloured overlay hugs the cell's bottom edge for
 ///   `.downloading` / `.paused` rows with known total bytes, giving a
 ///   low-noise progress indicator that doesn't push row height up
-/// - the trailing slot surfaces state-dependent actions (pause+cancel,
-///   resume+remove, reveal+remove, remove) in the hover-revealed button
-///   stack; longer tails (copy URL, open file, editing) are deferred
-///   to a later ellipsis menu pass shared with history/bookmarks
+/// - the trailing slot surfaces state-dependent actions directly
+///   (no ellipsis menu): active rows expose pause/resume + copy URL
+///   + cancel, completed rows expose reveal + copy URL + remove,
+///   terminal-failure rows expose copy URL + remove. Keeping the
+///   primary transport controls (pause, resume, cancel) as single
+///   clicks matches the user's expectation that mid-transfer decisions
+///   are quick; Copy URL is promoted to a first-class button so it
+///   stays one click too even though it's less frequent.
 ///
 /// Layout stability for hover-reveal: the trailing stack uses
 /// `detachesHiddenViews = false`, so toggling individual button
@@ -31,13 +35,20 @@ final class DownloadsSidebarView: NSView {
     var onPause: ((Int64) -> Void)?
     /// Fired when resume is requested on a paused download.
     var onResume: ((Int64) -> Void)?
-    /// Fired when a row is removed from the list (non-active states,
-    /// or the user explicitly abandoning an in-flight transfer).
+    /// Fired when a row is removed from the list. Only valid for
+    /// terminal states (.completed / .failed / .cancelled) — in-flight
+    /// rows route their trailing × through `onCancel` instead, matching
+    /// the invariant "active downloads can't be removed without first
+    /// being cancelled".
     var onRemove: ((Int64) -> Void)?
     /// Fired when reveal-in-Finder is requested on a completed row.
     /// The payload is the destination file path; empty paths are
     /// filtered by the sidebar controller before reaching Finder.
     var onShowInFinder: ((String) -> Void)?
+    /// Fired when Copy URL is requested on any row. The payload is
+    /// the download's id; the parent view controller looks up the
+    /// live URL so a racing store mutation can't copy a stale string.
+    var onCopyURL: ((Int64) -> Void)?
 
     private let manager: DownloadsManager
     private var listenerToken: DownloadsListenerToken?
@@ -129,9 +140,40 @@ final class DownloadsSidebarView: NSView {
     }
 
     private func reload() {
-        rows = manager.all()
-        tableView.reloadData()
-        emptyLabel.isHidden = !rows.isEmpty
+        let newRows = manager.all()
+        // Fast path: the manager fires listeners for *every* progress
+        // tick, not just membership changes. If the row identity list
+        // is unchanged we skip `reloadData` (which would re-run
+        // `viewFor` and `updateTrackingAreas` on every visible cell,
+        // flapping `isHovered` and making the hover-revealed buttons
+        // blink faster than they can be clicked) and push updates
+        // directly into the existing cells. Each cell's own
+        // `configure` already skips button rebuilds when its (id,
+        // state) hasn't changed, so the whole progress-tick path only
+        // mutates the subtitle text and the progress overlay width —
+        // no hit-test churn.
+        let identitiesMatch = rows.count == newRows.count
+            && zip(rows, newRows).allSatisfy { $0.id == $1.id }
+
+        // Update the backing array *before* any table mutation so
+        // `numberOfRows(in:)` (which reads `rows.count`) matches the
+        // shape we're asking the table to render. Deferring this until
+        // after `reloadData()` would make the table ask for the old
+        // count and miss the newly inserted row, leaving fresh
+        // downloads invisible until the next listener fire.
+        rows = newRows
+        emptyLabel.isHidden = !newRows.isEmpty
+
+        guard identitiesMatch else {
+            tableView.reloadData()
+            return
+        }
+        for (index, entry) in newRows.enumerated() {
+            let cell = tableView.view(
+                atColumn: 0, row: index, makeIfNecessary: false
+            ) as? DownloadsSidebarCellView
+            cell?.configure(with: entry)
+        }
     }
 
     private func hideAllActionButtons() {
@@ -191,6 +233,7 @@ extension DownloadsSidebarView: NSTableViewDelegate {
         cell.onResume = { [weak self] id in self?.onResume?(id) }
         cell.onRemove = { [weak self] id in self?.onRemove?(id) }
         cell.onShowInFinder = { [weak self] path in self?.onShowInFinder?(path) }
+        cell.onCopyURL = { [weak self] id in self?.onCopyURL?(id) }
         cell.configure(with: rows[row])
         return cell
     }
@@ -249,6 +292,7 @@ private final class DownloadsSidebarCellView: NSView {
     var onResume: ((Int64) -> Void)?
     var onRemove: ((Int64) -> Void)?
     var onShowInFinder: ((String) -> Void)?
+    var onCopyURL: ((Int64) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
@@ -259,6 +303,8 @@ private final class DownloadsSidebarCellView: NSView {
     private var trackingArea: NSTrackingArea?
     private var isHovered: Bool = false
     private var lastFraction: Double = 0
+    private var lastState: DownloadState?
+    private var lastConfiguredID: Int64?
     private var progressIsVisible: Bool = false
     private var currentID: Int64 = 0
     private var currentDestination: String = ""
@@ -313,7 +359,15 @@ private final class DownloadsSidebarCellView: NSView {
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleLabel.trailingAnchor.constraint(equalTo: actionsStack.leadingAnchor, constant: -6),
+            // `lessThanOrEqualTo` so the stack settles at its intrinsic
+            // width (3 buttons × 18pt + spacing) anchored flush to the
+            // trailing edge. With `equalTo` the stack would stretch to
+            // fill the remaining horizontal space and the buttons would
+            // gravitate to its leading edge, leaving dead space before
+            // the row's right margin.
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: actionsStack.leadingAnchor, constant: -6
+            ),
 
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
@@ -431,42 +485,73 @@ private final class DownloadsSidebarCellView: NSView {
         progressIsVisible = showProgress
         progressOverlay.isHidden = !showProgress
 
-        rebuildActionButtons(for: entry.state)
+        // Only rebuild the trailing button stack when the identity or
+        // state actually changed. Progress ticks on a `.downloading`
+        // row fire `fireListeners()` every time the bytes written
+        // advance, which re-enters `configure`. Rebuilding the stack
+        // removes the hover-revealed buttons from the tracking area
+        // mid-aim, so a user hovering over Cancel sees the button
+        // disappear and reappear several times a second — effectively
+        // un-clickable. Skipping the rebuild keeps the same button
+        // instances under the cursor so hover state sticks.
+        let stateChanged = lastState != entry.state
+        let idChanged = lastConfiguredID != entry.id
+        if stateChanged || idChanged {
+            rebuildActionButtons(for: entry.state)
+            lastState = entry.state
+            lastConfiguredID = entry.id
+        }
         needsLayout = true
     }
 
     private func rebuildActionButtons(for state: DownloadState) {
         actionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
 
+        // Leading primary action: transport control for active rows,
+        // reveal-in-Finder for completed rows, absent for terminal
+        // failure states (nothing primary to do there — the user
+        // either copies the URL to retry manually or removes the row).
         switch state {
         case .downloading:
             actionsStack.addArrangedSubview(makeButton(
                 symbol: "pause.circle", tooltip: "Pause",
                 action: #selector(handlePauseTapped)
             ))
-            actionsStack.addArrangedSubview(makeButton(
-                symbol: "xmark", tooltip: "Cancel",
-                action: #selector(handleCancelTapped)
-            ))
         case .paused:
             actionsStack.addArrangedSubview(makeButton(
                 symbol: "play.circle", tooltip: "Resume",
                 action: #selector(handleResumeTapped)
-            ))
-            actionsStack.addArrangedSubview(makeButton(
-                symbol: "xmark", tooltip: "Remove",
-                action: #selector(handleRemoveTapped)
             ))
         case .completed:
             actionsStack.addArrangedSubview(makeButton(
                 symbol: "folder", tooltip: "Show in Finder",
                 action: #selector(handleShowInFinderTapped)
             ))
-            actionsStack.addArrangedSubview(makeButton(
-                symbol: "xmark", tooltip: "Remove",
-                action: #selector(handleRemoveTapped)
-            ))
         case .failed, .cancelled:
+            break
+        }
+
+        // Copy URL lives next to the primary because users reach for
+        // it frequently enough to deserve a single click, but not so
+        // frequently that it should eclipse the state-specific primary.
+        actionsStack.addArrangedSubview(makeButton(
+            symbol: "link", tooltip: "Copy URL",
+            action: #selector(handleCopyURLTapped)
+        ))
+
+        // Trailing slot: cancel while the transfer is still live,
+        // remove once it has terminated. The invariant is "you can't
+        // remove an active download without cancelling it first" —
+        // routing downloading/paused through `onCancel` enforces that
+        // at the UI layer and keeps the manager's state machine from
+        // having to guard callers.
+        switch state {
+        case .downloading, .paused:
+            actionsStack.addArrangedSubview(makeButton(
+                symbol: "xmark", tooltip: "Cancel",
+                action: #selector(handleCancelTapped)
+            ))
+        case .completed, .failed, .cancelled:
             actionsStack.addArrangedSubview(makeButton(
                 symbol: "xmark", tooltip: "Remove",
                 action: #selector(handleRemoveTapped)
@@ -501,6 +586,7 @@ private final class DownloadsSidebarCellView: NSView {
     @objc private func handleCancelTapped() { onCancel?(currentID) }
     @objc private func handleRemoveTapped() { onRemove?(currentID) }
     @objc private func handleShowInFinderTapped() { onShowInFinder?(currentDestination) }
+    @objc private func handleCopyURLTapped() { onCopyURL?(currentID) }
 
     // MARK: - Status line formatting
 

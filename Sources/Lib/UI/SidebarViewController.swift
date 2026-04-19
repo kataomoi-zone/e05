@@ -161,6 +161,18 @@ final class SidebarViewController: NSViewController {
                 [URL(fileURLWithPath: path)]
             )
         }
+        downloadsView.onCopyURL = { [weak container] id in
+            // Re-read through the manager rather than caching the URL
+            // in the cell: if the row has been rewritten (retry with a
+            // redirected URL, future edit API) between menu render and
+            // click, we still copy the live value.
+            guard let container,
+                  let entry = container.downloadsManager.all().first(where: { $0.id == id })
+            else { return }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(entry.url, forType: .string)
+        }
         overlay.setDownloadsView(downloadsView)
 
         // Re-apply the current mode so the newly installed mode views'
