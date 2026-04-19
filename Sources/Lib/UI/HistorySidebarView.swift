@@ -100,7 +100,7 @@ final class HistorySidebarView: NSView {
             object: scrollView.contentView,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hideAllDeleteButtons() }
+            MainActor.assumeIsolated { self?.hideAllActionButtons() }
         }
 
         emptyLabel.font = .systemFont(ofSize: 12)
@@ -126,12 +126,12 @@ final class HistorySidebarView: NSView {
         emptyLabel.isHidden = !rows.isEmpty
     }
 
-    private func hideAllDeleteButtons() {
+    private func hideAllActionButtons() {
         tableView.enumerateAvailableRowViews { _, row in
             if let cell = self.tableView.view(
                 atColumn: 0, row: row, makeIfNecessary: false
             ) as? HistorySidebarCellView {
-                cell.forceHideDeleteButton()
+                cell.forceHideActionButton()
             }
         }
     }
@@ -180,10 +180,8 @@ extension HistorySidebarView: NSTableViewDelegate {
         let cell = tableView.makeView(withIdentifier: identifier, owner: self)
             as? HistorySidebarCellView ?? HistorySidebarCellView(identifier: identifier)
         cell.configure(with: rows[row])
-        cell.onDelete = { [weak self] id in
-            guard let self,
-                  let idx = self.rows.firstIndex(where: { $0.id == id }) else { return }
-            self.deleteRow(at: idx)
+        cell.onRowAction = { [weak self] id, action in
+            self?.handleRowAction(id: id, action: action)
         }
         return cell
     }
@@ -193,12 +191,48 @@ extension HistorySidebarView: NSTableViewDelegate {
     }
 }
 
+// MARK: - Row action routing
+
+extension HistorySidebarView {
+    fileprivate func handleRowAction(id: Int64, action: HistoryRowAction) {
+        guard let entry = rows.first(where: { $0.id == id }) else { return }
+        switch action {
+        case .delete:
+            history.delete(id: entry.id)
+        case .copyURL:
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(entry.url, forType: .string)
+        case .openInCurrentWorkspace:
+            onOpen?(entry.url)
+        case .openInNewWorkspace:
+            onOpenInNewWorkspace?(entry.url)
+        }
+    }
+}
+
+// MARK: - Cell actions
+
+/// Per-row action surfaced via the trailing ellipsis menu. Single
+/// callback + enum keeps the parent view as the single owner of
+/// mutation / pasteboard side effects.
+///
+/// Same-site filtering ("history of this host") will land alongside
+/// the history search UI, so it's intentionally absent here.
+enum HistoryRowAction {
+    case delete
+    case copyURL
+    case openInCurrentWorkspace
+    case openInNewWorkspace
+}
+
 // MARK: - Cell
 
 /// Compact two-line cell: page title on top (label color) and
-/// "host · relative_time" on the bottom (secondary). Hovering reveals
-/// a trailing delete (×) button. Transparent background so the
-/// Liquid Glass sidebar remains visible through the row.
+/// "relative_time · host" on the bottom (secondary). Hovering
+/// reveals a trailing ellipsis (…) button that opens a small action
+/// menu (Copy URL / Delete). Transparent background so the Liquid
+/// Glass sidebar remains visible through the row.
 private final class HistorySidebarCellView: NSView {
     static let height: CGFloat = 40
 
@@ -214,11 +248,11 @@ private final class HistorySidebarCellView: NSView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let deleteButton = HoverIconButton()
+    private let actionButton = HoverIconButton()
     private var currentID: Int64 = 0
     private var trackingArea: NSTrackingArea?
 
-    var onDelete: ((Int64) -> Void)?
+    var onRowAction: ((Int64, HistoryRowAction) -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -242,36 +276,36 @@ private final class HistorySidebarCellView: NSView {
         subtitleLabel.drawsBackground = false
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        deleteButton.image = NSImage(
-            systemSymbolName: "xmark", accessibilityDescription: "Delete"
+        actionButton.image = NSImage(
+            systemSymbolName: "ellipsis", accessibilityDescription: "More actions"
         )
-        deleteButton.imagePosition = .imageOnly
-        deleteButton.isBordered = false
-        deleteButton.bezelStyle = .regularSquare
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.target = self
-        deleteButton.action = #selector(deleteTapped)
-        deleteButton.toolTip = "Delete"
+        actionButton.imagePosition = .imageOnly
+        actionButton.isBordered = false
+        actionButton.bezelStyle = .regularSquare
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+        actionButton.target = self
+        actionButton.action = #selector(actionTapped)
+        actionButton.toolTip = "More actions"
         // Hover-revealed: the cell's tracking area toggles visibility.
-        deleteButton.isHidden = true
+        actionButton.isHidden = true
 
         addSubview(titleLabel)
         addSubview(subtitleLabel)
-        addSubview(deleteButton)
+        addSubview(actionButton)
 
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleLabel.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -6),
 
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
-            deleteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            deleteButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            deleteButton.widthAnchor.constraint(equalToConstant: 18),
-            deleteButton.heightAnchor.constraint(equalToConstant: 18),
+            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            actionButton.widthAnchor.constraint(equalToConstant: 18),
+            actionButton.heightAnchor.constraint(equalToConstant: 18),
         ])
     }
 
@@ -291,7 +325,7 @@ private final class HistorySidebarCellView: NSView {
     }
 
     override func mouseEntered(with _: NSEvent) {
-        deleteButton.isHidden = false
+        actionButton.isHidden = false
     }
 
     override func mouseExited(with _: NSEvent) {
@@ -300,20 +334,20 @@ private final class HistorySidebarCellView: NSView {
         // area (a HoverIconButton in our trailing slot) and back —
         // ignore those so the hover-reveal doesn't flicker off mid-aim.
         if cursorIsStillInsideBounds() { return }
-        deleteButton.isHidden = true
+        actionButton.isHidden = true
     }
 
     override func cursorUpdate(with _: NSEvent) {
         NSCursor.pointingHand.set()
     }
 
-    /// Force-hide the hover-revealed × button regardless of tracking
-    /// state. Used by the parent list when the clip view scrolls,
-    /// because NSTrackingArea with `.inVisibleRect` doesn't reliably
-    /// fire `mouseExited` for cells that scroll out from under a
-    /// stationary cursor.
-    func forceHideDeleteButton() {
-        deleteButton.isHidden = true
+    /// Force-hide the hover-revealed action button regardless of
+    /// tracking state. Used by the parent list when the clip view
+    /// scrolls, because NSTrackingArea with `.inVisibleRect` doesn't
+    /// reliably fire `mouseExited` for cells that scroll out from
+    /// under a stationary cursor.
+    func forceHideActionButton() {
+        actionButton.isHidden = true
     }
 
     func configure(with entry: BrowsingHistory.Entry) {
@@ -338,10 +372,6 @@ private final class HistorySidebarCellView: NSView {
             ? nil
             : "\(entry.title)\n\(entry.url)"
         subtitleLabel.toolTip = entry.url
-        // Re-enable after reuse so a cell whose previous occupant was
-        // deleted serves new rows normally. Visibility is driven by
-        // the tracking area; resetting `isHidden` here would fight it.
-        deleteButton.isEnabled = true
     }
 
     /// Relative-time wording that avoids `RelativeDateTimeFormatter`'s
@@ -357,12 +387,45 @@ private final class HistorySidebarCellView: NSView {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    @objc private func deleteTapped() {
-        // Disable immediately so the button can't fire twice during
-        // the store's listener-driven reload cycle.
-        deleteButton.isEnabled = false
-        onDelete?(currentID)
+    @objc private func actionTapped() {
+        let menu = NSMenu()
+
+        let copyItem = NSMenuItem(title: "Copy URL", action: #selector(menuCopyURL), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        menu.addItem(.separator())
+
+        let openItem = NSMenuItem(
+            title: "Open in Current Workspace",
+            action: #selector(menuOpenInCurrent),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        menu.addItem(openItem)
+
+        let openNewItem = NSMenuItem(
+            title: "Open in New Workspace",
+            action: #selector(menuOpenInNew),
+            keyEquivalent: ""
+        )
+        openNewItem.target = self
+        menu.addItem(openNewItem)
+
+        menu.addItem(.separator())
+
+        let deleteItem = NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: "")
+        deleteItem.target = self
+        menu.addItem(deleteItem)
+
+        let origin = NSPoint(x: 0, y: actionButton.bounds.height)
+        menu.popUp(positioning: nil, at: origin, in: actionButton)
     }
+
+    @objc private func menuCopyURL() { onRowAction?(currentID, .copyURL) }
+    @objc private func menuDelete() { onRowAction?(currentID, .delete) }
+    @objc private func menuOpenInCurrent() { onRowAction?(currentID, .openInCurrentWorkspace) }
+    @objc private func menuOpenInNew() { onRowAction?(currentID, .openInNewWorkspace) }
 }
 
 // MARK: - Row view
