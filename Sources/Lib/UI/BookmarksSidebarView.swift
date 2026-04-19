@@ -2,15 +2,13 @@ import AppKit
 
 /// Bookmarks list rendered inside the sidebar's `bookmarks` mode.
 /// Subscribes to the shared `Bookmarks` store so external mutations
-/// (URL bar Cmd+D, command palette Toggle Bookmark, the legacy
-/// bookmarks pane's delete button) reflect live without a manual
-/// reload.
+/// (URL bar Cmd+D, command palette Toggle Bookmark) reflect live
+/// without a manual reload.
 ///
-/// Compared to the fuller `ListPaneView` used by the legacy
-/// `e05://bookmarks` special pane, this view is sized for the 260pt
-/// sidebar: transparent background (Liquid Glass stays visible), no
-/// header (the mode name is already in the places section), compact
-/// 40pt rows with title + host, and a hover-revealed delete button.
+/// Sized for the 260pt sidebar: transparent background (Liquid Glass
+/// stays visible), no header (the mode name is already in the places
+/// section), compact 40pt rows with title + host, and a hover-revealed
+/// delete button.
 @MainActor
 final class BookmarksSidebarView: NSView {
     /// Fired on single click. UX policy: always open in a new browser
@@ -289,9 +287,9 @@ private final class BookmarksSidebarCellView: NSView {
 
     /// Re-validate that the cursor is truly outside the cell before
     /// responding to a mouseExited. The same helper is duplicated
-    /// verbatim in the history and downloads sidebar cells by the
-    /// legacy-separation rule — keep the three copies in sync until
-    /// they can be folded into a shared helper.
+    /// verbatim in the history and downloads sidebar cells — keep
+    /// the three copies in sync until they can be folded into a
+    /// shared helper.
     private func cursorIsStillInside() -> Bool {
         // When the window has gone (mode swap, table reload tearing
         // this cell out of the hierarchy) there's no meaningful

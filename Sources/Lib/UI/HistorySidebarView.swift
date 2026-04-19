@@ -2,9 +2,9 @@ import AppKit
 
 /// Browsing history list rendered inside the sidebar's `history` mode.
 /// Subscribes to the shared `BrowsingHistory` store so external
-/// mutations (new page visits from any browser pane, the legacy
-/// history pane's delete button, URL bar recordings) reflect live
-/// without a manual reload.
+/// mutations (new page visits from any browser pane, URL bar
+/// recordings, deletions triggered elsewhere) reflect live without a
+/// manual reload.
 ///
 /// Mirrors `BookmarksSidebarView`'s compact 260pt-friendly layout:
 /// transparent background (Liquid Glass stays visible through the
@@ -34,10 +34,9 @@ final class HistorySidebarView: NSView {
     private var rows: [BrowsingHistory.Entry] = []
     private var scrollObserver: NSObjectProtocol?
 
-    /// Cap on rows loaded into the sidebar list. Matches the legacy
-    /// `e05://history` pane's default so both UIs agree on visibility.
-    /// 500 entries is comfortable for a flat scroll list; a search
-    /// field (planned for stage 5) will handle deeper lookups.
+    /// Cap on rows loaded into the sidebar list. 500 entries is
+    /// comfortable for a flat scroll list; a planned search field
+    /// will handle deeper lookups.
     private static let rowLimit = 500
 
     init(history: BrowsingHistory) {
@@ -157,9 +156,10 @@ final class HistorySidebarView: NSView {
         guard rows.indices.contains(index) else { return }
         let entry = rows[index]
         // Remove from the store first — its listener will trigger
-        // `reload()`, which handles the row removal and selection
-        // restoration consistently with any external deletion source
-        // (legacy history pane's delete button, etc.).
+        // `reload()`, which keeps the row removal and selection
+        // restoration consistent regardless of which entry point
+        // (this list's × button, the URL bar, command palette, …)
+        // triggered the delete.
         history.delete(id: entry.id)
     }
 }
@@ -308,9 +308,9 @@ private final class HistorySidebarCellView: NSView {
 
     /// Re-validate that the cursor is truly outside the cell before
     /// responding to a mouseExited. The same helper is duplicated
-    /// verbatim in the bookmarks and downloads sidebar cells by the
-    /// legacy-separation rule — keep the three copies in sync until
-    /// they can be folded into a shared helper.
+    /// verbatim in the bookmarks and downloads sidebar cells — keep
+    /// the three copies in sync until they can be folded into a
+    /// shared helper.
     private func cursorIsStillInside() -> Bool {
         // When the window has gone (mode swap, table reload tearing
         // this cell out of the hierarchy) there's no meaningful

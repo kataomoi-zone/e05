@@ -1,12 +1,10 @@
 import Foundation
 
-/// Content mode of the sidebar's mutable top area. Stage 3-A wires the
-/// selector and keeps `.tabs` fully functional (showing the worklane);
-/// the other three modes display placeholder views until their list
-/// implementations land in stages 3-B / 3-C / 3-D. Stage 3-D also
-/// removes the corresponding `PaneAddress.Kind.history`/`.bookmarks`/
-/// `.downloads` special panes so these sidebar modes become the sole
-/// entry points for that functionality.
+/// Content mode of the sidebar's mutable top area. Each mode maps to
+/// a dedicated view slot in the overlay — `.tabs` shows the worklane
+/// tree, the other three host their respective list views. The sidebar
+/// is the sole entry point for the history / bookmarks / downloads
+/// features.
 ///
 /// `allCases` order defines the visual row order in the places section.
 enum SidebarMode: CaseIterable {
@@ -35,13 +33,11 @@ enum SidebarMode: CaseIterable {
     }
 
     /// Text shown in the placeholder view for modes that don't have a
-    /// real content view wired yet. Empty for modes backed by a real
-    /// view (`.tabs` → worklane, `.bookmarks` → bookmarks list,
-    /// `.history` → history list) since the placeholder is hidden in
-    /// those cases anyway; the string is still assigned unconditionally
-    /// so the placeholder never carries stale text from a previous mode
-    /// (which accessibility tooling or future fade animations could
-    /// expose).
+    /// real content view wired yet. Every current mode ships a real
+    /// view so the string is empty, but the placeholder is still
+    /// assigned on every mode change so it never carries stale text
+    /// from a previous mode (which accessibility tooling or a future
+    /// fade animation could expose).
     var placeholderMessage: String {
         switch self {
         case .tabs, .bookmarks, .history, .downloads: return ""

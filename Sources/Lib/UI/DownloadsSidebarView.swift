@@ -2,8 +2,8 @@ import AppKit
 
 /// Downloads list rendered inside the sidebar's `downloads` mode.
 /// Subscribes to the shared `DownloadsManager` so mutations (new
-/// transfers, pause / resume / cancel, the legacy pane's delete button,
-/// etc.) reflect live without a manual reload.
+/// transfers, pause / resume / cancel, removals from other entry
+/// points) reflect live without a manual reload.
 ///
 /// Mirrors `HistorySidebarView`'s compact 260pt-friendly layout with
 /// downloads-specific extensions:
@@ -14,7 +14,7 @@ import AppKit
 /// - the trailing slot surfaces state-dependent actions (pause+cancel,
 ///   resume+remove, reveal+remove, remove) in the hover-revealed button
 ///   stack; longer tails (copy URL, open file, editing) are deferred
-///   to the stage 5 ellipsis menu pass shared with history/bookmarks
+///   to a later ellipsis menu pass shared with history/bookmarks
 ///
 /// Layout stability for hover-reveal: the trailing stack uses
 /// `detachesHiddenViews = false`, so toggling individual button
@@ -165,7 +165,7 @@ final class DownloadsSidebarView: NSView {
         // Removal goes through the manager; its listener-driven reload
         // keeps the UI and data source in sync regardless of which
         // entry point triggered it (this list's × button, Delete key,
-        // the legacy pane, etc.).
+        // any future automation).
         onRemove?(entry.id)
     }
 }
@@ -379,9 +379,9 @@ private final class DownloadsSidebarCellView: NSView {
 
     /// Re-validate that the cursor is truly outside the cell before
     /// responding to a mouseExited. The same helper is duplicated
-    /// verbatim in the bookmarks and history sidebar cells by the
-    /// legacy-separation rule — keep the three copies in sync until
-    /// they can be folded into a shared helper.
+    /// verbatim in the bookmarks and history sidebar cells — keep
+    /// the three copies in sync until they can be folded into a
+    /// shared helper.
     private func cursorIsStillInside() -> Bool {
         // When the window has gone (mode swap, table reload tearing
         // this cell out of the hierarchy) there's no meaningful
