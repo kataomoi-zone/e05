@@ -20,6 +20,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var actions: [Action] = []
 
     func applicationDidFinishLaunching(_: Notification) {
+        // Lock the app to dark aqua so every NSView inherits a dark
+        // effective appearance regardless of the system setting. The
+        // browser panes render dark content anyway, so a light chrome
+        // around them looks out of place. A future preference (follow
+        // system / force light / force dark) can replace this line; the
+        // sidebar's `viewDidChangeEffectiveAppearance` path already
+        // tracks appearance changes.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
