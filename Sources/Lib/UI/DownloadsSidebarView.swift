@@ -400,6 +400,19 @@ private final class DownloadsSidebarCellView: NSView {
         currentDestination = entry.destination
         titleLabel.stringValue = entry.filename.isEmpty ? entry.url : entry.filename
         subtitleLabel.stringValue = Self.statusLine(for: entry)
+        // Tooltips surface full text when the compact 260pt sidebar
+        // truncates either label. Title tooltip carries the source URL
+        // as a secondary line so a hover reveals where the download
+        // came from even if the filename alone isn't distinctive. When
+        // there's no filename the main label already renders the URL,
+        // so a tooltip with the same string adds no information — leave
+        // it nil and let subtitleLabel remain the full-URL entry point.
+        titleLabel.toolTip = entry.filename.isEmpty
+            ? nil
+            : "\(entry.filename)\n\(entry.url)"
+        // For downloads the subtitle-level detail worth revealing is
+        // the on-disk destination (if we have one) — otherwise the URL.
+        subtitleLabel.toolTip = entry.destination.isEmpty ? entry.url : entry.destination
 
         let fraction: Double
         if entry.totalBytes > 0 {

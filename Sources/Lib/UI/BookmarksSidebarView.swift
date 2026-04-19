@@ -301,6 +301,18 @@ private final class BookmarksSidebarCellView: NSView {
         // Fall back to the full URL if the host can't be parsed — rare
         // but possible for entries stored with an atypical scheme.
         hostLabel.stringValue = URL(string: entry.url)?.host() ?? entry.url
+        // Tooltips surface the full text when the compact 260pt sidebar
+        // width truncates either label. The title tooltip shows the URL
+        // as a secondary line so a hover reveals "what is this?" even
+        // for bookmarks with identical titles on different hosts. When
+        // the bookmark has no title the main label already renders the
+        // URL, so a tooltip with the same string adds no information —
+        // leave it nil so the hostLabel tooltip remains the sole entry
+        // point for the full URL.
+        titleLabel.toolTip = entry.title.isEmpty
+            ? nil
+            : "\(entry.title)\n\(entry.url)"
+        hostLabel.toolTip = entry.url
         // Re-enable after reuse so a cell whose previous occupant was
         // deleted serves new rows normally. Visibility is driven by
         // the tracking area; resetting `isHidden` here would fight it.

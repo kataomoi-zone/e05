@@ -327,6 +327,17 @@ private final class HistorySidebarCellView: NSView {
         // timestamp past the truncation boundary, hiding the "when"
         // signal users rely on when scanning history.
         subtitleLabel.stringValue = "\(Self.relativeDescription(for: entry.visitedAt)) · \(host)"
+        // Tooltips surface full text when the compact 260pt sidebar
+        // truncates either label. Title tooltip carries the URL as a
+        // secondary line so a hover answers "which page was this?"
+        // even when the title alone isn't distinctive. When the entry
+        // has no title the main label already renders the URL, so a
+        // tooltip with the same string adds no information — leave it
+        // nil and let subtitleLabel remain the full-URL entry point.
+        titleLabel.toolTip = entry.title.isEmpty
+            ? nil
+            : "\(entry.title)\n\(entry.url)"
+        subtitleLabel.toolTip = entry.url
         // Re-enable after reuse so a cell whose previous occupant was
         // deleted serves new rows normally. Visibility is driven by
         // the tracking area; resetting `isHidden` here would fight it.
