@@ -534,7 +534,12 @@ private final class DownloadsSidebarCellView: NSView {
             let host = URL(string: entry.url)?.host() ?? entry.url
             let size = formatBytes(entry.bytesWritten)
             let when = relative(entry.completedAt ?? entry.startedAt)
-            return size.isEmpty ? "\(host) · \(when)" : "\(host) · \(size) · \(when)"
+            // Size and time first, host last: long hosts (e.g. CDN
+            // redirect URLs or deep GitHub artefact paths) would
+            // otherwise consume the line and push the "how big / when"
+            // signal past the truncation boundary. Host is secondary
+            // context here and survives partial truncation just fine.
+            return size.isEmpty ? "\(when) · \(host)" : "\(size) · \(when) · \(host)"
         case .failed:
             return "Failed · \(entry.errorMessage ?? "Unknown error")"
         case .cancelled:

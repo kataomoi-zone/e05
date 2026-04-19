@@ -346,7 +346,11 @@ private final class HistorySidebarCellView: NSView {
         // `host()` returns nil for atypical schemes; fall back to the
         // full URL so the row is still recognisable.
         let host = URL(string: entry.url)?.host() ?? entry.url
-        subtitleLabel.stringValue = "\(host) · \(Self.relativeDescription(for: entry.visitedAt))"
+        // Relative time first, host last: long hosts (e.g. deep
+        // artefact URLs) would otherwise consume the line and push the
+        // timestamp past the truncation boundary, hiding the "when"
+        // signal users rely on when scanning history.
+        subtitleLabel.stringValue = "\(Self.relativeDescription(for: entry.visitedAt)) · \(host)"
         // Re-enable after reuse so a cell whose previous occupant was
         // deleted serves new rows normally. Visibility is driven by
         // the tracking area; resetting `isHidden` here would fight it.
