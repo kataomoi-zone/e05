@@ -83,6 +83,22 @@ final class SidebarOverlayView: NSView {
             glass.trailingAnchor.constraint(equalTo: trailingAnchor),
             glass.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        applyGlassTint()
+    }
+
+    /// Keep the glass tint in sync with the current appearance so the
+    /// sidebar doesn't look brighter than the surrounding workspace
+    /// chrome when the user is in dark mode. In light mode we leave
+    /// `tintColor` nil — the OS default already blends with the bright
+    /// workspace background.
+    private func applyGlassTint() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        glass.tintColor = isDark ? NSColor(white: 0.05, alpha: 0.3) : nil
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyGlassTint()
     }
 
     private func setupContent() {
