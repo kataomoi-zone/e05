@@ -409,18 +409,28 @@ final class SidebarViewController: NSViewController {
             overlay.header.isPinned = (newState == .pinnedOpen)
             return
         }
+        // Bump invalidates deferred hover-in/out closures scheduled
+        // before this transition — necessary when `togglePin` interrupts
+        // an in-flight peek schedule. The completion below no longer
+        // captures `stateGeneration`; state-based guarding handles
+        // stacked transitions without coupling to the shared counter.
         stateGeneration &+= 1
-        let gen = stateGeneration
         currentState = newState
         overlay.header.isPinned = (newState == .pinnedOpen)
         isAnimating = animated
         container.applySidebarLayout(state: newState, animated: animated) { [weak self] in
-            // Generation guard: if pin toggles stack (pin → unpin while
-            // the first fade is still running), an earlier completion
-            // fires mid-animation for the newer transition. Checking
-            // the captured generation lets only the latest transition's
-            // completion flip `isAnimating` back off.
-            guard let self, gen == self.stateGeneration else { return }
+            // Guard on `currentState == newState` rather than the shared
+            // `stateGeneration` counter: hover event paths
+            // (setEdgeHovered / setSidebarHovered / scheduleHoverIn/Out)
+            // also bump `stateGeneration`, so a routine hover event
+            // occurring during the 200ms animation would leave this
+            // completion with a stale captured generation and `isAnimating`
+            // would never flip back to false — permanently blocking
+            // `hoverTriggerAllowed`. State-based guarding still correctly
+            // cancels superseded transitions: if pin toggles stack, the
+            // first completion sees a state that no longer matches and
+            // the second completion lands on the final state.
+            guard let self, self.currentState == newState else { return }
             self.isAnimating = false
         }
     }
