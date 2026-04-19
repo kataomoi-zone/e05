@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "SidebarHover")
 
 /// Sidebar view controller hosting the Liquid Glass overlay, the
 /// worklane / mode views, and the places section. Owns the three-state
@@ -291,6 +294,7 @@ final class SidebarViewController: NSViewController {
     /// direction's in-flight asyncAfter and produce missed transitions.
     func setEdgeHovered(_ value: Bool) {
         guard edgeHovered != value else { return }
+        logger.debug("setEdgeHovered \(self.edgeHovered, privacy: .public) -> \(value, privacy: .public); state=\(String(describing: self.currentState), privacy: .public) gen=\(self.stateGeneration, privacy: .public)")
         edgeHovered = value
         hoverInsideDidChange()
     }
@@ -301,6 +305,7 @@ final class SidebarViewController: NSViewController {
     /// for the same reason as `setEdgeHovered`.
     func setSidebarHovered(_ value: Bool) {
         guard sidebarHovered != value else { return }
+        logger.debug("setSidebarHovered \(self.sidebarHovered, privacy: .public) -> \(value, privacy: .public); state=\(String(describing: self.currentState), privacy: .public) gen=\(self.stateGeneration, privacy: .public)")
         sidebarHovered = value
         hoverInsideDidChange()
     }
@@ -319,23 +324,49 @@ final class SidebarViewController: NSViewController {
         // Bump the generation so any pending hide from a prior exit is
         // invalidated before the delay we're about to register.
         stateGeneration &+= 1
-        guard currentState == .hidden, hoverTriggerAllowed else { return }
+        logger.debug("scheduleHoverIn: gen=\(self.stateGeneration, privacy: .public) state=\(String(describing: self.currentState), privacy: .public) allowed=\(self.hoverTriggerAllowed, privacy: .public) [\(self.hoverAllowedBreakdown, privacy: .public)] edge=\(self.edgeHovered, privacy: .public) sidebar=\(self.sidebarHovered, privacy: .public)")
+        guard currentState == .hidden, hoverTriggerAllowed else {
+            logger.debug("scheduleHoverIn: early-return (state=\(String(describing: self.currentState), privacy: .public) allowed=\(self.hoverTriggerAllowed, privacy: .public))")
+            return
+        }
         let gen = stateGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverInDelay) { [weak self] in
-            guard let self, gen == self.stateGeneration else { return }
-            guard self.mouseInside, self.hoverTriggerAllowed else { return }
-            guard self.currentState == .hidden else { return }
+            guard let self else { return }
+            guard gen == self.stateGeneration else {
+                logger.debug("scheduleHoverIn fire: gen mismatch (captured=\(gen) live=\(self.stateGeneration))")
+                return
+            }
+            guard self.mouseInside, self.hoverTriggerAllowed else {
+                logger.debug("scheduleHoverIn fire: conditions failed (inside=\(self.mouseInside) allowed=\(self.hoverTriggerAllowed))")
+                return
+            }
+            guard self.currentState == .hidden else {
+                logger.debug("scheduleHoverIn fire: state moved (\(String(describing: self.currentState)))")
+                return
+            }
+            logger.debug("scheduleHoverIn fire: transitioning to .hoverPeek")
             self.transition(to: .hoverPeek, animated: true)
         }
     }
 
     private func scheduleHoverOut() {
         stateGeneration &+= 1
-        guard currentState == .hoverPeek else { return }
+        logger.debug("scheduleHoverOut: gen=\(self.stateGeneration, privacy: .public) state=\(String(describing: self.currentState), privacy: .public) edge=\(self.edgeHovered, privacy: .public) sidebar=\(self.sidebarHovered, privacy: .public)")
+        guard currentState == .hoverPeek else {
+            logger.debug("scheduleHoverOut: early-return (state=\(String(describing: self.currentState), privacy: .public))")
+            return
+        }
         let gen = stateGeneration
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverOutDelay) { [weak self] in
-            guard let self, gen == self.stateGeneration else { return }
-            guard !self.mouseInside else { return }
+            guard let self else { return }
+            guard gen == self.stateGeneration else {
+                logger.debug("scheduleHoverOut fire: gen mismatch (captured=\(gen, privacy: .public) live=\(self.stateGeneration, privacy: .public))")
+                return
+            }
+            guard !self.mouseInside else {
+                logger.debug("scheduleHoverOut fire: re-entered (inside=true)")
+                return
+            }
             // If the user is mid-drag (e.g. resizing a pane near the
             // sidebar edge), collapsing the sidebar out from under them
             // feels abrupt. Defer the hide until the primary button
@@ -343,10 +374,15 @@ final class SidebarViewController: NSViewController {
             // Right/middle buttons are pane-internal and don't affect
             // sidebar state, so we intentionally only guard on bit 0.
             if NSEvent.pressedMouseButtons & 1 != 0 {
+                logger.debug("scheduleHoverOut fire: deferring (drag in progress)")
                 self.installDragEndMonitor()
                 return
             }
-            guard self.currentState == .hoverPeek else { return }
+            guard self.currentState == .hoverPeek else {
+                logger.debug("scheduleHoverOut fire: state moved (\(String(describing: self.currentState), privacy: .public))")
+                return
+            }
+            logger.debug("scheduleHoverOut fire: transitioning to .hidden")
             self.transition(to: .hidden, animated: true)
         }
     }
@@ -402,6 +438,21 @@ final class SidebarViewController: NSViewController {
         return true
     }
 
+    /// Debug-only breakdown of every guard inside `hoverTriggerAllowed`
+    /// so the log reader can see *which* condition is blocking the
+    /// hover trigger instead of just seeing `allowed=false`.
+    private var hoverAllowedBreakdown: String {
+        let hasContainer = container != nil
+        let paletteVisible = container?.commandPalette.isVisible ?? false
+        let animatingWS = container?.isAnimatingWorkspaceSwitch ?? false
+        let animatingSB = isAnimating
+        let modalActive = NSApp.modalWindow != nil
+        let responder = view.window?.firstResponder
+        let textResponder = responder is NSText
+        let responderType = responder.map { String(describing: type(of: $0)) } ?? "nil"
+        return "container=\(hasContainer) palette=\(paletteVisible) animWS=\(animatingWS) animSB=\(animatingSB) modal=\(modalActive) textFR=\(textResponder) responder=\(responderType)"
+    }
+
     private func transition(to newState: SidebarState, animated: Bool) {
         guard newState != currentState else { return }
         guard let container else {
@@ -430,8 +481,13 @@ final class SidebarViewController: NSViewController {
             // cancels superseded transitions: if pin toggles stack, the
             // first completion sees a state that no longer matches and
             // the second completion lands on the final state.
-            guard let self, self.currentState == newState else { return }
+            guard let self else { return }
+            guard self.currentState == newState else {
+                logger.debug("transition completion: superseded (target=\(String(describing: newState), privacy: .public) current=\(String(describing: self.currentState), privacy: .public))")
+                return
+            }
             self.isAnimating = false
+            logger.debug("transition completion: isAnimating=false (state=\(String(describing: self.currentState), privacy: .public))")
         }
     }
 

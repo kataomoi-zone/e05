@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "EdgeHover")
 
 /// Thin transparent strip pinned to the window's leading edge. Fires
 /// hover-in / hover-out callbacks so the sidebar state machine can
@@ -53,8 +56,15 @@ final class EdgeHoverHitZoneView: NSView {
         syncHoverWithCurrentCursor()
     }
 
-    override func mouseEntered(with _: NSEvent) { onEnter?() }
-    override func mouseExited(with _: NSEvent) { onExit?() }
+    override func mouseEntered(with _: NSEvent) {
+        logger.debug("mouseEntered")
+        onEnter?()
+    }
+
+    override func mouseExited(with _: NSEvent) {
+        logger.debug("mouseExited")
+        onExit?()
+    }
 
     /// AppKit skips the synthesised `mouseEntered` when a freshly
     /// installed tracking area already contains the cursor — classically
