@@ -42,7 +42,7 @@ final class SidebarViewController: NSViewController {
     private var edgeHovered: Bool = false
     /// Cursor is currently inside the sidebar overlay's visible rect.
     /// Spurious `mouseExited` from nested subview tracking areas is
-    /// filtered by `SidebarOverlayView.cursorIsStillInside` before this
+    /// filtered by `SidebarOverlayView.cursorIsStillInsideBounds` before this
     /// flag flips.
     private var sidebarHovered: Bool = false
 

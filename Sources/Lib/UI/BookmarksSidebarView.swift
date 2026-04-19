@@ -274,36 +274,12 @@ private final class BookmarksSidebarCellView: NSView {
     }
 
     override func mouseExited(with _: NSEvent) {
-        // AppKit can deliver a spurious mouseExited when the cursor
-        // moves from this cell's tracking area into a subview's own
-        // tracking area (a HoverIconButton in our trailing slot) and
-        // back, even though the cursor never actually left our bounds.
-        // Re-check against the live cursor position; if we're still
-        // inside, ignore the event so the hover-revealed button
-        // doesn't flicker off mid-aim.
-        if cursorIsStillInside() { return }
+        // AppKit delivers a spurious mouseExited when the cursor moves
+        // from this cell's tracking area into a subview's own tracking
+        // area (a HoverIconButton in our trailing slot) and back —
+        // ignore those so the hover-reveal doesn't flicker off mid-aim.
+        if cursorIsStillInsideBounds() { return }
         deleteButton.isHidden = true
-    }
-
-    /// Re-validate that the cursor is truly outside the cell before
-    /// responding to a mouseExited. The same helper is duplicated
-    /// verbatim in the history and downloads sidebar cells — keep
-    /// the three copies in sync until they can be folded into a
-    /// shared helper.
-    private func cursorIsStillInside() -> Bool {
-        // When the window has gone (mode swap, table reload tearing
-        // this cell out of the hierarchy) there's no meaningful
-        // cursor-position check we can perform. Return `true` so a
-        // stray mouseExited during teardown is ignored: the function
-        // name reads as "still inside" and a cell not attached to a
-        // window isn't presenting its reveal anyway.
-        guard let window else { return true }
-        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        let localPoint = convert(windowPoint, from: nil)
-        // Prefer `NSMouseInRect` over `bounds.contains` so flipped /
-        // non-flipped coordinate changes can't silently invert the
-        // check when the cell view's `isFlipped` is overridden later.
-        return NSMouseInRect(localPoint, bounds, isFlipped)
     }
 
     override func cursorUpdate(with _: NSEvent) {

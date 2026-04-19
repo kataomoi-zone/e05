@@ -29,7 +29,7 @@ final class SidebarOverlayView: NSView {
     var onHoverEnter: (() -> Void)?
     /// Called when the cursor actually leaves the sidebar. Spurious
     /// `mouseExited` events from nested subview tracking areas are
-    /// filtered out before this fires (see `cursorIsStillInside`).
+    /// filtered out before this fires (see `cursorIsStillInsideBounds`).
     var onHoverExit: (() -> Void)?
 
     private var hoverTrackingArea: NSTrackingArea?
@@ -192,17 +192,7 @@ final class SidebarOverlayView: NSView {
         // cursor position against our bounds and suppress the exit if
         // the cursor is still inside — otherwise `.hoverPeek` would
         // collapse the moment the user tries to interact with a cell.
-        if cursorIsStillInside() { return }
+        if cursorIsStillInsideBounds() { return }
         onHoverExit?()
-    }
-
-    private func cursorIsStillInside() -> Bool {
-        // Teardown / window removal: treat as still-inside so we do not
-        // fire a phantom exit as the sidebar is dismantled.
-        guard let window else { return true }
-        let screenLoc = NSEvent.mouseLocation
-        let windowLoc = window.convertPoint(fromScreen: screenLoc)
-        let localLoc = convert(windowLoc, from: nil)
-        return NSMouseInRect(localLoc, bounds, isFlipped)
     }
 }
