@@ -99,7 +99,14 @@ public final class PaneModel {
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         case .settings:
-            assertionFailure("Settings pane not yet implemented")
+            // Settings is planned but not yet implemented. Log and fall
+            // back to a blank browser so users who type `e05://settings`
+            // or restore a session referencing it see an empty pane
+            // instead of a debug-build trap. The feature remains on the
+            // roadmap — drop this branch once a real Settings view ships.
+            logger.warning(
+                "Settings pane is not yet implemented — falling back to blank browser"
+            )
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         case .unknown:
