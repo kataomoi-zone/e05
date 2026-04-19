@@ -90,7 +90,7 @@ final class BookmarksSidebarView: NSView {
             object: scrollView.contentView,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hideAllDeleteButtons() }
+            MainActor.assumeIsolated { self?.hideAllActionButtons() }
         }
 
         emptyLabel.font = .systemFont(ofSize: 12)
@@ -116,12 +116,12 @@ final class BookmarksSidebarView: NSView {
         emptyLabel.isHidden = !rows.isEmpty
     }
 
-    private func hideAllDeleteButtons() {
+    private func hideAllActionButtons() {
         tableView.enumerateAvailableRowViews { _, row in
             if let cell = self.tableView.view(
                 atColumn: 0, row: row, makeIfNecessary: false
             ) as? BookmarksSidebarCellView {
-                cell.forceHideDeleteButton()
+                cell.forceHideActionButton()
             }
         }
     }
@@ -169,10 +169,8 @@ extension BookmarksSidebarView: NSTableViewDelegate {
         let cell = tableView.makeView(withIdentifier: identifier, owner: self)
             as? BookmarksSidebarCellView ?? BookmarksSidebarCellView(identifier: identifier)
         cell.configure(with: rows[row])
-        cell.onDelete = { [weak self] id in
-            guard let self,
-                  let idx = self.rows.firstIndex(where: { $0.id == id }) else { return }
-            self.deleteRow(at: idx)
+        cell.onRowAction = { [weak self] id, action in
+            self?.handleRowAction(id: id, action: action)
         }
         return cell
     }
@@ -182,22 +180,131 @@ extension BookmarksSidebarView: NSTableViewDelegate {
     }
 }
 
+// MARK: - Row action routing
+
+extension BookmarksSidebarView {
+    fileprivate func handleRowAction(id: Int64, action: BookmarkRowAction) {
+        guard let entry = rows.first(where: { $0.id == id }) else { return }
+        switch action {
+        case .edit:
+            presentEditSheet(for: entry)
+        case .delete:
+            bookmarks.remove(id: entry.id)
+        case .copyURL:
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(entry.url, forType: .string)
+        case .openInCurrentWorkspace:
+            onOpen?(entry.url)
+        case .openInNewWorkspace:
+            onOpenInNewWorkspace?(entry.url)
+        }
+    }
+
+    /// Present a modal sheet with Name and URL fields pre-populated
+    /// from the bookmark. Save commits via `Bookmarks.update`; a
+    /// UNIQUE collision (URL already bookmarked) surfaces a follow-up
+    /// warning alert instead of silently swallowing the edit.
+    private func presentEditSheet(for entry: Bookmarks.Entry) {
+        guard let window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Bookmark"
+        alert.informativeText = "Update the name or URL."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let nameField = NSTextField(string: entry.title)
+        nameField.placeholderString = "Name"
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+
+        let urlField = NSTextField(string: entry.url)
+        urlField.placeholderString = "URL"
+        urlField.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [nameField, urlField])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        // NSAlert sizes its accessoryView from a combination of the
+        // initial frame and Auto Layout's fittingSize. Seeding the
+        // frame is not dead code: without it, the accessoryView is
+        // installed at NSRect.zero and collapses to a sliver before
+        // the layout pass resolves the text-field width constraints.
+        // Keep both the frame seed and the constraint to get a sheet
+        // that's sized correctly on its first appearance.
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 56)
+        NSLayoutConstraint.activate([
+            nameField.widthAnchor.constraint(equalToConstant: 320),
+            urlField.widthAnchor.constraint(equalToConstant: 320),
+        ])
+
+        alert.accessoryView = stack
+        // Focus the name field so the user can type immediately.
+        alert.window.initialFirstResponder = nameField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let newTitle = nameField.stringValue
+            let newURL = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Empty URL would leave a ghost row impossible to focus —
+            // surface it as an error instead of silently no-op'ing.
+            guard !newURL.isEmpty else {
+                self.presentEditError(message: "URL cannot be empty.")
+                return
+            }
+            let ok = self.bookmarks.update(id: entry.id, title: newTitle, url: newURL)
+            if !ok {
+                self.presentEditError(
+                    message: "That URL is already bookmarked — changes were not saved."
+                )
+            }
+        }
+    }
+
+    private func presentEditError(message: String) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Could not save bookmark"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+}
+
+// MARK: - Cell actions
+
+/// Per-row action surfaced via the trailing ellipsis menu. A single
+/// callback on the cell dispatches on this enum so the parent view
+/// can own all the orchestration (store mutation, pasteboard writes,
+/// workspace routing, edit sheet presentation) in one place.
+enum BookmarkRowAction {
+    case edit
+    case delete
+    case copyURL
+    case openInCurrentWorkspace
+    case openInNewWorkspace
+}
+
 // MARK: - Cell
 
 /// Compact two-line cell: bookmark title on top (label color) and
 /// host on the bottom (secondary). Hovering reveals a trailing
-/// delete (×) button. Transparent background so the Liquid Glass
-/// sidebar remains visible through the row.
+/// ellipsis (…) button that opens an action menu (Edit… / Delete /
+/// Copy URL / Open in current or new workspace). Transparent
+/// background so the Liquid Glass sidebar remains visible through
+/// the row.
 private final class BookmarksSidebarCellView: NSView {
     static let height: CGFloat = 40
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let hostLabel = NSTextField(labelWithString: "")
-    private let deleteButton = HoverIconButton()
+    private let actionButton = HoverIconButton()
     private var currentID: Int64 = 0
     private var trackingArea: NSTrackingArea?
 
-    var onDelete: ((Int64) -> Void)?
+    var onRowAction: ((Int64, BookmarkRowAction) -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -221,36 +328,36 @@ private final class BookmarksSidebarCellView: NSView {
         hostLabel.drawsBackground = false
         hostLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        deleteButton.image = NSImage(
-            systemSymbolName: "xmark", accessibilityDescription: "Delete"
+        actionButton.image = NSImage(
+            systemSymbolName: "ellipsis", accessibilityDescription: "More actions"
         )
-        deleteButton.imagePosition = .imageOnly
-        deleteButton.isBordered = false
-        deleteButton.bezelStyle = .regularSquare
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.target = self
-        deleteButton.action = #selector(deleteTapped)
-        deleteButton.toolTip = "Delete"
+        actionButton.imagePosition = .imageOnly
+        actionButton.isBordered = false
+        actionButton.bezelStyle = .regularSquare
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+        actionButton.target = self
+        actionButton.action = #selector(actionTapped)
+        actionButton.toolTip = "More actions"
         // Hover-revealed: the cell's tracking area toggles visibility.
-        deleteButton.isHidden = true
+        actionButton.isHidden = true
 
         addSubview(titleLabel)
         addSubview(hostLabel)
-        addSubview(deleteButton)
+        addSubview(actionButton)
 
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            titleLabel.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -6),
 
             hostLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
             hostLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             hostLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
-            deleteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            deleteButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            deleteButton.widthAnchor.constraint(equalToConstant: 18),
-            deleteButton.heightAnchor.constraint(equalToConstant: 18),
+            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            actionButton.widthAnchor.constraint(equalToConstant: 18),
+            actionButton.heightAnchor.constraint(equalToConstant: 18),
         ])
     }
 
@@ -270,7 +377,7 @@ private final class BookmarksSidebarCellView: NSView {
     }
 
     override func mouseEntered(with _: NSEvent) {
-        deleteButton.isHidden = false
+        actionButton.isHidden = false
     }
 
     override func mouseExited(with _: NSEvent) {
@@ -279,20 +386,20 @@ private final class BookmarksSidebarCellView: NSView {
         // area (a HoverIconButton in our trailing slot) and back —
         // ignore those so the hover-reveal doesn't flicker off mid-aim.
         if cursorIsStillInsideBounds() { return }
-        deleteButton.isHidden = true
+        actionButton.isHidden = true
     }
 
     override func cursorUpdate(with _: NSEvent) {
         NSCursor.pointingHand.set()
     }
 
-    /// Force-hide the hover-revealed × button regardless of tracking
-    /// state. Used by the parent list when the clip view scrolls,
-    /// because NSTrackingArea with `.inVisibleRect` doesn't reliably
-    /// fire `mouseExited` for cells that scroll out from under a
-    /// stationary cursor.
-    func forceHideDeleteButton() {
-        deleteButton.isHidden = true
+    /// Force-hide the hover-revealed action button regardless of
+    /// tracking state. Used by the parent list when the clip view
+    /// scrolls, because NSTrackingArea with `.inVisibleRect` doesn't
+    /// reliably fire `mouseExited` for cells that scroll out from
+    /// under a stationary cursor.
+    func forceHideActionButton() {
+        actionButton.isHidden = true
     }
 
     func configure(with entry: Bookmarks.Entry) {
@@ -313,18 +420,54 @@ private final class BookmarksSidebarCellView: NSView {
             ? nil
             : "\(entry.title)\n\(entry.url)"
         hostLabel.toolTip = entry.url
-        // Re-enable after reuse so a cell whose previous occupant was
-        // deleted serves new rows normally. Visibility is driven by
-        // the tracking area; resetting `isHidden` here would fight it.
-        deleteButton.isEnabled = true
     }
 
-    @objc private func deleteTapped() {
-        // Disable immediately so the button can't fire twice during
-        // the store's listener-driven reload cycle.
-        deleteButton.isEnabled = false
-        onDelete?(currentID)
+    @objc private func actionTapped() {
+        let menu = NSMenu()
+
+        let editItem = NSMenuItem(title: "Edit…", action: #selector(menuEdit), keyEquivalent: "")
+        editItem.target = self
+        menu.addItem(editItem)
+
+        let copyItem = NSMenuItem(title: "Copy URL", action: #selector(menuCopyURL), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        menu.addItem(.separator())
+
+        let openItem = NSMenuItem(
+            title: "Open in Current Workspace",
+            action: #selector(menuOpenInCurrent),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        menu.addItem(openItem)
+
+        let openNewItem = NSMenuItem(
+            title: "Open in New Workspace",
+            action: #selector(menuOpenInNew),
+            keyEquivalent: ""
+        )
+        openNewItem.target = self
+        menu.addItem(openNewItem)
+
+        menu.addItem(.separator())
+
+        let deleteItem = NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: "")
+        deleteItem.target = self
+        menu.addItem(deleteItem)
+
+        // Position the menu flush to the action button's bottom-left
+        // so the first item lines up under the glyph.
+        let origin = NSPoint(x: 0, y: actionButton.bounds.height)
+        menu.popUp(positioning: nil, at: origin, in: actionButton)
     }
+
+    @objc private func menuEdit() { onRowAction?(currentID, .edit) }
+    @objc private func menuDelete() { onRowAction?(currentID, .delete) }
+    @objc private func menuCopyURL() { onRowAction?(currentID, .copyURL) }
+    @objc private func menuOpenInCurrent() { onRowAction?(currentID, .openInCurrentWorkspace) }
+    @objc private func menuOpenInNew() { onRowAction?(currentID, .openInNewWorkspace) }
 }
 
 // MARK: - Row view
