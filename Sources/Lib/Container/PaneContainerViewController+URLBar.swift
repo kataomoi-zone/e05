@@ -100,9 +100,18 @@ extension PaneContainerViewController {
     /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
     func handleURLBarNavigate(pane: PaneModel, input: String) {
         let newAddress: PaneAddress
-        if let parsed = PaneAddress.fromUserInput(input), parsed.kind != .unknown {
+        if let parsed = PaneAddress.fromUserInput(input) {
+            // Accept any parsed URL, including `.unknown`-kind e05 hosts.
+            // `PaneModel.init(.unknown)` lands the pane on a blank-browser
+            // fallback with a warning log — the same feedback a typed
+            // URL would get in a mainstream browser when the destination
+            // can't be rendered. Silently rewriting such URLs to a search
+            // query would hide the user's stated intent to navigate.
             newAddress = parsed
         } else if let search = PaneAddress.searchURL(query: input) {
+            // `fromUserInput` returned nil, so the input doesn't parse
+            // as a URL at all (bare word, disallowed scheme, …) — fall
+            // through to search like any other free-form query.
             newAddress = search
         } else {
             return

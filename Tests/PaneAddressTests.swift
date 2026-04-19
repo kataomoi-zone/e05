@@ -14,29 +14,16 @@ struct PaneAddressTests {
         #expect(PaneAddress.settings.kind == .settings)
     }
 
-    @Test("history address resolves to history kind")
-    func historyKind() {
-        #expect(PaneAddress.history.kind == .history)
-        #expect(PaneAddress.history.description == "e05://history")
-    }
-
-    @Test("bookmarks address resolves to bookmarks kind")
-    func bookmarksKind() {
-        #expect(PaneAddress.bookmarks.kind == .bookmarks)
-        #expect(PaneAddress.bookmarks.description == "e05://bookmarks")
-    }
-
-    @Test("downloads address resolves to downloads kind")
-    func downloadsKind() {
-        #expect(PaneAddress.downloads.kind == .downloads)
-        #expect(PaneAddress.downloads.description == "e05://downloads")
-    }
-
-    @Test("fromUserInput resolves e05 special panes")
-    func fromUserInputSpecialPanes() {
-        #expect(PaneAddress.fromUserInput("e05://history")?.kind == .history)
-        #expect(PaneAddress.fromUserInput("e05://bookmarks")?.kind == .bookmarks)
-        #expect(PaneAddress.fromUserInput("e05://downloads")?.kind == .downloads)
+    @Test("retired special-pane hosts resolve to unknown kind")
+    func retiredSpecialPanesAreUnknown() {
+        // The history / bookmarks / downloads hosts used to have their
+        // own kinds, but those panes were folded into the sidebar. Any
+        // URL still pointing at them (old session entries, hand-typed
+        // input) parses but resolves to `.unknown` so it falls through
+        // to the blank-browser fallback rather than a missing case.
+        #expect(PaneAddress("e05://history")?.kind == .unknown)
+        #expect(PaneAddress("e05://bookmarks")?.kind == .unknown)
+        #expect(PaneAddress("e05://downloads")?.kind == .unknown)
     }
 
     @Test("https URL resolves to browser kind")
@@ -143,11 +130,17 @@ struct PaneAddressTests {
         #expect(PaneAddress.asDirectNavigation("http://example.com")?.kind == .browser)
     }
 
-    @Test("asDirectNavigation accepts e05 internal scheme")
+    @Test("asDirectNavigation accepts e05 internal scheme, keeping unknown hosts navigable")
     func directNavE05() {
-        #expect(PaneAddress.asDirectNavigation("e05://history")?.kind == .history)
-        #expect(PaneAddress.asDirectNavigation("e05://bookmarks")?.kind == .bookmarks)
         #expect(PaneAddress.asDirectNavigation("e05://terminal")?.kind == .terminal)
+        // Unknown e05 hosts — retired special panes, typos, or future
+        // additions — stay navigable so the URL bar offers a direct-open
+        // row. `PaneModel.init(.unknown)` handles the display by falling
+        // back to a blank browser, mirroring how mainstream browsers
+        // respond to typed-but-unreachable URLs.
+        #expect(PaneAddress.asDirectNavigation("e05://history")?.kind == .unknown)
+        #expect(PaneAddress.asDirectNavigation("e05://bookmarks")?.kind == .unknown)
+        #expect(PaneAddress.asDirectNavigation("e05://downloads")?.kind == .unknown)
     }
 
     @Test("asDirectNavigation accepts about scheme")
@@ -239,11 +232,6 @@ struct PaneAddressTests {
         #expect(PaneAddress.asDirectNavigation("//example.com") == nil)
     }
 
-    @Test("asDirectNavigation rejects unknown e05 host")
-    func directNavRejectsUnknownE05() {
-        #expect(PaneAddress.asDirectNavigation("e05://nonexistent") == nil)
-    }
-
     @Test("asDirectNavigation rejects disallowed schemes")
     func directNavRejectsDisallowed() {
         #expect(PaneAddress.asDirectNavigation("ftp://example.com") == nil)
@@ -260,7 +248,7 @@ struct PaneAddressTests {
     @Test("asDirectNavigation tolerates surrounding whitespace")
     func directNavTrimsWhitespace() {
         #expect(PaneAddress.asDirectNavigation("  https://example.com  ") != nil)
-        #expect(PaneAddress.asDirectNavigation("\te05://history\n") != nil)
+        #expect(PaneAddress.asDirectNavigation("\te05://terminal\n") != nil)
     }
 
     // MARK: - Search

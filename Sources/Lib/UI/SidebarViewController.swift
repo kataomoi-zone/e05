@@ -201,9 +201,6 @@ final class SidebarViewController: NSViewController {
         case .terminal: return "Terminal"
         case .browser:
             return pane.address.url.host() ?? pane.address.url.absoluteString
-        case .history: return "History"
-        case .bookmarks: return "Bookmarks"
-        case .downloads: return "Downloads"
         case .settings: return "Settings"
         case .unknown: return "(unknown)"
         }

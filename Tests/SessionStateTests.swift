@@ -111,6 +111,46 @@ struct SessionStateTests {
         #expect(result == nil)
     }
 
+    @Test("retired special-pane addresses round-trip intact for later fallback")
+    func retiredAddressesRoundTrip() throws {
+        // Old session files may still reference addresses whose panes
+        // were retired in favour of the sidebar. The JSON layer must
+        // carry them through unchanged so `PaneModel.init(.unknown)`
+        // can apply the blank-browser fallback at load time.
+        let addresses = ["e05://history", "e05://bookmarks", "e05://downloads"]
+        let session = SessionState(
+            workspaces: [
+                SessionState.WorkspaceState(
+                    columns: addresses.map { address in
+                        SessionState.ColumnState(
+                            panes: [SessionState.PaneState(address: address)],
+                            focusedPaneIndex: 0,
+                            width: 640,
+                            heightRatios: []
+                        )
+                    },
+                    focusedColumnIndex: 0,
+                    scrollX: 0
+                ),
+            ],
+            focusedWorkspaceIndex: 0,
+            urlBarVisible: false
+        )
+
+        let data = try JSONEncoder().encode(session)
+        let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+
+        let panes = decoded.workspaces[0].columns.map(\.panes[0])
+        #expect(panes.map(\.address) == addresses)
+        // Sanity-check the address string still parses into a
+        // `.unknown`-kind PaneAddress so the loader's fallback path
+        // keeps applying.
+        for pane in panes {
+            let addr = PaneAddress(pane.address)
+            #expect(addr?.kind == .unknown)
+        }
+    }
+
     @Test("sidebarPinned round-trips for both true and false")
     func sidebarPinnedRoundTrip() throws {
         for pinned in [true, false] {

@@ -93,33 +93,6 @@ extension PaneContainerViewController {
             }
         }
 
-        if let lv = pane.listView {
-            lv.onOpen = { [weak self, weak pane] url in
-                guard let self, let pane else { return }
-                self.handleURLBarNavigate(pane: pane, input: url)
-            }
-            lv.onOpenInNewColumn = { [weak self] url in
-                // Route through fromUserInput so disallowed schemes
-                // (javascript:, data:, ...) are rejected even if they
-                // somehow landed in the history / bookmarks DB.
-                guard let self,
-                      let addr = PaneAddress.fromUserInput(url),
-                      addr.kind != .unknown else { return }
-                self.addColumn(address: addr)
-            }
-            lv.onFocusChanged = { [weak self, weak pane] in
-                guard let self, let pane else { return }
-                self.handleFocusChange(from: pane)
-            }
-        }
-
-        if let dv = pane.downloadsView {
-            dv.onFocusChanged = { [weak self, weak pane] in
-                guard let self, let pane else { return }
-                self.handleFocusChange(from: pane)
-            }
-        }
-
         if let bv = pane.browserView {
             bv.onTitleChange = { [weak self, weak pane] title in
                 pane?.title = title

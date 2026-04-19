@@ -214,18 +214,11 @@ public final class PaneContainerViewController: NSViewController {
     /// another layout pass is triggered.
     var isAnimatingWorkspaceSwitch = false
 
-    /// Factory: construct a `PaneModel` with all dependencies the container
-    /// owns. Using this instead of `PaneModel.init` directly keeps call
-    /// sites agnostic of the full dependency list — adding a new
-    /// dependency (e.g. for `e05://downloads`) touches only this method.
+    /// Factory: construct a `PaneModel` with the terminal dependency the
+    /// container owns. Kept as a method so future per-pane dependencies
+    /// land in one place.
     func makePane(address: PaneAddress) -> PaneModel {
-        PaneModel(
-            address: address,
-            ghosttyApp: ghosttyApp,
-            browsingHistory: browsingHistory,
-            bookmarks: bookmarks,
-            downloadsManager: downloadsManager
-        )
+        PaneModel(address: address, ghosttyApp: ghosttyApp)
     }
 
     private var hasAppearedOnce = false

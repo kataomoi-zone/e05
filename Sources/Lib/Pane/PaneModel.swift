@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PaneModel")
 
 /// Preset for pane width. Each cycle action defines an ordered list of these.
 public enum PaneWidthPreset: Equatable {
@@ -10,13 +13,6 @@ public enum PaneWidthPreset: Equatable {
 public enum PaneContent {
     case terminal(GhosttyTerminalView)
     case browser(BrowserPaneView)
-    /// Generic list pane (history, bookmarks). The concrete data is
-    /// supplied by a `ListPaneDataSource` held by `ListPaneView`.
-    case list(ListPaneView)
-    /// Download manager pane. Dedicated view because downloads carry
-    /// live state (progress, cancellable sessions) that don't fit
-    /// the static-list model.
-    case downloads(DownloadsPaneView)
 }
 
 /// A single pane within a column — either a terminal or a browser.
@@ -48,13 +44,11 @@ public final class PaneModel {
         return v
     }()
 
-    /// The raw content NSView (terminal / browser / list / downloads).
+    /// The raw content NSView (terminal / browser).
     public var rawContentView: NSView {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv
-        case .list(let lv): return lv
-        case .downloads(let dv): return dv
         }
     }
 
@@ -70,18 +64,6 @@ public final class PaneModel {
         return nil
     }
 
-    /// Convenience: returns ListPaneView if this is a list pane.
-    public var listView: ListPaneView? {
-        if case .list(let lv) = content { return lv }
-        return nil
-    }
-
-    /// Convenience: returns DownloadsPaneView if this is a downloads pane.
-    public var downloadsView: DownloadsPaneView? {
-        if case .downloads(let dv) = content { return dv }
-        return nil
-    }
-
     /// Whether this is a blank browser pane (no URL loaded yet).
     public var isBlankBrowser: Bool {
         address == .blankBrowser
@@ -92,8 +74,6 @@ public final class PaneModel {
         switch content {
         case .terminal(let tv): return tv
         case .browser(let bv): return bv.webView
-        case .list(let lv): return lv.focusTarget
-        case .downloads(let dv): return dv.focusTarget
         }
     }
 
@@ -103,16 +83,11 @@ public final class PaneModel {
 
     /// Create a pane from a PaneAddress. Routes to the appropriate content type.
     ///
-    /// Dependencies (`ghosttyApp`, `browsingHistory`, `bookmarks`) are
-    /// optional so tests and non-relevant call sites can omit them; each
-    /// kind asserts the deps it actually needs.
-    public init(
-        address: PaneAddress,
-        ghosttyApp: GhosttyApp?,
-        browsingHistory: BrowsingHistory? = nil,
-        bookmarks: Bookmarks? = nil,
-        downloadsManager: DownloadsManager? = nil
-    ) {
+    /// `ghosttyApp` is optional so browser-only callers and tests can omit
+    /// it; the terminal branch asserts it when needed. Unknown kinds (e.g.
+    /// a session entry pointing at a retired `e05://history` URL) fall
+    /// back to a blank browser so old sessions still load without crashing.
+    public init(address: PaneAddress, ghosttyApp: GhosttyApp?) {
         self.address = address
         switch address.kind {
         case .terminal:
@@ -123,33 +98,27 @@ public final class PaneModel {
         case .browser:
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
-        case .history:
-            guard let browsingHistory else {
-                fatalError("BrowsingHistory required for history pane")
-            }
-            let lv = ListPaneView(dataSource: HistoryDataSource(history: browsingHistory))
-            self.content = .list(lv)
-            self.title = "History"
-        case .bookmarks:
-            guard let bookmarks else {
-                fatalError("Bookmarks required for bookmarks pane")
-            }
-            let lv = ListPaneView(dataSource: BookmarksDataSource(bookmarks: bookmarks))
-            self.content = .list(lv)
-            self.title = "Bookmarks"
-        case .downloads:
-            guard let downloadsManager else {
-                fatalError("DownloadsManager required for downloads pane")
-            }
-            let dv = DownloadsPaneView(manager: downloadsManager)
-            self.content = .downloads(dv)
-            self.title = "Downloads"
         case .settings:
             assertionFailure("Settings pane not yet implemented")
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         case .unknown:
-            assertionFailure("Unknown address kind: \(address)")
+            // Retired special-pane addresses (legacy `e05://history` etc.)
+            // and anything else that doesn't map to a known kind land here.
+            // Surface via the logger so stale session entries are visible
+            // during development, and fall back to a blank browser so the
+            // surrounding session restore path still completes.
+            //
+            // `privacy: .public` is intentional: the inputs reaching this
+            // branch are filtered by `PaneAddress.fromUserInput`'s allowlist
+            // (https / http / e05 / about), so nothing more sensitive than
+            // URLs a developer could have typed into the URL bar or that
+            // already live in the on-disk session file flows through. Being
+            // able to read them in Console.app during development is the
+            // whole point of the warning.
+            logger.warning(
+                "Unknown pane address \(address.description, privacy: .public) — falling back to blank browser"
+            )
             let bv = Self.makeBrowserView()
             self.content = .browser(bv)
         }

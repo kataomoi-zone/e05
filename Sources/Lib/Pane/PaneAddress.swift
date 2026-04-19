@@ -4,11 +4,13 @@ import Foundation
 ///
 /// Supported schemes:
 /// - `e05://terminal` — terminal pane
-/// - `e05://history` — browsing history list pane
-/// - `e05://bookmarks` — bookmarks list pane
-/// - `e05://downloads` — download manager pane
 /// - `e05://settings` — settings pane (future)
 /// - `https://...`, `http://...` — browser pane
+///
+/// The former `e05://history`, `e05://bookmarks`, and `e05://downloads`
+/// addresses have been retired in favour of the sidebar's dedicated
+/// modes. Such URLs now resolve to `.unknown` and restoring an old
+/// session entry pointing at them lands on a blank browser pane.
 public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     public let url: URL
 
@@ -21,9 +23,6 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
             guard let host = url.host() else { return .unknown }
             switch host {
             case "terminal": return .terminal
-            case "history": return .history
-            case "bookmarks": return .bookmarks
-            case "downloads": return .downloads
             case "settings": return .settings
             default: return .unknown
             }
@@ -39,9 +38,6 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     public enum Kind: Equatable {
         case terminal
         case browser
-        case history
-        case bookmarks
-        case downloads
         case settings
         case unknown
     }
@@ -62,9 +58,6 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     public static let internalScheme = "e05"
 
     public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
-    public static let history = PaneAddress(URL(string: "\(internalScheme)://history")!)
-    public static let bookmarks = PaneAddress(URL(string: "\(internalScheme)://bookmarks")!)
-    public static let downloads = PaneAddress(URL(string: "\(internalScheme)://downloads")!)
     public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
     /// Blank browser address (no page loaded).
     public static let blankBrowser = PaneAddress(URL(string: "about:blank")!)
@@ -126,12 +119,19 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
         guard !trimmed.isEmpty,
               !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
 
-        // Explicit-scheme path
+        // Explicit-scheme path. `fromUserInput` has already filtered
+        // out disallowed schemes (ftp://, javascript://, …), so a nil
+        // here means the input doesn't parse as a URL at all and
+        // should fall through to search. Kind can still be `.unknown`
+        // for an `e05://` URL whose host doesn't map to a pane type
+        // (retired addresses, typos) — let those through so the URL
+        // bar offers a direct-open row and the pane lands on the
+        // blank-browser fallback inside `PaneModel.init(.unknown)`.
+        // Silently converting a typed URL to a search query the way a
+        // bare word falls through to DuckDuckGo wouldn't match how
+        // mainstream browsers treat typed-but-unreachable URLs.
         if trimmed.contains("://") || trimmed.hasPrefix("about:") {
-            guard let addr = fromUserInput(trimmed), addr.kind != .unknown else {
-                return nil
-            }
-            return addr
+            return fromUserInput(trimmed)
         }
 
         // Bare hostname path — must plausibly be a domain or IP.

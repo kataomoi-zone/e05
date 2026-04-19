@@ -153,21 +153,6 @@ extension PaneContainerViewController {
                 handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
             ),
             Action(
-                id: "open_history",
-                title: "Open History",
-                handler: { [weak self] in self?.addColumn(address: .history) }
-            ),
-            Action(
-                id: "open_bookmarks",
-                title: "Open Bookmarks",
-                handler: { [weak self] in self?.addColumn(address: .bookmarks) }
-            ),
-            Action(
-                id: "open_downloads",
-                title: "Open Downloads",
-                handler: { [weak self] in self?.addColumn(address: .downloads) }
-            ),
-            Action(
                 id: "command_palette",
                 title: "Command Palette",
                 keyEquivalent: "p",
