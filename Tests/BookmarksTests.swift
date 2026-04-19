@@ -87,4 +87,59 @@ struct BookmarksTests {
         let results = bm.search(query: "Favorite")
         #expect(results.count == 1)
     }
+
+    @Test("update rewrites title and url for an existing entry")
+    func updateRewrites() {
+        let bm = Bookmarks(inMemory: true)
+        bm.add(url: "https://old.example.com", title: "Old Title")
+        let id = bm.all()[0].id
+
+        let ok = bm.update(id: id, title: "New Title", url: "https://new.example.com")
+        #expect(ok == true)
+
+        let all = bm.all()
+        #expect(all.count == 1)
+        #expect(all[0].title == "New Title")
+        #expect(all[0].url == "https://new.example.com")
+    }
+
+    @Test("update returns false when target id does not exist")
+    func updateMissingId() {
+        let bm = Bookmarks(inMemory: true)
+        let ok = bm.update(id: 999, title: "x", url: "https://x.example.com")
+        #expect(ok == false)
+    }
+
+    @Test("update returns false when new url collides with another bookmark")
+    func updateUniqueCollision() {
+        let bm = Bookmarks(inMemory: true)
+        bm.add(url: "https://a.example.com", title: "A")
+        bm.add(url: "https://b.example.com", title: "B")
+        let aId = bm.all().first(where: { $0.url == "https://a.example.com" })!.id
+
+        // Editing A to use B's URL must fail rather than merge them.
+        let ok = bm.update(id: aId, title: "A-renamed", url: "https://b.example.com")
+        #expect(ok == false)
+
+        let all = bm.all()
+        #expect(all.count == 2)
+        // A's original row must stay intact on failure.
+        #expect(all.contains { $0.url == "https://a.example.com" && $0.title == "A" })
+    }
+
+    @Test("update fires listeners on success only")
+    func updateListenerFiring() {
+        let bm = Bookmarks(inMemory: true)
+        bm.add(url: "https://a.example.com", title: "A")
+        let id = bm.all()[0].id
+
+        var fireCount = 0
+        bm.addListener { fireCount += 1 }
+
+        _ = bm.update(id: id, title: "A-renamed", url: "https://a.example.com")
+        #expect(fireCount == 1)
+
+        _ = bm.update(id: 999, title: "x", url: "https://x.example.com")
+        #expect(fireCount == 1)  // no-op shouldn't re-notify
+    }
 }

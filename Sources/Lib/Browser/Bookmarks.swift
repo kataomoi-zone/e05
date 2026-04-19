@@ -142,6 +142,53 @@ public final class Bookmarks {
         fireListeners()
     }
 
+    /// Edit an existing bookmark's title and URL. Returns `true` when
+    /// the update commits, `false` when the target id doesn't exist or
+    /// when the new URL collides with another row (the UNIQUE
+    /// constraint on `url` would throw otherwise). The UI layer uses
+    /// the return value to surface an "URL already bookmarked" error.
+    /// Fires listeners only on success so a rejected edit doesn't
+    /// churn consumers.
+    @discardableResult
+    public func update(id: Int64, title: String, url: String) -> Bool {
+        guard let db else { return false }
+        let sql = "UPDATE bookmarks SET title = ?, url = ? WHERE id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+              let stmt else { return false }
+        defer { sqlite3_finalize(stmt) }
+
+        _ = title.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
+        _ = url.withCString { sqlite3_bind_text(stmt, 2, $0, -1, SQLITE_TRANSIENT) }
+        sqlite3_bind_int64(stmt, 3, id)
+
+        let result = sqlite3_step(stmt)
+        switch result {
+        case SQLITE_DONE:
+            break
+        case SQLITE_CONSTRAINT:
+            // UNIQUE violation on `url`: another row already holds the
+            // requested URL. Distinct from other failures so callers
+            // can surface "URL already bookmarked" without misleading
+            // the user on transient errors (SQLITE_BUSY) or disk
+            // issues (SQLITE_IOERR). No error log — this is a normal
+            // user-facing condition, not a bug.
+            return false
+        default:
+            logger.error(
+                "Failed to update bookmark \(id): \(String(cString: sqlite3_errmsg(db)))"
+            )
+            return false
+        }
+        // `sqlite3_changes` reads the row count affected by the most
+        // recent write. Zero means the id didn't exist — don't fire
+        // listeners for a no-op so callers can distinguish "not found"
+        // from "updated" via the return value.
+        guard sqlite3_changes(db) > 0 else { return false }
+        fireListeners()
+        return true
+    }
+
     /// Remove a bookmark by URL.
     public func remove(url: String) {
         guard let db else { return }
