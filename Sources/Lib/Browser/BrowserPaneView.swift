@@ -49,6 +49,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     private var urlObservation: NSKeyValueObservation?
     private var canGoBackObservation: NSKeyValueObservation?
     private var canGoForwardObservation: NSKeyValueObservation?
+    private var adblockerObserverTask: Task<Void, Never>?
 
     public override init(frame: NSRect) {
         let config = WKWebViewConfiguration()
@@ -58,6 +59,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         // created — WKWebView snapshots its configuration at init time, so
         // setting the controller afterwards is silently ignored.
         config.webExtensionController = ExtensionController.shared.controller
+        // Attach the built-in content rule list. Same init-time snapshot
+        // constraint applies: the user content controller must already
+        // hold its rule lists before WKWebView is initialized.
+        AdBlocker.shared.attach(to: config)
         let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
         webView = focusReportingWebView
 
@@ -72,6 +77,40 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 
         setupHostAndWebView()
         setupObservers()
+        observeAdBlockerReady()
+    }
+
+    /// When the pane is built before ``AdBlocker.shared`` finishes its
+    /// first-run compile, subscribe to the global ready notification and
+    /// attach the rule lists to the live ``WKUserContentController``
+    /// exactly once. ``WKUserContentController`` accepts post-init
+    /// ``add(_:)`` calls for rule lists (unlike the configuration, which
+    /// is snapshotted at web view init).
+    private func observeAdBlockerReady() {
+        if !AdBlocker.shared.ruleLists.isEmpty { return }
+        let ucc = webView.configuration.userContentController
+        adblockerObserverTask = Task { @MainActor [weak self] in
+            let stream = NotificationCenter.default.notifications(
+                named: AdBlocker.ruleListDidChangeNotification,
+                object: nil
+            )
+            for await _ in stream {
+                // If the pane has been released, abandon the stream
+                // rather than wait for further notifications that will
+                // never matter.
+                guard self != nil else { return }
+                let lists = AdBlocker.shared.ruleLists
+                guard !lists.isEmpty else { continue }
+                for list in lists {
+                    ucc.add(list)
+                }
+                return
+            }
+        }
+    }
+
+    deinit {
+        adblockerObserverTask?.cancel()
     }
 
     @available(*, unavailable)

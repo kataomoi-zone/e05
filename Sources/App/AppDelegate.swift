@@ -28,6 +28,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // set of loaded contexts grows once scanning completes.
         Task { await ExtensionController.shared.loadAll() }
 
+        // Prime the built-in content rule list. On first launch the
+        // filterlist is downloaded and compiled in the background, so
+        // panes created before compilation completes get no blocker this
+        // session. Subsequent launches pull the compiled binary from
+        // WKContentRuleListStore synchronously and apply immediately.
+        Task { await AdBlocker.shared.start() }
+
         // Lock the app to dark aqua so every NSView inherits a dark
         // effective appearance regardless of the system setting. The
         // browser panes render dark content anyway, so a light chrome
