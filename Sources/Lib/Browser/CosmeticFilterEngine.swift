@@ -554,10 +554,16 @@ public final class CosmeticFilterEngine {
     /// - MutationObserver that harvests newly inserted class / id
     ///   names and feeds them back through `queryClassesAndIds`
     /// - rAF-throttled batching to keep the IPC rate bounded
+    /// - procedural selector runtime (`:has-text()`, `:contains()`,
+    ///   `:upward(N|selector)`) with per-selector budget enforcement
     ///
-    /// Procedural bodies are received but not executed — the M2
-    /// PSelector pipeline will replace `applyProcedural` with the real
-    /// evaluator.
+    /// The procedural runtime is an independent reimplementation of the
+    /// uBlock Origin / AdGuard operator semantics — no code is lifted
+    /// from their repositories. Hidden elements carry a marker class
+    /// that a globally-installed `CSSStyleSheet` maps to
+    /// `display: none !important`, which is more resilient to
+    /// per-element style overrides from third-party scripts than
+    /// writing to the element's `style` attribute directly.
     private static let contentScriptSource: String = #"""
     (() => {
       if (window.__e05AdblockCosmetic) return;
@@ -577,6 +583,31 @@ public final class CosmeticFilterEngine {
       let injectedCount = 0;
       let injectedSheetCount = 0;
       let flushCount = 0;
+
+      // Procedural runtime state. Everything is lazily initialised so
+      // pages that receive zero procedural rules pay nothing beyond the
+      // declaration cost of these bindings.
+      const PROC_HIDDEN_CLASS = "e05-proc-hidden";
+      const PROC_PER_RUN_LIMIT_MS = 200;     // soft ceiling per selector per pass
+      const PROC_TOTAL_BUDGET_MS = 500;      // cumulative budget before disable
+      const PROC_RECOVERY_INTERVAL_MS = 2000;
+      const PROC_RECOVERY_AMOUNT_MS = 50;
+      const PROC_MAX_CLIMB_DEPTH = 256;      // cap for `:upward(N)` numeric arg
+      // Defensive caps against filterlist authors writing pathological
+      // `:has-text(/.../)` patterns (e.g. nested quantifiers that
+      // trigger catastrophic backtracking). The regex engine is not
+      // sandboxed, and filter text comes from third-party maintainers,
+      // so a single bad rule without these caps can freeze the UI.
+      const PROC_PATTERN_MAX_LENGTH = 200;   // source length cap for `/regex/flags`
+      const PROC_TEXT_SCAN_LIMIT = 10_000;   // max chars fed to the text matcher
+      const proceduralFilters = [];          // array of parsed PSelector objects
+      const proceduralBudgets = new Map();   // raw selector → {totalMs, disabled}
+      const proceduralSeenBodies = new Set();// raw body strings already processed
+      let proceduralEvalScheduled = false;
+      let proceduralHiddenCount = 0;
+      let proceduralRecoveryStarted = false;
+      let proceduralStyleSheetInstalled = false;
+      let proceduralPassCount = 0;
 
       function sendLog(level, message) {
         // Diagnostic channel — the Swift side routes this into os.Logger
@@ -619,14 +650,315 @@ public final class CosmeticFilterEngine {
         }
       }
 
-      function applyProcedural(bodies) {
-        // M1 placeholder. The M2 PSelector pipeline replaces this
-        // function with a real evaluator; the IPC payload already
-        // carries the procedural bodies so no protocol change is
-        // needed when the runtime ships.
-        if (bodies && bodies.length) {
-          sendLog("debug", `procedural stash size=${bodies.length} (M2 pending)`);
+      // --- Procedural runtime ----------------------------------------
+
+      // Supported procedural operator names. Looked up by direct string
+      // comparison while scanning selector bodies; adding a new operator
+      // is a two-step change (extend this list + implement the branch
+      // in applyOperator).
+      const PROC_KNOWN_OPS = ["has-text", "contains", "upward"];
+
+      function installProceduralStyleSheet() {
+        if (proceduralStyleSheetInstalled) return;
+        proceduralStyleSheetInstalled = true;
+        try {
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync("." + PROC_HIDDEN_CLASS + "{display:none !important;}");
+          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+        } catch (e) {
+          sendLog("error", `procedural stylesheet install failed: ${String(e)}`);
         }
+      }
+
+      function ensureProceduralRecovery() {
+        if (proceduralRecoveryStarted) return;
+        proceduralRecoveryStarted = true;
+        // Every PROC_RECOVERY_INTERVAL_MS we credit each active budget
+        // back by PROC_RECOVERY_AMOUNT_MS, so selectors that are
+        // occasionally slow recover naturally. Disabled selectors stay
+        // disabled — re-enabling after a hard trip would fight the
+        // script that caused them to trip in the first place.
+        setInterval(() => {
+          for (const b of proceduralBudgets.values()) {
+            if (b.disabled) continue;
+            b.totalMs = Math.max(0, b.totalMs - PROC_RECOVERY_AMOUNT_MS);
+          }
+        }, PROC_RECOVERY_INTERVAL_MS);
+      }
+
+      // Parse a procedural selector body (the text after `#?#`) into a
+      // { plain, ops, raw } record. `plain` is a standard CSS selector
+      // suitable for querySelectorAll; `ops` is the ordered list of
+      // procedural operators to filter those candidates through.
+      // Returns null on structural failure (unbalanced parens etc.).
+      function parseProcedural(raw) {
+        const len = raw.length;
+        let inBracket = 0;  // track [...] so a `:` inside attribute selectors is ignored
+        let opStart = -1;
+        for (let i = 0; i < len; i++) {
+          const c = raw[i];
+          if (c === "[") { inBracket++; continue; }
+          if (c === "]") { inBracket--; continue; }
+          if (inBracket !== 0 || c !== ":") continue;
+          for (const name of PROC_KNOWN_OPS) {
+            if (raw.substr(i + 1, name.length) === name && raw[i + 1 + name.length] === "(") {
+              opStart = i;
+              break;
+            }
+          }
+          if (opStart >= 0) break;
+        }
+        if (opStart < 0) {
+          // No procedural op present — caller should not reach this path
+          // for such rules, but return a record that makes evalProcedural
+          // a safe no-op.
+          return { plain: raw.trim() || "*", ops: [], raw };
+        }
+        const plain = raw.slice(0, opStart).trim() || "*";
+        const ops = [];
+        let pos = opStart;
+        while (pos < len) {
+          if (raw[pos] !== ":") break;
+          let foundOp = null;
+          for (const name of PROC_KNOWN_OPS) {
+            if (raw.substr(pos + 1, name.length) === name && raw[pos + 1 + name.length] === "(") {
+              foundOp = name;
+              break;
+            }
+          }
+          if (!foundOp) return null;
+          const argStart = pos + 1 + foundOp.length + 1;  // past "("
+          let depth = 1;
+          let cursor = argStart;
+          while (cursor < len && depth > 0) {
+            const ch = raw[cursor];
+            if (ch === "(") depth++;
+            else if (ch === ")") depth--;
+            if (depth > 0) cursor++;
+          }
+          if (depth !== 0) return null;  // unbalanced
+          ops.push({ kind: foundOp, arg: raw.slice(argStart, cursor) });
+          pos = cursor + 1;
+        }
+        return { plain, ops, raw };
+      }
+
+      // Build a predicate for the argument to `:has-text()` /
+      // `:contains()`. Accepts either a literal substring (case-
+      // sensitive, matching uBO / AdGuard default) or the `/pattern/flags`
+      // regex form. Returns null if the regex fails to compile, if the
+      // argument is empty (a literal empty-string match would hide
+      // every candidate), or if the regex source exceeds the length cap.
+      function compileTextMatcher(arg) {
+        const trimmed = arg.trim();
+        if (trimmed.length === 0) return null;
+        if (trimmed.length >= 2 && trimmed[0] === "/") {
+          const lastSlash = trimmed.lastIndexOf("/");
+          if (lastSlash > 0) {
+            const pattern = trimmed.slice(1, lastSlash);
+            const flags = trimmed.slice(lastSlash + 1);
+            if (pattern.length > PROC_PATTERN_MAX_LENGTH) return null;
+            try {
+              const re = new RegExp(pattern, flags);
+              return (text) => re.test(text);
+            } catch (_) { return null; }
+          }
+        }
+        return (text) => text.indexOf(trimmed) >= 0;
+      }
+
+      function applyHasText(candidates, arg) {
+        const matcher = compileTextMatcher(arg);
+        if (!matcher) return [];
+        const out = [];
+        for (const el of candidates) {
+          // textContent includes descendants, which matches the uBO
+          // behaviour: a label buried inside a child element still
+          // qualifies the ancestor for the match. Slice at a hard cap
+          // so a gigantic article page does not feed a MB-scale string
+          // through a regex engine that cannot be interrupted.
+          const full = el.textContent || "";
+          const text = full.length > PROC_TEXT_SCAN_LIMIT
+            ? full.slice(0, PROC_TEXT_SCAN_LIMIT)
+            : full;
+          if (matcher(text)) out.push(el);
+        }
+        return out;
+      }
+
+      function applyUpward(candidates, arg) {
+        const trimmed = arg.trim();
+        const asNum = parseInt(trimmed, 10);
+        if (!isNaN(asNum) && String(asNum) === trimmed) {
+          // uBO treats `:upward(0)` as self (noop); we return empty
+          // because 0 has never been observed in shipped filterlists
+          // and emptying is the safer default for an author typo.
+          if (asNum < 1 || asNum > PROC_MAX_CLIMB_DEPTH) return [];
+          const out = [];
+          for (const el of candidates) {
+            let cur = el;
+            for (let k = 0; k < asNum && cur; k++) cur = cur.parentElement;
+            if (cur) out.push(cur);
+          }
+          return out;
+        }
+        // Selector form: climb from the *parent* so we do not match the
+        // candidate itself — :upward(X) is "nearest ancestor matching X",
+        // not "self or ancestor".
+        const out = [];
+        for (const el of candidates) {
+          const parent = el.parentElement;
+          const hit = parent ? parent.closest(trimmed) : null;
+          if (hit) out.push(hit);
+        }
+        return out;
+      }
+
+      function applyOperator(candidates, op) {
+        if (op.kind === "has-text" || op.kind === "contains") {
+          return applyHasText(candidates, op.arg);
+        }
+        if (op.kind === "upward") {
+          return applyUpward(candidates, op.arg);
+        }
+        return [];
+      }
+
+      function evalProcedural(pf) {
+        let candidates;
+        try {
+          candidates = Array.from(document.querySelectorAll(pf.plain || "*"));
+        } catch (_) { return []; }
+        for (const op of pf.ops) {
+          candidates = applyOperator(candidates, op);
+          if (candidates.length === 0) return [];
+        }
+        // Dedupe — chained `:upward` on sibling candidates can converge
+        // on the same ancestor and we only need to hide it once.
+        if (candidates.length > 1) {
+          const seen = new Set();
+          const unique = [];
+          for (const el of candidates) {
+            if (seen.has(el)) continue;
+            seen.add(el);
+            unique.push(el);
+          }
+          return unique;
+        }
+        return candidates;
+      }
+
+      function execWithBudget(pf, fn) {
+        const key = pf.raw;
+        let b = proceduralBudgets.get(key);
+        if (!b) { b = { totalMs: 0, disabled: false }; proceduralBudgets.set(key, b); }
+        if (b.disabled) return 0;
+        const start = performance.now();
+        let hidden = 0;
+        try {
+          hidden = fn();
+        } catch (e) {
+          sendLog("error", `procedural exec threw for '${key}': ${String(e)}`);
+        }
+        const dt = performance.now() - start;
+        b.totalMs += dt;
+        if (dt > PROC_PER_RUN_LIMIT_MS) {
+          sendLog(
+            "warn",
+            `procedural slow single-pass: '${key}' ${dt.toFixed(1)}ms ` +
+            `(total=${b.totalMs.toFixed(1)}ms)`
+          );
+        }
+        if (b.totalMs > PROC_TOTAL_BUDGET_MS && !b.disabled) {
+          b.disabled = true;
+          sendLog(
+            "warn",
+            `procedural selector disabled (budget exhausted): '${key}' ` +
+            `totalMs=${b.totalMs.toFixed(1)}ms`
+          );
+        }
+        return hidden;
+      }
+
+      function evaluateAllProcedural() {
+        if (proceduralFilters.length === 0) return;
+        proceduralPassCount += 1;
+        let totalHidden = 0;
+        for (const pf of proceduralFilters) {
+          totalHidden += execWithBudget(pf, () => {
+            const els = evalProcedural(pf);
+            let added = 0;
+            for (const el of els) {
+              if (!el.classList.contains(PROC_HIDDEN_CLASS)) {
+                el.classList.add(PROC_HIDDEN_CLASS);
+                added++;
+              }
+            }
+            return added;
+          });
+        }
+        if (totalHidden > 0) {
+          proceduralHiddenCount += totalHidden;
+          sendLog(
+            "info",
+            `procedural pass#${proceduralPassCount} hid ${totalHidden} elements ` +
+            `(cumulative=${proceduralHiddenCount})`
+          );
+        }
+      }
+
+      function scheduleProceduralEval() {
+        if (proceduralEvalScheduled) return;
+        if (proceduralFilters.length === 0) return;
+        proceduralEvalScheduled = true;
+        requestAnimationFrame(() => {
+          proceduralEvalScheduled = false;
+          evaluateAllProcedural();
+        });
+      }
+
+      function applyProcedural(bodies) {
+        if (!bodies || !bodies.length) return;
+        installProceduralStyleSheet();
+        ensureProceduralRecovery();
+        let added = 0;
+        let skippedPlain = 0;
+        let skippedParse = 0;
+        let skippedDup = 0;
+        for (const body of bodies) {
+          // A filter source may list the same selector under more than
+          // one hostname scope — for example in the hostname index
+          // under both `example.com` and `sub.example.com` — and the
+          // hostname-parent walk then emits it twice. Dedup on the raw
+          // body so `proceduralFilters` does not grow duplicates that
+          // waste budget on identical `querySelectorAll` work.
+          if (proceduralSeenBodies.has(body)) { skippedDup++; continue; }
+          proceduralSeenBodies.add(body);
+          const parsed = parseProcedural(body);
+          if (!parsed) {
+            skippedParse++;
+            // Slice in the log to keep a pathological filter line
+            // from flooding the diagnostic stream.
+            sendLog(
+              "debug",
+              `procedural parse failed: '${body.slice(0, 120)}'`
+            );
+            continue;
+          }
+          // A body that carries no procedural op should have been
+          // resolved by the M1 non-procedural path — drop it here so
+          // we do not double-hide.
+          if (parsed.ops.length === 0) { skippedPlain++; continue; }
+          proceduralFilters.push(parsed);
+          added++;
+        }
+        sendLog(
+          "info",
+          `procedural activated: ${added} rules ` +
+          `(total=${proceduralFilters.length}, skipped plain=${skippedPlain} ` +
+          `parse=${skippedParse} dup=${skippedDup})`
+        );
+        if (added > 0) scheduleProceduralEval();
       }
 
       // Caps at 3 retries with 200/400/800 ms delays, covering the
@@ -755,7 +1087,13 @@ public final class CosmeticFilterEngine {
             dirty = true;
           }
         }
-        if (dirty) scheduleFlush();
+        if (dirty) {
+          scheduleFlush();
+          // Procedural rules can match on freshly inserted elements or on
+          // text that arrived via a `textContent` mutation — piggy-back
+          // on the same dirty signal rather than observe twice.
+          scheduleProceduralEval();
+        }
       });
 
       function boot() {
@@ -784,10 +1122,19 @@ public final class CosmeticFilterEngine {
         // from `log stream` whether the engine produced any effect on
         // this page without opening Web Inspector.
         setTimeout(() => {
+          // Count selectors that hit the budget ceiling so the summary
+          // line surfaces broken filter authoring without needing to
+          // grep the full log.
+          let procDisabled = 0;
+          for (const b of proceduralBudgets.values()) {
+            if (b.disabled) procDisabled++;
+          }
           sendLog(
             "info",
             `+5s summary seenClasses=${seenClasses.size} seenIds=${seenIds.size} ` +
-            `flushes=${flushCount} injectedSheets=${injectedSheetCount} injectedSelectors=${injectedCount}`
+            `flushes=${flushCount} injectedSheets=${injectedSheetCount} injectedSelectors=${injectedCount} ` +
+            `proceduralRules=${proceduralFilters.length} proceduralPasses=${proceduralPassCount} ` +
+            `proceduralHidden=${proceduralHiddenCount} proceduralDisabled=${procDisabled}`
           );
         }, 5000);
       }
