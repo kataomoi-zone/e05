@@ -63,10 +63,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         // constraint applies: the user content controller must already
         // hold its rule lists before WKWebView is initialized.
         AdBlocker.shared.attach(to: config)
-        // Layer A Phase 2: install the cosmetic content script and its
-        // reply-handler IPC alongside the declarative rule list. The
-        // user script + WKScriptMessageHandlerWithReply registrations
-        // share the same init-time snapshot constraint as AdBlocker.
+        // Install the cosmetic content script and its reply-handler
+        // IPC alongside the declarative rule list. The user script +
+        // WKScriptMessageHandlerWithReply registrations share the same
+        // init-time snapshot constraint as AdBlocker.
         CosmeticFilterEngine.shared.attach(to: config)
         let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
         webView = focusReportingWebView

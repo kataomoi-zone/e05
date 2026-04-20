@@ -164,7 +164,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     // MARK: - Search
 
     /// Default search engine URL template. `%s` is replaced with the percent-encoded query.
-    // TODO: make configurable via e05 config (Phase 11)
+    // TODO: make configurable via user config
     private static let searchTemplate = "https://duckduckgo.com/?q=%s"
 
     /// Build a browser address for a search query using the default search engine.

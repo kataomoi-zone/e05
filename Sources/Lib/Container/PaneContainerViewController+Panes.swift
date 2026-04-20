@@ -77,8 +77,8 @@ extension PaneContainerViewController {
 
             tv.onClose = { [weak self, weak pane] in
                 guard let self, let pane else { return }
-                // TODO(Phase 8-1f): scans the current workspace only.
-                // `removePane` also assumes current-WS state
+                // TODO(cross-workspace cleanup): scans the current
+                // workspace only. `removePane` assumes current-WS state
                 // (columns[safe:], stackView, closeCurrentWorkspace,
                 // setFocus). A terminal exiting in a non-current workspace
                 // leaves a dead pane until the user switches to that WS
@@ -408,11 +408,12 @@ extension PaneContainerViewController {
                 // sidebar action) that might fire between alert display and
                 // confirmation. Falls back to current-WS `removePane` only
                 // if the pane is on the focused workspace, since removePane
-                // depends on current-WS state (see Phase 8-1f TODO).
+                // depends on current-WS state (see the cross-workspace
+                // cleanup TODO on `onClose`).
                 guard let colIdx = self.columns.firstIndex(where: { $0.id == targetColId }),
                       let col = self.columns[safe: colIdx],
                       let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId }) else {
-                    NSLog("[e05/ws] close alert: target pane not in current WS (Phase 8-1f scope)")
+                    NSLog("[e05/ws] close alert: target pane not in current WS")
                     return
                 }
                 self.removePane(columnIndex: colIdx, paneIndex: paneIdx)

@@ -3,8 +3,8 @@ import AppKit
 extension PaneContainerViewController {
     // MARK: - Limits
 
-    /// Upper bound on concurrent workspaces. Fixed in Phase 8-1; will move
-    /// to user config in Phase 11.
+    /// Upper bound on concurrent workspaces. Currently a compile-time
+    /// constant; a later config plumbing pass can expose it to the user.
     public static let maxWorkspaces = 5
 
     public var canCreateWorkspace: Bool {

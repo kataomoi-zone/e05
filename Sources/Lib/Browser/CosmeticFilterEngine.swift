@@ -21,9 +21,10 @@ public enum ABPCosmeticParser {
         /// an otherwise generic rule or from the positive set.
         public let excludedDomains: [String]
         public let selector: String
-        /// True for `#?#` lines — they contain at least one uBO
-        /// procedural operator such as `:has-text()` or `:upward(...)`
-        /// and require the M2 PSelector pipeline to evaluate.
+        /// True for `#?#` lines — they contain at least one procedural
+        /// operator such as `:has-text()` or `:upward(...)` and have
+        /// to be evaluated by the content-script runtime rather than
+        /// applied as a plain CSS selector.
         public let isProcedural: Bool
     }
 
@@ -127,10 +128,11 @@ public enum ABPCosmeticParser {
 /// `.className`) vs complex (the class is a qualifier inside a larger
 /// selector).
 ///
-/// The runtime queries this in two phases:
+/// The runtime queries this in two stages:
 /// 1. `queryHostname(_:)` at page commit returns hostname-scoped hides,
 ///    the global misc bucket, and procedural filter bodies (the latter
-///    are forwarded unchanged for M2 to evaluate).
+///    are forwarded unchanged for the content script's procedural
+///    runtime to evaluate).
 /// 2. `queryClassesAndIds(hostname:classes:ids:)` on each MutationObserver
 ///    batch looks up the newly observed class / id names against the
 ///    simple sets and complex maps, returning the CSS to inject.
@@ -154,10 +156,10 @@ public struct CosmeticIndex: Sendable {
     /// subtracted from the hide output at query time.
     public internal(set) var hostnameUnhide: [String: [String]] = [:]
     /// Hostname-scoped `#?#` procedural filter bodies. Forwarded to JS
-    /// untouched; the M1 pipeline stores them but does not evaluate,
-    /// so they have no visible effect until the M2 runtime ships.
+    /// untouched; the content-script procedural runtime parses and
+    /// evaluates them against the live DOM.
     public internal(set) var hostnameProcedural: [String: [String]] = [:]
-    /// Generic `#?#` procedural bodies. Same M1 caveat as above.
+    /// Generic `#?#` procedural bodies applied on every page.
     public internal(set) var genericProcedural: Set<String> = []
 
     public init() {}
@@ -179,9 +181,10 @@ public struct CosmeticIndex: Sendable {
         // runtime follow-up.
         let isGeneric = rule.domains.isEmpty
         if rule.isProcedural {
-            // Procedural rules take the unhide side only in M2+; M1
-            // stores them inert on the hide path and ignores procedural
-            // unhides (they are rare and harmless to skip).
+            // Procedural unhide rules (`#@?#selector`) are rare and
+            // dropping them is safe: without a matching procedural hide
+            // there is nothing to cancel, and with one the worst case
+            // is leaving a rare exception un-applied.
             if rule.kind == .unhide { return }
             if isGeneric {
                 genericProcedural.insert(rule.selector)
@@ -203,11 +206,12 @@ public struct CosmeticIndex: Sendable {
                 }
             }
         case .unhide:
-            // Generic unhide ("~domain##selector") is left unimplemented
-            // for M1. It is rare in the shipped filterlists and requires
-            // either materialising every generic selector minus the
-            // exclusion, or a second pass at query time; neither is
-            // necessary for the motivating "スポンサーリンク" use case.
+            // Generic unhide (`~domain##selector` with no positive
+            // domain) is not implemented. It is rare in the shipped
+            // filterlists and would need either a materialised
+            // "positive minus excluded" set at index-build time, or a
+            // second lookup at query time; neither is justified by
+            // observed filter traffic.
             guard !isGeneric else { return }
             for domain in rule.domains {
                 hostnameUnhide[domain, default: []].append(rule.selector)
@@ -373,7 +377,8 @@ public struct CosmeticIndex: Sendable {
     }
 }
 
-/// Layer A Phase 2 — static + dynamic cosmetic injection.
+/// Static + dynamic cosmetic filter injection for the built-in
+/// content blocker.
 ///
 /// Reads the same filter sources that ``AdBlocker`` downloads, parses
 /// the cosmetic half into a ``CosmeticIndex``, and exposes it to every
@@ -384,15 +389,15 @@ public struct CosmeticIndex: Sendable {
 /// IPC so generic rules expand to match the live DOM.
 ///
 /// Procedural filters (`:has-text()`, `:upward()`, …) are parsed into
-/// the procedural buckets but **not evaluated** at this stage — the
-/// content script forwards them to a noop placeholder. M2 replaces the
-/// placeholder with the PSelector pipeline.
+/// the procedural buckets and evaluated by the content-script runtime
+/// against the live DOM, subject to per-selector budget enforcement.
 ///
-/// Pairs with ``AdBlocker``: the network half + the declarative css
+/// Pairs with ``AdBlocker``: the network half + the declarative CSS
 /// cosmetic continue to run through `WKContentRuleList`. The two
 /// layers double-hide for non-procedural cosmetic, which is idempotent
-/// (CSS `display:none` is stable under repetition). Phase 3 revisits
-/// retiring the `WKContentRuleList` cosmetic path.
+/// (CSS `display:none` is stable under repetition); retiring the
+/// ``WKContentRuleList`` cosmetic path is a possible follow-up once
+/// the JS side has enough soak time to be the single source of truth.
 @MainActor
 public final class CosmeticFilterEngine {
     public static let shared = CosmeticFilterEngine()
@@ -546,7 +551,7 @@ public final class CosmeticFilterEngine {
         )
     }
 
-    /// The M1 content script. Responsibilities:
+    /// The content script injected into every browser pane. Responsibilities:
     /// - idempotent load guard (subframes and SPA navigations can
     ///   re-trigger injection on the same realm)
     /// - page-commit hostname query that injects hostname-specific
@@ -1173,9 +1178,9 @@ public final class CosmeticFilterEngine {
             );
             continue;
           }
-          // A body that carries no procedural op should have been
-          // resolved by the M1 non-procedural path — drop it here so
-          // we do not double-hide.
+          // A body with no procedural op is a plain CSS selector that
+          // the non-procedural pipeline already turned into CSS; drop
+          // it here rather than double-hide.
           if (parsed.ops.length === 0) { skippedPlain++; continue; }
           proceduralFilters.push(parsed);
           added++;

@@ -11,8 +11,9 @@ private let logger = Logger(
 /// https://developer.apple.com/documentation/safariservices/creating_a_content_blocker.
 ///
 /// The compiled JSON is fed into ``WKContentRuleListStore`` which WebKit
-/// evaluates natively (no JS runtime on the hot path). This is the layer A
-/// adblocker's Phase 1 engine.
+/// evaluates natively in the network process — no JS runtime on the
+/// hot path. Procedural and text-matching cosmetic filters live in a
+/// separate content-script engine.
 ///
 /// ## Supported
 /// - Network block: `||domain.com^`, `|http://...|`, `example.com/ads/*`
@@ -26,7 +27,8 @@ private let logger = Logger(
 /// - Cosmetic exception `#@#` — Safari cannot express declaratively
 /// - Procedural cosmetic (`:has-text()`, `:upward()`, `:xpath()`, `:style(...)`)
 /// - HTML filter `##^script`, `$$` — no response-body rewrite in WebKit
-/// - Scriptlet `+js(...)` — belongs to Phase 3
+/// - Scriptlet `+js(...)` — not implemented; would need a separate
+///   JS injection pipeline outside the content rule list
 /// - Rare options: `$csp`, `$redirect`, `$replace`, `$removeparam`,
 ///   `$important`, `$badfilter`, `$generichide`, `$elemhide`
 /// - Regex literals with lookbehind

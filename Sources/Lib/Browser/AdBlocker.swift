@@ -9,11 +9,12 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "AdBloc
 /// compiles a Safari Content Blocker rule list from an ABP/EasyList-format
 /// filter and attaches it to every browser pane's ``WKWebViewConfiguration``.
 ///
-/// WebKit evaluates ``WKContentRuleList`` natively in the network process,
-/// so network blocks and declarative `css-display-none` selectors apply
-/// without any JS on the page. This is Phase 1. Procedural cosmetic
-/// (`:has-text()`, `:upward()` …) and scriptlet injection require a
-/// content-script runtime and arrive in later phases.
+/// WebKit evaluates ``WKContentRuleList`` natively in the network
+/// process, so network blocks and declarative `css-display-none`
+/// selectors apply without any JS on the page. Procedural cosmetic
+/// (`:has-text()`, `:upward()` …) runs in a separate content-script
+/// runtime inside ``CosmeticFilterEngine``; scriptlet injection is
+/// not implemented.
 ///
 /// Extensions that ship their own ad filtering (layer B, `WKWebExtension`)
 /// stay out of this path entirely; placing an adblocker extension under
