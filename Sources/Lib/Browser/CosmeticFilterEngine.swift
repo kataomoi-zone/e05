@@ -656,7 +656,26 @@ public final class CosmeticFilterEngine {
       // comparison while scanning selector bodies; adding a new operator
       // is a two-step change (extend this list + implement the branch
       // in applyOperator).
-      const PROC_KNOWN_OPS = ["has-text", "contains", "upward"];
+      // Single source of truth for procedural operator dispatch.
+      // Function declarations below are hoisted, so referencing them
+      // here at the top of the IIFE is safe. Adding a new operator is
+      // one entry here; `PROC_KNOWN_OPS` and `applyOperator` both
+      // read from this table, so there is no chance of the parser
+      // accepting a name the evaluator silently ignores.
+      const PROC_OP_HANDLERS = {
+        "has-text":        applyHasText,       // text matching (literal + regex)
+        "contains":        applyHasText,       // alias of has-text
+        "upward":          applyUpward,        // ancestor climb (numeric or selector)
+        "nth-ancestor":    applyNthAncestor,   // numeric-only ancestor climb
+        "matches-attr":    applyMatchesAttr,   // attribute name/value filter
+        "matches-css":     applyMatchesCss,    // computed style filter
+        "xpath":           applyXpath,         // XPath snapshot (replaces candidate set)
+        "min-text-length": applyMinTextLength, // textContent length threshold
+      };
+      // `remove` is a terminal action resolved in `evalProcedural`
+      // rather than a filter — it gets recognised by the parser but
+      // is intentionally absent from the handler table.
+      const PROC_KNOWN_OPS = Object.keys(PROC_OP_HANDLERS).concat(["remove"]);
 
       function installProceduralStyleSheet() {
         if (proceduralStyleSheetInstalled) return;
@@ -814,27 +833,220 @@ public final class CosmeticFilterEngine {
         return out;
       }
 
-      function applyOperator(candidates, op) {
-        if (op.kind === "has-text" || op.kind === "contains") {
-          return applyHasText(candidates, op.arg);
+      function applyNthAncestor(candidates, arg) {
+        // Numeric-only variant of `:upward(N)` — filter authors use
+        // it when they mean "go up exactly N" and want the selector
+        // form (`:upward(selector)`) disabled. Reject non-integer
+        // arguments rather than silently accepting them.
+        const trimmed = arg.trim();
+        const asNum = parseInt(trimmed, 10);
+        if (isNaN(asNum) || String(asNum) !== trimmed) return [];
+        if (asNum < 1 || asNum > PROC_MAX_CLIMB_DEPTH) return [];
+        const out = [];
+        for (const el of candidates) {
+          let cur = el;
+          for (let k = 0; k < asNum && cur; k++) cur = cur.parentElement;
+          if (cur) out.push(cur);
         }
-        if (op.kind === "upward") {
-          return applyUpward(candidates, op.arg);
-        }
-        return [];
+        return out;
       }
 
+      function applyMinTextLength(candidates, arg) {
+        const n = parseInt(arg.trim(), 10);
+        if (isNaN(n) || n < 0) return [];
+        const out = [];
+        for (const el of candidates) {
+          if ((el.textContent || "").length >= n) out.push(el);
+        }
+        return out;
+      }
+
+      // Compile a string predicate used for `:matches-attr` name or
+      // value matching, and for `:matches-css` value matching. Three
+      // input shapes are accepted, checked in this order so a quoted
+      // literal that happens to contain slashes is not misread as a
+      // regex pattern:
+      //
+      //   "foo" / 'foo'       → literal (quotes stripped)
+      //   /pattern/flags      → compiled RegExp
+      //   foo                 → literal
+      //
+      // `substring` picks the matcher semantic for the literal paths:
+      // true → substring test (value side), false → exact equality
+      // (name side). Returns null if the input is empty or if regex
+      // compilation fails.
+      function compileProcMatcher(spec, substring) {
+        const trimmed = spec.trim();
+        if (trimmed.length === 0) return null;
+        if (trimmed.length >= 2) {
+          const first = trimmed[0];
+          const last = trimmed[trimmed.length - 1];
+          if ((first === "\"" || first === "'") && first === last) {
+            const literal = trimmed.slice(1, -1);
+            return substring
+              ? (text) => (text || "").indexOf(literal) >= 0
+              : (text) => (text || "") === literal;
+          }
+        }
+        if (trimmed.length >= 2 && trimmed[0] === "/") {
+          const lastSlash = trimmed.lastIndexOf("/");
+          if (lastSlash > 0) {
+            const pattern = trimmed.slice(1, lastSlash);
+            const flags = trimmed.slice(lastSlash + 1);
+            if (pattern.length > PROC_PATTERN_MAX_LENGTH) return null;
+            try {
+              const re = new RegExp(pattern, flags);
+              return (text) => re.test(text || "");
+            } catch (_) { return null; }
+          }
+        }
+        return substring
+          ? (text) => (text || "").indexOf(trimmed) >= 0
+          : (text) => (text || "") === trimmed;
+      }
+
+      // Parse the `:matches-attr(...)` argument into name and value
+      // predicates. Splits on the first top-level `=` that is not
+      // inside a quoted string or `/regex/` literal — the same syntax
+      // uBO / AdGuard accept.
+      function parseAttrSpec(arg) {
+        const trimmed = arg.trim();
+        if (trimmed.length === 0) return null;
+        let inStr = null;
+        let inRegex = false;
+        let prev = "";
+        let eqPos = -1;
+        for (let i = 0; i < trimmed.length; i++) {
+          const c = trimmed[i];
+          if (inStr) {
+            if (c === inStr && prev !== "\\") inStr = null;
+          } else if (inRegex) {
+            if (c === "/" && prev !== "\\") inRegex = false;
+          } else if (c === "\"" || c === "'") {
+            inStr = c;
+          } else if (c === "/") {
+            inRegex = true;
+          } else if (c === "=") {
+            eqPos = i;
+            break;
+          }
+          prev = c;
+        }
+        const namePart = eqPos < 0 ? trimmed : trimmed.slice(0, eqPos).trim();
+        const valuePart = eqPos < 0 ? null : trimmed.slice(eqPos + 1).trim();
+        // Attribute names are well-defined, so literal name match is
+        // exact equality; attribute values can be substring-matched
+        // which is what filter authors normally want ("title contains
+        // 'Sponsored'" etc.).
+        const nameMatcher = compileProcMatcher(namePart, false);
+        if (!nameMatcher) return null;
+        let valueMatcher = null;
+        if (valuePart !== null) {
+          valueMatcher = compileProcMatcher(valuePart, true);
+          if (!valueMatcher) return null;
+        }
+        return { nameMatcher, valueMatcher };
+      }
+
+      function applyMatchesAttr(candidates, arg) {
+        const parsed = parseAttrSpec(arg);
+        if (!parsed) return [];
+        const out = [];
+        for (const el of candidates) {
+          const attrs = el.attributes;
+          if (!attrs || !attrs.length) continue;
+          let hit = false;
+          for (let i = 0; i < attrs.length; i++) {
+            const a = attrs[i];
+            if (!parsed.nameMatcher(a.name)) continue;
+            if (parsed.valueMatcher && !parsed.valueMatcher(a.value)) continue;
+            hit = true;
+            break;
+          }
+          if (hit) out.push(el);
+        }
+        return out;
+      }
+
+      function applyMatchesCss(candidates, arg) {
+        const trimmed = arg.trim();
+        const colon = trimmed.indexOf(":");
+        if (colon < 0) return [];
+        const prop = trimmed.slice(0, colon).trim();
+        const valSpec = trimmed.slice(colon + 1).trim();
+        if (!prop || !valSpec) return [];
+        const matcher = compileProcMatcher(valSpec, true);
+        if (!matcher) return [];
+        const out = [];
+        for (const el of candidates) {
+          let value = "";
+          try { value = getComputedStyle(el).getPropertyValue(prop); } catch (_) {}
+          if (matcher(value)) out.push(el);
+        }
+        return out;
+      }
+
+      function applyXpath(candidates, arg) {
+        // XPath context is the document rather than each candidate —
+        // uBO and AdGuard both discard the incoming candidate set
+        // because filter authors write `*:xpath(//...)` expecting a
+        // fresh document-wide match.
+        const expr = arg.trim();
+        if (!expr) return [];
+        const out = [];
+        const seen = new Set();
+        try {
+          const snap = document.evaluate(
+            expr,
+            document,
+            null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
+            null
+          );
+          for (let i = 0; i < snap.snapshotLength; i++) {
+            const node = snap.snapshotItem(i);
+            if (node && node.nodeType === 1 && !seen.has(node)) {
+              seen.add(node);
+              out.push(node);
+            }
+          }
+        } catch (_) { /* invalid xpath — drop */ }
+        return out;
+      }
+
+      function applyOperator(candidates, op) {
+        // `:remove` is a terminal action hoisted by `evalProcedural`
+        // into the action flag before this function is reached. Any
+        // other unknown opcode returns `undefined` from the table and
+        // yields an empty candidate set, dropping the chain.
+        const fn = PROC_OP_HANDLERS[op.kind];
+        return fn ? fn(candidates, op.arg) : [];
+      }
+
+      // Evaluate a parsed procedural filter against the live DOM.
+      // Returns { elements: Element[], action: "hide" | "remove" };
+      // an empty `elements` means no match this pass and the caller
+      // can skip the hide/remove work entirely.
       function evalProcedural(pf) {
         let candidates;
         try {
           candidates = Array.from(document.querySelectorAll(pf.plain || "*"));
-        } catch (_) { return []; }
+        } catch (_) { return { elements: [], action: "hide" }; }
+        let action = "hide";
         for (const op of pf.ops) {
+          if (op.kind === "remove") {
+            // `:remove()` is a terminal action marker, not a filter.
+            // Switch mode and let the remaining chain (if any) run —
+            // uBO places it at the tail, but being permissive here
+            // avoids throwing on an early `:remove()`.
+            action = "remove";
+            continue;
+          }
           candidates = applyOperator(candidates, op);
-          if (candidates.length === 0) return [];
+          if (candidates.length === 0) return { elements: [], action };
         }
         // Dedupe — chained `:upward` on sibling candidates can converge
-        // on the same ancestor and we only need to hide it once.
+        // on the same ancestor and we only need to act on it once.
         if (candidates.length > 1) {
           const seen = new Set();
           const unique = [];
@@ -843,9 +1055,9 @@ public final class CosmeticFilterEngine {
             seen.add(el);
             unique.push(el);
           }
-          return unique;
+          return { elements: unique, action };
         }
-        return candidates;
+        return { elements: candidates, action };
       }
 
       function execWithBudget(pf, fn) {
@@ -884,24 +1096,40 @@ public final class CosmeticFilterEngine {
         if (proceduralFilters.length === 0) return;
         proceduralPassCount += 1;
         let totalHidden = 0;
+        let totalRemoved = 0;
         for (const pf of proceduralFilters) {
-          totalHidden += execWithBudget(pf, () => {
-            const els = evalProcedural(pf);
+          execWithBudget(pf, () => {
+            const result = evalProcedural(pf);
             let added = 0;
-            for (const el of els) {
-              if (!el.classList.contains(PROC_HIDDEN_CLASS)) {
-                el.classList.add(PROC_HIDDEN_CLASS);
-                added++;
+            if (result.action === "remove") {
+              for (const el of result.elements) {
+                // `el.remove()` is a no-op on an orphaned node; the
+                // parent check short-circuits so a previous pass that
+                // already removed this element does not inflate the
+                // counter.
+                if (el.parentNode) {
+                  el.remove();
+                  added++;
+                }
               }
+              totalRemoved += added;
+            } else {
+              for (const el of result.elements) {
+                if (!el.classList.contains(PROC_HIDDEN_CLASS)) {
+                  el.classList.add(PROC_HIDDEN_CLASS);
+                  added++;
+                }
+              }
+              totalHidden += added;
             }
             return added;
           });
         }
-        if (totalHidden > 0) {
-          proceduralHiddenCount += totalHidden;
+        if (totalHidden > 0 || totalRemoved > 0) {
+          proceduralHiddenCount += totalHidden + totalRemoved;
           sendLog(
             "info",
-            `procedural pass#${proceduralPassCount} hid ${totalHidden} elements ` +
+            `procedural pass#${proceduralPassCount} hid=${totalHidden} removed=${totalRemoved} ` +
             `(cumulative=${proceduralHiddenCount})`
           );
         }
