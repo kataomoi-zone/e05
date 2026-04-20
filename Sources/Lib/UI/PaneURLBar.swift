@@ -8,7 +8,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private let backButton: HoverIconButton
     private let forwardButton: HoverIconButton
-    private let reloadButton: HoverIconButton
+    let reloadButton: HoverIconButton
     private let foldButton: HoverIconButton
     private let urlField: NSTextField
     private let suggestionList = SuggestionListView()

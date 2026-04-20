@@ -53,4 +53,41 @@ struct PaneURLBarTests {
         bar.setZoomPercent(1.331)
         #expect(bar.zoomPercentLabel.stringValue == "133%")
     }
+
+    @Test("setReloadButtonLoading(true) advertises the stop affordance")
+    @MainActor func reloadButtonEntersLoading() {
+        let bar = PaneURLBar(frame: .zero)
+        bar.setReloadButtonLoading(true)
+        #expect(bar.isReloadLoading)
+        #expect(bar.reloadButton.toolTip == "Stop")
+        #expect(bar.reloadButton.image?.accessibilityDescription == "Stop")
+    }
+
+    @Test("setReloadButtonLoading(false) restores the reload affordance")
+    @MainActor func reloadButtonLeavesLoading() {
+        let bar = PaneURLBar(frame: .zero)
+        bar.setReloadButtonLoading(true)
+        bar.setReloadButtonLoading(false)
+        #expect(!bar.isReloadLoading)
+        #expect(bar.reloadButton.toolTip == "Reload")
+        #expect(bar.reloadButton.image?.accessibilityDescription == "Reload")
+    }
+
+    @Test("setReloadButtonLoading follows repeated toggles")
+    @MainActor func reloadButtonToggleSequence() {
+        let bar = PaneURLBar(frame: .zero)
+        for expected in [true, false, true, false] {
+            bar.setReloadButtonLoading(expected)
+            #expect(bar.isReloadLoading == expected)
+        }
+    }
+
+    @Test("reload button starts in the idle state")
+    @MainActor func reloadButtonStartsIdle() {
+        let bar = PaneURLBar(frame: .zero)
+        // `setReloadButtonLoading(_:)` hasn't been invoked yet, so the
+        // flag should reflect the factory-initialised idle state.
+        #expect(!bar.isReloadLoading)
+        #expect(bar.reloadButton.toolTip == "Reload")
+    }
 }
