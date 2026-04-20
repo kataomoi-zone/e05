@@ -27,7 +27,7 @@ final class BookmarksSidebarView: NSView {
     private let tableView = BookmarksTableView()
     private let emptyLabel = NSTextField(labelWithString: "No bookmarks yet")
     private var rows: [Bookmarks.Entry] = []
-    private var scrollObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
 
     init(bookmarks: Bookmarks) {
         self.bookmarks = bookmarks
@@ -42,11 +42,18 @@ final class BookmarksSidebarView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
-    // NOTE: No deinit cleanup for the listener registration. The closure
-    // captures `[weak self]`, so post-dealloc invocations are no-ops.
-    // `Bookmarks` is a process-lifetime singleton held by the container
-    // and the sidebar view is recreated at most per container, so the
-    // listener list never grows beyond a handful of entries.
+    deinit {
+        // Block-based observers keep their closure retained inside
+        // NotificationCenter until the token is passed to
+        // `removeObserver`, so a `[weak self]` capture alone does not
+        // free the subscription. The `Bookmarks` listener is left
+        // registered intentionally: the store is process-lifetime and
+        // the closure weak-captures self, so post-dealloc invocations
+        // are no-ops.
+        if let token = scrollObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
 
     private func setupLayout() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("bookmark"))

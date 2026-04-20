@@ -32,7 +32,7 @@ final class HistorySidebarView: NSView {
     private let tableView = HistoryTableView()
     private let emptyLabel = NSTextField(labelWithString: "No history yet")
     private var rows: [BrowsingHistory.Entry] = []
-    private var scrollObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
 
     /// Cap on rows loaded into the sidebar list. 500 entries is
     /// comfortable for a flat scroll list; a planned search field
@@ -52,11 +52,18 @@ final class HistorySidebarView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
-    // NOTE: No deinit cleanup for the listener registration. The closure
-    // captures `[weak self]`, so post-dealloc invocations are no-ops.
-    // `BrowsingHistory` is a process-lifetime singleton held by the
-    // container and the sidebar view is recreated at most per container,
-    // so the listener list never grows beyond a handful of entries.
+    deinit {
+        // Block-based observers keep their closure retained inside
+        // NotificationCenter until the token is passed to
+        // `removeObserver`, so a `[weak self]` capture alone does not
+        // free the subscription. The `BrowsingHistory` listener is left
+        // registered intentionally: the store is process-lifetime and
+        // the closure weak-captures self, so post-dealloc invocations
+        // are no-ops.
+        if let token = scrollObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
 
     private func setupLayout() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("history"))

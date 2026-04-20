@@ -61,6 +61,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         fatalError()
     }
 
+    deinit {
+        // `viewDidMoveToWindow` installs a `didResizeNotification`
+        // observer on the current window. NotificationCenter stores the
+        // observer as an unowned reference, so a zombie dispatch after
+        // dealloc would crash. Remove here to match `CommandPaletteView`
+        // / `OverlayScrollView`, which use the same pattern.
+        NotificationCenter.default.removeObserver(self)
+    }
+
     // MARK: - Icon Button Factory
 
     private static let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)

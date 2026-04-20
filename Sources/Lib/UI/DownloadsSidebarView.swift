@@ -56,7 +56,7 @@ final class DownloadsSidebarView: NSView {
     private let tableView = DownloadsTableView()
     private let emptyLabel = NSTextField(labelWithString: "No downloads")
     private var rows: [Download] = []
-    private var scrollObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
 
     init(manager: DownloadsManager) {
         self.manager = manager
@@ -71,12 +71,18 @@ final class DownloadsSidebarView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError() }
 
-    // NOTE: No deinit cleanup for the listener or scroll observer. The
-    // closures capture `[weak self]`, so post-dealloc invocations are
-    // no-ops. `DownloadsManager` is a process-lifetime singleton held
-    // by the container and the sidebar view is recreated at most per
-    // container, so the listener list never grows beyond a handful of
-    // entries.
+    deinit {
+        // Block-based observers keep their closure retained inside
+        // NotificationCenter until the token is passed to
+        // `removeObserver`, so a `[weak self]` capture alone does not
+        // free the subscription. The `DownloadsManager` listener is
+        // left registered intentionally: the store is process-lifetime
+        // and the closure weak-captures self, so post-dealloc
+        // invocations are no-ops.
+        if let token = scrollObserver {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
 
     private func setupLayout() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("downloads"))
