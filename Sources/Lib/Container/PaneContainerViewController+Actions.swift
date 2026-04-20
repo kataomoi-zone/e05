@@ -146,6 +146,44 @@ extension PaneContainerViewController {
                 }
             ),
             Action(
+                id: "browser_reload",
+                title: "Reload Page",
+                keyEquivalent: "r",
+                handler: { [weak self] in self?.reloadFocusedBrowser() },
+                validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
+                separatorBefore: true
+            ),
+            Action(
+                id: "browser_hard_reload",
+                title: "Reload Page (Bypass Cache)",
+                keyEquivalent: "r",
+                modifierMask: [.command, .shift],
+                handler: { [weak self] in self?.reloadFocusedBrowserFromOrigin() },
+                validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+            ),
+            Action(
+                id: "browser_back",
+                title: "Back",
+                keyEquivalent: "[",
+                handler: { [weak self] in self?.goBackFocusedBrowser() },
+                validate: { [weak self] in
+                    let enabled = (self?.isFocusedPaneBrowser ?? false)
+                        && (self?.canFocusedBrowserGoBack ?? false)
+                    return (enabled, nil)
+                }
+            ),
+            Action(
+                id: "browser_forward",
+                title: "Forward",
+                keyEquivalent: "]",
+                handler: { [weak self] in self?.goForwardFocusedBrowser() },
+                validate: { [weak self] in
+                    let enabled = (self?.isFocusedPaneBrowser ?? false)
+                        && (self?.canFocusedBrowserGoForward ?? false)
+                    return (enabled, nil)
+                }
+            ),
+            Action(
                 id: "new_browser",
                 title: "New Browser Column",
                 keyEquivalent: "b",

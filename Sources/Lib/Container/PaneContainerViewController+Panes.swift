@@ -138,12 +138,15 @@ extension PaneContainerViewController {
             pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
         }
 
-        // URL bar: back/forward for browser panes
+        // URL bar: back/forward/reload for browser panes
         pane.urlBar.onBack = { [weak pane] in
             pane?.browserView?.webView.goBack()
         }
         pane.urlBar.onForward = { [weak pane] in
             pane?.browserView?.webView.goForward()
+        }
+        pane.urlBar.onReload = { [weak pane] in
+            pane?.browserView?.webView.reload()
         }
 
         // URL bar: clicking moves focus to this pane

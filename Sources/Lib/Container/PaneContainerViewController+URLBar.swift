@@ -223,6 +223,38 @@ extension PaneContainerViewController {
         }
     }
 
+    // MARK: - Browser Navigation
+
+    /// Reload the focused browser pane's current page.
+    public func reloadFocusedBrowser() {
+        focusedPane?.browserView?.webView.reload()
+    }
+
+    /// Reload the focused browser pane bypassing the HTTP cache.
+    public func reloadFocusedBrowserFromOrigin() {
+        focusedPane?.browserView?.webView.reloadFromOrigin()
+    }
+
+    /// Navigate back in the focused browser pane's session history.
+    public func goBackFocusedBrowser() {
+        focusedPane?.browserView?.webView.goBack()
+    }
+
+    /// Navigate forward in the focused browser pane's session history.
+    public func goForwardFocusedBrowser() {
+        focusedPane?.browserView?.webView.goForward()
+    }
+
+    /// Whether the focused browser pane has any back history.
+    public var canFocusedBrowserGoBack: Bool {
+        focusedPane?.browserView?.webView.canGoBack ?? false
+    }
+
+    /// Whether the focused browser pane has any forward history.
+    public var canFocusedBrowserGoForward: Bool {
+        focusedPane?.browserView?.webView.canGoForward ?? false
+    }
+
     // MARK: - Web Inspector
 
     /// Toggle Web Inspector inline in the focused browser pane.

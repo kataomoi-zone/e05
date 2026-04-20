@@ -8,6 +8,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private let backButton: NSButton
     private let forwardButton: NSButton
+    private let reloadButton: NSButton
     private let foldButton: NSButton
     private let urlField: NSTextField
     private let suggestionList = SuggestionListView()
@@ -25,6 +26,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onBack: (() -> Void)?
     /// Called when user clicks forward button.
     public var onForward: (() -> Void)?
+    /// Called when user clicks the reload button.
+    public var onReload: (() -> Void)?
     /// Called when user presses ESC to dismiss URL field.
     public var onCancel: (() -> Void)?
     /// Called when text changes in the URL field. Return suggestions to display.
@@ -41,6 +44,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         forwardButton = Self.makeIconButton(symbol: "chevron.forward",
                                             fallback: "\u{25B6}",
                                             accessibility: "Forward")
+        reloadButton = Self.makeIconButton(symbol: "arrow.clockwise",
+                                           fallback: "\u{21BB}",
+                                           accessibility: "Reload")
         foldButton = Self.makeIconButton(symbol: "arrow.right.and.line.vertical.and.arrow.left",
                                          fallback: "\u{25C4}\u{25BA}",
                                          accessibility: "Fold column")
@@ -90,7 +96,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // MARK: - Setup
 
     private func setupButtons() {
-        for button in [backButton, forwardButton, foldButton] {
+        for button in [backButton, forwardButton, reloadButton, foldButton] {
             button.bezelStyle = .inline
             button.isBordered = false
             button.font = .systemFont(ofSize: 10)
@@ -102,12 +108,16 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         forwardButton.target = self
         forwardButton.action = #selector(forwardAction)
         forwardButton.toolTip = "Forward"
+        reloadButton.target = self
+        reloadButton.action = #selector(reloadAction)
+        reloadButton.toolTip = "Reload"
         foldButton.target = self
         foldButton.action = #selector(foldAction)
         foldButton.toolTip = "Fold column"
 
         addSubview(backButton)
         addSubview(forwardButton)
+        addSubview(reloadButton)
         addSubview(foldButton)
     }
 
@@ -136,7 +146,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
             forwardButton.widthAnchor.constraint(equalToConstant: buttonSize),
             forwardButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
-            urlField.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 4),
+            reloadButton.leadingAnchor.constraint(equalTo: forwardButton.trailingAnchor, constant: 2),
+            reloadButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            reloadButton.widthAnchor.constraint(equalToConstant: buttonSize),
+            reloadButton.heightAnchor.constraint(equalToConstant: buttonSize),
+
+            urlField.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 4),
             urlField.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -4),
             urlField.centerYAnchor.constraint(equalTo: centerYAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 22),
@@ -255,6 +270,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     @objc private func forwardAction() {
         onClicked?()
         onForward?()
+    }
+
+    @objc private func reloadAction() {
+        onClicked?()
+        onReload?()
     }
 
     @objc private func foldAction() {
