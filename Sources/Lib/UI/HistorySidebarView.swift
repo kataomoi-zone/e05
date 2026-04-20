@@ -29,7 +29,7 @@ final class HistorySidebarView: NSView {
     private let history: BrowsingHistory
     private var listenerToken: BrowsingHistoryListenerToken?
     private let scrollView = NSScrollView()
-    private let tableView = HistoryTableView()
+    private let tableView = SidebarListTableView()
     private let emptyLabel = NSTextField(labelWithString: "No history yet")
     private var rows: [BrowsingHistory.Entry] = []
     nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -137,8 +137,8 @@ final class HistorySidebarView: NSView {
         tableView.enumerateAvailableRowViews { _, row in
             if let cell = self.tableView.view(
                 atColumn: 0, row: row, makeIfNecessary: false
-            ) as? HistorySidebarCellView {
-                cell.forceHideActionButton()
+            ) as? SidebarListCellView {
+                cell.forceHideHoverActions()
             }
         }
     }
@@ -194,7 +194,7 @@ extension HistorySidebarView: NSTableViewDelegate {
     }
 
     func tableView(_: NSTableView, rowViewForRow _: Int) -> NSTableRowView? {
-        HistorySidebarRowView()
+        SidebarListRowView()
     }
 }
 
@@ -240,7 +240,7 @@ enum HistoryRowAction {
 /// reveals a trailing ellipsis (…) button that opens a small action
 /// menu (Copy URL / Delete). Transparent background so the Liquid
 /// Glass sidebar remains visible through the row.
-private final class HistorySidebarCellView: NSView {
+private final class HistorySidebarCellView: SidebarListCellView {
     static let height: CGFloat = 40
 
     /// Shared across all cells — `RelativeDateTimeFormatter` allocation
@@ -257,7 +257,6 @@ private final class HistorySidebarCellView: NSView {
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let actionButton = HoverIconButton()
     private var currentID: Int64 = 0
-    private var trackingArea: NSTrackingArea?
 
     var onRowAction: ((Int64, HistoryRowAction) -> Void)?
 
@@ -316,45 +315,8 @@ private final class HistorySidebarCellView: NSView {
         ])
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            // `.cursorUpdate` lets AppKit call `cursorUpdate(with:)`
-            // while the pointer is inside the cell so rows advertise
-            // their clickability (hover highlight alone looks passive).
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with _: NSEvent) {
-        actionButton.isHidden = false
-    }
-
-    override func mouseExited(with _: NSEvent) {
-        // AppKit delivers a spurious mouseExited when the cursor moves
-        // from this cell's tracking area into a subview's own tracking
-        // area (a HoverIconButton in our trailing slot) and back —
-        // ignore those so the hover-reveal doesn't flicker off mid-aim.
-        if cursorIsStillInsideBounds() { return }
-        actionButton.isHidden = true
-    }
-
-    override func cursorUpdate(with _: NSEvent) {
-        NSCursor.pointingHand.set()
-    }
-
-    /// Force-hide the hover-revealed action button regardless of
-    /// tracking state. Used by the parent list when the clip view
-    /// scrolls, because NSTrackingArea with `.inVisibleRect` doesn't
-    /// reliably fire `mouseExited` for cells that scroll out from
-    /// under a stationary cursor.
-    func forceHideActionButton() {
-        actionButton.isHidden = true
+    override func setHoverActionsHidden(_ hidden: Bool) {
+        actionButton.isHidden = hidden
     }
 
     func configure(with entry: BrowsingHistory.Entry) {
@@ -435,83 +397,3 @@ private final class HistorySidebarCellView: NSView {
     @objc private func menuOpenInNew() { onRowAction?(currentID, .openInNewWorkspace) }
 }
 
-// MARK: - Row view
-
-/// Row view that moves the table selection on hover (unifying mouse
-/// and keyboard feedback into a single highlight) and forces the
-/// non-key gray selection color so the sidebar's focus state doesn't
-/// flash blue when the list steals first-responder momentarily.
-private final class HistorySidebarRowView: NSTableRowView {
-    private var trackingArea: NSTrackingArea?
-
-    override var isEmphasized: Bool {
-        get { false }
-        set {}
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with _: NSEvent) {
-        guard let tableView = superview as? NSTableView else { return }
-        let row = tableView.row(for: self)
-        guard row >= 0, tableView.selectedRow != row else { return }
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    }
-}
-
-// MARK: - Table view
-
-/// `NSTableView` subclass that intercepts Delete and Return keys for
-/// the sidebar history list, and adds emacs-style Ctrl+N / Ctrl+P
-/// navigation alongside the default arrow keys.
-private final class HistoryTableView: NSTableView {
-    var onDeleteKey: (() -> Void)?
-    var onActivateRow: (() -> Void)?
-
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 51, 117:
-            onDeleteKey?()
-            return
-        case 36, 76:
-            onActivateRow?()
-            return
-        default:
-            break
-        }
-
-        if event.modifierFlags.contains(.control) {
-            switch event.charactersIgnoringModifiers {
-            case "n":
-                moveSelection(by: 1)
-                return
-            case "p":
-                moveSelection(by: -1)
-                return
-            default:
-                break
-            }
-        }
-
-        super.keyDown(with: event)
-    }
-
-    private func moveSelection(by delta: Int) {
-        let count = numberOfRows
-        guard count > 0 else { return }
-        let base = selectedRow >= 0 ? selectedRow : (delta > 0 ? -1 : count)
-        let target = max(0, min(count - 1, base + delta))
-        selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
-        scrollRowToVisible(target)
-    }
-}

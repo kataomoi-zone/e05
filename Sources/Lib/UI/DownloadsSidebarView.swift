@@ -53,7 +53,7 @@ final class DownloadsSidebarView: NSView {
     private let manager: DownloadsManager
     private var listenerToken: DownloadsListenerToken?
     private let scrollView = NSScrollView()
-    private let tableView = DownloadsTableView()
+    private let tableView = SidebarListTableView()
     private let emptyLabel = NSTextField(labelWithString: "No downloads")
     private var rows: [Download] = []
     nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -186,7 +186,7 @@ final class DownloadsSidebarView: NSView {
         tableView.enumerateAvailableRowViews { _, row in
             (self.tableView.view(
                 atColumn: 0, row: row, makeIfNecessary: false
-            ) as? DownloadsSidebarCellView)?.forceHideActionButtons()
+            ) as? SidebarListCellView)?.forceHideHoverActions()
         }
     }
 
@@ -245,40 +245,13 @@ extension DownloadsSidebarView: NSTableViewDelegate {
     }
 
     func tableView(_: NSTableView, rowViewForRow _: Int) -> NSTableRowView? {
-        DownloadsSidebarRowView()
-    }
-}
-
-// MARK: - Row view
-
-private final class DownloadsSidebarRowView: NSTableRowView {
-    private var trackingArea: NSTrackingArea?
-
-    override var isEmphasized: Bool { get { false } set {} }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with _: NSEvent) {
-        guard let tv = superview as? NSTableView else { return }
-        let row = tv.row(for: self)
-        guard row >= 0, tv.selectedRow != row else { return }
-        tv.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        SidebarListRowView()
     }
 }
 
 // MARK: - Cell view
 
-private final class DownloadsSidebarCellView: NSView {
+private final class DownloadsSidebarCellView: SidebarListCellView {
     static let height: CGFloat = 40
 
     private static let byteFormatter: ByteCountFormatter = {
@@ -306,8 +279,6 @@ private final class DownloadsSidebarCellView: NSView {
     private let progressOverlay = NSView()
     private var progressOverlayWidth: NSLayoutConstraint?
 
-    private var trackingArea: NSTrackingArea?
-    private var isHovered: Bool = false
     private var lastFraction: Double = 0
     private var lastState: DownloadState?
     private var lastConfiguredID: Int64?
@@ -404,55 +375,8 @@ private final class DownloadsSidebarCellView: NSView {
         }
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            // `.cursorUpdate` lets AppKit call `cursorUpdate(with:)`
-            // while the pointer is inside the cell so rows advertise
-            // their clickability (hover highlight alone looks passive).
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with _: NSEvent) {
-        isHovered = true
-        showActionButtons()
-    }
-
-    override func mouseExited(with _: NSEvent) {
-        // AppKit delivers a spurious mouseExited when the cursor moves
-        // from this cell's tracking area into a subview's own tracking
-        // area (a HoverIconButton in our trailing slot) and back —
-        // ignore those so the hover-reveal doesn't flicker off mid-aim.
-        if cursorIsStillInsideBounds() { return }
-        isHovered = false
-        hideActionButtons()
-    }
-
-    override func cursorUpdate(with _: NSEvent) {
-        NSCursor.pointingHand.set()
-    }
-
-    private func showActionButtons() {
-        actionsStack.arrangedSubviews.forEach { $0.isHidden = false }
-    }
-
-    private func hideActionButtons() {
-        actionsStack.arrangedSubviews.forEach { $0.isHidden = true }
-    }
-
-    /// Force-hide the trailing buttons regardless of tracking state.
-    /// Used by the parent list when the clip view scrolls, because
-    /// `.inVisibleRect` doesn't reliably fire `mouseExited` for cells
-    /// that scroll out from under a stationary cursor.
-    func forceHideActionButtons() {
-        isHovered = false
-        hideActionButtons()
+    override func setHoverActionsHidden(_ hidden: Bool) {
+        actionsStack.arrangedSubviews.forEach { $0.isHidden = hidden }
     }
 
     func configure(with entry: Download) {
@@ -639,49 +563,3 @@ private final class DownloadsSidebarCellView: NSView {
     }
 }
 
-// MARK: - Table view
-
-/// `NSTableView` subclass that intercepts Delete and Return keys for
-/// the sidebar downloads list, and adds emacs-style Ctrl+N / Ctrl+P
-/// navigation alongside the default arrow keys.
-private final class DownloadsTableView: NSTableView {
-    var onDeleteKey: (() -> Void)?
-    var onActivateRow: (() -> Void)?
-
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 51, 117:
-            onDeleteKey?()
-            return
-        case 36, 76:
-            onActivateRow?()
-            return
-        default:
-            break
-        }
-
-        if event.modifierFlags.contains(.control) {
-            switch event.charactersIgnoringModifiers {
-            case "n":
-                moveSelection(by: 1)
-                return
-            case "p":
-                moveSelection(by: -1)
-                return
-            default:
-                break
-            }
-        }
-
-        super.keyDown(with: event)
-    }
-
-    private func moveSelection(by delta: Int) {
-        let count = numberOfRows
-        guard count > 0 else { return }
-        let base = selectedRow >= 0 ? selectedRow : (delta > 0 ? -1 : count)
-        let target = max(0, min(count - 1, base + delta))
-        selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
-        scrollRowToVisible(target)
-    }
-}
