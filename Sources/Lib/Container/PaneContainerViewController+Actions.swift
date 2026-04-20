@@ -170,6 +170,21 @@ extension PaneContainerViewController {
                 }
             ),
             Action(
+                id: "open_bookmarks",
+                title: "Open Bookmarks",
+                handler: { [weak self] in self?.sidebarVC?.openMode(.bookmarks) }
+            ),
+            Action(
+                id: "open_history",
+                title: "Open History",
+                handler: { [weak self] in self?.sidebarVC?.openMode(.history) }
+            ),
+            Action(
+                id: "open_downloads",
+                title: "Open Downloads",
+                handler: { [weak self] in self?.sidebarVC?.openMode(.downloads) }
+            ),
+            Action(
                 id: "workspace_new",
                 title: "New Workspace",
                 handler: { [weak self] in self?.createWorkspace() },

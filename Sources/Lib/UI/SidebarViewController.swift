@@ -232,6 +232,22 @@ final class SidebarViewController: NSViewController {
         applyMode(mode)
     }
 
+    /// Pin the sidebar open (if it isn't already) and switch to `mode`.
+    /// Palette actions like "Open Bookmarks" route here so the sidebar
+    /// surfaces deliberately and persists until the user hits ⌘B to
+    /// unpin. `.hoverPeek` is promoted to `.pinnedOpen` because the
+    /// hover-out delay would yank the content out from under a user who
+    /// just asked to see it.
+    func openMode(_ mode: SidebarMode) {
+        switch currentState {
+        case .hidden, .hoverPeek:
+            transition(to: .pinnedOpen, animated: true)
+        case .pinnedOpen:
+            break
+        }
+        setMode(mode)
+    }
+
     private func applyMode(_ mode: SidebarMode) {
         overlay.places.setCurrentMode(mode)
         overlay.worklane.isHidden = mode != .tabs
