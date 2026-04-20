@@ -33,7 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // panes created before compilation completes get no blocker this
         // session. Subsequent launches pull the compiled binary from
         // WKContentRuleListStore synchronously and apply immediately.
-        Task { await AdBlocker.shared.start() }
+        //
+        // CosmeticFilterEngine runs sequentially after so it can read the
+        // same filter text from disk rather than double-downloading. The
+        // cosmetic index is applied through a WKUserScript per-pane and
+        // has no per-launch compile cost; its cold-start penalty is just
+        // parsing the shared cache.
+        Task {
+            await AdBlocker.shared.start()
+            await CosmeticFilterEngine.shared.start()
+        }
 
         // Lock the app to dark aqua so every NSView inherits a dark
         // effective appearance regardless of the system setting. The
