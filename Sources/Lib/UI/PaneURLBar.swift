@@ -40,7 +40,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     /// Owned by `setReloadButtonLoading(_:)` so the click handler can
     /// dispatch to either `onReload` or `onStop` without consulting
     /// the image/title, which are view-layer details.
-    private(set) var reloadIsLoading: Bool = false
+    private(set) var isReloadLoading: Bool = false
 
     /// Threshold under which `setZoomPercent(_:)` treats the supplied
     /// value as the 1.0 default. Wider than typical double round-trip
@@ -385,7 +385,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
             reloadButton.title = fallback
         }
         reloadButton.toolTip = accessibility
-        reloadIsLoading = loading
+        isReloadLoading = loading
     }
 
     /// Focus the URL field and select all text for quick editing.
@@ -449,7 +449,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     @objc private func reloadAction() {
         onClicked?()
-        if reloadIsLoading {
+        if isReloadLoading {
             onStop?()
         } else {
             onReload?()
