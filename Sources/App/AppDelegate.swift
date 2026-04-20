@@ -20,6 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var actions: [Action] = []
 
     func applicationDidFinishLaunching(_: Notification) {
+        // Fire off the extension load before the first browser pane is
+        // constructed. Scanning the extensions directory is cheap and the
+        // actual WKWebExtension parsing runs asynchronously, so this does
+        // not block window creation. Panes that come up before loadAll()
+        // finishes still reach the fully configured controller — only the
+        // set of loaded contexts grows once scanning completes.
+        Task { await ExtensionController.shared.loadAll() }
+
         // Lock the app to dark aqua so every NSView inherits a dark
         // effective appearance regardless of the system setting. The
         // browser panes render dark content anyway, so a light chrome

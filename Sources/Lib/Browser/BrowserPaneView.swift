@@ -54,6 +54,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
         let config = WKWebViewConfiguration()
         // Enable Web Inspector — required for _inspector to work.
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // Attach the shared WKWebExtensionController before the web view is
+        // created — WKWebView snapshots its configuration at init time, so
+        // setting the controller afterwards is silently ignored.
+        config.webExtensionController = ExtensionController.shared.controller
         let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
         webView = focusReportingWebView
 
