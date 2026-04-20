@@ -16,6 +16,14 @@ let package = Package(
             name: "E05Lib",
             dependencies: ["GhosttyKit"],
             path: "Sources/Lib",
+            resources: [
+                // `.copy` instead of `.process` because the JS runtime
+                // is eval'd verbatim inside a WKUserScript — any SPM
+                // processing (future image optimisation if a non-text
+                // asset lands in this directory, for instance) would
+                // be destructive for the content script.
+                .copy("Browser/Resources/cosmetic-runtime.js"),
+            ],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .linkedFramework("Carbon"),
