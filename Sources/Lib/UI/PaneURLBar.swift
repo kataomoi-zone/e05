@@ -6,10 +6,10 @@ import AppKit
 public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public static let barHeight: CGFloat = 28
 
-    private let backButton: NSButton
-    private let forwardButton: NSButton
-    private let reloadButton: NSButton
-    private let foldButton: NSButton
+    private let backButton: HoverIconButton
+    private let forwardButton: HoverIconButton
+    private let reloadButton: HoverIconButton
+    private let foldButton: HoverIconButton
     private let urlField: NSTextField
     private let suggestionList = SuggestionListView()
     /// Domain objects backing the current dropdown. `SuggestionListView`
@@ -19,6 +19,28 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     private var currentSuggestions: [Suggestion] = []
     private var searchDebounceTimer: Timer?
     private static let searchDebounceInterval: TimeInterval = 0.15
+
+    /// Inline zoom indicator (percent label + -/+/Reset). Hidden while
+    /// `pageZoom` is at 1.0 so the URL field claims the full trailing
+    /// space; revealed and updated via `setZoomPercent(_:)` whenever the
+    /// focused browser pane reports a non-default zoom.
+    let zoomContainer = NSStackView()
+    let zoomPercentLabel = NSTextField(labelWithString: "")
+    private let zoomOutInlineButton: HoverIconButton
+    private let zoomInInlineButton: HoverIconButton
+    private let zoomResetInlineButton = HoverIconButton(frame: .zero)
+
+    /// Active URL-field trailing constraint. Swapped between the zoom
+    /// container and the fold button in `setZoomPercent(_:)` so hiding
+    /// the indicator lets the URL field reclaim the trailing slot.
+    var urlTrailingToZoom: NSLayoutConstraint?
+    var urlTrailingToFold: NSLayoutConstraint?
+
+    /// Threshold under which `setZoomPercent(_:)` treats the supplied
+    /// value as the 1.0 default. Wider than typical double round-trip
+    /// error (e.g. `1.1 * (1/1.1)` leaves ~4e-16) so repeated zoom
+    /// in/out keeps snapping the indicator back to hidden.
+    private static let zoomDefaultEpsilon: CGFloat = 0.001
 
     /// Called when user submits a URL (presses Enter).
     public var onNavigate: ((String) -> Void)?
@@ -36,6 +58,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onClicked: (() -> Void)?
     /// Called when user clicks the fold button.
     public var onFold: (() -> Void)?
+    /// Called when the inline zoom indicator's "-" button is clicked.
+    public var onZoomOut: (() -> Void)?
+    /// Called when the inline zoom indicator's "+" button is clicked.
+    public var onZoomIn: (() -> Void)?
+    /// Called when the inline zoom indicator's "Reset" link is clicked.
+    public var onZoomReset: (() -> Void)?
 
     public override init(frame: NSRect) {
         backButton = Self.makeIconButton(symbol: "chevron.backward",
@@ -50,6 +78,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         foldButton = Self.makeIconButton(symbol: "arrow.right.and.line.vertical.and.arrow.left",
                                          fallback: "\u{25C4}\u{25BA}",
                                          accessibility: "Fold column")
+        zoomOutInlineButton = Self.makeIconButton(symbol: "minus",
+                                                  fallback: "-",
+                                                  accessibility: "Zoom out")
+        zoomInInlineButton = Self.makeIconButton(symbol: "plus",
+                                                 fallback: "+",
+                                                 accessibility: "Zoom in")
         urlField = NSTextField()
 
         super.init(frame: frame)
@@ -59,6 +93,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
         setupButtons()
         setupURLField()
+        setupZoomIndicator()
         setupLayout()
     }
 
@@ -80,7 +115,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private static let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
 
-    private static func makeIconButton(symbol: String, fallback: String, accessibility: String) -> NSButton {
+    private static func makeIconButton(symbol: String, fallback: String, accessibility: String) -> HoverIconButton {
         let button = HoverIconButton()
         if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
             .withSymbolConfiguration(iconConfig)
@@ -121,6 +156,78 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         addSubview(foldButton)
     }
 
+    private func setupZoomIndicator() {
+        zoomPercentLabel.font = .systemFont(ofSize: 11)
+        zoomPercentLabel.textColor = .secondaryLabelColor
+        zoomPercentLabel.drawsBackground = false
+        zoomPercentLabel.isBezeled = false
+        zoomPercentLabel.isEditable = false
+        zoomPercentLabel.isSelectable = false
+        zoomPercentLabel.alignment = .right
+
+        let zoomButtonSize: CGFloat = 22
+        for button in [zoomOutInlineButton, zoomInInlineButton] {
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 10)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            // Pin a square hit zone so the entire button — not just the
+            // SF Symbol glyph's vector path — responds to hover and
+            // clicks. Without an explicit size the intrinsic content
+            // size tracks the glyph, leaving the surrounding padding
+            // unclaimed by the tracking area and making the `-` / `+`
+            // miserable to aim at.
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: zoomButtonSize),
+                button.heightAnchor.constraint(equalToConstant: zoomButtonSize),
+            ])
+        }
+        zoomOutInlineButton.target = self
+        zoomOutInlineButton.action = #selector(zoomOutInlineAction)
+        zoomOutInlineButton.toolTip = "Zoom out"
+        zoomInInlineButton.target = self
+        zoomInInlineButton.action = #selector(zoomInInlineAction)
+        zoomInInlineButton.toolTip = "Zoom in"
+
+        // Text-style reset: transparent bezel, accent-coloured title,
+        // pointing-hand cursor from `HoverIconButton`. Using the same
+        // subclass as the icon buttons keeps the hit zone = bounds
+        // invariant — a plain `NSButton` with `.inline` bezel leaves
+        // the cursor as the default arrow and hit zone as just the
+        // glyph outline, which reads as non-clickable.
+        zoomResetInlineButton.bezelStyle = .inline
+        zoomResetInlineButton.isBordered = false
+        zoomResetInlineButton.font = .systemFont(ofSize: 11)
+        zoomResetInlineButton.translatesAutoresizingMaskIntoConstraints = false
+        zoomResetInlineButton.attributedTitle = NSAttributedString(
+            string: "Reset",
+            attributes: [
+                .foregroundColor: NSColor.controlAccentColor,
+                .font: NSFont.systemFont(ofSize: 11),
+            ]
+        )
+        zoomResetInlineButton.target = self
+        zoomResetInlineButton.action = #selector(zoomResetInlineAction)
+        zoomResetInlineButton.toolTip = "Reset zoom"
+        // Height matches the icon buttons so the whole cluster sits on
+        // a uniform baseline; width tracks the intrinsic "Reset" title
+        // plus the corner-radius padding.
+        NSLayoutConstraint.activate([
+            zoomResetInlineButton.heightAnchor.constraint(equalToConstant: zoomButtonSize),
+        ])
+
+        zoomContainer.orientation = .horizontal
+        zoomContainer.spacing = 4
+        zoomContainer.translatesAutoresizingMaskIntoConstraints = false
+        zoomContainer.addArrangedSubview(zoomPercentLabel)
+        zoomContainer.addArrangedSubview(zoomOutInlineButton)
+        zoomContainer.addArrangedSubview(zoomInInlineButton)
+        zoomContainer.addArrangedSubview(zoomResetInlineButton)
+        zoomContainer.isHidden = true
+
+        addSubview(zoomContainer)
+    }
+
     private func setupURLField() {
         urlField.placeholderString = "Enter URL or search..."
         urlField.font = .systemFont(ofSize: 12)
@@ -135,6 +242,21 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     private func setupLayout() {
         let buttonSize: CGFloat = 22
+        let urlToZoom = urlField.trailingAnchor.constraint(
+            equalTo: zoomContainer.leadingAnchor, constant: -6
+        )
+        let urlToFold = urlField.trailingAnchor.constraint(
+            equalTo: foldButton.leadingAnchor, constant: -4
+        )
+        // Default state (zoom == 1.0): zoom indicator hidden, URL field
+        // occupies the full trailing slot up to the fold button.
+        // `setZoomPercent(_:)` flips these two constraints when a
+        // non-default zoom is applied.
+        urlToFold.isActive = true
+        urlToZoom.isActive = false
+        urlTrailingToZoom = urlToZoom
+        urlTrailingToFold = urlToFold
+
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             backButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -152,9 +274,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
             reloadButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
             urlField.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 4),
-            urlField.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -4),
             urlField.centerYAnchor.constraint(equalTo: centerYAnchor),
             urlField.heightAnchor.constraint(equalToConstant: 22),
+
+            zoomContainer.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -4),
+            zoomContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             foldButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             foldButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -239,6 +363,24 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         urlField.refusesFirstResponder = true
     }
 
+    /// Update the inline zoom indicator to reflect the focused browser
+    /// pane's current `pageZoom`. Pass 1.0 to hide the indicator (the
+    /// URL field reclaims the trailing space); non-default values
+    /// reveal the "NNN% - + Reset" cluster with the rounded percent
+    /// filled in.
+    public func setZoomPercent(_ zoom: CGFloat) {
+        let isAtDefault = abs(zoom - 1.0) < Self.zoomDefaultEpsilon
+        zoomContainer.isHidden = isAtDefault
+        if isAtDefault {
+            urlTrailingToZoom?.isActive = false
+            urlTrailingToFold?.isActive = true
+        } else {
+            urlTrailingToFold?.isActive = false
+            urlTrailingToZoom?.isActive = true
+            zoomPercentLabel.stringValue = "\(Int(round(zoom * 100)))%"
+        }
+    }
+
     // MARK: - Suggestions
 
     private func acceptSuggestion(_ suggestion: Suggestion) {
@@ -280,6 +422,21 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     @objc private func foldAction() {
         onClicked?()
         onFold?()
+    }
+
+    @objc private func zoomOutInlineAction() {
+        onClicked?()
+        onZoomOut?()
+    }
+
+    @objc private func zoomInInlineAction() {
+        onClicked?()
+        onZoomIn?()
+    }
+
+    @objc private func zoomResetInlineAction() {
+        onClicked?()
+        onZoomReset?()
     }
 
     // MARK: - NSTextFieldDelegate

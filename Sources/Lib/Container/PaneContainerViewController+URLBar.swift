@@ -255,6 +255,40 @@ extension PaneContainerViewController {
         focusedPane?.browserView?.webView.canGoForward ?? false
     }
 
+    // MARK: - Browser Zoom
+
+    /// Multiplicative step applied to `WKWebView.pageZoom` per zoom
+    /// keystroke. 1.1x matches the step Safari and Chrome use; reaching
+    /// the next preset in one keystroke without visibly overshooting.
+    private static let browserZoomStep: CGFloat = 1.1
+    /// Lower clamp on `pageZoom`. Below ~0.25 the page becomes unusable
+    /// and the underlying WebKit rendering starts to break glyph hinting.
+    private static let browserZoomMin: CGFloat = 0.25
+    /// Upper clamp on `pageZoom`. Matches Safari's "Make Text Larger"
+    /// ceiling — past ~5x the viewport rarely fits meaningful content.
+    private static let browserZoomMax: CGFloat = 5.0
+
+    /// Scale up the focused browser pane's page zoom by one step.
+    public func zoomInFocusedBrowser() {
+        guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+        webView.pageZoom = min(webView.pageZoom * Self.browserZoomStep, Self.browserZoomMax)
+        pane.urlBar.setZoomPercent(webView.pageZoom)
+    }
+
+    /// Scale down the focused browser pane's page zoom by one step.
+    public func zoomOutFocusedBrowser() {
+        guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+        webView.pageZoom = max(webView.pageZoom / Self.browserZoomStep, Self.browserZoomMin)
+        pane.urlBar.setZoomPercent(webView.pageZoom)
+    }
+
+    /// Reset the focused browser pane's page zoom to 1.0.
+    public func resetFocusedBrowserZoom() {
+        guard let pane = focusedPane else { return }
+        pane.browserView?.webView.pageZoom = 1.0
+        pane.urlBar.setZoomPercent(1.0)
+    }
+
     // MARK: - Web Inspector
 
     /// Toggle Web Inspector inline in the focused browser pane.

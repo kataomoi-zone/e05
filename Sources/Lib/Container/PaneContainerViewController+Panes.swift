@@ -149,6 +149,15 @@ extension PaneContainerViewController {
             pane?.browserView?.webView.reload()
         }
 
+        // URL bar: inline zoom indicator controls. Route through the
+        // container helpers so the inline buttons, the command-palette
+        // actions, and any future toolbar / pinch-gesture entry point
+        // all flow through the same clamped path and share the same
+        // urlBar refresh logic.
+        pane.urlBar.onZoomIn = { [weak self] in self?.zoomInFocusedBrowser() }
+        pane.urlBar.onZoomOut = { [weak self] in self?.zoomOutFocusedBrowser() }
+        pane.urlBar.onZoomReset = { [weak self] in self?.resetFocusedBrowserZoom() }
+
         // URL bar: clicking moves focus to this pane
         pane.urlBar.onClicked = { [weak self, weak pane] in
             guard let self, let pane else { return }

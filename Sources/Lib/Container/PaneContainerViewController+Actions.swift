@@ -184,6 +184,28 @@ extension PaneContainerViewController {
                 }
             ),
             Action(
+                id: "browser_zoom_in",
+                title: "Zoom In",
+                keyEquivalent: "+",
+                handler: { [weak self] in self?.zoomInFocusedBrowser() },
+                validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
+                separatorBefore: true
+            ),
+            Action(
+                id: "browser_zoom_out",
+                title: "Zoom Out",
+                keyEquivalent: "-",
+                handler: { [weak self] in self?.zoomOutFocusedBrowser() },
+                validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+            ),
+            Action(
+                id: "browser_zoom_reset",
+                title: "Actual Size",
+                keyEquivalent: "0",
+                handler: { [weak self] in self?.resetFocusedBrowserZoom() },
+                validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+            ),
+            Action(
                 id: "new_browser",
                 title: "New Browser Column",
                 keyEquivalent: "b",
