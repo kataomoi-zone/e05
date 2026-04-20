@@ -38,6 +38,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     public var onURLChange: ((URL?) -> Void)?
     /// Called when back/forward availability changes.
     public var onNavigationStateChange: ((Bool, Bool) -> Void)?
+    /// Called when the page's loading state flips. `true` means a
+    /// navigation is in progress; the URL bar flips its reload button
+    /// into a stop button for the duration.
+    public var onLoadingStateChange: ((Bool) -> Void)?
     /// Called when the browser content gains focus (click or key navigation).
     public var onFocusChanged: (() -> Void)?
     /// Called when a navigation response resolves to a download. The
@@ -49,6 +53,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     private var urlObservation: NSKeyValueObservation?
     private var canGoBackObservation: NSKeyValueObservation?
     private var canGoForwardObservation: NSKeyValueObservation?
+    private var isLoadingObservation: NSKeyValueObservation?
     private var adblockerObserverTask: Task<Void, Never>?
 
     public override init(frame: NSRect) {
@@ -180,6 +185,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
                 guard let self else { return }
                 self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
             }
+        }
+        isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, change in
+            guard let isLoading = change.newValue else { return }
+            DispatchQueue.main.async { self?.onLoadingStateChange?(isLoading) }
         }
     }
 

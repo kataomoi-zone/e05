@@ -36,6 +36,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     var urlTrailingToZoom: NSLayoutConstraint?
     var urlTrailingToFold: NSLayoutConstraint?
 
+    /// Whether the reload button currently shows the stop affordance.
+    /// Owned by `setReloadButtonLoading(_:)` so the click handler can
+    /// dispatch to either `onReload` or `onStop` without consulting
+    /// the image/title, which are view-layer details.
+    private(set) var reloadIsLoading: Bool = false
+
     /// Threshold under which `setZoomPercent(_:)` treats the supplied
     /// value as the 1.0 default. Wider than typical double round-trip
     /// error (e.g. `1.1 * (1/1.1)` leaves ~4e-16) so repeated zoom
@@ -50,6 +56,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     public var onForward: (() -> Void)?
     /// Called when user clicks the reload button.
     public var onReload: (() -> Void)?
+    /// Called when user clicks the stop button (the reload icon flips
+    /// to an `xmark` while the page is loading).
+    public var onStop: (() -> Void)?
     /// Called when user presses ESC to dismiss URL field.
     public var onCancel: (() -> Void)?
     /// Called when text changes in the URL field. Return suggestions to display.
@@ -355,6 +364,30 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         forwardButton.isEnabled = forward
     }
 
+    /// Swap the reload button between its idle (reload) and loading
+    /// (stop) presentations. While `loading` is true the icon flips to
+    /// `xmark`, the tooltip reads `Stop`, and click routes through
+    /// `onStop`; on false it reverts to the reload glyph and
+    /// `onReload`. Matches the affordance every mainstream browser
+    /// exposes in place of a dedicated stop shortcut.
+    public func setReloadButtonLoading(_ loading: Bool) {
+        let symbol = loading ? "xmark" : "arrow.clockwise"
+        let fallback = loading ? "\u{2715}" : "\u{21BB}"
+        let accessibility = loading ? "Stop" : "Reload"
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
+            .withSymbolConfiguration(Self.iconConfig)
+        {
+            reloadButton.image = image
+            reloadButton.imagePosition = .imageOnly
+            reloadButton.title = ""
+        } else {
+            reloadButton.image = nil
+            reloadButton.title = fallback
+        }
+        reloadButton.toolTip = accessibility
+        reloadIsLoading = loading
+    }
+
     /// Focus the URL field and select all text for quick editing.
     public func focusURLField() {
         urlField.refusesFirstResponder = false
@@ -416,7 +449,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
     @objc private func reloadAction() {
         onClicked?()
-        onReload?()
+        if reloadIsLoading {
+            onStop?()
+        } else {
+            onReload?()
+        }
     }
 
     @objc private func foldAction() {

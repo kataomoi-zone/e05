@@ -118,6 +118,9 @@ extension PaneContainerViewController {
             bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
                 pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
             }
+            bv.onLoadingStateChange = { [weak pane] isLoading in
+                pane?.urlBar.setReloadButtonLoading(isLoading)
+            }
             bv.onDownloadStarted = { [weak self] wkDownload in
                 self?.downloadsManager.adopt(wkDownload)
             }
@@ -147,6 +150,9 @@ extension PaneContainerViewController {
         }
         pane.urlBar.onReload = { [weak pane] in
             pane?.browserView?.webView.reload()
+        }
+        pane.urlBar.onStop = { [weak pane] in
+            pane?.browserView?.webView.stopLoading()
         }
 
         // URL bar: inline zoom indicator controls. Route through the
