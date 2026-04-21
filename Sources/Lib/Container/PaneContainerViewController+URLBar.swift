@@ -372,17 +372,23 @@ extension PaneContainerViewController {
       view.window?.title = title
     }
 
-    guard titleChanged, isFocused else { return }
+    guard titleChanged else { return }
 
-    // Header overlay: debounced, only when URL bar is hidden
-    guard !urlBarVisible else { return }
+    // Sidebar worklane + header overlay share one debounce so the
+    // SET_TITLE storm from shell prompt redraws and progress bars is
+    // rate-limited to one rebuild per `titleDebounceInterval` per
+    // pane event. The worklane lists panes from every workspace, so
+    // this fires regardless of whether the updated pane is focused;
+    // the header overlay still gates on focus + URL bar hidden.
     titleDebounceTimer?.invalidate()
     titleDebounceTimer = Timer.scheduledTimer(
       withTimeInterval: Self.titleDebounceInterval, repeats: false
     ) { [weak self, weak pane] _ in
       DispatchQueue.main.async {
         guard let self, let pane else { return }
+        self.notifySidebarWorklaneDidChange()
         guard pane.id == self.focusedPane?.id else { return }
+        guard !self.urlBarVisible else { return }
         guard pane.title != self.lastShownTitle else { return }
         self.lastShownTitle = pane.title
         pane.headerView.show(title: pane.title, autoHide: true)
