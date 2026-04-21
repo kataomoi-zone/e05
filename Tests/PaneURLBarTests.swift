@@ -90,4 +90,17 @@ struct PaneURLBarTests {
         #expect(!bar.isReloadLoading)
         #expect(bar.reloadButton.toolTip == "Reload")
     }
+
+    @Test("setReloadEnabled toggles the reload button availability")
+    @MainActor func reloadEnableToggle() {
+        let bar = PaneURLBar(frame: .zero)
+        // Factory default is enabled; the terminal pane setup path
+        // disables it so non-browser panes don't advertise a click
+        // that routes to a nil web view.
+        #expect(bar.reloadButton.isEnabled)
+        bar.setReloadEnabled(false)
+        #expect(!bar.reloadButton.isEnabled)
+        bar.setReloadEnabled(true)
+        #expect(bar.reloadButton.isEnabled)
+    }
 }

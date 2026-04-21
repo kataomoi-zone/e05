@@ -364,6 +364,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         forwardButton.isEnabled = forward
     }
 
+    /// Enable/disable the reload button. Kept separate from
+    /// `setNavigationEnabled(back:forward:)` because availability and
+    /// loading state are orthogonal axes — the focused pane may have
+    /// nothing to reload (terminal pane, blank surface) even while
+    /// `isReloadLoading` stays false.
+    public func setReloadEnabled(_ enabled: Bool) {
+        reloadButton.isEnabled = enabled
+    }
+
     /// Swap the reload button between its idle (reload) and loading
     /// (stop) presentations. While `loading` is true the icon flips to
     /// `xmark`, the tooltip reads `Stop`, and click routes through

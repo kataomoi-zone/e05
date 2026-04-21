@@ -127,6 +127,10 @@ extension PaneContainerViewController {
         } else {
             // Terminal/other panes: navigation buttons always disabled
             pane.urlBar.setNavigationEnabled(back: false, forward: false)
+            // Mirror the non-browser case for reload too so the button
+            // visibly dims instead of advertising a click that routes
+            // to a nil `browserView?.webView` and silently no-ops.
+            pane.urlBar.setReloadEnabled(false)
         }
 
         // URL bar: navigate callback
