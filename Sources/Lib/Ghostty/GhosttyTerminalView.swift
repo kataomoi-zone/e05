@@ -447,10 +447,22 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// here). Updated on every `GHOSTTY_ACTION_SEARCH_TOTAL`.
   internal private(set) var searchTotal: Int?
 
-  /// 1-based index of the currently highlighted match, or `nil` when
-  /// no match is selected (no navigation yet, or scan pending).
-  /// Updated on every `GHOSTTY_ACTION_SEARCH_SELECTED`.
+  /// 0-based index of the currently highlighted match as reported by
+  /// libghostty, or `nil` when no match is selected (no navigation
+  /// yet, or scan pending). `flushPendingFindCompletion` converts
+  /// this to the 1-based count `FindHelper` callers expect.
   internal private(set) var searchSelected: Int?
+
+  /// Caller deferred until the next `search_total` / `search_selected`
+  /// callback lands (or the fallback timer fires). Set from
+  /// `performFind`, drained from `flushPendingFindCompletion`.
+  private var pendingFindCompletion: (@MainActor ((total: Int, current: Int)) -> Void)?
+
+  /// Safety net for queries where libghostty stays silent — a
+  /// zero-match needle emits no `search_selected`, and a same-needle
+  /// retry may skip `search_total`. The timer guarantees the caller
+  /// isn't left waiting on a notification that will never arrive.
+  private var findCompletionTimer: Timer?
 
   func handleSearchStart(needle: String) {
     searchNeedle = needle
@@ -462,15 +474,125 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     searchTotal = nil
     searchSelected = nil
     NSLog("[e05-find] end_search")
+    flushPendingFindCompletion()
   }
 
   func handleSearchTotal(_ total: Int?) {
-    searchTotal = total
     NSLog("[e05-find] search_total=\(total.map(String.init) ?? "nil")")
+    // libghostty emits `total=0` / `total=null` as a reset
+    // notification before every scan and after `navigate_search`
+    // transitions. Keep the previous observed count so the fallback
+    // timer doesn't flush with zero after the reset; the real count
+    // (or `null` from a genuinely zero-match needle) arrives in a
+    // subsequent notification that we do honour below.
+    guard let total, total > 0 else { return }
+    searchTotal = total
+    flushPendingFindCompletion()
   }
 
   func handleSearchSelected(_ selected: Int?) {
-    searchSelected = selected
     NSLog("[e05-find] search_selected=\(selected.map(String.init) ?? "nil")")
+    // `selected=null` is the reset counterpart to `total=0` and is
+    // pushed by libghostty whenever the selection state is being
+    // recomputed (needle change, navigate_search, etc.). Keep the
+    // prior selected index until a concrete one lands.
+    guard let selected else { return }
+    searchSelected = selected
+    flushPendingFindCompletion()
+  }
+
+  /// Forward a binding action string (e.g. `search:foo`,
+  /// `navigate_search:next`, `end_search`) to libghostty on this
+  /// surface. The third argument to `ghostty_surface_binding_action`
+  /// is the action-string byte length — passing a zero there yields
+  /// an empty slice and a parse error inside libghostty.
+  @discardableResult
+  private func performSearchAction(_ action: String) -> Bool {
+    guard let surface else { return false }
+    return action.withCString { ptr in
+      ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+    }
+  }
+
+  /// Drain any in-flight find completion using the latest observed
+  /// total / selected values. Safe to call repeatedly — the second
+  /// call is a no-op because the completion slot is cleared on the
+  /// first flush.
+  private func flushPendingFindCompletion() {
+    guard let pending = pendingFindCompletion else { return }
+    pendingFindCompletion = nil
+    findCompletionTimer?.invalidate()
+    findCompletionTimer = nil
+    // libghostty returns selected as a 0-based index; FindBar and
+    // the FindHelper protocol expect a 1-based count to match
+    // Brave / Chrome / Firefox conventions. Translate here so the
+    // stored state stays faithful to the upstream representation.
+    let position: (total: Int, current: Int) = (
+      total: searchTotal ?? 0,
+      current: searchSelected.map { $0 + 1 } ?? 0
+    )
+    Task { @MainActor in pending(position) }
+  }
+}
+
+// MARK: - FindHelper
+
+extension GhosttyTerminalView: FindHelper {
+  /// Drive the libghostty scrollback search via binding actions. A
+  /// fresh `needle` kicks `search:<needle>` which triggers a scan on
+  /// the ghostty side and produces a `search_total` callback when
+  /// the scan completes. Subsequent calls with the same needle send
+  /// `navigate_search:next` / `previous`, which update the selected
+  /// match and emit `search_selected`. Completion is deferred until
+  /// either callback flushes it or the short fallback timer expires,
+  /// so zero-match queries don't leave the caller hanging.
+  public func performFind(
+    _ needle: String,
+    forward: Bool,
+    completion: @escaping @MainActor ((total: Int, current: Int)) -> Void
+  ) {
+    guard !needle.isEmpty else {
+      endFind()
+      Task { @MainActor in completion((total: 0, current: 0)) }
+      return
+    }
+
+    // Reject any prior completion so a stale caller can't latch onto
+    // a response for a different needle.
+    flushPendingFindCompletion()
+    pendingFindCompletion = completion
+
+    let action: String
+    if needle == searchNeedle, searchTotal != nil {
+      action = forward ? "navigate_search:next" : "navigate_search:previous"
+    } else {
+      // Changing the needle invalidates prior counts; clear before
+      // the scan so a fast keystroke doesn't flush with stale values.
+      // Record the needle locally too: libghostty only emits
+      // `start_search` for its own ⌘F binding, so without this the
+      // `searchNeedle == needle` branch above would never be taken
+      // and every ⌘G would re-send `search:<needle>` and reset the
+      // counts instead of navigating.
+      searchNeedle = needle
+      searchTotal = nil
+      searchSelected = nil
+      action = "search:\(needle)"
+    }
+
+    performSearchAction(action)
+
+    findCompletionTimer?.invalidate()
+    findCompletionTimer = Timer.scheduledTimer(
+      withTimeInterval: 0.15, repeats: false
+    ) { [weak self] _ in
+      DispatchQueue.main.async { self?.flushPendingFindCompletion() }
+    }
+  }
+
+  public func endFind() {
+    performSearchAction("end_search")
+    findCompletionTimer?.invalidate()
+    findCompletionTimer = nil
+    pendingFindCompletion = nil
   }
 }
