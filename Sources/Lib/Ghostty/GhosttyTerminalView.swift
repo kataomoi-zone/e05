@@ -430,4 +430,47 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   public func characterIndex(for _: NSPoint) -> Int {
     0
   }
+
+  // MARK: - Search
+
+  /// Latest search needle observed on this surface. Driven by
+  /// `GHOSTTY_ACTION_START_SEARCH` notifications from libghostty and
+  /// cleared by `GHOSTTY_ACTION_END_SEARCH`. libghostty emits
+  /// start_search with an empty needle to signal "open the search UI"
+  /// — the actual query is threaded in through the `search:<needle>`
+  /// binding action, which is echoed back as the same notification.
+  internal private(set) var searchNeedle: String = ""
+
+  /// Match count reported by the libghostty search thread. `nil`
+  /// means the scan is in-flight or indeterminate (libghostty wraps
+  /// `?usize` as `-1` on the C boundary and we restore the optional
+  /// here). Updated on every `GHOSTTY_ACTION_SEARCH_TOTAL`.
+  internal private(set) var searchTotal: Int?
+
+  /// 1-based index of the currently highlighted match, or `nil` when
+  /// no match is selected (no navigation yet, or scan pending).
+  /// Updated on every `GHOSTTY_ACTION_SEARCH_SELECTED`.
+  internal private(set) var searchSelected: Int?
+
+  func handleSearchStart(needle: String) {
+    searchNeedle = needle
+    NSLog("[e05-find] start_search needle=\"\(needle)\"")
+  }
+
+  func handleSearchEnd() {
+    searchNeedle = ""
+    searchTotal = nil
+    searchSelected = nil
+    NSLog("[e05-find] end_search")
+  }
+
+  func handleSearchTotal(_ total: Int?) {
+    searchTotal = total
+    NSLog("[e05-find] search_total=\(total.map(String.init) ?? "nil")")
+  }
+
+  func handleSearchSelected(_ selected: Int?) {
+    searchSelected = selected
+    NSLog("[e05-find] search_selected=\(selected.map(String.init) ?? "nil")")
+  }
 }

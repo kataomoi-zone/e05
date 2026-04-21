@@ -38,6 +38,11 @@ public final class GhosttyApp {
     }
 
     // action_cb: (ghostty_app_t, ghostty_target_s, ghostty_action_s) -> Bool
+    // libghostty invokes this synchronously from `ghostty_app_tick`,
+    // which we drive on the main queue (see `wakeup_cb` below). The
+    // `@MainActor` guarantee for `handleAction` therefore holds by
+    // construction rather than by compiler-checked isolation — keep
+    // the tick dispatch on the main queue if the runtime is rewired.
     runtime.action_cb = { app, target, action in
       guard let app else { return false }
       guard let ud = ghostty_app_userdata(app) else { return false }
@@ -140,8 +145,37 @@ public final class GhosttyApp {
       // The actual close is handled by close_surface_cb.
       // TODO: show overlay message like ghostty macOS app
       return false
+    case GHOSTTY_ACTION_START_SEARCH:
+      guard let view = terminalView(for: target) else { return false }
+      let needle = action.action.start_search.needle.flatMap { String(cString: $0) } ?? ""
+      view.handleSearchStart(needle: needle)
+      return true
+    case GHOSTTY_ACTION_END_SEARCH:
+      guard let view = terminalView(for: target) else { return false }
+      view.handleSearchEnd()
+      return true
+    case GHOSTTY_ACTION_SEARCH_TOTAL:
+      guard let view = terminalView(for: target) else { return false }
+      let raw = action.action.search_total.total
+      view.handleSearchTotal(raw >= 0 ? Int(raw) : nil)
+      return true
+    case GHOSTTY_ACTION_SEARCH_SELECTED:
+      guard let view = terminalView(for: target) else { return false }
+      let raw = action.action.search_selected.selected
+      view.handleSearchSelected(raw >= 0 ? Int(raw) : nil)
+      return true
     default:
       return false
     }
+  }
+
+  /// Resolve the `GhosttyTerminalView` that owns the surface referenced
+  /// by a runtime action target. Returns `nil` for app-scoped actions
+  /// or when the surface has no userdata attached (e.g. mid-teardown).
+  private func terminalView(for target: ghostty_target_s) -> GhosttyTerminalView? {
+    guard let surface = target.target.surface,
+      let ud = ghostty_surface_userdata(surface)
+    else { return nil }
+    return Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
   }
 }
