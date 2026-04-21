@@ -289,3 +289,31 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     return type == "attachment"
   }
 }
+
+// MARK: - FindHelper
+
+extension BrowserPaneView: FindHelper {
+  public func performFind(_ needle: String, forward: Bool) {
+    guard !needle.isEmpty else {
+      endFind()
+      return
+    }
+    let config = WKFindConfiguration()
+    config.backwards = !forward
+    config.wraps = true
+    webView.find(needle, configuration: config) { _ in
+      // The boolean `matchFound` result is ignored here. Surfacing it
+      // back to the find bar (for a no-match red tint, for instance)
+      // is a future extension.
+    }
+  }
+
+  public func endFind() {
+    // WKWebView exposes no public API to clear an in-page find
+    // highlight. Existing highlights dissipate when the page navigates
+    // or reloads; immediate clearing on close (to match Safari) would
+    // require injecting JavaScript that strips the selection and any
+    // `-webkit-text-highlight` styling, and is deferred until the find
+    // bar gains an incremental JS channel.
+  }
+}
