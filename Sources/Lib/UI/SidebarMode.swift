@@ -8,39 +8,39 @@ import Foundation
 ///
 /// `allCases` order defines the visual row order in the places section.
 enum SidebarMode: CaseIterable {
-    case tabs
-    case bookmarks
-    case history
-    case downloads
+  case tabs
+  case bookmarks
+  case history
+  case downloads
 
-    var title: String {
-        switch self {
-        case .tabs: return "Tabs"
-        case .bookmarks: return "Bookmarks"
-        case .history: return "History"
-        case .downloads: return "Downloads"
-        }
+  var title: String {
+    switch self {
+    case .tabs: return "Tabs"
+    case .bookmarks: return "Bookmarks"
+    case .history: return "History"
+    case .downloads: return "Downloads"
     }
+  }
 
-    /// SF Symbol used as the row icon in the places section.
-    var symbolName: String {
-        switch self {
-        case .tabs: return "text.rectangle"
-        case .bookmarks: return "bookmark"
-        case .history: return "clock"
-        case .downloads: return "arrow.down.circle"
-        }
+  /// SF Symbol used as the row icon in the places section.
+  var symbolName: String {
+    switch self {
+    case .tabs: return "text.rectangle"
+    case .bookmarks: return "bookmark"
+    case .history: return "clock"
+    case .downloads: return "arrow.down.circle"
     }
+  }
 
-    /// Text shown in the placeholder view for modes that don't have a
-    /// real content view wired yet. Every current mode ships a real
-    /// view so the string is empty, but the placeholder is still
-    /// assigned on every mode change so it never carries stale text
-    /// from a previous mode (which accessibility tooling or a future
-    /// fade animation could expose).
-    var placeholderMessage: String {
-        switch self {
-        case .tabs, .bookmarks, .history, .downloads: return ""
-        }
+  /// Text shown in the placeholder view for modes that don't have a
+  /// real content view wired yet. Every current mode ships a real
+  /// view so the string is empty, but the placeholder is still
+  /// assigned on every mode change so it never carries stale text
+  /// from a previous mode (which accessibility tooling or a future
+  /// fade animation could expose).
+  var placeholderMessage: String {
+    switch self {
+    case .tabs, .bookmarks, .history, .downloads: return ""
     }
+  }
 }

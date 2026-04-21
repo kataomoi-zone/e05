@@ -5,78 +5,78 @@ import Testing
 
 @Suite("PaneWidthPreset")
 struct PaneWidthPresetTests {
-    @Test("columns equality")
-    func columnsEquality() {
-        #expect(PaneWidthPreset.columns(80) == .columns(80))
-        #expect(PaneWidthPreset.columns(80) != .columns(120))
-    }
+  @Test("columns equality")
+  func columnsEquality() {
+    #expect(PaneWidthPreset.columns(80) == .columns(80))
+    #expect(PaneWidthPreset.columns(80) != .columns(120))
+  }
 
-    @Test("fraction equality")
-    func fractionEquality() {
-        #expect(PaneWidthPreset.fraction(0.5) == .fraction(0.5))
-        #expect(PaneWidthPreset.fraction(0.5) != .fraction(0.333))
-    }
+  @Test("fraction equality")
+  func fractionEquality() {
+    #expect(PaneWidthPreset.fraction(0.5) == .fraction(0.5))
+    #expect(PaneWidthPreset.fraction(0.5) != .fraction(0.333))
+  }
 
-    @Test("columns and fraction are not equal")
-    func crossTypeInequality() {
-        #expect(PaneWidthPreset.columns(80) != .fraction(0.5))
-    }
+  @Test("columns and fraction are not equal")
+  func crossTypeInequality() {
+    #expect(PaneWidthPreset.columns(80) != .fraction(0.5))
+  }
 }
 
 @Suite("PaneHeaderView")
 @MainActor
 struct PaneHeaderViewTests {
-    @Test("starts hidden")
-    func startsHidden() {
-        let header = PaneHeaderView()
-        #expect(header.alphaValue == 0)
-    }
+  @Test("starts hidden")
+  func startsHidden() {
+    let header = PaneHeaderView()
+    #expect(header.alphaValue == 0)
+  }
 
-    @Test("hideImmediately sets alpha to zero")
-    func hideImmediately() {
-        let header = PaneHeaderView()
-        header.alphaValue = 1
-        header.hideImmediately()
-        #expect(header.alphaValue == 0)
-    }
+  @Test("hideImmediately sets alpha to zero")
+  func hideImmediately() {
+    let header = PaneHeaderView()
+    header.alphaValue = 1
+    header.hideImmediately()
+    #expect(header.alphaValue == 0)
+  }
 
-    @Test("currentTitle reflects show title")
-    func currentTitle() {
-        let header = PaneHeaderView()
-        header.show(title: "test-title", autoHide: false)
-        #expect(header.currentTitle == "test-title")
-    }
+  @Test("currentTitle reflects show title")
+  func currentTitle() {
+    let header = PaneHeaderView()
+    header.show(title: "test-title", autoHide: false)
+    #expect(header.currentTitle == "test-title")
+  }
 }
 
 @Suite("PaneResizeHandle")
 @MainActor
 struct PaneResizeHandleTests {
-    @Test("starts inactive")
-    func startsInactive() {
-        let handle = PaneResizeHandle(orientation: .horizontal)
-        #expect(handle.isActive == false)
-    }
+  @Test("starts inactive")
+  func startsInactive() {
+    let handle = PaneResizeHandle(orientation: .horizontal)
+    #expect(handle.isActive == false)
+  }
 
-    @Test("can be activated")
-    func canActivate() {
-        let handle = PaneResizeHandle(orientation: .horizontal)
-        handle.isActive = true
-        #expect(handle.isActive == true)
-    }
+  @Test("can be activated")
+  func canActivate() {
+    let handle = PaneResizeHandle(orientation: .horizontal)
+    handle.isActive = true
+    #expect(handle.isActive == true)
+  }
 
-    @Test("horizontal handle has width constraint")
-    func widthConstraint() {
-        let handle = PaneResizeHandle(orientation: .horizontal)
-        let constraints = PaneResizeHandle.makeConstraints(for: handle)
-        #expect(constraints.count == 1)
-        #expect(constraints[0].constant == 6) // handleSize
-    }
+  @Test("horizontal handle has width constraint")
+  func widthConstraint() {
+    let handle = PaneResizeHandle(orientation: .horizontal)
+    let constraints = PaneResizeHandle.makeConstraints(for: handle)
+    #expect(constraints.count == 1)
+    #expect(constraints[0].constant == 6)  // handleSize
+  }
 
-    @Test("vertical handle has height constraint")
-    func heightConstraint() {
-        let handle = PaneResizeHandle(orientation: .vertical)
-        let constraints = PaneResizeHandle.makeConstraints(for: handle)
-        #expect(constraints.count == 1)
-        #expect(constraints[0].constant == 6) // handleSize
-    }
+  @Test("vertical handle has height constraint")
+  func heightConstraint() {
+    let handle = PaneResizeHandle(orientation: .vertical)
+    let constraints = PaneResizeHandle.makeConstraints(for: handle)
+    #expect(constraints.count == 1)
+    #expect(constraints[0].constant == 6)  // handleSize
+  }
 }

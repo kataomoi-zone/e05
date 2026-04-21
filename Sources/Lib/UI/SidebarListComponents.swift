@@ -16,45 +16,45 @@ import AppKit
 /// and adds Ctrl+N / Ctrl+P alongside the default arrow keys.
 @MainActor
 final class SidebarListTableView: NSTableView {
-    var onDeleteKey: (() -> Void)?
-    var onActivateRow: (() -> Void)?
+  var onDeleteKey: (() -> Void)?
+  var onActivateRow: (() -> Void)?
 
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 51, 117:
-            onDeleteKey?()
-            return
-        case 36, 76:
-            onActivateRow?()
-            return
-        default:
-            break
-        }
-
-        if event.modifierFlags.contains(.control) {
-            switch event.charactersIgnoringModifiers {
-            case "n":
-                moveSelection(by: 1)
-                return
-            case "p":
-                moveSelection(by: -1)
-                return
-            default:
-                break
-            }
-        }
-
-        super.keyDown(with: event)
+  override func keyDown(with event: NSEvent) {
+    switch event.keyCode {
+    case 51, 117:
+      onDeleteKey?()
+      return
+    case 36, 76:
+      onActivateRow?()
+      return
+    default:
+      break
     }
 
-    private func moveSelection(by delta: Int) {
-        let count = numberOfRows
-        guard count > 0 else { return }
-        let base = selectedRow >= 0 ? selectedRow : (delta > 0 ? -1 : count)
-        let target = max(0, min(count - 1, base + delta))
-        selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
-        scrollRowToVisible(target)
+    if event.modifierFlags.contains(.control) {
+      switch event.charactersIgnoringModifiers {
+      case "n":
+        moveSelection(by: 1)
+        return
+      case "p":
+        moveSelection(by: -1)
+        return
+      default:
+        break
+      }
     }
+
+    super.keyDown(with: event)
+  }
+
+  private func moveSelection(by delta: Int) {
+    let count = numberOfRows
+    guard count > 0 else { return }
+    let base = selectedRow >= 0 ? selectedRow : (delta > 0 ? -1 : count)
+    let target = max(0, min(count - 1, base + delta))
+    selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
+    scrollRowToVisible(target)
+  }
 }
 
 /// Row view that moves the table selection on hover (unifying mouse
@@ -63,34 +63,34 @@ final class SidebarListTableView: NSTableView {
 /// flash blue when the list steals first-responder momentarily.
 @MainActor
 final class SidebarListRowView: NSTableRowView {
-    private var trackingArea: NSTrackingArea?
+  private var trackingArea: NSTrackingArea?
 
-    override var isEmphasized: Bool {
-        get { false }
-        set {}
-    }
+  override var isEmphasized: Bool {
+    get { false }
+    set {}
+  }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let old = trackingArea { removeTrackingArea(old) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
 
-    override func mouseEntered(with _: NSEvent) {
-        guard let tableView = superview as? NSTableView else { return }
-        let row = tableView.row(for: self)
-        // Skip re-selecting the same row so the table doesn't emit a
-        // redundant `selectionDidChange` whenever the cursor crosses a
-        // subview boundary inside the already-selected row.
-        guard row >= 0, tableView.selectedRow != row else { return }
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    }
+  override func mouseEntered(with _: NSEvent) {
+    guard let tableView = superview as? NSTableView else { return }
+    let row = tableView.row(for: self)
+    // Skip re-selecting the same row so the table doesn't emit a
+    // redundant `selectionDidChange` whenever the cursor crosses a
+    // subview boundary inside the already-selected row.
+    guard row >= 0, tableView.selectedRow != row else { return }
+    tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+  }
 }
 
 /// Cell view base class that encapsulates the hover-tracking
@@ -109,58 +109,58 @@ final class SidebarListRowView: NSTableRowView {
 /// hover actions can ignore it.
 @MainActor
 class SidebarListCellView: NSView {
-    private var trackingArea: NSTrackingArea?
+  private var trackingArea: NSTrackingArea?
 
-    /// True while the pointer is inside the cell's bounds (modulo
-    /// AppKit's spurious mouseExited filtering). Exposed so subclasses
-    /// that rebuild their action buttons under the cursor can sync
-    /// visibility to the current hover state.
-    private(set) var isHovered: Bool = false
+  /// True while the pointer is inside the cell's bounds (modulo
+  /// AppKit's spurious mouseExited filtering). Exposed so subclasses
+  /// that rebuild their action buttons under the cursor can sync
+  /// visibility to the current hover state.
+  private(set) var isHovered: Bool = false
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let old = trackingArea { removeTrackingArea(old) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            // `.cursorUpdate` lets AppKit call `cursorUpdate(with:)`
-            // while the pointer is inside the cell so rows advertise
-            // their clickability (hover highlight alone looks passive).
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let old = trackingArea { removeTrackingArea(old) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      // `.cursorUpdate` lets AppKit call `cursorUpdate(with:)`
+      // while the pointer is inside the cell so rows advertise
+      // their clickability (hover highlight alone looks passive).
+      options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
 
-    override func mouseEntered(with _: NSEvent) {
-        isHovered = true
-        setHoverActionsHidden(false)
-    }
+  override func mouseEntered(with _: NSEvent) {
+    isHovered = true
+    setHoverActionsHidden(false)
+  }
 
-    override func mouseExited(with _: NSEvent) {
-        // AppKit delivers a spurious mouseExited when the cursor moves
-        // from this cell's tracking area into a subview's own tracking
-        // area (e.g. a HoverIconButton in the trailing slot) and back —
-        // ignore those so the hover-reveal doesn't flicker off mid-aim.
-        if cursorIsStillInsideBounds() { return }
-        isHovered = false
-        setHoverActionsHidden(true)
-    }
+  override func mouseExited(with _: NSEvent) {
+    // AppKit delivers a spurious mouseExited when the cursor moves
+    // from this cell's tracking area into a subview's own tracking
+    // area (e.g. a HoverIconButton in the trailing slot) and back —
+    // ignore those so the hover-reveal doesn't flicker off mid-aim.
+    if cursorIsStillInsideBounds() { return }
+    isHovered = false
+    setHoverActionsHidden(true)
+  }
 
-    override func cursorUpdate(with _: NSEvent) {
-        NSCursor.pointingHand.set()
-    }
+  override func cursorUpdate(with _: NSEvent) {
+    NSCursor.pointingHand.set()
+  }
 
-    /// Force-hide the hover-revealed action button(s) regardless of
-    /// tracking state. Used by the parent list when the clip view
-    /// scrolls.
-    func forceHideHoverActions() {
-        isHovered = false
-        setHoverActionsHidden(true)
-    }
+  /// Force-hide the hover-revealed action button(s) regardless of
+  /// tracking state. Used by the parent list when the clip view
+  /// scrolls.
+  func forceHideHoverActions() {
+    isHovered = false
+    setHoverActionsHidden(true)
+  }
 
-    /// Override in subclasses to toggle hover-revealed action
-    /// visibility. Default is a no-op so cells without hover actions
-    /// don't need to implement it.
-    func setHoverActionsHidden(_ hidden: Bool) {}
+  /// Override in subclasses to toggle hover-revealed action
+  /// visibility. Default is a no-op so cells without hover actions
+  /// don't need to implement it.
+  func setHoverActionsHidden(_ hidden: Bool) {}
 }

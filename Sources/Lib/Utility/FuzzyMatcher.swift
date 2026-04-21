@@ -19,13 +19,13 @@ import Foundation
 /// Using indices directly as `NSRange` locations will desynchronize for URLs
 /// or titles containing emoji, surrogate pairs, or combining characters.
 public struct FuzzyMatch: Equatable {
-    public let score: Int
-    public let matchedIndices: [Int]
+  public let score: Int
+  public let matchedIndices: [Int]
 
-    public init(score: Int, matchedIndices: [Int]) {
-        self.score = score
-        self.matchedIndices = matchedIndices
-    }
+  public init(score: Int, matchedIndices: [Int]) {
+    self.score = score
+    self.matchedIndices = matchedIndices
+  }
 }
 
 /// Pure, UI-agnostic fuzzy matching engine inspired by fzf v2.
@@ -55,171 +55,171 @@ public struct FuzzyMatch: Equatable {
 /// enough for URL-bar-sized candidates and costs O(|query| * |candidate|)
 /// worst case.
 public enum FuzzyMatcher {
-    // MARK: - Scoring constants
+  // MARK: - Scoring constants
 
-    private static let scoreMatch = 16
-    private static let scoreConsecutive = 35
-    private static let scoreBoundary = 30
-    private static let scoreCamelCase = 30
-    private static let scoreHead = 5
-    private static let penaltyGap = 2
-    private static let penaltyGapMax = 20
+  private static let scoreMatch = 16
+  private static let scoreConsecutive = 35
+  private static let scoreBoundary = 30
+  private static let scoreCamelCase = 30
+  private static let scoreHead = 5
+  private static let penaltyGap = 2
+  private static let penaltyGapMax = 20
 
-    private static let boundaryChars: Set<Character> = [".", "/", "-", "_", " "]
+  private static let boundaryChars: Set<Character> = [".", "/", "-", "_", " "]
 
-    // MARK: - Public API
+  // MARK: - Public API
 
-    /// Score a query against a single candidate string.
-    /// Returns `nil` if the query is not a subsequence of the candidate.
-    /// An empty query returns a zero-score match with no highlighted indices
-    /// — callers can choose to treat that as "match everything".
-    public static func match(query: String, against candidate: String) -> FuzzyMatch? {
-        if query.isEmpty {
-            return FuzzyMatch(score: 0, matchedIndices: [])
-        }
-
-        let queryChars = Array(query)
-        let candidateChars = Array(candidate)
-        let caseSensitive = queryChars.contains(where: isUppercaseASCII)
-
-        // Greedy subsequence scan: for each query character find the earliest
-        // matching candidate character. If any query character fails to
-        // match, return nil.
-        var matchedIndices: [Int] = []
-        matchedIndices.reserveCapacity(queryChars.count)
-        var candidateIndex = 0
-        for qChar in queryChars {
-            while candidateIndex < candidateChars.count {
-                let cChar = candidateChars[candidateIndex]
-                if charactersEqual(qChar, cChar, caseSensitive: caseSensitive) {
-                    matchedIndices.append(candidateIndex)
-                    candidateIndex += 1
-                    break
-                }
-                candidateIndex += 1
-            }
-        }
-        guard matchedIndices.count == queryChars.count else {
-            return nil
-        }
-
-        let score = computeScore(
-            candidateChars: candidateChars,
-            matchedIndices: matchedIndices
-        )
-        return FuzzyMatch(score: score, matchedIndices: matchedIndices)
+  /// Score a query against a single candidate string.
+  /// Returns `nil` if the query is not a subsequence of the candidate.
+  /// An empty query returns a zero-score match with no highlighted indices
+  /// — callers can choose to treat that as "match everything".
+  public static func match(query: String, against candidate: String) -> FuzzyMatch? {
+    if query.isEmpty {
+      return FuzzyMatch(score: 0, matchedIndices: [])
     }
 
-    /// Rank a list of items by best match across one or more string keys.
-    /// - Parameters:
-    ///   - query: search query. Empty query returns items unchanged (with
-    ///     score 0).
-    ///   - items: candidates to rank.
-    ///   - keys: extracts one or more searchable strings per item. The best
-    ///     (highest) score across keys is used for ranking. Passing multiple
-    ///     keys lets callers search title + URL in one pass.
-    /// - Returns: items paired with their match, sorted by score descending.
-    ///   Sort is stable: items with equal scores preserve their input order.
-    public static func rank<T>(
-        query: String,
-        items: [T],
-        keys: (T) -> [String]
-    ) -> [(item: T, match: FuzzyMatch)] {
-        if query.isEmpty {
-            return items.map { ($0, FuzzyMatch(score: 0, matchedIndices: [])) }
+    let queryChars = Array(query)
+    let candidateChars = Array(candidate)
+    let caseSensitive = queryChars.contains(where: isUppercaseASCII)
+
+    // Greedy subsequence scan: for each query character find the earliest
+    // matching candidate character. If any query character fails to
+    // match, return nil.
+    var matchedIndices: [Int] = []
+    matchedIndices.reserveCapacity(queryChars.count)
+    var candidateIndex = 0
+    for qChar in queryChars {
+      while candidateIndex < candidateChars.count {
+        let cChar = candidateChars[candidateIndex]
+        if charactersEqual(qChar, cChar, caseSensitive: caseSensitive) {
+          matchedIndices.append(candidateIndex)
+          candidateIndex += 1
+          break
         }
-
-        // Pair (originalIndex, item, bestMatch) so we can stable-sort.
-        var scored: [(originalIndex: Int, item: T, match: FuzzyMatch)] = []
-        scored.reserveCapacity(items.count)
-
-        for (index, item) in items.enumerated() {
-            var best: FuzzyMatch?
-            for key in keys(item) {
-                guard let candidate = match(query: query, against: key) else { continue }
-                if candidate.score > (best?.score ?? Int.min) {
-                    best = candidate
-                }
-            }
-            if let best {
-                scored.append((index, item, best))
-            }
-        }
-
-        scored.sort { lhs, rhs in
-            if lhs.match.score != rhs.match.score {
-                return lhs.match.score > rhs.match.score
-            }
-            return lhs.originalIndex < rhs.originalIndex
-        }
-
-        return scored.map { ($0.item, $0.match) }
+        candidateIndex += 1
+      }
+    }
+    guard matchedIndices.count == queryChars.count else {
+      return nil
     }
 
-    // MARK: - Scoring
+    let score = computeScore(
+      candidateChars: candidateChars,
+      matchedIndices: matchedIndices
+    )
+    return FuzzyMatch(score: score, matchedIndices: matchedIndices)
+  }
 
-    private static func computeScore(
-        candidateChars: [Character],
-        matchedIndices: [Int]
-    ) -> Int {
-        var score = 0
-        var previousMatchIndex: Int? = nil
-
-        for matchIndex in matchedIndices {
-            score += scoreMatch
-
-            if matchIndex == 0 {
-                score += scoreHead
-                score += scoreBoundary
-            } else {
-                let prevChar = candidateChars[matchIndex - 1]
-                if boundaryChars.contains(prevChar) {
-                    score += scoreBoundary
-                }
-                // CamelCase boundary: lowercase followed by uppercase.
-                let curChar = candidateChars[matchIndex]
-                if isLowercaseASCII(prevChar), isUppercaseASCII(curChar) {
-                    score += scoreCamelCase
-                }
-            }
-
-            if let previous = previousMatchIndex {
-                if matchIndex == previous + 1 {
-                    score += scoreConsecutive
-                } else {
-                    let gap = matchIndex - previous - 1
-                    score -= min(gap * penaltyGap, penaltyGapMax)
-                }
-            }
-            previousMatchIndex = matchIndex
-        }
-        return score
+  /// Rank a list of items by best match across one or more string keys.
+  /// - Parameters:
+  ///   - query: search query. Empty query returns items unchanged (with
+  ///     score 0).
+  ///   - items: candidates to rank.
+  ///   - keys: extracts one or more searchable strings per item. The best
+  ///     (highest) score across keys is used for ranking. Passing multiple
+  ///     keys lets callers search title + URL in one pass.
+  /// - Returns: items paired with their match, sorted by score descending.
+  ///   Sort is stable: items with equal scores preserve their input order.
+  public static func rank<T>(
+    query: String,
+    items: [T],
+    keys: (T) -> [String]
+  ) -> [(item: T, match: FuzzyMatch)] {
+    if query.isEmpty {
+      return items.map { ($0, FuzzyMatch(score: 0, matchedIndices: [])) }
     }
 
-    // MARK: - Character helpers
+    // Pair (originalIndex, item, bestMatch) so we can stable-sort.
+    var scored: [(originalIndex: Int, item: T, match: FuzzyMatch)] = []
+    scored.reserveCapacity(items.count)
 
-    private static func charactersEqual(_ a: Character, _ b: Character, caseSensitive: Bool) -> Bool {
-        if caseSensitive {
-            return a == b
+    for (index, item) in items.enumerated() {
+      var best: FuzzyMatch?
+      for key in keys(item) {
+        guard let candidate = match(query: query, against: key) else { continue }
+        if candidate.score > (best?.score ?? Int.min) {
+          best = candidate
         }
-        // Lowercase only when ASCII — avoids expensive locale-aware folding
-        // for non-ASCII characters, which we want to compare as-is.
-        let aLower = isUppercaseASCII(a) ? Character(a.lowercased()) : a
-        let bLower = isUppercaseASCII(b) ? Character(b.lowercased()) : b
-        return aLower == bLower
+      }
+      if let best {
+        scored.append((index, item, best))
+      }
     }
 
-    private static func isUppercaseASCII(_ c: Character) -> Bool {
-        guard let scalar = c.unicodeScalars.first, c.unicodeScalars.count == 1 else {
-            return false
-        }
-        return scalar.value >= 0x41 && scalar.value <= 0x5A
+    scored.sort { lhs, rhs in
+      if lhs.match.score != rhs.match.score {
+        return lhs.match.score > rhs.match.score
+      }
+      return lhs.originalIndex < rhs.originalIndex
     }
 
-    private static func isLowercaseASCII(_ c: Character) -> Bool {
-        guard let scalar = c.unicodeScalars.first, c.unicodeScalars.count == 1 else {
-            return false
+    return scored.map { ($0.item, $0.match) }
+  }
+
+  // MARK: - Scoring
+
+  private static func computeScore(
+    candidateChars: [Character],
+    matchedIndices: [Int]
+  ) -> Int {
+    var score = 0
+    var previousMatchIndex: Int? = nil
+
+    for matchIndex in matchedIndices {
+      score += scoreMatch
+
+      if matchIndex == 0 {
+        score += scoreHead
+        score += scoreBoundary
+      } else {
+        let prevChar = candidateChars[matchIndex - 1]
+        if boundaryChars.contains(prevChar) {
+          score += scoreBoundary
         }
-        return scalar.value >= 0x61 && scalar.value <= 0x7A
+        // CamelCase boundary: lowercase followed by uppercase.
+        let curChar = candidateChars[matchIndex]
+        if isLowercaseASCII(prevChar), isUppercaseASCII(curChar) {
+          score += scoreCamelCase
+        }
+      }
+
+      if let previous = previousMatchIndex {
+        if matchIndex == previous + 1 {
+          score += scoreConsecutive
+        } else {
+          let gap = matchIndex - previous - 1
+          score -= min(gap * penaltyGap, penaltyGapMax)
+        }
+      }
+      previousMatchIndex = matchIndex
     }
+    return score
+  }
+
+  // MARK: - Character helpers
+
+  private static func charactersEqual(_ a: Character, _ b: Character, caseSensitive: Bool) -> Bool {
+    if caseSensitive {
+      return a == b
+    }
+    // Lowercase only when ASCII — avoids expensive locale-aware folding
+    // for non-ASCII characters, which we want to compare as-is.
+    let aLower = isUppercaseASCII(a) ? Character(a.lowercased()) : a
+    let bLower = isUppercaseASCII(b) ? Character(b.lowercased()) : b
+    return aLower == bLower
+  }
+
+  private static func isUppercaseASCII(_ c: Character) -> Bool {
+    guard let scalar = c.unicodeScalars.first, c.unicodeScalars.count == 1 else {
+      return false
+    }
+    return scalar.value >= 0x41 && scalar.value <= 0x5A
+  }
+
+  private static func isLowercaseASCII(_ c: Character) -> Bool {
+    guard let scalar = c.unicodeScalars.first, c.unicodeScalars.count == 1 else {
+      return false
+    }
+    return scalar.value >= 0x61 && scalar.value <= 0x7A
+  }
 }
