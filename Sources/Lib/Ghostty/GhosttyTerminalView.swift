@@ -116,11 +116,30 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   private func updateSize() {
     guard let surface else { return }
+    // Skip size forwarding while the view (or any ancestor) is hidden.
+    // Column fold flips `pane.containerView.isHidden = true` and
+    // shrinks the column's width constraint to `foldedColumnWidth`
+    // (30pt), which otherwise pushes an extremely narrow cols/rows
+    // figure into ghostty. For surfaces whose backing process has
+    // already exited via wait-after-command, that reflow is
+    // destructive: there is no live shell to rebuild the scrollback
+    // when the column is expanded again, so the previously visible
+    // scrollback appears lost. Holding the last live size across the
+    // fold lets ghostty keep the preserved screen intact.
+    guard !isHiddenOrHasHiddenAncestor else { return }
     let scale = window?.backingScaleFactor ?? 1.0
     let w = UInt32(bounds.width * scale)
     let h = UInt32(bounds.height * scale)
     guard w > 0, h > 0 else { return }
     ghostty_surface_set_size(surface, w, h)
+  }
+
+  /// Forward the current bounds to ghostty even if the last
+  /// `setFrameSize` was suppressed by the hidden-ancestor guard in
+  /// `updateSize`. Called by the column-fold path right after a pane
+  /// is unhidden so ghostty redraws at the full width.
+  public func resyncSurfaceSize() {
+    updateSize()
   }
 
   // MARK: - Focus
