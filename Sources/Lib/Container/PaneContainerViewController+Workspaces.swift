@@ -74,6 +74,13 @@ extension PaneContainerViewController {
       return
     }
 
+    // Dismiss the find bar before the slide animation begins. The
+    // completion-handler path eventually runs `setFocus`, which would
+    // close the bar anyway, but that fires after the 250ms slide —
+    // leaving the overlay visibly stranded on the outgoing workspace
+    // for the duration. Closing up front lets the slide start clean.
+    closeFindBar()
+
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x
     preserveSurfaces(in: outgoing)
