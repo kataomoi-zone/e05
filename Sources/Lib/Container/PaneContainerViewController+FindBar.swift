@@ -72,6 +72,14 @@ extension PaneContainerViewController {
   public func closeFindBar() {
     guard let target = findBarTargetPane, target.isFindBarVisible else { return }
     dismissFindSession(on: target)
+    // Return first responder to the pane content so terminal input or
+    // WKWebView keystrokes resume immediately; without this the
+    // collapsed search field keeps responder status and eats the next
+    // keypress. Mirrors the URL bar's `onCancel` path in
+    // `PaneContainerViewController+Panes.swift`. Focus-change callers
+    // (`setFocus`) overwrite this responder a few lines later with the
+    // new pane's target, so there's no flicker for that path.
+    target.containerView.window?.makeFirstResponder(target.preferredFirstResponder)
     findBarTargetPane = nil
   }
 
