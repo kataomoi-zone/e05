@@ -7,8 +7,6 @@ public final class GhosttyApp {
   private(set) var app: ghostty_app_t?
   private(set) var config: ghostty_config_t?
 
-  public var onSetTitle: ((ghostty_surface_t, String) -> Void)?
-
   public init() {
     let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
     guard initResult == 0 else {
@@ -135,10 +133,10 @@ public final class GhosttyApp {
   ) -> Bool {
     switch action.tag {
     case GHOSTTY_ACTION_SET_TITLE:
-      guard let surface = target.target.surface else { return false }
+      guard let view = terminalView(for: target) else { return false }
       guard let titlePtr = action.action.set_title.title else { return false }
       let title = String(cString: titlePtr)
-      onSetTitle?(surface, title)
+      view.onTitleChange?(title)
       return true
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
       // GUI notification for abnormal exit or wait_after_command.

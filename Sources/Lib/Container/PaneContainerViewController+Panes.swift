@@ -75,6 +75,11 @@ extension PaneContainerViewController {
         self.handleFocusChange(from: pane)
       }
 
+      tv.onTitleChange = { [weak self, weak pane] title in
+        guard let self, let pane else { return }
+        self.handleTitleChange(pane: pane, title: title)
+      }
+
       tv.onClose = { [weak self, weak pane] in
         guard let self, let pane else { return }
         // TODO(cross-workspace cleanup): scans the current

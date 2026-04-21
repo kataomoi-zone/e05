@@ -1,5 +1,4 @@
 import AppKit
-import GhosttyKit
 
 extension PaneContainerViewController {
   // MARK: - URL Bar
@@ -356,21 +355,13 @@ extension PaneContainerViewController {
   /// Update a pane's title and show header if it's the focused pane.
   /// Debounced: header only shows when the title is stable for a short time,
   /// filtering out rapid changes from shell command execution.
-  public func handleTitleChange(surface: ghostty_surface_t, title: String) {
-    // Search across ALL workspaces — ghostty's SET_TITLE event can arrive
-    // for any terminal surface that's still alive (including panes parked
-    // in non-current workspaces). Limiting to `columns` (= current WS)
-    // would silently drop title updates for other workspaces, leaving
-    // their panes with an empty title and falling back to "Pane N-M" in
-    // the command palette's "Focus: <title>" entries.
-    //
-    // Use `lazy.flatMap` + `first(where:)` so iteration short-circuits as
-    // soon as the target pane is found — avoiding a full materialized
-    // Array every time SET_TITLE fires (which happens on every prompt
-    // redraw, progress bar update, etc.).
-    let allPanes = workspaces.lazy.flatMap { $0.columns.lazy.flatMap { $0.panes } }
-    guard let pane = allPanes.first(where: { $0.terminalView?.surface == surface }) else { return }
-
+  ///
+  /// Callers pass the `PaneModel` directly so cross-workspace SET_TITLE
+  /// events stay correctly routed: the surface → view → pane path is
+  /// resolved once at pane creation in `setupPaneCallbacks` and captured
+  /// weakly, so events for panes parked in non-current workspaces still
+  /// update their titles instead of being dropped.
+  public func handleTitleChange(pane: PaneModel, title: String) {
     let titleChanged = pane.title != title
     pane.title = title
 

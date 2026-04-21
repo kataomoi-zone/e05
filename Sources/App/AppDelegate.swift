@@ -74,10 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     window.contentViewController = container
     self.paneContainer = container
 
-    ghosttyApp.onSetTitle = { [weak container] surface, title in
-      container?.handleTitleChange(surface: surface, title: title)
-    }
-
     window.center()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate()
