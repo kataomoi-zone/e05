@@ -142,6 +142,17 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     updateSize()
   }
 
+  /// Drop any stale focus flag on the ghostty surface. Column fold
+  /// hides the pane without firing `resignFirstResponder`, so
+  /// surfaces retain whatever focus value they held at fold time —
+  /// leaving the caret blinking on the wrong pane after unfold.
+  /// Call this before restoring first responder so only the newly
+  /// focused surface re-arms via `becomeFirstResponder`.
+  public func clearSurfaceFocus() {
+    guard let surface else { return }
+    ghostty_surface_set_focus(surface, false)
+  }
+
   // MARK: - Focus
 
   public override var acceptsFirstResponder: Bool { true }

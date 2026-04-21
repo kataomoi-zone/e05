@@ -211,6 +211,21 @@ extension PaneContainerViewController {
       for pane in column.panes {
         pane.terminalView?.resyncSurfaceSize()
       }
+      // Fold didn't fire resignFirstResponder on any hidden pane, so
+      // every terminal surface in the column still carries whatever
+      // ghostty_surface_set_focus value it had at fold time. Clear
+      // them all first, then hand first responder back to the
+      // focused pane so `becomeFirstResponder` re-arms focus on
+      // exactly one surface. Without this step a split column
+      // reappears with the focused pane's caret drawn as a hollow
+      // box (no responder) while the non-focused pane blinks (stale
+      // ghostty focus), and keyboard input goes nowhere.
+      for pane in column.panes {
+        pane.terminalView?.clearSurfaceFocus()
+      }
+      if let pane = column.focusedPane {
+        pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
+      }
     } else {
       // Fold: save current width, shrink column, hide panes + vertical handles
       column.unfoldedWidth = constraint.constant
