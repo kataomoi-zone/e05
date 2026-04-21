@@ -121,6 +121,12 @@ public final class PaneContainerViewController: NSViewController {
   /// closing while the bar is open doesn't strand the reference.
   weak var findBarTargetPane: PaneModel?
 
+  /// Debounce timer for match-count updates. `onSearch` fires on
+  /// every keystroke; `callAsyncJavaScript` is cheap per call but
+  /// cumulative cost during fast typing is noticeable, so coalesce
+  /// with a short delay before issuing the count script.
+  var findCountDebounceTimer: Timer?
+
   // MARK: - Init
 
   public init(ghosttyApp: GhosttyApp) {

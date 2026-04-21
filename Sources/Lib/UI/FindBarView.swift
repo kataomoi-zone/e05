@@ -12,9 +12,18 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   public static let barHeight: CGFloat = PaneURLBar.barHeight
 
   private let searchField = NSTextField()
+  private let matchCountLabel = NSTextField(labelWithString: "")
   private let prevButton: HoverIconButton
   private let nextButton: HoverIconButton
   private let closeButton: HoverIconButton
+
+  /// Last `current` value we displayed that was strictly positive.
+  /// Retained so that a `current = 0` return from the position query
+  /// (typical when the live find selection sits in a cross-origin
+  /// iframe whose DOM we can't walk) doesn't slam the label back to
+  /// zero as the user pages through. Reset on needle change and
+  /// explicit hide.
+  private var lastKnownCurrent: Int?
 
   /// Called whenever the search field's text changes. Empty strings are
   /// forwarded so the helper can end the current session.
@@ -50,6 +59,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     layer?.backgroundColor = NSColor(white: 0.12, alpha: 1.0).cgColor
 
     setupField()
+    setupMatchCountLabel()
     setupButtons()
     setupLayout()
   }
@@ -104,6 +114,19 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     addSubview(searchField)
   }
 
+  private func setupMatchCountLabel() {
+    matchCountLabel.font = .systemFont(ofSize: 11)
+    matchCountLabel.textColor = .secondaryLabelColor
+    matchCountLabel.drawsBackground = false
+    matchCountLabel.isBezeled = false
+    matchCountLabel.isEditable = false
+    matchCountLabel.isSelectable = false
+    matchCountLabel.alignment = .right
+    matchCountLabel.isHidden = true
+    matchCountLabel.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(matchCountLabel)
+  }
+
   private func setupButtons() {
     prevButton.target = self
     prevButton.action = #selector(prevAction)
@@ -126,7 +149,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       searchField.centerYAnchor.constraint(equalTo: centerYAnchor),
       searchField.heightAnchor.constraint(equalToConstant: 22),
-      searchField.trailingAnchor.constraint(equalTo: prevButton.leadingAnchor, constant: -4),
+      // searchField → matchCountLabel → prevButton. When the count
+      // label is hidden its intrinsic size collapses to zero, so the
+      // searchField effectively extends up to the prev button.
+      searchField.trailingAnchor.constraint(equalTo: matchCountLabel.leadingAnchor, constant: -4),
+
+      matchCountLabel.trailingAnchor.constraint(equalTo: prevButton.leadingAnchor, constant: -4),
+      matchCountLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
       prevButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       prevButton.widthAnchor.constraint(equalToConstant: buttonSize),
@@ -163,6 +192,51 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     searchField.selectText(nil)
   }
 
+  /// Update the match-position indicator displayed to the right of
+  /// the search field. Passing `nil` for either side hides the label
+  /// and restores the default tint. Passing `(current: 0, total: 0)`
+  /// reveals "0 / 0" and tints the search field red to flag a
+  /// no-match state; any positive `total` shows "current / total" in
+  /// the neutral tint and matches Brave / Chrome / Firefox conventions.
+  ///
+  /// When `current = 0` but `total > 0` we interpret it as "the JS
+  /// walker couldn't locate the live selection" — typically because
+  /// the selection is in a cross-origin iframe. In that case the
+  /// last known non-zero current is displayed instead so the label
+  /// stays on the user's previous hit instead of snapping to zero.
+  public func setMatchPosition(current: Int?, total: Int?) {
+    guard let current, let total else {
+      matchCountLabel.stringValue = ""
+      matchCountLabel.isHidden = true
+      searchField.textColor = .labelColor
+      lastKnownCurrent = nil
+      return
+    }
+    let displayCurrent: Int
+    if current == 0, total > 0, let last = lastKnownCurrent {
+      displayCurrent = last
+    } else {
+      displayCurrent = current
+      if current > 0 {
+        lastKnownCurrent = current
+      } else if total == 0 {
+        lastKnownCurrent = nil
+      }
+    }
+    matchCountLabel.stringValue = "\(displayCurrent) / \(total)"
+    matchCountLabel.isHidden = false
+    searchField.textColor = total > 0 ? .labelColor : .systemRed
+  }
+
+  // MARK: - Testing Support
+
+  /// Current text of the match-count label. Exposed so tests can
+  /// verify `setMatchCount`'s branching without reaching through the
+  /// view hierarchy.
+  var matchCountText: String {
+    matchCountLabel.stringValue
+  }
+
   // MARK: - Button Actions
 
   @objc private func prevAction() { onPrev?() }
@@ -172,6 +246,10 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   // MARK: - NSTextFieldDelegate
 
   public func controlTextDidChange(_: Notification) {
+    // A new needle invalidates any retained position — drop it now
+    // so the first query for the new search can report an honest
+    // zero without the fallback fishing out a stale prior value.
+    lastKnownCurrent = nil
     onSearch?(searchField.stringValue)
   }
 

@@ -26,6 +26,17 @@ extension PaneContainerViewController {
     findBarTargetPane = pane
     pane.setFindBarVisible(true)
     pane.findBar.focusField()
+    // Re-run find + position query against whatever needle the field
+    // still carries from a previous session on this pane. Without
+    // this the position label would show stale or empty values until
+    // the user types another character.
+    let needle = pane.findBar.searchText
+    if needle.isEmpty {
+      pane.findBar.setMatchPosition(current: nil, total: nil)
+    } else {
+      pane.browserView?.performFind(needle, forward: true)
+      scheduleMatchPositionUpdate(needle: needle, pane: pane)
+    }
   }
 
   /// Advance to the next match. When no bar is currently revealed — a
@@ -40,7 +51,9 @@ extension PaneContainerViewController {
       closeFindBar()
       return
     }
-    helper.performFind(target.findBar.searchText, forward: true)
+    let needle = target.findBar.searchText
+    helper.performFind(needle, forward: true)
+    scheduleMatchPositionUpdate(needle: needle, pane: target)
   }
 
   /// Step to the previous match. Same fallbacks as `findNext`.
@@ -53,7 +66,9 @@ extension PaneContainerViewController {
       closeFindBar()
       return
     }
-    helper.performFind(target.findBar.searchText, forward: false)
+    let needle = target.findBar.searchText
+    helper.performFind(needle, forward: false)
+    scheduleMatchPositionUpdate(needle: needle, pane: target)
   }
 
   /// Hide the target pane's find bar and end the current session.
@@ -74,6 +89,9 @@ extension PaneContainerViewController {
   /// lands in `BrowserPaneView.endFind`, both paths pick it up
   /// automatically.
   private func dismissFindSession(on pane: PaneModel) {
+    findCountDebounceTimer?.invalidate()
+    findCountDebounceTimer = nil
+    pane.findBar.setMatchPosition(current: nil, total: nil)
     pane.setFindBarVisible(false)
     pane.browserView?.endFind()
   }
@@ -85,13 +103,44 @@ extension PaneContainerViewController {
   /// incremental-search hot path.
   private func wireFindBarCallbacks(on pane: PaneModel) {
     let bar = pane.findBar
-    bar.onSearch = { [weak pane] needle in
+    bar.onSearch = { [weak self, weak pane] needle in
       guard let helper: FindHelper = pane?.browserView else { return }
       helper.performFind(needle, forward: true)
+      self?.scheduleMatchPositionUpdate(needle: needle, pane: pane)
     }
     bar.onNext = { [weak self] in self?.findNext() }
     bar.onPrev = { [weak self] in self?.findPrev() }
     bar.onClose = { [weak self] in self?.closeFindBar() }
+  }
+
+  /// Coalesce match-position queries behind a 200ms debounce so fast
+  /// typing and navigation spam don't spawn one
+  /// `callAsyncJavaScript` per keystroke. The completion guards
+  /// against a stale needle (the user may have typed further while
+  /// the debounce ran) so the label only updates when still
+  /// pointing at the query that scheduled the fetch.
+  private func scheduleMatchPositionUpdate(needle: String, pane: PaneModel?) {
+    findCountDebounceTimer?.invalidate()
+    guard let pane else { return }
+    guard !needle.isEmpty else {
+      pane.findBar.setMatchPosition(current: nil, total: nil)
+      return
+    }
+    findCountDebounceTimer = Timer.scheduledTimer(
+      withTimeInterval: 0.2, repeats: false
+    ) { [weak self, weak pane] _ in
+      DispatchQueue.main.async {
+        guard let self, let pane, let browserView = pane.browserView else { return }
+        // Verify the session still targets this pane. A background
+        // workspace switch or close could have rerouted things
+        // during the debounce window.
+        guard self.findBarTargetPane === pane else { return }
+        browserView.queryMatchPosition(needle) { position in
+          guard pane.findBar.searchText == needle else { return }
+          pane.findBar.setMatchPosition(current: position.current, total: position.total)
+        }
+      }
+    }
   }
 
   private func currentFindHelper() -> FindHelper? {

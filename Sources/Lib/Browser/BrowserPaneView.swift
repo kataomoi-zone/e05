@@ -316,4 +316,108 @@ extension BrowserPaneView: FindHelper {
     // `-webkit-text-highlight` styling, and is deferred until the find
     // bar gains an incremental JS channel.
   }
+
+  /// Query the current find position (total hits, and the 1-based
+  /// index of whichever match the live selection currently occupies)
+  /// for `needle`. Walks every text node via
+  /// `document.createTreeWalker`, sums `matchAll` hits, and
+  /// cross-references `window.getSelection()` in each frame to
+  /// identify the currently focused match.
+  ///
+  /// The walker recurses into every same-origin iframe so nested
+  /// DOMs still contribute to the total. Cross-origin iframes
+  /// (Twitter embeds, YouTube players, sandboxed widgets) can't be
+  /// walked because the same-origin policy makes `contentWindow`
+  /// accessors throw; those frames are silently skipped. Their hits
+  /// are still highlighted on screen by `WKFindConfiguration`, so
+  /// the visible selection can land in a cross-origin frame — in
+  /// that case the returned `current` is 0 (JS sees nothing) and
+  /// the Swift side retains its last known position.
+  public func queryMatchPosition(
+    _ needle: String,
+    completion: @escaping @MainActor ((total: Int, current: Int)) -> Void
+  ) {
+    guard !needle.isEmpty else {
+      Task { @MainActor in completion((0, 0)) }
+      return
+    }
+    let script = """
+      const pattern = needle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+      const re = new RegExp(pattern, 'gi');
+      function walk(win, offset) {
+        let total = offset;
+        let current = 0;
+        try {
+          const doc = win.document;
+          if (!doc || !doc.body) return { total: total, current: current };
+          const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+          const sel = win.getSelection();
+          const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+          let node;
+          while ((node = walker.nextNode())) {
+            for (const hit of node.textContent.matchAll(re)) {
+              total += 1;
+              if (current === 0 && range && node === range.startContainer) {
+                const ms = hit.index;
+                const me = ms + hit[0].length;
+                if (range.startOffset >= ms && range.startOffset <= me) {
+                  current = total;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          return { total: total, current: current };
+        }
+        try {
+          const iframes = win.document.querySelectorAll('iframe');
+          for (const iframe of iframes) {
+            try {
+              const cw = iframe.contentWindow;
+              if (cw && cw.document) {
+                const sub = walk(cw, total);
+                total = sub.total;
+                if (current === 0 && sub.current > 0) {
+                  current = sub.current;
+                }
+              }
+            } catch (e) {
+              // cross-origin — silently skip; those hits remain
+              // highlighted by WKFindConfiguration but unreachable.
+            }
+          }
+        } catch (e) {
+          // `querySelectorAll` should never throw on a live
+          // document, but guard anyway so the outer walk always
+          // returns sensible numbers.
+        }
+        return { total: total, current: current };
+      }
+      return walk(window, 0);
+      """
+    webView.callAsyncJavaScript(
+      script,
+      arguments: ["needle": needle],
+      in: nil,
+      in: .defaultClient
+    ) { result in
+      let position: (total: Int, current: Int)
+      switch result {
+      case .success(let value):
+        if let dict = value as? [String: Any] {
+          // JavaScript numbers bridge back as NSNumber — NSNumber
+          // handles Int / Double / Bool uniformly where `as? Int`
+          // alone can be environment-dependent.
+          let total = (dict["total"] as? NSNumber)?.intValue ?? 0
+          let current = (dict["current"] as? NSNumber)?.intValue ?? 0
+          position = (total, current)
+        } else {
+          position = (0, 0)
+        }
+      case .failure:
+        position = (0, 0)
+      }
+      Task { @MainActor in completion(position) }
+    }
+  }
 }
