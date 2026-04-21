@@ -10,8 +10,16 @@ import AppKit
 @MainActor
 public protocol FindHelper: AnyObject {
   /// Search for `needle` and reveal the next match. Passing an empty
-  /// string ends the session and calls back into `endFind()`.
-  func performFind(_ needle: String, forward: Bool)
+  /// string ends the session and calls back into `endFind()`. The
+  /// completion reports the current position: `total` is the number
+  /// of hits found after filtering, `current` is the 1-based index
+  /// of the hit the caller should treat as active (0 when no hit
+  /// exists or the engine couldn't resolve a position).
+  func performFind(
+    _ needle: String,
+    forward: Bool,
+    completion: @escaping @MainActor ((total: Int, current: Int)) -> Void
+  )
 
   /// End the current find session and clear any transient state.
   func endFind()

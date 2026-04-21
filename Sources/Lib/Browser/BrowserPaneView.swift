@@ -293,111 +293,33 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 // MARK: - FindHelper
 
 extension BrowserPaneView: FindHelper {
-  public func performFind(_ needle: String, forward: Bool) {
-    guard !needle.isEmpty else {
-      endFind()
-      return
-    }
-    let config = WKFindConfiguration()
-    config.backwards = !forward
-    config.wraps = true
-    webView.find(needle, configuration: config) { _ in
-      // The boolean `matchFound` result is ignored here. Surfacing it
-      // back to the find bar (for a no-match red tint, for instance)
-      // is a future extension.
-    }
-  }
-
-  public func endFind() {
-    // WKWebView exposes no public API to clear an in-page find
-    // highlight. Existing highlights dissipate when the page navigates
-    // or reloads; immediate clearing on close (to match Safari) would
-    // require injecting JavaScript that strips the selection and any
-    // `-webkit-text-highlight` styling, and is deferred until the find
-    // bar gains an incremental JS channel.
-  }
-
-  /// Query the current find position (total hits, and the 1-based
-  /// index of whichever match the live selection currently occupies)
-  /// for `needle`. Walks every text node via
-  /// `document.createTreeWalker`, sums `matchAll` hits, and
-  /// cross-references `window.getSelection()` in each frame to
-  /// identify the currently focused match.
+  /// Perform an in-page find for `needle` using a self-contained JS
+  /// implementation built on `createTreeWalker` + `Range` + the CSS
+  /// Custom Highlight API. WKFindConfiguration isn't used, so
+  /// cross-origin iframes contribute neither matches nor highlights
+  /// (their DOMs are invisible to us, and skipping them entirely is
+  /// what users expect for embedded widgets).
   ///
-  /// The walker recurses into every same-origin iframe so nested
-  /// DOMs still contribute to the total. Cross-origin iframes
-  /// (Twitter embeds, YouTube players, sandboxed widgets) can't be
-  /// walked because the same-origin policy makes `contentWindow`
-  /// accessors throw; those frames are silently skipped. Their hits
-  /// are still highlighted on screen by `WKFindConfiguration`, so
-  /// the visible selection can land in a cross-origin frame — in
-  /// that case the returned `current` is 0 (JS sees nothing) and
-  /// the Swift side retains its last known position.
-  public func queryMatchPosition(
+  /// State between invocations is parked on `window.__e05Find` so
+  /// the same needle can be navigated without re-walking the DOM;
+  /// changing the needle rebuilds the match array. The JS returns
+  /// `{ total, current }` and also applies two highlight layers:
+  /// `e05-find` over every match in yellow, `e05-find-current` over
+  /// the active one in orange. The DOM selection is moved to the
+  /// current match so Copy and screen readers follow along.
+  public func performFind(
     _ needle: String,
+    forward: Bool,
     completion: @escaping @MainActor ((total: Int, current: Int)) -> Void
   ) {
     guard !needle.isEmpty else {
+      endFind()
       Task { @MainActor in completion((0, 0)) }
       return
     }
-    let script = """
-      const pattern = needle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-      const re = new RegExp(pattern, 'gi');
-      function walk(win, offset) {
-        let total = offset;
-        let current = 0;
-        try {
-          const doc = win.document;
-          if (!doc || !doc.body) return { total: total, current: current };
-          const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-          const sel = win.getSelection();
-          const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-          let node;
-          while ((node = walker.nextNode())) {
-            for (const hit of node.textContent.matchAll(re)) {
-              total += 1;
-              if (current === 0 && range && node === range.startContainer) {
-                const ms = hit.index;
-                const me = ms + hit[0].length;
-                if (range.startOffset >= ms && range.startOffset <= me) {
-                  current = total;
-                }
-              }
-            }
-          }
-        } catch (e) {
-          return { total: total, current: current };
-        }
-        try {
-          const iframes = win.document.querySelectorAll('iframe');
-          for (const iframe of iframes) {
-            try {
-              const cw = iframe.contentWindow;
-              if (cw && cw.document) {
-                const sub = walk(cw, total);
-                total = sub.total;
-                if (current === 0 && sub.current > 0) {
-                  current = sub.current;
-                }
-              }
-            } catch (e) {
-              // cross-origin — silently skip; those hits remain
-              // highlighted by WKFindConfiguration but unreachable.
-            }
-          }
-        } catch (e) {
-          // `querySelectorAll` should never throw on a live
-          // document, but guard anyway so the outer walk always
-          // returns sensible numbers.
-        }
-        return { total: total, current: current };
-      }
-      return walk(window, 0);
-      """
     webView.callAsyncJavaScript(
-      script,
-      arguments: ["needle": needle],
+      Self.findScript,
+      arguments: ["needle": needle, "forward": forward],
       in: nil,
       in: .defaultClient
     ) { result in
@@ -405,9 +327,6 @@ extension BrowserPaneView: FindHelper {
       switch result {
       case .success(let value):
         if let dict = value as? [String: Any] {
-          // JavaScript numbers bridge back as NSNumber — NSNumber
-          // handles Int / Double / Bool uniformly where `as? Int`
-          // alone can be environment-dependent.
           let total = (dict["total"] as? NSNumber)?.intValue ?? 0
           let current = (dict["current"] as? NSNumber)?.intValue ?? 0
           position = (total, current)
@@ -420,4 +339,147 @@ extension BrowserPaneView: FindHelper {
       Task { @MainActor in completion(position) }
     }
   }
+
+  public func endFind() {
+    let script = """
+      window.__e05Find = null;
+      if (typeof CSS !== 'undefined' && CSS.highlights) {
+        CSS.highlights.delete('e05-find');
+        CSS.highlights.delete('e05-find-current');
+      }
+      const sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+      """
+    webView.evaluateJavaScript(script, completionHandler: nil)
+  }
+
+  /// JavaScript body executed by `callAsyncJavaScript`. `needle` and
+  /// `forward` arrive as named arguments. The script collects every
+  /// match into a `Range`, paints all-match and current-match
+  /// highlight layers, scrolls the current into view, and returns
+  /// `{ total, current }` for the Swift side to display.
+  private static let findScript: String = """
+    if (!document.getElementById('__e05FindStyle')) {
+      const style = document.createElement('style');
+      style.id = '__e05FindStyle';
+      style.textContent =
+        '::highlight(e05-find) { background-color: rgba(255, 255, 0, 0.45); color: inherit; } ' +
+        '::highlight(e05-find-current) { background-color: rgba(255, 128, 0, 0.75); color: inherit; }';
+      document.head.appendChild(style);
+    }
+
+    function acceptTextNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      const tag = parent.nodeName;
+      // Reject only text whose parent is a non-rendering element
+      // (SCRIPT / STYLE / NOSCRIPT / TEMPLATE) — SEO JSON-LD and
+      // stylesheet text that would otherwise inflate the count.
+      // Don't add a `checkVisibility` filter here: Safari and
+      // Chrome's native find do reach CSS-hidden branches, and any
+      // attempt to pre-screen by visibility drops real aside /
+      // sidebar / `content-visibility: auto` content that users
+      // expect the search to see.
+      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+
+    function collect(win, out) {
+      try {
+        const doc = win.document;
+        if (!doc || !doc.body) return;
+        const walker = doc.createTreeWalker(
+          doc.body,
+          NodeFilter.SHOW_TEXT,
+          { acceptNode: acceptTextNode }
+        );
+        const pattern = needle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+        const re = new RegExp(pattern, 'gi');
+        let node;
+        while ((node = walker.nextNode())) {
+          for (const hit of node.textContent.matchAll(re)) {
+            const r = new Range();
+            r.setStart(node, hit.index);
+            r.setEnd(node, hit.index + hit[0].length);
+            out.push(r);
+          }
+        }
+        const iframes = doc.querySelectorAll('iframe');
+        for (const iframe of iframes) {
+          try {
+            const cw = iframe.contentWindow;
+            if (cw && cw.document) collect(cw, out);
+          } catch (e) {
+            // cross-origin — silently skip; those frames contribute
+            // nothing to the find session.
+          }
+        }
+      } catch (e) {
+        // Swallow any unexpected DOM access error and fall through.
+      }
+    }
+
+    const state = window.__e05Find;
+    let matches;
+    if (state && state.needle === needle) {
+      matches = state.matches;
+    } else {
+      matches = [];
+      collect(window, matches);
+    }
+
+    if (matches.length === 0) {
+      if (typeof CSS !== 'undefined' && CSS.highlights) {
+        CSS.highlights.delete('e05-find');
+        CSS.highlights.delete('e05-find-current');
+      }
+      window.__e05Find = { needle: needle, matches: matches, current: 0 };
+      return { total: 0, current: 0 };
+    }
+
+    let current;
+    if (state && state.needle === needle && state.current > 0) {
+      // Clamp the resume index into the current array length so any
+      // future path that rebuilds `matches` shorter cannot leave us
+      // stuck past the end. Today's same-needle branch keeps the
+      // array identical, so `base === state.current`.
+      const base = Math.min(state.current, matches.length);
+      if (forward) {
+        current = base >= matches.length ? 1 : base + 1;
+      } else {
+        current = base <= 1 ? matches.length : base - 1;
+      }
+    } else {
+      current = 1;
+    }
+
+    const currentRange = matches[current - 1];
+    const currentNode = currentRange.startContainer;
+
+    if (typeof CSS !== 'undefined' && CSS.highlights) {
+      const allHl = new Highlight();
+      for (const r of matches) allHl.add(r);
+      CSS.highlights.set('e05-find', allHl);
+      const curHl = new Highlight();
+      curHl.add(currentRange);
+      CSS.highlights.set('e05-find-current', curHl);
+    }
+
+    // Skip the selection and scroll if the match's container has
+    // been detached from the document — dynamic SPA rendering can
+    // orphan Ranges cached in window.__e05Find, and scrolling into
+    // the orphan jumps to an off-document arbitrary position.
+    if (currentNode && currentNode.isConnected) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(currentRange);
+      const elem = currentNode.parentElement;
+      if (elem) elem.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    window.__e05Find = { needle: needle, matches: matches, current: current };
+    return { total: matches.length, current: current };
+    """
 }
