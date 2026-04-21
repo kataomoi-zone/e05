@@ -1,5 +1,8 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "GhosttyFind")
 
 /// NSView that hosts a single ghostty terminal surface with Metal rendering.
 @MainActor
@@ -466,19 +469,19 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   func handleSearchStart(needle: String) {
     searchNeedle = needle
-    NSLog("[e05-find] start_search needle=\"\(needle)\"")
+    logger.debug("start_search needle=\"\(needle, privacy: .public)\"")
   }
 
   func handleSearchEnd() {
     searchNeedle = ""
     searchTotal = nil
     searchSelected = nil
-    NSLog("[e05-find] end_search")
+    logger.debug("end_search")
     flushPendingFindCompletion()
   }
 
   func handleSearchTotal(_ total: Int?) {
-    NSLog("[e05-find] search_total=\(total.map(String.init) ?? "nil")")
+    logger.debug("search_total=\(total.map(String.init) ?? "nil", privacy: .public)")
     // libghostty emits `total=0` / `total=null` as a reset
     // notification before every scan and after `navigate_search`
     // transitions. Keep the previous observed count so the fallback
@@ -491,7 +494,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   }
 
   func handleSearchSelected(_ selected: Int?) {
-    NSLog("[e05-find] search_selected=\(selected.map(String.init) ?? "nil")")
+    logger.debug("search_selected=\(selected.map(String.init) ?? "nil", privacy: .public)")
     // `selected=null` is the reset counterpart to `total=0` and is
     // pushed by libghostty whenever the selection state is being
     // recomputed (needle change, navigate_search, etc.). Keep the
