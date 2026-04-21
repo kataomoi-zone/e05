@@ -212,7 +212,7 @@ extension PaneContainerViewController {
         title: "Find in Page",
         keyEquivalent: "f",
         handler: { [weak self] in self?.openFindBar() },
-        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
+        validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) },
         separatorBefore: true
       ),
       Action(
@@ -220,7 +220,7 @@ extension PaneContainerViewController {
         title: "Find Next",
         keyEquivalent: "g",
         handler: { [weak self] in self?.findNext() },
-        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+        validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) }
       ),
       Action(
         id: "browser_find_prev",
@@ -228,7 +228,7 @@ extension PaneContainerViewController {
         keyEquivalent: "g",
         modifierMask: [.command, .shift],
         handler: { [weak self] in self?.findPrev() },
-        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+        validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) }
       ),
       Action(
         id: "new_browser",

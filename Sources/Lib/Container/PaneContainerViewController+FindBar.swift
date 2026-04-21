@@ -10,7 +10,7 @@ extension PaneContainerViewController {
   /// new target so ⌘G / ⌘⇧G always refer to the pane whose bar is
   /// currently revealed.
   public func openFindBar() {
-    guard isFocusedPaneBrowser, let pane = focusedPane else { return }
+    guard let pane = focusedPane, pane.findHelper != nil else { return }
     if !urlBarVisible {
       toggleURLBarVisibility()
     }
@@ -88,7 +88,7 @@ extension PaneContainerViewController {
     findCountDebounceTimer = nil
     pane.findBar.setMatchPosition(current: nil, total: nil)
     pane.setFindBarVisible(false)
-    pane.browserView?.endFind()
+    pane.findHelper?.endFind()
   }
 
   /// Bind the shared container-side callback set onto the supplied
@@ -118,7 +118,7 @@ extension PaneContainerViewController {
   private func scheduleFindUpdate(needle: String, forward: Bool, pane: PaneModel) {
     findCountDebounceTimer?.invalidate()
     guard !needle.isEmpty else {
-      pane.browserView?.endFind()
+      pane.findHelper?.endFind()
       pane.findBar.setMatchPosition(current: nil, total: nil)
       return
     }
@@ -140,7 +140,7 @@ extension PaneContainerViewController {
   /// into the bar. Guards on the current search text so a slow
   /// return from an older keystroke can't overwrite a newer label.
   private func applyFindResult(needle: String, forward: Bool, pane: PaneModel) {
-    guard let helper: FindHelper = pane.browserView else { return }
+    guard let helper = pane.findHelper else { return }
     helper.performFind(needle, forward: forward) { position in
       guard pane.findBar.searchText == needle else { return }
       pane.findBar.setMatchPosition(current: position.current, total: position.total)
@@ -148,6 +148,6 @@ extension PaneContainerViewController {
   }
 
   private func currentFindHelper() -> FindHelper? {
-    findBarTargetPane?.browserView
+    findBarTargetPane?.findHelper
   }
 }

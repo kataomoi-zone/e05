@@ -76,6 +76,19 @@ public final class PaneModel {
     return nil
   }
 
+  /// The pane's find-in-page driver. Both `BrowserPaneView` and
+  /// `GhosttyTerminalView` conform to `FindHelper`, so the shared
+  /// find-bar controller can treat the two pane kinds uniformly
+  /// instead of branching on content. An exhaustive switch here
+  /// means adding a new `PaneContent` case forces a compiler error
+  /// on the missing find strategy.
+  public var findHelper: FindHelper? {
+    switch content {
+    case .browser(let v): return v
+    case .terminal(let v): return v
+    }
+  }
+
   /// Whether this is a blank browser pane (no URL loaded yet).
   public var isBlankBrowser: Bool {
     address == .blankBrowser
@@ -251,14 +264,11 @@ public final class PaneModel {
   /// content view down by `FindBarView.barHeight`, hiding collapses
   /// the strip to zero height so layout matches the bar-less default.
   ///
-  /// Terminal (and other non-browser) panes ignore the call. Find is
-  /// currently a browser-only affordance, and the single in-app
-  /// caller (`PaneContainerViewController.openFindBar`) is already
-  /// gated by `isFocusedPaneBrowser`. Treating the public API as
-  /// browser-only on top of that prevents an external caller from
-  /// accidentally unfurling an unwired bar over a terminal surface.
+  /// Panes without a `findHelper` ignore the call so an external
+  /// caller can't unfurl a bar over a surface that has no search
+  /// engine wired up.
   public func setFindBarVisible(_ visible: Bool) {
-    guard browserView != nil else { return }
+    guard findHelper != nil else { return }
     guard visible != isFindBarVisible else { return }
     isFindBarVisible = visible
     findBar.isHidden = !visible
