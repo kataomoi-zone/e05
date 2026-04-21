@@ -19,6 +19,17 @@ extension PaneContainerViewController {
       return
     }
 
+    // Dismiss the find bar whenever focus is moving to a pane other
+    // than the one the bar targets. `setFocus` is the funnel point
+    // for every pane / column / workspace mutation (add, remove,
+    // split, switchWorkspace, createWorkspace, closeCurrentWorkspace,
+    // movePane, undo-close), so one hook here covers them all without
+    // sprinkling close calls across every caller.
+    let incomingPaneId = column.panes[paneIndex].id
+    if let target = findBarTargetPane, target.id != incomingPaneId {
+      closeFindBar()
+    }
+
     if let previousPane = focusedPane {
       NSLog("[e05/ws] setFocus clearing previous pane=%@", String(describing: previousPane.id))
       clearFocusBorder(previousPane)

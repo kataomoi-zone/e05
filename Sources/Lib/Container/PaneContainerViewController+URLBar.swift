@@ -149,6 +149,11 @@ extension PaneContainerViewController {
   /// Focus the URL bar of the focused pane (⌘+L).
   public func focusURLBar(prefill: String? = nil) {
     guard let pane = focusedPane else { return }
+    // Dismiss the find bar before the URL field takes focus. The two
+    // compete for the row directly beneath the pane header; leaving
+    // the find overlay up while typing a new URL would stack two
+    // text fields on top of the same visual slot.
+    closeFindBar()
     if !urlBarVisible {
       toggleURLBarVisibility()
     }
