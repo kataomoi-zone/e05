@@ -15,7 +15,6 @@
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
           swift-format
-          swiftlint
         ];
       };
     };
