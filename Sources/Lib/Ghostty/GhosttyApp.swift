@@ -133,9 +133,10 @@ public final class GhosttyApp {
   ) -> Bool {
     switch action.tag {
     case GHOSTTY_ACTION_SET_TITLE:
-      guard let view = terminalView(for: target) else { return false }
-      guard let titlePtr = action.action.set_title.title else { return false }
-      let title = String(cString: titlePtr)
+      guard let view = terminalView(for: target),
+        let titlePtr = action.action.set_title.title,
+        let title = String(validatingCString: titlePtr)
+      else { return false }
       view.onTitleChange?(title)
       return true
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
@@ -145,7 +146,7 @@ public final class GhosttyApp {
       return false
     case GHOSTTY_ACTION_START_SEARCH:
       guard let view = terminalView(for: target) else { return false }
-      let needle = action.action.start_search.needle.flatMap { String(cString: $0) } ?? ""
+      let needle = action.action.start_search.needle.flatMap { String(validatingCString: $0) } ?? ""
       view.handleSearchStart(needle: needle)
       return true
     case GHOSTTY_ACTION_END_SEARCH:
