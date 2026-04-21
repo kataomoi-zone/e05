@@ -208,6 +208,29 @@ extension PaneContainerViewController {
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
       Action(
+        id: "browser_find",
+        title: "Find in Page",
+        keyEquivalent: "f",
+        handler: { [weak self] in self?.openFindBar() },
+        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
+        separatorBefore: true
+      ),
+      Action(
+        id: "browser_find_next",
+        title: "Find Next",
+        keyEquivalent: "g",
+        handler: { [weak self] in self?.findNext() },
+        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+      ),
+      Action(
+        id: "browser_find_prev",
+        title: "Find Previous",
+        keyEquivalent: "g",
+        modifierMask: [.command, .shift],
+        handler: { [weak self] in self?.findPrev() },
+        validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
+      ),
+      Action(
         id: "new_browser",
         title: "New Browser Column",
         keyEquivalent: "b",

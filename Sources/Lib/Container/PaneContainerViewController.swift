@@ -110,6 +110,20 @@ public final class PaneContainerViewController: NSViewController {
   /// closure captures) on every keystroke.
   var cachedAllActions: [Action] = []
 
+  // MARK: - Find in Page
+
+  /// Find-in-page overlay. Constructed lazily on first open and reused
+  /// afterwards so typed text and caret state survive close/reopen.
+  /// Placement logic lives in `+FindBar`.
+  var findBar: FindBarView?
+
+  /// Pane the active find session targets. Held separately from
+  /// `focusedPane` so subsequent focus moves (click into the sidebar,
+  /// workspace switch, URL bar edit) can't silently redirect the
+  /// session to a different pane. Weak so a pane closing while the
+  /// bar is open doesn't strand the reference.
+  weak var findBarTargetPane: PaneModel?
+
   // MARK: - Init
 
   public init(ghosttyApp: GhosttyApp) {
