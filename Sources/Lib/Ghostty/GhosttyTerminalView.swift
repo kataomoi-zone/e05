@@ -468,6 +468,14 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   private var findCompletionTimer: Timer?
 
   func handleSearchStart(needle: String) {
+    // Guard against a same-needle re-entry so future `didSet`-based
+    // scan resets or logging side effects on `searchNeedle` can be
+    // attached without triggering on a no-op reassignment. libghostty
+    // only fires START_SEARCH from ghostty's own ⌘F binding (the
+    // `search:<needle>` path suppresses it), so the redundant case
+    // is rare today — but cheap to rule out here rather than at every
+    // future observer site.
+    guard needle != searchNeedle else { return }
     searchNeedle = needle
     logger.debug("start_search needle=\"\(needle, privacy: .public)\"")
   }
