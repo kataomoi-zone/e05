@@ -41,4 +41,35 @@ struct PaneModelTests {
     #expect(pane.terminalView == nil)
     #expect(pane.address.kind == .settings)
   }
+
+  @Test("find bar starts collapsed on a freshly built pane")
+  func findBarStartsCollapsed() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    #expect(!pane.isFindBarVisible)
+    #expect(pane.findBar.isHidden)
+  }
+
+  @Test("setFindBarVisible toggles isHidden alongside the flag")
+  func setFindBarVisibleTogglesHidden() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    pane.setFindBarVisible(true)
+    #expect(pane.isFindBarVisible)
+    #expect(!pane.findBar.isHidden)
+    pane.setFindBarVisible(false)
+    #expect(!pane.isFindBarVisible)
+    #expect(pane.findBar.isHidden)
+  }
+
+  @Test("setFindBarVisible with the same value is a no-op")
+  func setFindBarVisibleIdempotent() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    // Re-applying the default must not drive spurious constraint
+    // churn or hidden-state flips.
+    pane.setFindBarVisible(false)
+    #expect(!pane.isFindBarVisible)
+    pane.setFindBarVisible(true)
+    pane.setFindBarVisible(true)
+    #expect(pane.isFindBarVisible)
+    #expect(!pane.findBar.isHidden)
+  }
 }

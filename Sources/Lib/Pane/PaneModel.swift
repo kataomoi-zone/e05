@@ -31,8 +31,20 @@ public final class PaneModel {
   /// Shared URL bar (toggleable, visible on all pane types).
   public let urlBar = PaneURLBar()
 
+  /// Per-pane find bar. Sits in the constraint hierarchy directly
+  /// below the URL bar so the content view is pushed down when the
+  /// bar reveals, and so horizontal scrolling / pane moves carry the
+  /// bar along with the pane instead of stranding it over window-
+  /// absolute coordinates.
+  public let findBar = FindBarView()
+
   /// Whether the URL bar is currently shown.
   public private(set) var isURLBarVisible = false
+
+  /// Whether the find bar is currently revealed. Controlled through
+  /// `setFindBarVisible(_:)`, which toggles both `findBar.isHidden`
+  /// and the height constraint so collapsed bars don't occupy layout.
+  public private(set) var isFindBarVisible = false
 
   // TODO: used for vertical drag resize (Step 5)
   public var heightConstraint: NSLayoutConstraint?
@@ -78,8 +90,14 @@ public final class PaneModel {
   }
 
   private var urlBarTopConstraint: NSLayoutConstraint?
-  private var contentTopToURLBarConstraint: NSLayoutConstraint?
+  /// Content-top constraint used while the URL bar is visible. Anchors
+  /// to `findBar.bottom` rather than `urlBar.bottom`: when the find
+  /// bar is hidden its height constraint collapses to zero, so the
+  /// two anchor points coincide and the find-hidden case lays out
+  /// identically to the original design.
+  private var contentTopBelowBarsConstraint: NSLayoutConstraint?
   private var contentTopToContainerConstraint: NSLayoutConstraint?
+  private var findBarHeightConstraint: NSLayoutConstraint?
 
   /// Create a pane from a PaneAddress. Routes to the appropriate content type.
   ///
@@ -148,9 +166,16 @@ public final class PaneModel {
   private func setupContainerView() {
     let cv = rawContentView
     urlBar.translatesAutoresizingMaskIntoConstraints = false
+    findBar.translatesAutoresizingMaskIntoConstraints = false
     headerView.translatesAutoresizingMaskIntoConstraints = false
 
+    // Start both bars collapsed so a freshly created pane doesn't
+    // flash an empty strip before `applyURLBarVisibility` settles
+    // the real state.
+    findBar.isHidden = true
+
     containerView.addSubview(urlBar)
+    containerView.addSubview(findBar)
     containerView.addSubview(cv)
     containerView.addSubview(headerView)
 
@@ -158,8 +183,18 @@ public final class PaneModel {
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
     let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)
 
-    // Content: either below URL bar or at top of container
-    contentTopToURLBarConstraint = cv.topAnchor.constraint(equalTo: urlBar.bottomAnchor)
+    // Find bar directly below the URL bar. Height collapses to 0
+    // while hidden so the content view is flush with the URL bar;
+    // `setFindBarVisible(true)` swaps the constant to
+    // `FindBarView.barHeight`, pushing the page down by one row.
+    let findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
+    findBarHeightConstraint = findBarHeight
+
+    // Content: below the find bar when the URL bar is visible, or at
+    // the container top when the URL bar is hidden (the find bar can
+    // only be revealed alongside the URL bar, so no hidden-URL+
+    // visible-find combination reaches layout).
+    contentTopBelowBarsConstraint = cv.topAnchor.constraint(equalTo: findBar.bottomAnchor)
     contentTopToContainerConstraint = cv.topAnchor.constraint(equalTo: containerView.topAnchor)
 
     NSLayoutConstraint.activate([
@@ -167,6 +202,11 @@ public final class PaneModel {
       urlBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       urlBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       urlBarHeight,
+
+      findBar.topAnchor.constraint(equalTo: urlBar.bottomAnchor),
+      findBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+      findBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+      findBarHeight,
 
       cv.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       cv.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
@@ -197,10 +237,31 @@ public final class PaneModel {
     // Deactivate first to avoid conflicting constraints
     if isURLBarVisible {
       contentTopToContainerConstraint?.isActive = false
-      contentTopToURLBarConstraint?.isActive = true
+      contentTopBelowBarsConstraint?.isActive = true
     } else {
-      contentTopToURLBarConstraint?.isActive = false
+      contentTopBelowBarsConstraint?.isActive = false
       contentTopToContainerConstraint?.isActive = true
     }
+  }
+
+  // MARK: - Find Bar Toggle
+
+  /// Reveal or hide the find bar. The bar sits in the constraint
+  /// hierarchy directly below the URL bar; revealing it pushes the
+  /// content view down by `FindBarView.barHeight`, hiding collapses
+  /// the strip to zero height so layout matches the bar-less default.
+  ///
+  /// Terminal (and other non-browser) panes ignore the call. Find is
+  /// currently a browser-only affordance, and the single in-app
+  /// caller (`PaneContainerViewController.openFindBar`) is already
+  /// gated by `isFocusedPaneBrowser`. Treating the public API as
+  /// browser-only on top of that prevents an external caller from
+  /// accidentally unfurling an unwired bar over a terminal surface.
+  public func setFindBarVisible(_ visible: Bool) {
+    guard browserView != nil else { return }
+    guard visible != isFindBarVisible else { return }
+    isFindBarVisible = visible
+    findBar.isHidden = !visible
+    findBarHeightConstraint?.constant = visible ? FindBarView.barHeight : 0
   }
 }
