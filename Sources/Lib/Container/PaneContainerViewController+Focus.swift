@@ -30,6 +30,26 @@ extension PaneContainerViewController {
       closeFindBar()
     }
 
+    // Clear ghostty focus on every terminal surface in the current
+    // workspace except the incoming pane before we arm it via
+    // makeFirstResponder below. AppKit's resignFirstResponder cascade
+    // from makeFirstResponder only reaches the surface whose view is
+    // the window's current first responder — menu, palette, and
+    // sidebar dispatch paths leave the responder outside the pane
+    // hierarchy, so outgoing surfaces keep reporting
+    // ghostty_surface_set_focus(true) and caret blinks on two panes
+    // at once. The incoming pane has to be skipped: makeFirstResponder
+    // is a no-op when the target is already the first responder, so
+    // if we cleared its flag here it would never be re-armed through
+    // becomeFirstResponder and the caret would render as an
+    // unfocused hollow box even though keyboard input is routed
+    // correctly.
+    for col in columns {
+      for pane in col.panes where pane.id != incomingPaneId {
+        pane.terminalView?.clearSurfaceFocus()
+      }
+    }
+
     if let previousPane = focusedPane {
       NSLog("[e05/ws] setFocus clearing previous pane=%@", String(describing: previousPane.id))
       clearFocusBorder(previousPane)

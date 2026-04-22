@@ -227,11 +227,23 @@ extension PaneContainerViewController {
   }
 
   /// Re-focus the currently active pane's content view.
+  ///
+  /// Routed through `setFocus` rather than a direct
+  /// `makeFirstResponder` so palette dismissal flows through the same
+  /// clear-then-arm cascade that split and arrow-key focus hops use.
+  /// A bare `makeFirstResponder` on the already-focused pane is a
+  /// no-op from AppKit's perspective, so the ghostty surface kept
+  /// whatever focus flag the dismissal handoff had put it in — in
+  /// particular, a cross-pane `Focus: <other>` palette action left
+  /// the outgoing pane's surface with `ghostty_surface_set_focus(true)`
+  /// because `becomeFirstResponder` never re-fired to re-arm the
+  /// guard. Re-entering `setFocus` here clears every surface in the
+  /// focused workspace and re-arms exactly one.
   func focusCurrentPane() {
-    guard let column = columns[safe: focusedColumnIndex],
-      let pane = column.panes[safe: column.focusedPaneIndex]
-    else { return }
-    view.window?.makeFirstResponder(pane.preferredFirstResponder)
+    guard columns.indices.contains(focusedColumnIndex) else { return }
+    let column = columns[focusedColumnIndex]
+    guard column.panes.indices.contains(column.focusedPaneIndex) else { return }
+    setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex, scroll: false)
   }
 
   /// Search the action registry for the command palette.
