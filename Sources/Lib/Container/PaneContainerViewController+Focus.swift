@@ -273,38 +273,73 @@ extension PaneContainerViewController {
   /// Rebuild the containerView of a column from its panes array.
   /// Inserts vertical resize handles between panes and sets equal height constraints.
   func rebuildColumnView(column: ColumnModel) {
-    // Clean up old constraints and views
+    let sv = column.containerView
+
+    // Drop previous equal-height constraints — reinstalled below.
     NSLayoutConstraint.deactivate(column.equalHeightConstraints)
     column.equalHeightConstraints.removeAll()
-    // Retain surviving pane containerViews as subviews while we
-    // rebuild the stack: `removeFromSuperview` flips
-    // `viewDidMoveToWindow(nil)` on the GhosttyTerminalView inside,
-    // which destroys the ghostty surface whenever
-    // `keepSurfaceAlive` is false — wiping its scrollback. Resize
-    // handles are disposable (a new handle is created below per
-    // pair) and get dropped entirely.
-    let liveContainers = Set(column.panes.map { ObjectIdentifier($0.containerView) })
-    for v in column.containerView.arrangedSubviews.reversed() {
-      column.containerView.removeArrangedSubview(v)
-      if !liveContainers.contains(ObjectIdentifier(v)) {
-        v.removeFromSuperview()
-      }
+
+    // Resize handles are rebuilt from scratch every time so the
+    // per-pair top/bottom index bindings stay consistent; the
+    // pane containerViews, on the other hand, are preserved in
+    // place to avoid triggering a layout + animation glitch.
+    //
+    // Under `allowsImplicitAnimation`, pulling a pane
+    // containerView out of `arrangedSubviews` and putting it
+    // back synchronously made the existing pane's frame tween
+    // through an intermediate stack-view-empty layout — the
+    // user saw it slide upwards (URL bar clipped off the top)
+    // before settling at half height. Leaving in-place panes
+    // untouched means the tween only sees the size change from
+    // the new equal-height constraints.
+    for v in sv.arrangedSubviews where v is PaneResizeHandle {
+      sv.removeArrangedSubview(v)
+      v.removeFromSuperview()
     }
 
+    // Drop pane containerViews that no longer map to a live
+    // pane. Those represent panes removed by `removePane`'s
+    // animation path and should be fully detached here.
+    let liveContainerIds = Set(column.panes.map { ObjectIdentifier($0.containerView) })
+    for v in sv.arrangedSubviews.reversed() where !liveContainerIds.contains(ObjectIdentifier(v)) {
+      sv.removeArrangedSubview(v)
+      v.removeFromSuperview()
+    }
+
+    // Insert / reorder panes + handles so the sequence is
+    // pane, handle, pane, handle, pane, …, matching
+    // `column.panes`. Live panes already in `arrangedSubviews`
+    // at the right index stay put.
     var firstCV: NSView?
     for (i, pane) in column.panes.enumerated() {
-      if i > 0 {
+      let handleIndex = i == 0 ? nil : (i * 2 - 1)
+      if let handleIndex {
         let handle = makeVerticalResizeHandle(column: column, topIndex: i - 1, bottomIndex: i)
-        column.containerView.addArrangedSubview(handle)
+        sv.insertArrangedSubview(handle, at: handleIndex)
         NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
       }
+
       let cv = pane.containerView
-      column.containerView.addArrangedSubview(cv)
-      NSLayoutConstraint.activate([
-        cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-        cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
-      ])
-      // Equal height constraints between all panes (deactivated on drag)
+      let paneTargetIndex = i * 2
+      if let currentIndex = sv.arrangedSubviews.firstIndex(of: cv) {
+        if currentIndex != paneTargetIndex {
+          // `removeArrangedSubview` + `insertArrangedSubview`
+          // is the NSStackView-supported way to reorder; the
+          // view's subview membership and its leading/trailing
+          // constraints survive the round-trip.
+          sv.removeArrangedSubview(cv)
+          sv.insertArrangedSubview(cv, at: paneTargetIndex)
+        }
+      } else {
+        sv.insertArrangedSubview(cv, at: paneTargetIndex)
+        NSLayoutConstraint.activate([
+          cv.leadingAnchor.constraint(equalTo: sv.leadingAnchor),
+          cv.trailingAnchor.constraint(equalTo: sv.trailingAnchor),
+        ])
+      }
+
+      // Equal height constraints between all panes
+      // (deactivated on drag-resize)
       if let first = firstCV {
         let c = cv.heightAnchor.constraint(equalTo: first.heightAnchor)
         c.isActive = true
@@ -314,11 +349,12 @@ extension PaneContainerViewController {
       }
     }
 
-    // addArrangedSubview appends to subviews (back to front), which would sink
-    // the foldedLabelView behind pane views. Re-hoist it to the front so the
-    // overlay stays on top when the column is folded.
-    if column.foldedLabelView.superview === column.containerView {
-      column.containerView.addSubview(column.foldedLabelView, positioned: .above, relativeTo: nil)
+    // `insertArrangedSubview` appends into `subviews` near the
+    // end, which would sink the folded-label overlay behind the
+    // pane views. Re-hoist it so the overlay sits on top when
+    // the column is folded.
+    if column.foldedLabelView.superview === sv {
+      sv.addSubview(column.foldedLabelView, positioned: .above, relativeTo: nil)
     }
   }
 

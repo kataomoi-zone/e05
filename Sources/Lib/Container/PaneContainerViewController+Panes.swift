@@ -27,17 +27,63 @@ extension PaneContainerViewController {
     // Folded label overlay — shown only when column is folded
     attachFoldedLabel(to: column)
 
-    // Width constraint on the containerView
-    let wc = column.containerView.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
+    // Session restore runs before the window is attached and would
+    // flash every restored column through the animation; the guard
+    // keeps that path immediate.
+    let animated = view.window != nil
+    // Start the column at its target width so the post-insert
+    // layout pass below resolves the final frame. `animateScroll(toX:)`
+    // reads that frame to compute the scroll target; launching the
+    // scroll from a width-0 start would land on the wrong X.
+    let wc = column.containerView.widthAnchor.constraint(
+      equalToConstant: defaultPaneWidth
+    )
     wc.isActive = true
     column.widthConstraint = wc
+
+    if animated {
+      // Hide the new column's contents while the slot expands so
+      // its WKWebView / ghostty surface doesn't render at every
+      // intermediate width — that in-between layout looked
+      // garbled. The completion handler snaps it visible once
+      // the slot is at full width.
+      column.containerView.wantsLayer = true
+      column.containerView.alphaValue = 0
+    }
 
     let insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
     columns.insert(column, at: insertIndex)
 
     rebuildStackView()
     view.layoutSubtreeIfNeeded()
-    setFocus(columnIndex: insertIndex, paneIndex: 0)
+
+    // Capture the scroll target while the layout still reflects
+    // the final column width. Snapping to width 0 below would
+    // leave `column.containerView.frame.minX` pointing into the
+    // wrong neighbourhood and the scroll would aim at a 1-pixel
+    // sliver instead of the full column.
+    let scrollTarget = animated ? computeScrollTargetX(for: column) : nil
+
+    if animated {
+      // Now that the target frame is known, snap the column back
+      // to width 0 as the animation start state.
+      wc.constant = 0
+      view.layoutSubtreeIfNeeded()
+    }
+
+    animatePaneLayoutChange(
+      completion: animated ? { [column] in column.containerView.alphaValue = 1 } : nil
+    ) {
+      wc.animator().constant = defaultPaneWidth
+    }
+    if let scrollTarget {
+      animateScroll(toX: scrollTarget)
+    }
+
+    // The animation already owns the scroll — tell setFocus to
+    // leave it alone so scrollToColumn doesn't fire a second
+    // tween after the insert's completion handler.
+    setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
     return column
   }
 
@@ -284,8 +330,27 @@ extension PaneContainerViewController {
     let insertPaneIndex = column.focusedPaneIndex + 1
     column.panes.insert(newPane, at: insertPaneIndex)
 
+    let animated = view.window != nil
+    if animated {
+      newPane.containerView.wantsLayer = true
+      newPane.containerView.alphaValue = 0
+    }
+
+    // Snap the layout into its new shape synchronously —
+    // tweening the stack-view reshuffle under implicit animation
+    // slid the existing pane's `frame.origin.y` mid-animation
+    // (Cocoa stack views manage arranged subviews in a bottom-
+    // anchored coordinate system), which pushed its URL bar off
+    // the visible top before the final frame settled. Keeping
+    // the snap and animating only the new pane's alpha avoids
+    // that flicker at the cost of the sibling-shrink tween.
     rebuildColumnView(column: column)
     view.layoutSubtreeIfNeeded()
+
+    if animated {
+      animateAlphaIn(newPane.containerView)
+    }
+
     setFocus(columnIndex: focusedColumnIndex, paneIndex: insertPaneIndex)
   }
 
@@ -294,6 +359,98 @@ extension PaneContainerViewController {
   /// Duration used by pane close / insert animations. Matches the
   /// sidebar slide so the two affordances feel synchronised.
   static let paneAnimationDuration: TimeInterval = 0.2
+
+  /// Run `mutation` inside a shared animation group tuned for pane
+  /// layout transitions — `allowsImplicitAnimation = true` so the
+  /// stack view's layout pass tweens frame changes from
+  /// `mutation`'s constraint / view edits. Falls through to a
+  /// direct call when the view isn't on screen yet so session
+  /// restore (which mutates layout before the window is attached)
+  /// doesn't spawn a flurry of start-up animations. `completion`
+  /// fires on the main actor once the animation settles.
+  func animatePaneLayoutChange(
+    completion: (@MainActor @Sendable () -> Void)? = nil,
+    _ mutation: () -> Void
+  ) {
+    guard view.window != nil else {
+      mutation()
+      completion?()
+      return
+    }
+    NSAnimationContext.runAnimationGroup(
+      { ctx in
+        ctx.duration = Self.paneAnimationDuration
+        ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        ctx.allowsImplicitAnimation = true
+        mutation()
+        view.layoutSubtreeIfNeeded()
+      },
+      completionHandler: {
+        MainActor.assumeIsolated {
+          completion?()
+        }
+      }
+    )
+  }
+
+  /// Compute where the scroll view should land so `column` is
+  /// visible. Call with the layout already settled at the column's
+  /// final width — reading the frame during the insert tween would
+  /// capture an intermediate width and target the wrong X. Returns
+  /// `nil` when the whole content already fits.
+  func computeScrollTargetX(for column: ColumnModel) -> CGFloat? {
+    let columnFrame = column.containerView.frame
+    let visibleWidth = scrollView.contentView.bounds.width
+    let contentWidth = stackView.frame.width
+    guard contentWidth > visibleWidth else { return nil }
+
+    let targetX: CGFloat
+    if columnFrame.width >= visibleWidth {
+      targetX = columnFrame.minX
+    } else {
+      targetX = columnFrame.midX - visibleWidth / 2
+    }
+    let maxScrollX = contentWidth - visibleWidth
+    return max(0, min(maxScrollX, targetX))
+  }
+
+  /// Tween the scroll view to the given X in its own animation
+  /// group, matching `paneAnimationDuration` so the scroll runs
+  /// in visual lockstep with a concurrent insert / expand layout
+  /// animation. Distinct from `scrollToColumn(at:)` on
+  /// `PaneContainerViewController+Focus`, which serves focus-
+  /// driven scrolls at a different duration (0.25s) and defers
+  /// onto the next run-loop tick to survive mouse-event paths.
+  /// Must stay isolated from the insert's layout animation —
+  /// NSScrollView's `animator().bounds.origin` is silently
+  /// dropped when it shares a context with other implicit
+  /// animations.
+  func animateScroll(toX targetX: CGFloat) {
+    guard view.window != nil else { return }
+    NSAnimationContext.runAnimationGroup { ctx in
+      ctx.duration = Self.paneAnimationDuration
+      ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      self.scrollView.contentView.animator().bounds.origin.x = targetX
+    }
+  }
+
+  /// Fade `view.alphaValue` from its current value to 1 in its own
+  /// animation group. Intended for inserts that pre-hide a new /
+  /// restored view at alpha 0 while the surrounding layout snaps
+  /// into its final shape — the fade is what sells the "new pane
+  /// arrived" beat. Skips straight to alpha 1 when off-screen so
+  /// session restore doesn't flash a tween.
+  func animateAlphaIn(_ view: NSView) {
+    guard self.view.window != nil else {
+      view.alphaValue = 1
+      return
+    }
+    NSAnimationContext.runAnimationGroup { ctx in
+      ctx.duration = Self.paneAnimationDuration
+      ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      view.animator().alphaValue = 1
+    }
+  }
 
   func removePane(columnIndex: Int, paneIndex: Int) {
     guard let column = columns[safe: columnIndex],
@@ -365,22 +522,17 @@ extension PaneContainerViewController {
     }
   }
 
-  /// Animated counterpart of the column-internal removal path: the
-  /// pane detaches in a single frame while the surviving siblings
-  /// grow into the released vertical slot via `rebuildColumnView`'s
-  /// refreshed `equalHeightConstraints`. Mirrors
-  /// `animateRemoveColumn` but operates on the column's vertical
-  /// stack view instead of the workspace-level horizontal one.
+  /// Column-internal removal: detach the leaving pane and snap
+  /// the siblings into their new equal-height share. The reshuffle
+  /// runs outside any animation context — tweening the vertical
+  /// stack view's layout under `allowsImplicitAnimation` made the
+  /// surviving pane's `frame.origin.y` slide toward the closed
+  /// slot before the height settled, which read as a jarring
+  /// "pane shifts into the closing one" jolt. The counterpart
+  /// `splitVertical` path uses the same snap discipline.
   private func animateRemovePaneFromColumn(
     _ column: ColumnModel, at columnIndex: Int, paneIndex: Int, pane: PaneModel
   ) {
-    // Snap the reshuffle through — running it under
-    // `allowsImplicitAnimation` tweened the surviving pane's
-    // `frame.origin.y` toward the closed slot before the height
-    // settled (the Cocoa stack view manages vertical arranged
-    // subviews in a bottom-anchored coordinate system), which
-    // read as the kept pane "tilting into" the gap. Losing the
-    // height tween is the trade-off.
     pane.containerView.removeFromSuperview()
     rebuildColumnView(column: column)
     view.layoutSubtreeIfNeeded()
@@ -459,11 +611,24 @@ extension PaneContainerViewController {
       // Folded label overlay — same setup as insertColumn(with:)
       attachFoldedLabel(to: column)
 
+      let targetWidth = closed.columnWidth ?? defaultPaneWidth
+      let animated = view.window != nil
+      // Start at the saved width so the layout pass below can
+      // resolve the final frame for `animateScroll(toX:)`.
       let wc = column.containerView.widthAnchor.constraint(
-        equalToConstant: closed.columnWidth ?? defaultPaneWidth
+        equalToConstant: targetWidth
       )
       wc.isActive = true
       column.widthConstraint = wc
+
+      if animated {
+        // Hide the restored column's contents through the width
+        // tween, matching `insertColumn` — the in-between widths
+        // would otherwise re-layout the web view / terminal at
+        // every frame.
+        column.containerView.wantsLayer = true
+        column.containerView.alphaValue = 0
+      }
 
       let insertIndex = min(closed.columnIndex, columns.count)
       // `Array.insert(at:)` shifts every element from `insertIndex`
@@ -478,7 +643,29 @@ extension PaneContainerViewController {
       columns.insert(column, at: insertIndex)
       rebuildStackView()
       view.layoutSubtreeIfNeeded()
-      setFocus(columnIndex: insertIndex, paneIndex: 0)
+
+      // Capture scroll target while the layout reflects the
+      // column's saved width — see the matching comment in
+      // `insertColumn` for the 1-pixel-sliver pitfall.
+      let scrollTarget = animated ? computeScrollTargetX(for: column) : nil
+
+      if animated {
+        // Snap to width 0 for the animation start now that the
+        // target frame has been captured into column.containerView.
+        wc.constant = 0
+        view.layoutSubtreeIfNeeded()
+      }
+
+      animatePaneLayoutChange(
+        completion: animated ? { [column] in column.containerView.alphaValue = 1 } : nil
+      ) {
+        wc.animator().constant = targetWidth
+      }
+      if let scrollTarget {
+        animateScroll(toX: scrollTarget)
+      }
+
+      setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
     } else {
       // Insert back into existing column
       guard !columns.isEmpty else { return }
@@ -496,8 +683,24 @@ extension PaneContainerViewController {
       }
       setupPaneCallbacks(pane: pane, column: column)
       column.panes.insert(pane, at: paneIndex)
+
+      // Mirror `splitVertical`: snap the layout in place and
+      // only tween the restored pane's alpha. Tweening the
+      // stack-view reshuffle would otherwise slide the siblings'
+      // `frame.origin.y` mid-animation.
+      let animated = view.window != nil
+      if animated {
+        pane.containerView.wantsLayer = true
+        pane.containerView.alphaValue = 0
+      }
+
       rebuildColumnView(column: column)
       view.layoutSubtreeIfNeeded()
+
+      if animated {
+        animateAlphaIn(pane.containerView)
+      }
+
       setFocus(columnIndex: colIndex, paneIndex: paneIndex)
     }
   }
