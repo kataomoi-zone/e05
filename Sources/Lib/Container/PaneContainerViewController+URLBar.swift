@@ -226,6 +226,16 @@ extension PaneContainerViewController {
       if let pane = column.focusedPane {
         pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
       }
+      // Bring the newly expanded column into view. A folded column
+      // occupies only `foldedColumnWidth` (30pt), so the rest of the
+      // workspace is shifted to fill the horizontal space; unfolding
+      // can push the column partially or entirely off-screen, which
+      // defeats the purpose of expanding it. Mirror the
+      // scroll-to-focus behaviour that `setFocus` applies on every
+      // other focus hop (keybind / palette / sidebar click) so
+      // unfold lands the column at the same visible position a
+      // direct focus would.
+      scrollToColumn(at: focusedColumnIndex)
     } else {
       // Fold: save current width, shrink column, hide panes + vertical handles
       column.unfoldedWidth = constraint.constant
