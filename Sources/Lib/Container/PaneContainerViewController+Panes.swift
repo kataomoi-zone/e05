@@ -291,6 +291,10 @@ extension PaneContainerViewController {
 
   // MARK: - Pane Removal
 
+  /// Duration used by pane close / insert animations. Matches the
+  /// sidebar slide so the two affordances feel synchronised.
+  static let paneAnimationDuration: TimeInterval = 0.2
+
   func removePane(columnIndex: Int, paneIndex: Int) {
     guard let column = columns[safe: columnIndex],
       column.panes.indices.contains(paneIndex)
@@ -306,13 +310,42 @@ extension PaneContainerViewController {
     pane.terminalView?.keepSurfaceAlive = true
 
     if wasOnlyPane {
-      // Remove column
+      animateRemoveColumn(column, at: columnIndex, pane: pane)
+    } else {
+      pane.containerView.removeFromSuperview()
+      rebuildColumnView(column: column)
+      let newPaneIndex = min(paneIndex, column.panes.count - 1)
+      setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
+    }
+
+    // Queue the undo stash right away rather than waiting for the
+    // close animation to finish — users can undo during the 0.2s
+    // slide without the entry being missed.
+    stashClosedPane(
+      pane, columnIndex: columnIndex, paneIndex: paneIndex,
+      columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
+  }
+
+  /// Remove the column immediately but tween the remaining columns
+  /// into the vacated slot. The closing view disappears in a single
+  /// frame (so terminal / browser drawables never re-initialise);
+  /// `allowsImplicitAnimation = true` wraps the stack view's layout
+  /// pass so every surviving column's frame animates from its old
+  /// position to the new one computed by `rebuildStackView`. Follows
+  /// the same idiom as `animateSlide` in
+  /// ``PaneContainerViewController+Workspaces``.
+  private func animateRemoveColumn(_ column: ColumnModel, at columnIndex: Int, pane: PaneModel) {
+    NSAnimationContext.runAnimationGroup { ctx in
+      ctx.duration = Self.paneAnimationDuration
+      ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      ctx.allowsImplicitAnimation = true
+
       columns.remove(at: columnIndex)
       column.containerView.removeFromSuperview()
 
       if columns.isEmpty {
-        // Workspace is now empty — its surface is going with it, so
-        // release it eagerly (undo across workspace close isn't
+        // Workspace is now empty — its surface is going with it,
+        // so release it eagerly (undo across workspace close isn't
         // supported: closeCurrentWorkspace flushes the undo stack).
         pane.terminalView?.keepSurfaceAlive = false
         for v in stackView.arrangedSubviews { v.removeFromSuperview() }
@@ -321,18 +354,17 @@ extension PaneContainerViewController {
       }
 
       rebuildStackView()
-      let newColIndex = min(columnIndex, columns.count - 1)
-      setFocus(columnIndex: newColIndex, paneIndex: 0)
-    } else {
-      pane.containerView.removeFromSuperview()
-      rebuildColumnView(column: column)
-      let newPaneIndex = min(paneIndex, column.panes.count - 1)
-      setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
+      view.layoutSubtreeIfNeeded()
     }
 
-    stashClosedPane(
-      pane, columnIndex: columnIndex, paneIndex: paneIndex,
-      columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
+    if !columns.isEmpty {
+      // Focus move is deliberately outside the animation group:
+      // `setFocus` invokes `scrollToColumn`, which runs its own
+      // animation context, and letting the two overlap produces
+      // a jittery scroll + slide mix.
+      let newColIndex = min(columnIndex, columns.count - 1)
+      setFocus(columnIndex: newColIndex, paneIndex: 0)
+    }
   }
 
   private static let maxRecentlyClosed = 10
