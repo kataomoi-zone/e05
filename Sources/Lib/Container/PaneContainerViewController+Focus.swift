@@ -276,9 +276,19 @@ extension PaneContainerViewController {
     // Clean up old constraints and views
     NSLayoutConstraint.deactivate(column.equalHeightConstraints)
     column.equalHeightConstraints.removeAll()
+    // Retain surviving pane containerViews as subviews while we
+    // rebuild the stack: `removeFromSuperview` flips
+    // `viewDidMoveToWindow(nil)` on the GhosttyTerminalView inside,
+    // which destroys the ghostty surface whenever
+    // `keepSurfaceAlive` is false — wiping its scrollback. Resize
+    // handles are disposable (a new handle is created below per
+    // pair) and get dropped entirely.
+    let liveContainers = Set(column.panes.map { ObjectIdentifier($0.containerView) })
     for v in column.containerView.arrangedSubviews.reversed() {
       column.containerView.removeArrangedSubview(v)
-      v.removeFromSuperview()
+      if !liveContainers.contains(ObjectIdentifier(v)) {
+        v.removeFromSuperview()
+      }
     }
 
     var firstCV: NSView?
