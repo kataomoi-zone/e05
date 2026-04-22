@@ -312,10 +312,8 @@ extension PaneContainerViewController {
     if wasOnlyPane {
       animateRemoveColumn(column, at: columnIndex, pane: pane)
     } else {
-      pane.containerView.removeFromSuperview()
-      rebuildColumnView(column: column)
-      let newPaneIndex = min(paneIndex, column.panes.count - 1)
-      setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
+      animateRemovePaneFromColumn(
+        column, at: columnIndex, paneIndex: paneIndex, pane: pane)
     }
 
     // Queue the undo stash right away rather than waiting for the
@@ -365,6 +363,30 @@ extension PaneContainerViewController {
       let newColIndex = min(columnIndex, columns.count - 1)
       setFocus(columnIndex: newColIndex, paneIndex: 0)
     }
+  }
+
+  /// Animated counterpart of the column-internal removal path: the
+  /// pane detaches in a single frame while the surviving siblings
+  /// grow into the released vertical slot via `rebuildColumnView`'s
+  /// refreshed `equalHeightConstraints`. Mirrors
+  /// `animateRemoveColumn` but operates on the column's vertical
+  /// stack view instead of the workspace-level horizontal one.
+  private func animateRemovePaneFromColumn(
+    _ column: ColumnModel, at columnIndex: Int, paneIndex: Int, pane: PaneModel
+  ) {
+    // Snap the reshuffle through — running it under
+    // `allowsImplicitAnimation` tweened the surviving pane's
+    // `frame.origin.y` toward the closed slot before the height
+    // settled (the Cocoa stack view manages vertical arranged
+    // subviews in a bottom-anchored coordinate system), which
+    // read as the kept pane "tilting into" the gap. Losing the
+    // height tween is the trade-off.
+    pane.containerView.removeFromSuperview()
+    rebuildColumnView(column: column)
+    view.layoutSubtreeIfNeeded()
+
+    let newPaneIndex = min(paneIndex, column.panes.count - 1)
+    setFocus(columnIndex: columnIndex, paneIndex: newPaneIndex)
   }
 
   private static let maxRecentlyClosed = 10
@@ -444,6 +466,15 @@ extension PaneContainerViewController {
       column.widthConstraint = wc
 
       let insertIndex = min(closed.columnIndex, columns.count)
+      // `Array.insert(at:)` shifts every element from `insertIndex`
+      // onwards by one but leaves the stored `focusedColumnIndex`
+      // untouched. Without this bump, `focusedColumnIndex` now
+      // resolves to the freshly inserted column, so `setFocus`'s
+      // clear-previous step clears the wrong pane's border and the
+      // real previously focused column keeps its border lit.
+      if insertIndex <= focusedColumnIndex {
+        focusedColumnIndex += 1
+      }
       columns.insert(column, at: insertIndex)
       rebuildStackView()
       view.layoutSubtreeIfNeeded()
@@ -455,6 +486,14 @@ extension PaneContainerViewController {
       guard let column = columns[safe: colIndex] else { return }
 
       let paneIndex = min(closed.paneIndex, column.panes.count)
+      // Same index-identity preservation as the column branch —
+      // otherwise `column.focusedPaneIndex` now points at the
+      // newly inserted pane and the previously focused sibling
+      // keeps a stale focus border (and a stuck ghostty focus
+      // flag) after undo.
+      if paneIndex <= column.focusedPaneIndex {
+        column.focusedPaneIndex += 1
+      }
       setupPaneCallbacks(pane: pane, column: column)
       column.panes.insert(pane, at: paneIndex)
       rebuildColumnView(column: column)
