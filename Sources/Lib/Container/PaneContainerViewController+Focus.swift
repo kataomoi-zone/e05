@@ -159,20 +159,47 @@ extension PaneContainerViewController {
 
   public func moveColumnLeft() {
     guard focusedColumnIndex > 0 else { return }
+    let moved = columns[focusedColumnIndex]
+    let displaced = columns[focusedColumnIndex - 1]
+    let oldMovedFrame = moved.containerView.frame
+    let oldDisplacedFrame = displaced.containerView.frame
+
     columns.swapAt(focusedColumnIndex, focusedColumnIndex - 1)
     focusedColumnIndex -= 1
     rebuildStackView()
     view.layoutSubtreeIfNeeded()
-    setFocus(columnIndex: focusedColumnIndex, paneIndex: columns[focusedColumnIndex].focusedPaneIndex)
+    // Keep the scroll position where it was: both columns were
+    // already on-screen before the swap, and re-centring on the
+    // focused column would shove the other one off the edge.
+    setFocus(
+      columnIndex: focusedColumnIndex,
+      paneIndex: columns[focusedColumnIndex].focusedPaneIndex,
+      scroll: false)
+
+    animateLayerSwap(
+      moved.containerView, oldFrameA: oldMovedFrame,
+      displaced.containerView, oldFrameB: oldDisplacedFrame)
   }
 
   public func moveColumnRight() {
     guard focusedColumnIndex < columns.count - 1 else { return }
+    let moved = columns[focusedColumnIndex]
+    let displaced = columns[focusedColumnIndex + 1]
+    let oldMovedFrame = moved.containerView.frame
+    let oldDisplacedFrame = displaced.containerView.frame
+
     columns.swapAt(focusedColumnIndex, focusedColumnIndex + 1)
     focusedColumnIndex += 1
     rebuildStackView()
     view.layoutSubtreeIfNeeded()
-    setFocus(columnIndex: focusedColumnIndex, paneIndex: columns[focusedColumnIndex].focusedPaneIndex)
+    setFocus(
+      columnIndex: focusedColumnIndex,
+      paneIndex: columns[focusedColumnIndex].focusedPaneIndex,
+      scroll: false)
+
+    animateLayerSwap(
+      moved.containerView, oldFrameA: oldMovedFrame,
+      displaced.containerView, oldFrameB: oldDisplacedFrame)
   }
 
   // MARK: - Pane Reorder within Column

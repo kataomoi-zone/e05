@@ -452,6 +452,58 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Tween two views from their pre-swap frames into their new
+  /// positions via a CALayer `transform` translation, so a reorder
+  /// reads as a slide instead of a snap. The caller is responsible
+  /// for mutating the model, rebuilding the stack view, and
+  /// forcing layout *before* calling — `viewA` / `viewB` should
+  /// already sit at their final frames, and `oldFrameA` /
+  /// `oldFrameB` are the frames they occupied before the swap.
+  ///
+  /// Uses layer transforms rather than `allowsImplicitAnimation`
+  /// on the parent stack: the stack's reshuffle finishes
+  /// synchronously, so no sibling view sees an intermediate layout
+  /// (which was the source of the vertical-close tilt and the
+  /// horizontal-insert Metal-surface reflow seen in earlier pane
+  /// animations). Skips straight to the final layout when
+  /// off-screen so session restore doesn't spawn a start-up tween.
+  func animateLayerSwap(
+    _ viewA: NSView, oldFrameA: CGRect,
+    _ viewB: NSView, oldFrameB: CGRect
+  ) {
+    guard view.window != nil else { return }
+
+    let newFrameA = viewA.frame
+    let newFrameB = viewB.frame
+    let deltaA = CGPoint(
+      x: oldFrameA.minX - newFrameA.minX,
+      y: oldFrameA.minY - newFrameA.minY)
+    let deltaB = CGPoint(
+      x: oldFrameB.minX - newFrameB.minX,
+      y: oldFrameB.minY - newFrameB.minY)
+
+    viewA.wantsLayer = true
+    viewB.wantsLayer = true
+
+    // Leave each view's model transform at identity (AppKit re-
+    // sets it on every layout pass anyway) and let a CABasicAnimation
+    // paint the translation on the presentation layer only. The
+    // view appears at its old frame, slides to the new one, then
+    // the animation auto-removes leaving the identity model.
+    addSwapAnimation(to: viewA.layer, delta: deltaA)
+    addSwapAnimation(to: viewB.layer, delta: deltaB)
+  }
+
+  private func addSwapAnimation(to layer: CALayer?, delta: CGPoint) {
+    guard let layer, delta != .zero else { return }
+    let animation = CABasicAnimation(keyPath: "transform")
+    animation.fromValue = NSValue(caTransform3D: CATransform3DMakeTranslation(delta.x, delta.y, 0))
+    animation.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+    animation.duration = Self.paneAnimationDuration
+    animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    layer.add(animation, forKey: "paneLayerSwap")
+  }
+
   func removePane(columnIndex: Int, paneIndex: Int) {
     guard let column = columns[safe: columnIndex],
       column.panes.indices.contains(paneIndex)
