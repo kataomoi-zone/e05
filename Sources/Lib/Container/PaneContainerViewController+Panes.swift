@@ -100,11 +100,14 @@ extension PaneContainerViewController {
 
     if let bv = pane.browserView {
       bv.onTitleChange = { [weak self, weak pane] title in
-        pane?.title = title
-        // Update history title for the current URL
-        if let url = pane?.address.url.absoluteString {
-          self?.browsingHistory.updateTitle(url: url, title: title)
-        }
+        guard let self, let pane else { return }
+        // Route through the shared handler so browser title changes
+        // flow into the same sidebar-reload + header-overlay + window-
+        // title pipeline the terminal path uses; without this the
+        // sidebar worklane only refreshed on the next `setFocus`.
+        self.handleTitleChange(pane: pane, title: title)
+        // Update history title for the current URL.
+        self.browsingHistory.updateTitle(url: pane.address.url.absoluteString, title: title)
       }
       bv.onURLChange = { [weak self, weak pane] url in
         guard let url else { return }
