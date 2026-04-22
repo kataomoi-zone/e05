@@ -143,6 +143,20 @@ extension PaneContainerViewController {
     // commits the start-frame layout before the animator kicks in.
     toTop.constant = slidingUp ? h : -h
     toVC.view.isHidden = false
+    // Resync every terminal surface on the incoming workspace.
+    // `updateSize` skips forwarding to ghostty while the view's
+    // ancestor chain is hidden (scrollback-preservation guard added
+    // in commit ff5c3b4), so any window resize that happened while
+    // this workspace was parked stays unsent. Without this reseed,
+    // `ghostty_surface_set_size` is never called after the VC flips
+    // back to visible — the surface keeps rendering at its last
+    // pre-hide size and the pane shows a short strip of live output
+    // with the remaining rows blacked out.
+    for column in toVC.workspace.columns {
+      for pane in column.panes {
+        pane.terminalView?.resyncSurfaceSize()
+      }
+    }
     view.layoutSubtreeIfNeeded()
 
     NSLog(
