@@ -222,22 +222,25 @@ public final class PaneContainerViewController: NSViewController {
 
     let initialConstant: CGFloat = makeCurrent ? 0 : max(view.bounds.height, 1)
     let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
-    // Leading starts flush with the sidebar state's push value.
-    // `viewDidLoad` runs before `installSidebar`, so the first
-    // call resolves to 0 (sidebarVC nil). After `installSidebar`,
-    // `createWorkspace` / `restoreSession` addenda need to honour
-    // the current push so a new workspace doesn't slip under a
-    // pinned sidebar.
-    let push = sidebarVC?.currentState.pushesContent == true ? Self.sidebarWidth : 0
-    let leading = wv.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: push)
+    // The root view spans the full window width so the sidebar
+    // (`.pinnedOpen` included) overlays it and so columns scrolled
+    // under the sidebar give the glass a blur source to pick up.
+    // Pinned state instead inflates the scrollView's leading
+    // contentInset to keep the leftmost column's content past the
+    // sidebar — `viewDidLoad` runs before `installSidebar`, so the
+    // first call resolves to 0 (sidebarVC nil); `createWorkspace` /
+    // `restoreSession` addenda honour the current pinned inset so a
+    // new workspace doesn't open with the leftmost column sitting
+    // half-buried under a pinned sidebar.
     NSLayoutConstraint.activate([
       top,
-      leading,
+      wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
       wv.heightAnchor.constraint(equalTo: view.heightAnchor),
     ])
     vc.topConstraint = top
-    vc.leadingConstraint = leading
+    let pinnedInset = sidebarVC?.currentState.pushesContent == true ? Self.sidebarWidth : 0
+    vc.scrollView.contentInsets.left = pinnedInset
 
     NSLog(
       "[e05/ws] installWorkspaceView wsId=%@ current=%@ topConstant=%f bounds.h=%f hidden=%@",

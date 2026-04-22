@@ -112,14 +112,20 @@ extension PaneContainerViewController {
     }
 
     let sidebarConst: CGFloat = state.isRevealed ? 0 : -Self.sidebarWidth
-    let workspaceConst: CGFloat = state.pushesContent ? Self.sidebarWidth : 0
+    // Pinned state inflates each workspace's `scrollView.contentInsets.left`
+    // so the leftmost column starts past the sidebar without pushing the
+    // whole workspace root — the root spans the full window width in
+    // every state, and any column scrolled under the sidebar gives the
+    // glass a multi-coloured blur source so the panel reads as Liquid
+    // Glass instead of an opaque slab.
+    let pinnedInset: CGFloat = state.pushesContent ? Self.sidebarWidth : 0
 
     applyTrafficLights(revealed: state.isRevealed, animated: animated)
 
     guard animated else {
       sidebarLeadingConstraint?.constant = sidebarConst
       for vc in workspaceVCs {
-        vc.leadingConstraint?.constant = workspaceConst
+        vc.scrollView.contentInsets.left = pinnedInset
       }
       view.layoutSubtreeIfNeeded()
       completion?()
@@ -144,7 +150,13 @@ extension PaneContainerViewController {
           ctx.allowsImplicitAnimation = true
           self.sidebarLeadingConstraint?.animator().constant = sidebarConst
           for vc in self.workspaceVCs {
-            vc.leadingConstraint?.animator().constant = workspaceConst
+            // NSScrollView is `NSAnimatablePropertyContainer`; assigning
+            // a fresh `NSEdgeInsets` through the animator interpolates
+            // the inset, so the column strip slides into its new
+            // start position in lockstep with the sidebar slide.
+            var insets = vc.scrollView.contentInsets
+            insets.left = pinnedInset
+            vc.scrollView.animator().contentInsets = insets
           }
           self.view.layoutSubtreeIfNeeded()
         },

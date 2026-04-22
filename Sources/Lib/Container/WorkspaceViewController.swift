@@ -21,13 +21,6 @@ public final class WorkspaceViewController: NSViewController {
   /// need a side-dictionary to find it at animation time.
   weak var topConstraint: NSLayoutConstraint?
 
-  /// Leading constraint offsetting this VC's root view from the
-  /// container's leading edge. Animated alongside the sidebar state
-  /// machine: constant = 0 when the sidebar is hidden or hover-peek
-  /// (overlay behaviour), `sidebarWidth` when pinned open (push
-  /// behaviour).
-  weak var leadingConstraint: NSLayoutConstraint?
-
   public init(workspace: WorkspaceModel) {
     self.workspace = workspace
     super.init(nibName: nil, bundle: nil)
