@@ -151,6 +151,77 @@ struct SessionStateTests {
     }
   }
 
+  @Test("pane title round-trips and is omitted when unset")
+  func paneTitleRoundTrip() throws {
+    let session = SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          columns: [
+            SessionState.ColumnState(
+              panes: [
+                SessionState.PaneState(
+                  address: "https://example.com",
+                  title: "Example Domain"
+                ),
+                SessionState.PaneState(address: "e05://terminal"),
+              ],
+              focusedPaneIndex: 0,
+              width: 640,
+              heightRatios: [1]
+            )
+          ],
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0,
+      urlBarVisible: false
+    )
+
+    let data = try JSONEncoder().encode(session)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    let panes = decoded.workspaces[0].columns[0].panes
+
+    #expect(panes[0].title == "Example Domain")
+    #expect(panes[1].title == nil)
+
+    // Confirm the JSON payload itself omits the field when nil so
+    // terminal-only sessions don't grow a dead key.
+    let json = try #require(String(data: data, encoding: .utf8))
+    #expect(!json.contains("\"title\":null"))
+  }
+
+  @Test("legacy session JSON without title decodes pane titles as nil")
+  func legacyTitleMissing() throws {
+    // A fabricated old-format payload — no `title` field anywhere.
+    // Guards against future hand-written `CodingKeys` breaking
+    // auto-synthesis' `decodeIfPresent` semantics on `title`.
+    let legacy = """
+      {
+        "focusedWorkspaceIndex": 0,
+        "urlBarVisible": false,
+        "sidebarPinned": false,
+        "workspaces": [
+          {
+            "focusedColumnIndex": 0,
+            "scrollX": 0,
+            "columns": [
+              {
+                "focusedPaneIndex": 0,
+                "width": 640,
+                "heightRatios": [],
+                "panes": [{ "address": "https://example.com" }]
+              }
+            ]
+          }
+        ]
+      }
+      """
+    let data = Data(legacy.utf8)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    #expect(decoded.workspaces[0].columns[0].panes[0].title == nil)
+  }
+
   @Test("sidebarPinned round-trips for both true and false")
   func sidebarPinnedRoundTrip() throws {
     for pinned in [true, false] {

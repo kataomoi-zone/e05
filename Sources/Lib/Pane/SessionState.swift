@@ -31,6 +31,11 @@ public struct SessionState: Codable {
 
   public struct PaneState: Codable {
     public var address: String
+    /// Browser page title captured at save time. Primes the sidebar
+    /// worklane on restore so browser rows don't flash the hostname
+    /// fallback before WKWebView's title KVO settles after page load.
+    /// Omitted for terminal panes — ghostty resets titles on restart.
+    public var title: String?
     /// Browser back history URLs (oldest first). Empty for non-browser panes.
     public var backHistory: [String]?
     /// Browser forward history URLs. Empty for non-browser panes.

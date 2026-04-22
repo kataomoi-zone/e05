@@ -25,6 +25,7 @@ extension PaneContainerViewController {
         let paneStates = column.panes.map { pane -> SessionState.PaneState in
           var state = SessionState.PaneState(address: pane.address.description)
           if let webView = pane.browserView?.webView {
+            if !pane.title.isEmpty { state.title = pane.title }
             let backList = webView.backForwardList.backList.map(\.url.absoluteString)
             let forwardList = webView.backForwardList.forwardList.map(\.url.absoluteString)
             if !backList.isEmpty { state.backHistory = backList }
@@ -104,10 +105,18 @@ extension PaneContainerViewController {
 
         let column = addColumn(address: firstAddress)
         column.widthConstraint?.constant = CGFloat(colState.width)
+        // Direct assignment rather than `handleTitleChange`: restore
+        // runs before the sidebar view is installed, and we don't
+        // want the header overlay flash / window.title write /
+        // debounce timer that the shared handler triggers.
+        if let title = firstPaneState.title {
+          column.panes.first?.title = title
+        }
 
         for paneState in colState.panes.dropFirst() {
           let address = PaneAddress(paneState.address) ?? .terminal
           let pane = makePane(address: address)
+          if let title = paneState.title { pane.title = title }
           setupPaneCallbacks(pane: pane, column: column)
           column.panes.append(pane)
         }
