@@ -32,6 +32,22 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
   /// Container for webView + Inspector. WebKit manages the split inside this.
   private let browserHostView = NSView()
 
+  /// Status-bar-style preview that shows the URL under the cursor
+  /// while the user hovers a link. Populated by the JS content script
+  /// registered in ``init(frame:)``.
+  public let hoverLinkOverlay = HoverLinkOverlayView()
+
+  /// Retained so the `WKUserContentController`'s weak handler
+  /// reference has something to point at. Without a strong reference
+  /// here the handler would be released the moment ``init`` returns.
+  private let hoverLinkMessageHandler: HoverLinkMessageHandler
+
+  /// Paired horizontal constraints for ``hoverLinkOverlay``. Only
+  /// one is active at any time; the JS content script decides which
+  /// side the preview should live on based on the cursor position.
+  private var hoverLinkOverlayLeadingConstraint: NSLayoutConstraint?
+  private var hoverLinkOverlayTrailingConstraint: NSLayoutConstraint?
+
   /// Called when page title changes.
   public var onTitleChange: ((String) -> Void)?
   /// Called when URL changes.
@@ -73,10 +89,34 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     // WKScriptMessageHandlerWithReply registrations share the same
     // init-time snapshot constraint as AdBlocker.
     CosmeticFilterEngine.shared.attach(to: config)
+    // Hover-link preview: register the content script and fire-and-
+    // forget message handler before the web view is constructed so
+    // the init-time configuration snapshot picks them up. The handler
+    // and the user script must share a content world — otherwise the
+    // `webkit.messageHandlers.<name>` lookup in the script returns
+    // undefined and every post is silently dropped.
+    let hoverHandler = HoverLinkMessageHandler()
+    config.userContentController.addUserScript(Self.hoverLinkUserScript)
+    config.userContentController.add(
+      hoverHandler,
+      contentWorld: Self.hoverLinkContentWorld,
+      name: Self.hoverLinkHandlerName
+    )
+    hoverLinkMessageHandler = hoverHandler
     let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
     webView = focusReportingWebView
 
     super.init(frame: frame)
+
+    hoverHandler.onMessage = { [weak self] url, side in
+      guard let self else { return }
+      self.applyHoverLinkSide(side)
+      if let url, !url.isEmpty {
+        self.hoverLinkOverlay.show(url: url)
+      } else {
+        self.hoverLinkOverlay.hide()
+      }
+    }
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
     layer?.backgroundColor = NSColor(white: 0.15, alpha: 1.0).cgColor
@@ -140,6 +180,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
       browserHostView.leadingAnchor.constraint(equalTo: leadingAnchor),
       browserHostView.trailingAnchor.constraint(equalTo: trailingAnchor),
       browserHostView.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+
+    // Hover-link preview sits above browserHostView at the bottom
+    // edge. `hitTest → nil` (in HoverLinkOverlayView) keeps it
+    // click-through so the preview never blocks page interaction.
+    // Leading is the default side; `applyHoverLinkSide` flips the
+    // active constraint to trailing when the cursor drifts under
+    // the preview (Safari-style flip).
+    hoverLinkOverlay.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(hoverLinkOverlay)
+    let leading = hoverLinkOverlay.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6)
+    let trailing = hoverLinkOverlay.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6)
+    hoverLinkOverlayLeadingConstraint = leading
+    hoverLinkOverlayTrailingConstraint = trailing
+    leading.isActive = true
+    NSLayoutConstraint.activate([
+      hoverLinkOverlay.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+      hoverLinkOverlay.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.7),
     ])
 
     // webView uses autoresizing mask inside browserHostView (not Auto Layout).
@@ -287,6 +345,158 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
       .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
       ?? ""
     return type == "attachment"
+  }
+
+  // MARK: - Hover-Link Preview
+
+  /// Switch the hover-link overlay between the leading and trailing
+  /// edges. Called when the JS content script reports that the
+  /// cursor has entered (or left) the overlay's bottom-leading
+  /// footprint, so the preview never hides the link the user is
+  /// actually pointing at.
+  private func applyHoverLinkSide(_ side: String?) {
+    let trailing = side == "right"
+    guard hoverLinkOverlayTrailingConstraint?.isActive != trailing else { return }
+    if trailing {
+      hoverLinkOverlayLeadingConstraint?.isActive = false
+      hoverLinkOverlayTrailingConstraint?.isActive = true
+    } else {
+      hoverLinkOverlayTrailingConstraint?.isActive = false
+      hoverLinkOverlayLeadingConstraint?.isActive = true
+    }
+  }
+
+  static let hoverLinkHandlerName = "e05HoverLink"
+
+  /// Content world shared by the hover-link user script and its
+  /// message handler. Isolates `window.__e05HoverLinkInstalled`
+  /// from page scripts so ad code can't clobber the install guard.
+  static let hoverLinkContentWorld: WKContentWorld = .defaultClient
+
+  /// Content script that delegates mouse events on `document` to
+  /// resolve the nearest ancestor `<a>` with a usable `href` and
+  /// reports the resolved URL via the Swift-side message handler.
+  /// Injected at document-start in every frame (including same-
+  /// origin subframes); the install guard is per content world.
+  private static let hoverLinkUserScript = WKUserScript(
+    source: """
+      (function() {
+        if (window.__e05HoverLinkInstalled) return;
+        window.__e05HoverLinkInstalled = true;
+
+        // Viewport zone that mirrors where Swift places the preview
+        // at the bottom-leading corner. When the cursor enters it,
+        // the overlay flips to the trailing edge so a link pinned
+        // at the bottom-left stays visible under the cursor. The
+        // width is fixed even though the overlay is allowed to grow
+        // up to 70% of the pane: on wider panes the overlay may
+        // extend past this zone, but since the overlay is click-
+        // through and mostly contains a truncated URL, the slight
+        // mismatch is acceptable and avoids plumbing pane width
+        // into the content script.
+        const FLIP_ZONE_WIDTH = 420;
+        const FLIP_ZONE_HEIGHT = 44;
+
+        let lastUrl = null;
+        let lastSide = 'left';
+
+        function resolveLink(target) {
+          if (!target || typeof target.closest !== 'function') return null;
+          const a = target.closest('a');
+          if (!a) return null;
+          const href = a.href;
+          if (!href) return null;
+          if (href.startsWith('javascript:')) return null;
+          // Pure same-page fragment: no preview (matches Safari).
+          const raw = a.getAttribute('href');
+          if (raw === null || raw === '' || raw === '#') return null;
+          // `a.href` returns the fully percent-encoded absolute URL,
+          // so `/wiki/日本` comes back as `/wiki/%E6%97%A5%E6%9C%AC`.
+          // Decode for display using `decodeURI` — it restores Unicode
+          // segments while preserving structural reserved characters
+          // like `?`, `#`, `&`, matching how mainstream browsers show
+          // URLs in their status bar.
+          try {
+            return decodeURI(href);
+          } catch (e) {
+            return href;
+          }
+        }
+
+        function sideFor(event) {
+          // Subframes have their own viewport — `clientX/clientY`
+          // and `innerWidth/innerHeight` live in iframe-local
+          // coordinates, so the flip zone would be computed
+          // against the iframe bounds instead of the pane bounds.
+          // Keep the overlay pinned to leading in subframes rather
+          // than flipping based on the wrong reference frame.
+          if (window.top !== window) return 'left';
+          const vw = window.innerWidth || document.documentElement.clientWidth;
+          const vh = window.innerHeight || document.documentElement.clientHeight;
+          const atLeft = event.clientX < FLIP_ZONE_WIDTH;
+          const atBottom = event.clientY > vh - FLIP_ZONE_HEIGHT;
+          return (atLeft && atBottom) ? 'right' : 'left';
+        }
+
+        function post(url, side) {
+          // Skip side-only churn while the preview is hidden:
+          // without a url there's nothing to display, so flipping
+          // the constraint on every non-link mousemove through the
+          // bottom-leading zone would just queue pointless layout
+          // passes.
+          if (url === null && lastUrl === null) return;
+          if (url === lastUrl && side === lastSide) return;
+          lastUrl = url;
+          lastSide = side;
+          try {
+            webkit.messageHandlers.e05HoverLink.postMessage({ url: url, side: side });
+          } catch (e) { /* handler not yet registered on this frame */ }
+        }
+
+        document.addEventListener('mouseover', (e) => {
+          post(resolveLink(e.target), sideFor(e));
+        }, { passive: true, capture: true });
+
+        document.addEventListener('mousemove', (e) => {
+          // Only recompute while a preview is visible: `lastUrl`
+          // holds the URL currently displayed by the overlay, so
+          // null means the overlay is hidden and no side state
+          // needs to be maintained against further mouse motion.
+          if (lastUrl === null) return;
+          const side = sideFor(e);
+          if (side !== lastSide) post(lastUrl, side);
+        }, { passive: true, capture: true });
+
+        document.addEventListener('mouseout', (e) => {
+          const from = resolveLink(e.target);
+          const to = resolveLink(e.relatedTarget);
+          if (from && !to) post(null, sideFor(e));
+        }, { passive: true, capture: true });
+      })();
+      """,
+    injectionTime: .atDocumentStart,
+    forMainFrameOnly: false,
+    in: hoverLinkContentWorld
+  )
+}
+
+/// Bridges JS `webkit.messageHandlers.e05HoverLink` posts to a Swift
+/// closure. Kept out of ``BrowserPaneView`` so
+/// ``WKUserContentController``'s reference can hold on to it without
+/// creating a retain cycle with the owning view.
+@MainActor
+private final class HoverLinkMessageHandler: NSObject, WKScriptMessageHandler {
+  var onMessage: ((String?, String?) -> Void)?
+
+  func userContentController(
+    _: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard message.name == BrowserPaneView.hoverLinkHandlerName else { return }
+    let body = message.body as? [String: Any]
+    let url = body?["url"] as? String
+    let side = body?["side"] as? String
+    onMessage?(url, side)
   }
 }
 
