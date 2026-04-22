@@ -204,12 +204,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     zoomInInlineButton.action = #selector(zoomInInlineAction)
     zoomInInlineButton.toolTip = "Zoom in"
 
-    // Text-style reset: transparent bezel, accent-coloured title,
-    // pointing-hand cursor from `HoverIconButton`. Using the same
-    // subclass as the icon buttons keeps the hit zone = bounds
-    // invariant — a plain `NSButton` with `.inline` bezel leaves
-    // the cursor as the default arrow and hit zone as just the
-    // glyph outline, which reads as non-clickable.
+    // Text-style reset: transparent bezel, neutral title colour to
+    // match the neighbouring `121% − +` cluster (percent label uses
+    // secondaryLabelColor, the icon buttons render SF Symbols with
+    // the same default template tint). The earlier controlAccentColor
+    // fill looked like a misplaced hyperlink on dark aqua and hit
+    // the WCAG AA contrast boundary with graphite / gray accents.
+    // Pointing-hand cursor from `HoverIconButton` still signals
+    // clickability.
     zoomResetInlineButton.bezelStyle = .inline
     zoomResetInlineButton.isBordered = false
     zoomResetInlineButton.font = .systemFont(ofSize: 11)
@@ -217,7 +219,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     zoomResetInlineButton.attributedTitle = NSAttributedString(
       string: "Reset",
       attributes: [
-        .foregroundColor: NSColor.controlAccentColor,
+        .foregroundColor: NSColor.secondaryLabelColor,
         .font: NSFont.systemFont(ofSize: 11),
       ]
     )
