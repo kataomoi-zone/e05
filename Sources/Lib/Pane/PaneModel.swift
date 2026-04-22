@@ -232,6 +232,11 @@ public final class PaneModel {
       headerView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
     ])
 
+    containerView.wantsLayer = true
+    containerView.layer?.cornerRadius = 12
+    containerView.layer?.cornerCurve = .continuous
+    containerView.layer?.masksToBounds = true
+
     // Start with URL bar hidden
     applyURLBarVisibility()
     urlBar.setDisplayURL(isBlankBrowser ? "" : address.description)
