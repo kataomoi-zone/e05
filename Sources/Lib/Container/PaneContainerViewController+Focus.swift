@@ -209,11 +209,23 @@ extension PaneContainerViewController {
       column.focusedPaneIndex > 0
     else { return }
     let idx = column.focusedPaneIndex
+    let moved = column.panes[idx]
+    let displaced = column.panes[idx - 1]
+    let oldMovedFrame = moved.containerView.frame
+    let oldDisplacedFrame = displaced.containerView.frame
+
     column.panes.swapAt(idx, idx - 1)
     column.focusedPaneIndex = idx - 1
     rebuildColumnView(column: column)
     view.layoutSubtreeIfNeeded()
-    setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
+    setFocus(
+      columnIndex: focusedColumnIndex,
+      paneIndex: column.focusedPaneIndex,
+      scroll: false)
+
+    animateLayerSwap(
+      moved.containerView, oldFrameA: oldMovedFrame,
+      displaced.containerView, oldFrameB: oldDisplacedFrame)
   }
 
   public func movePaneDown() {
@@ -221,11 +233,23 @@ extension PaneContainerViewController {
       column.focusedPaneIndex < column.panes.count - 1
     else { return }
     let idx = column.focusedPaneIndex
+    let moved = column.panes[idx]
+    let displaced = column.panes[idx + 1]
+    let oldMovedFrame = moved.containerView.frame
+    let oldDisplacedFrame = displaced.containerView.frame
+
     column.panes.swapAt(idx, idx + 1)
     column.focusedPaneIndex = idx + 1
     rebuildColumnView(column: column)
     view.layoutSubtreeIfNeeded()
-    setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
+    setFocus(
+      columnIndex: focusedColumnIndex,
+      paneIndex: column.focusedPaneIndex,
+      scroll: false)
+
+    animateLayerSwap(
+      moved.containerView, oldFrameA: oldMovedFrame,
+      displaced.containerView, oldFrameB: oldDisplacedFrame)
   }
 
   // MARK: - Stack View Rebuild
