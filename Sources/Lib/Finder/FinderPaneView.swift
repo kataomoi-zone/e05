@@ -82,6 +82,21 @@ public final class FinderPaneView: NSView {
 
   private static let statusBarHeight: CGFloat = 22
 
+  /// Sort axis backing the table-column header clicks. `rawValue` is
+  /// passed as the `NSSortDescriptor.key` string so AppKit's header
+  /// indicator wiring (the ▲/▼ glyph next to the active column) is
+  /// driven by the same value the delegate reads back when resolving
+  /// the active sort.
+  private enum SortKey: String {
+    case name
+    case dateModified
+    case size
+    case kind
+  }
+
+  private var currentSortKey: SortKey = .name
+  private var sortAscending: Bool = true
+
   public init(initialURL: URL) {
     self.currentURL = initialURL
     self.tableView = FinderTableView()
@@ -123,25 +138,40 @@ public final class FinderPaneView: NSView {
     nameCol.width = 260
     nameCol.minWidth = 120
     nameCol.resizingMask = [.autoresizingMask, .userResizingMask]
+    // Default directions match Finder list-view conventions: Name /
+    // Kind ascending (A→Z), Date Modified / Size descending (newest
+    // and largest first). The first click on a column header uses
+    // this direction; a second click flips it. The key string must
+    // round-trip through `SortKey(rawValue:)` in the delegate, so
+    // both sides share the enum as the source of truth.
+    nameCol.sortDescriptorPrototype = NSSortDescriptor(key: SortKey.name.rawValue, ascending: true)
 
     let dateCol = NSTableColumn(identifier: Self.dateColumn)
     dateCol.title = "Date Modified"
     dateCol.width = 150
     dateCol.minWidth = 100
+    dateCol.sortDescriptorPrototype = NSSortDescriptor(key: SortKey.dateModified.rawValue, ascending: false)
 
     let sizeCol = NSTableColumn(identifier: Self.sizeColumn)
     sizeCol.title = "Size"
     sizeCol.width = 80
     sizeCol.minWidth = 60
+    sizeCol.sortDescriptorPrototype = NSSortDescriptor(key: SortKey.size.rawValue, ascending: false)
 
     let kindCol = NSTableColumn(identifier: Self.kindColumn)
     kindCol.title = "Kind"
     kindCol.width = 120
     kindCol.minWidth = 80
+    kindCol.sortDescriptorPrototype = NSSortDescriptor(key: SortKey.kind.rawValue, ascending: true)
 
     for col in [nameCol, dateCol, sizeCol, kindCol] {
       tableView.addTableColumn(col)
     }
+
+    // Seed the active sort so the Name column renders its ▲ indicator
+    // on first appearance and `sortItems` has a stable key to start
+    // from, before the user clicks any header.
+    tableView.sortDescriptors = [NSSortDescriptor(key: SortKey.name.rawValue, ascending: true)]
 
     tableView.rowHeight = 22
     tableView.intercellSpacing = NSSize(width: 8, height: 0)
@@ -275,17 +305,7 @@ public final class FinderPaneView: NSView {
       }
     }
 
-    // Directories first, then alphabetical by localized name — the
-    // Finder default. Packages (`.app`, `.bundle`) sort with files
-    // because Finder treats them as single-click openable units.
-    loaded.sort { a, b in
-      let aIsDir = a.isDirectory && !a.isPackage
-      let bIsDir = b.isDirectory && !b.isPackage
-      if aIsDir != bIsDir { return aIsDir }
-      return a.name.localizedStandardCompare(b.name) == .orderedAscending
-    }
-
-    items = loaded
+    items = sortItems(loaded)
     tableView.reloadData()
     updateStatusBar()
 
@@ -299,6 +319,63 @@ public final class FinderPaneView: NSView {
       if !restored.isEmpty {
         tableView.selectRowIndexes(restored, byExtendingSelection: false)
       }
+    }
+  }
+
+  /// Order items for display. Finder's list view sorts purely by the
+  /// active key with no directory grouping — a folder named `bin`
+  /// appears between `bash` and `cat` under a Name ascending sort,
+  /// not pulled to the top. Mirror that behaviour: delegate entirely
+  /// to `compareByCurrentKey`, with no separate directory tier.
+  private func sortItems(_ items: [FileItem]) -> [FileItem] {
+    items.sorted(by: compareByCurrentKey)
+  }
+
+  /// Return `true` iff `a` should precede `b` under the active sort.
+  /// `NSSortDescriptor` itself can't drive this comparison because
+  /// `FileItem` is a plain Swift class without `@objc` keypath
+  /// bindings; the delegate callback reads the descriptor's `key`
+  /// string, maps it back to `SortKey`, and dispatches here so the
+  /// comparison logic lives fully in Swift.
+  private func compareByCurrentKey(_ a: FileItem, _ b: FileItem) -> Bool {
+    switch currentSortKey {
+    case .name:
+      let result = a.name.localizedStandardCompare(b.name)
+      return sortAscending ? result == .orderedAscending : result == .orderedDescending
+    case .dateModified:
+      // `.distantPast` is the smallest representable Date, so rows
+      // without a modification date (broken metadata, permission
+      // errors) surface at the **top** of an ascending sort (oldest
+      // first) and at the **bottom** of a descending one. Treating
+      // nil as "very old" is how Finder handles missing timestamps.
+      let da = a.dateModified ?? .distantPast
+      let db = b.dateModified ?? .distantPast
+      return sortAscending ? da < db : da > db
+    case .size:
+      // Finder's Size column groups folders together: the column
+      // renders "--" for directories since their byte size isn't
+      // meaningful, and both sort directions keep the folder cluster
+      // intact. Ascending puts the cluster at the top, descending at
+      // the bottom — folders always sit at whichever end an
+      // "unknown size" maps to. Modelling non-package directory size
+      // as `Int64.min` makes folders the smallest value in the key
+      // space; a name-ascending tiebreaker keeps the cluster's
+      // internal alphabetical order (`bin → deno → …`) identical
+      // regardless of the direction applied to the surrounding files.
+      // The same tiebreaker applies to any pair with equal effective
+      // size (e.g. multiple 0-byte files) — Finder breaks same-size
+      // ties the same way.
+      let aIsDir = a.isDirectory && !a.isPackage
+      let bIsDir = b.isDirectory && !b.isPackage
+      let sa = aIsDir ? Int64.min : a.size
+      let sb = bIsDir ? Int64.min : b.size
+      if sa != sb {
+        return sortAscending ? sa < sb : sa > sb
+      }
+      return a.name.localizedStandardCompare(b.name) == .orderedAscending
+    case .kind:
+      let result = a.kind.localizedStandardCompare(b.kind)
+      return sortAscending ? result == .orderedAscending : result == .orderedDescending
     }
   }
 
@@ -401,6 +478,42 @@ public final class FinderPaneView: NSView {
 extension FinderPaneView: NSTableViewDataSource {
   public func numberOfRows(in tableView: NSTableView) -> Int {
     items.count
+  }
+
+  /// AppKit calls this when the user clicks a column header. The new
+  /// descriptors already include the flipped direction if the user
+  /// clicked the active column again, and the header indicator
+  /// updates on its own — all we need to do is translate the
+  /// descriptor key back into our `SortKey` enum, re-sort, and
+  /// reload. Selection is preserved by URL rather than row index
+  /// because the sort shuffles the items under fixed row indexes;
+  /// without the URL round-trip, the user's highlight would jump to
+  /// whatever file landed in the same row after the sort.
+  public func tableView(
+    _ tableView: NSTableView,
+    sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]
+  ) {
+    guard let descriptor = tableView.sortDescriptors.first,
+      let key = descriptor.key,
+      let sortKey = SortKey(rawValue: key)
+    else { return }
+    let previouslySelectedURLs: [URL] = tableView.selectedRowIndexes.compactMap {
+      $0 < items.count ? items[$0].url : nil
+    }
+    currentSortKey = sortKey
+    sortAscending = descriptor.ascending
+    items = sortItems(items)
+    tableView.reloadData()
+    var restored = IndexSet()
+    for url in previouslySelectedURLs {
+      if let idx = items.firstIndex(where: { $0.url == url }) {
+        restored.insert(idx)
+      }
+    }
+    if !restored.isEmpty {
+      tableView.selectRowIndexes(restored, byExtendingSelection: false)
+    }
+    updateStatusBar()
   }
 }
 
