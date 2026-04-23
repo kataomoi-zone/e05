@@ -222,6 +222,80 @@ struct SessionStateTests {
     #expect(decoded.workspaces[0].columns[0].panes[0].title == nil)
   }
 
+  @Test("finder addresses round-trip through session JSON intact")
+  func finderAddressesRoundTrip() throws {
+    // Covers the full save/load contract for `e05://finder` panes:
+    //
+    // 1. Plain ASCII paths must survive JSON encode/decode byte-for-byte.
+    // 2. Non-ASCII paths (Japanese, etc.) must survive the percent-encoded
+    //    form that `PaneAddress.finder(path:)` produces, and still decode
+    //    back into the original path via `PaneAddress(string).currentPath`.
+    // 3. Paths containing spaces encode safely (URLComponents percent-
+    //    encodes them) and decode back to the original spaced form.
+    // 4. The root path `/` round-trips without being dropped by URL parsing.
+    // 5. The bare `e05://finder` URL — which `PaneModel.init(address:)`
+    //    treats as the trigger to substitute the user's home directory —
+    //    round-trips as-is. A refactor that starts emitting `e05://finder/`
+    //    or dropping the bare form would break the home-fallback path
+    //    silently; this pins the contract at the session.json layer.
+    let paths = [
+      "/Users/kawarimidoll",
+      "/Users/kawarimidoll/日本語フォルダ",
+      "/Users/kawarimidoll/My Documents",
+      "/",
+    ]
+    let expectedPathAddresses = paths.map { PaneAddress.finder(path: $0).description }
+    let bareFinder = "e05://finder"
+    let addresses = expectedPathAddresses + [bareFinder]
+
+    let session = SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          columns: addresses.map { address in
+            SessionState.ColumnState(
+              panes: [SessionState.PaneState(address: address)],
+              focusedPaneIndex: 0,
+              width: 640,
+              heightRatios: []
+            )
+          },
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0,
+      urlBarVisible: false
+    )
+
+    let data = try JSONEncoder().encode(session)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    let decodedAddresses = decoded.workspaces[0].columns.map(\.panes[0].address)
+
+    #expect(decodedAddresses == addresses)
+
+    // Each decoded address string must re-parse into a `.finder`-kind
+    // PaneAddress so `restoreSession` routes it to FinderPaneView rather
+    // than falling through to the blank-browser branch in
+    // `PaneModel.init(address:)`.
+    for addressString in decodedAddresses {
+      #expect(PaneAddress(addressString)?.kind == .finder)
+    }
+
+    // Spot-check that path decoding survives the percent-encoding round
+    // trip for each non-bare entry — the plain ASCII, Japanese, spaced,
+    // and root variants all reach `currentPath` in their original form.
+    for (path, addressString) in zip(paths, decodedAddresses) {
+      let parsed = try #require(PaneAddress(addressString))
+      #expect(parsed.currentPath == path)
+    }
+
+    // The bare entry resolves to an empty `currentPath`, which is the
+    // signal `PaneModel.init(address:)` reads to substitute
+    // `FileManager.default.homeDirectoryForCurrentUser`.
+    let bare = try #require(PaneAddress(bareFinder))
+    #expect(bare.currentPath.isEmpty)
+  }
+
   @Test("sidebarPinned round-trips for both true and false")
   func sidebarPinnedRoundTrip() throws {
     for pinned in [true, false] {
