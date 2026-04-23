@@ -22,7 +22,13 @@ public enum SidebarState: Equatable {
   /// `.hoverPeek` and `.pinnedOpen`.
   var isRevealed: Bool { self != .hidden }
 
-  /// Whether workspace content should be pushed right to accommodate
-  /// the sidebar. Only `.pinnedOpen` pushes — `.hoverPeek` overlays.
-  var pushesContent: Bool { self == .pinnedOpen }
+  /// Whether the workspace's scroll strip should reserve a leading
+  /// inset matching the sidebar's width. Only `.pinnedOpen` reserves
+  /// — `.hoverPeek` overlays without shifting the columns. The name
+  /// is deliberate: earlier revisions pushed the whole workspace
+  /// root right and "pushesContent" reflected that, but the current
+  /// implementation only inflates `scrollView.contentInsets.left`,
+  /// which keeps the root spanning the full window so the sidebar
+  /// glass has a blur source behind it.
+  var reservesLeadingScrollInset: Bool { self == .pinnedOpen }
 }

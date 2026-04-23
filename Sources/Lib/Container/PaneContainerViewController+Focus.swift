@@ -149,7 +149,11 @@ extension PaneContainerViewController {
       guard size.cell_width_px > 0 else { return }
       constraint.constant = CGFloat(n) * CGFloat(size.cell_width_px) / scale
     case .fraction(let f):
-      let visibleWidth = scrollView.contentView.bounds.width
+      // Fraction is taken against the user-visible region (post-
+      // sidebar-inset), matching `viewDidLayout`'s width sync — a
+      // raw clip-width fraction would overflow past the pinned
+      // sidebar.
+      let visibleWidth = effectiveVisibleWidth(in: scrollView)
       guard visibleWidth > 0 else { return }
       constraint.constant = visibleWidth * f
     }

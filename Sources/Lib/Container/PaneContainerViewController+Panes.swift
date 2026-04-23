@@ -393,6 +393,21 @@ extension PaneContainerViewController {
     )
   }
 
+  /// Width of the user-visible portion of `scrollView`'s clip view,
+  /// with `contentInsets.left` / `.right` (the sidebar pinned inset
+  /// and any future trailing inset) excluded. NSClipView's
+  /// `bounds.width` itself stays at the full clip span regardless
+  /// of `contentInsets`, so any callsite that meant "how wide is
+  /// the part of the scroll view the user can actually see" must
+  /// subtract the insets — share this helper rather than open-
+  /// coding the subtraction so widths derived from it (column
+  /// `.fraction` presets, `viewDidLayout` width sync, scroll
+  /// centring) all agree on the same notion of "visible".
+  func effectiveVisibleWidth(in scrollView: NSScrollView) -> CGFloat {
+    let insets = scrollView.contentInsets
+    return scrollView.contentView.bounds.width - insets.left - insets.right
+  }
+
   /// Compute where the scroll view should land so `column` is
   /// centred within the visible (post-inset) region. Call with the
   /// layout already settled at the column's final width — reading
@@ -411,11 +426,11 @@ extension PaneContainerViewController {
     let visibleWidth = scrollView.contentView.bounds.width
     let contentWidth = stackView.frame.width
     let insets = scrollView.contentInsets
-    let effectiveVisibleWidth = visibleWidth - insets.left - insets.right
-    guard contentWidth > effectiveVisibleWidth else { return nil }
+    let effective = effectiveVisibleWidth(in: scrollView)
+    guard contentWidth > effective else { return nil }
 
     let targetX: CGFloat
-    if columnFrame.width >= effectiveVisibleWidth {
+    if columnFrame.width >= effective {
       // Column can't fit, pin its left edge to the visible region's
       // leading edge (i.e. just past the sidebar inset).
       targetX = columnFrame.minX - insets.left
@@ -468,11 +483,14 @@ extension PaneContainerViewController {
 
   /// Tween two views from their pre-swap frames into their new
   /// positions via a CALayer `transform` translation, so a reorder
-  /// reads as a slide instead of a snap. The caller is responsible
-  /// for mutating the model, rebuilding the stack view, and
-  /// forcing layout *before* calling — `viewA` / `viewB` should
-  /// already sit at their final frames, and `oldFrameA` /
-  /// `oldFrameB` are the frames they occupied before the swap.
+  /// reads as a slide instead of a snap. Shared by both
+  /// `moveColumnLeft/Right` (horizontal swap inside the workspace
+  /// stack view) and `movePaneUp/Down` (vertical swap inside a
+  /// column stack view). The caller is responsible for mutating
+  /// the model, rebuilding the stack view, and forcing layout
+  /// *before* calling — `viewA` / `viewB` should already sit at
+  /// their final frames, and `oldFrameA` / `oldFrameB` are the
+  /// frames they occupied before the swap.
   ///
   /// Uses layer transforms rather than `allowsImplicitAnimation`
   /// on the parent stack: the stack's reshuffle finishes

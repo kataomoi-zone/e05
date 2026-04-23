@@ -12,13 +12,13 @@ struct SidebarStateTests {
     #expect(SidebarState.pinnedOpen.isRevealed == true)
   }
 
-  @Test("pushesContent is true only for .pinnedOpen")
-  func pushesContent() {
-    #expect(SidebarState.hidden.pushesContent == false)
+  @Test("reservesLeadingScrollInset is true only for .pinnedOpen")
+  func reservesLeadingScrollInset() {
+    #expect(SidebarState.hidden.reservesLeadingScrollInset == false)
     // Hover peek overlays the content — crucial so the workspace
     // doesn't reshuffle columns on a transient reveal.
-    #expect(SidebarState.hoverPeek.pushesContent == false)
-    #expect(SidebarState.pinnedOpen.pushesContent == true)
+    #expect(SidebarState.hoverPeek.reservesLeadingScrollInset == false)
+    #expect(SidebarState.pinnedOpen.reservesLeadingScrollInset == true)
   }
 
   @Test("equality covers every case pair")

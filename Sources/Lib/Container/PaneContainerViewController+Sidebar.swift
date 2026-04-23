@@ -118,7 +118,7 @@ extension PaneContainerViewController {
     // every state, and any column scrolled under the sidebar gives the
     // glass a multi-coloured blur source so the panel reads as Liquid
     // Glass instead of an opaque slab.
-    let pinnedInset: CGFloat = state.pushesContent ? Self.sidebarWidth : 0
+    let pinnedInset: CGFloat = state.reservesLeadingScrollInset ? Self.sidebarWidth : 0
 
     applyTrafficLights(revealed: state.isRevealed, animated: animated)
 

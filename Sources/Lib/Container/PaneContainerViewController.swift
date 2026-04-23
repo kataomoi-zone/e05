@@ -222,16 +222,11 @@ public final class PaneContainerViewController: NSViewController {
 
     let initialConstant: CGFloat = makeCurrent ? 0 : max(view.bounds.height, 1)
     let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
-    // The root view spans the full window width so the sidebar
-    // (`.pinnedOpen` included) overlays it and so columns scrolled
-    // under the sidebar give the glass a blur source to pick up.
-    // Pinned state instead inflates the scrollView's leading
-    // contentInset to keep the leftmost column's content past the
-    // sidebar — `viewDidLoad` runs before `installSidebar`, so the
-    // first call resolves to 0 (sidebarVC nil); `createWorkspace` /
-    // `restoreSession` addenda honour the current pinned inset so a
-    // new workspace doesn't open with the leftmost column sitting
-    // half-buried under a pinned sidebar.
+    // Root view spans the full window width in every sidebar state —
+    // the sidebar overlays it and the columns scrolled under the
+    // sidebar give the glass a blur source. The pinned-sidebar
+    // offset is applied below as a `scrollView.contentInsets.left`,
+    // not as a leading constant on the root view.
     NSLayoutConstraint.activate([
       top,
       wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -239,7 +234,12 @@ public final class PaneContainerViewController: NSViewController {
       wv.heightAnchor.constraint(equalTo: view.heightAnchor),
     ])
     vc.topConstraint = top
-    let pinnedInset = sidebarVC?.currentState.pushesContent == true ? Self.sidebarWidth : 0
+    // `viewDidLoad` runs before `installSidebar`, so the first call
+    // here resolves to 0 (sidebarVC nil); `createWorkspace` /
+    // `restoreSession` addenda honour the current pinned inset so a
+    // new workspace doesn't open with the leftmost column buried
+    // under a pinned sidebar.
+    let pinnedInset = sidebarVC?.currentState.reservesLeadingScrollInset == true ? Self.sidebarWidth : 0
     vc.scrollView.contentInsets.left = pinnedInset
 
     NSLog(
@@ -327,11 +327,20 @@ public final class PaneContainerViewController: NSViewController {
         // focused column behind the sidebar. Snap to a centred
         // origin (via `computeScrollTargetX`, which honours the
         // inset) when the focused column ended up outside the
-        // visible region. Direct setBoundsOrigin matches the
-        // immediate-snap idiom the rest of `restoreScroll` uses
-        // instead of triggering an entrance tween.
+        // user-visible region. `documentVisibleRect` reports the
+        // full clip-view rect including the sidebar inset, so
+        // shrink it to the post-inset visible band before testing
+        // — otherwise a column hidden under the sidebar still
+        // tests as `contains == true` and the snap is skipped.
+        // Direct `setBoundsOrigin` matches the immediate-snap idiom
+        // the rest of `restoreScroll` uses instead of triggering
+        // an entrance tween.
+        let insets = scrollView.contentInsets
+        var trueVisible = scrollView.documentVisibleRect
+        trueVisible.origin.x += insets.left
+        trueVisible.size.width -= insets.left + insets.right
         if let focused = columns[safe: focusedColumnIndex],
-          !scrollView.documentVisibleRect.contains(focused.containerView.frame),
+          !trueVisible.contains(focused.containerView.frame),
           let targetX = computeScrollTargetX(for: focused)
         {
           scrollView.contentView.setBoundsOrigin(NSPoint(x: targetX, y: 0))
@@ -356,7 +365,12 @@ public final class PaneContainerViewController: NSViewController {
     // workspace that was mid-switch got its column stranded at the
     // narrower, pinned-width value.
     for vc in workspaceVCs where vc.isViewLoaded {
-      let visibleWidth = vc.scrollView.contentView.bounds.width
+      // `.fraction` is anchored to the user-visible portion of the
+      // scroll view, not its raw clip width — pinning the sidebar
+      // inflates `contentInsets.left` and the visible region shrinks
+      // by that much, so a `.fraction(1.0)` column has to shrink to
+      // match or it overflows past the sidebar inset.
+      let visibleWidth = effectiveVisibleWidth(in: vc.scrollView)
       for column in vc.workspace.columns {
         // Folded columns keep their fixed strip width regardless
         // of window size — the saved unfoldedWidth is what the
