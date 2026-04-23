@@ -230,7 +230,19 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     }
     urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
       guard let url = change.newValue ?? nil else { return }
-      DispatchQueue.main.async { self?.onURLChange?(url) }
+      DispatchQueue.main.async {
+        self?.onURLChange?(url)
+        // Warm the favicon cache so sidebar worklane rows and URL
+        // bar suggestions can stop showing the generic `globe`
+        // placeholder for this host. Synchronous main-thread call
+        // because FaviconCache is `@MainActor`; the actual network
+        // fetch runs inside its own Task.
+        if let scheme = url.scheme, scheme == "http" || scheme == "https",
+          let host = url.host(percentEncoded: false)
+        {
+          FaviconCache.shared.prefetch(for: host)
+        }
+      }
     }
     canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
@@ -328,6 +340,63 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
   ) {
     onDownloadStarted?(download)
   }
+
+  public func webView(_: WKWebView, didFinish _: WKNavigation!) {
+    // Scan the rendered DOM for a `<link rel="icon">` (or apple-touch
+    // variant) and feed the highest-resolution hit to the favicon
+    // cache. This covers sites whose `/favicon.ico` route 404s (they
+    // declare the icon via <link> instead) and SPAs whose link tags
+    // are injected after the initial HTML ships.
+    scanPageFavicon()
+  }
+
+  private func scanPageFavicon() {
+    // Skip chrome-less navigations (about:blank, data:, custom
+    // schemes) so we don't evaluate the script on pages that can't
+    // carry a meaningful `<link rel="icon">`.
+    guard let url = webView.url,
+      let scheme = url.scheme?.lowercased(),
+      scheme == "http" || scheme == "https",
+      let host = url.host(percentEncoded: false), !host.isEmpty
+    else { return }
+    webView.evaluateJavaScript(
+      Self.faviconScanScript,
+      in: nil,
+      in: .defaultClient
+    ) { result in
+      guard case .success(let value) = result,
+        let href = value as? String,
+        !href.isEmpty,
+        let url = URL(string: href)
+      else { return }
+      FaviconCache.shared.ingest(host: host, from: url)
+    }
+  }
+
+  /// Pick the highest-resolution `<link rel="icon">` href on the
+  /// page. Matches `icon`, `shortcut icon`, and `apple-touch-icon`.
+  /// When no tag carries a `sizes` attribute the first hit wins —
+  /// the same heuristic Safari uses as a tiebreaker.
+  private static let faviconScanScript: String = """
+    (function() {
+      const links = document.querySelectorAll(
+        'link[rel~="icon"], link[rel~="shortcut"], link[rel~="apple-touch-icon"]'
+      );
+      let best = null, bestArea = 0;
+      for (const l of links) {
+        const href = l.href;
+        if (!href) continue;
+        const sizes = (l.getAttribute('sizes') || '').toLowerCase();
+        const m = sizes.match(/(\\d+)x(\\d+)/);
+        const area = m ? (parseInt(m[1], 10) * parseInt(m[2], 10)) : 0;
+        if (!best || area > bestArea) {
+          best = href;
+          bestArea = area;
+        }
+      }
+      return best || '';
+    })();
+    """
 
   private static func shouldDownload(_ response: URLResponse) -> Bool {
     guard let http = response as? HTTPURLResponse,

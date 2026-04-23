@@ -48,6 +48,7 @@ final class WorklaneSectionView: NSView {
     let focusedPaneId: ULID?
     let accentColor: (Int) -> NSColor
     let paneTitle: (PaneModel) -> String
+    let paneIcon: (PaneModel) -> NSImage?
     let onWorkspaceClick: (Int) -> Void
     let onPaneClick: (ULID) -> Void
   }
@@ -80,6 +81,7 @@ final class WorklaneSectionView: NSView {
           let row = PaneRow(
             paneId: pane.id,
             title: input.paneTitle(pane),
+            icon: input.paneIcon(pane),
             accentColor: wsColor,
             isCurrent: isCurrentPane
           )

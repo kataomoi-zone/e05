@@ -62,6 +62,12 @@ final class SidebarViewController: NSViewController {
   /// it fires (one-shot) or in `deinit` if still active.
   nonisolated(unsafe) private var dragEndMonitor: Any?
 
+  /// Block-based observer for `FaviconCache.didChangeNotification`.
+  /// Kept in lockstep with the `scrollObserver` pattern used by the
+  /// bookmarks/history sidebar views so all three favicon-aware
+  /// surfaces share one subscription style and one cleanup path.
+  nonisolated(unsafe) private var faviconObserver: NSObjectProtocol?
+
   /// Hover-in delay (seconds). Short enough to feel instant on
   /// intentional edge hover yet long enough to shrug off an accidental
   /// cursor fly-by crossing the edge strip.
@@ -190,6 +196,20 @@ final class SidebarViewController: NSViewController {
     // or `DownloadsBadgeView.widthAnchor >= height` clamps the pill
     // to a 16pt square, truncating the digit label.
     refreshDownloadsBadge()
+
+    // Rebuild the worklane when any host's favicon becomes available
+    // so the generic `globe` placeholder gets upgraded in place. Uses
+    // the block-based form + a `nonisolated(unsafe)` token so the
+    // subscription style matches `BookmarksSidebarView` /
+    // `HistorySidebarView` (the other favicon-aware surfaces),
+    // giving us one shared cleanup path in `deinit`.
+    faviconObserver = NotificationCenter.default.addObserver(
+      forName: FaviconCache.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.reloadWorklane() }
+    }
   }
 
   // NOTE: No deinit cleanup for the Downloads listener. The closure
@@ -218,6 +238,7 @@ final class SidebarViewController: NSViewController {
         focusedPaneId: focusedPaneId,
         accentColor: { PaneContainerViewController.accentColor(forWorkspaceAt: $0) },
         paneTitle: Self.displayTitle(for:),
+        paneIcon: Self.displayIcon(for:),
         onWorkspaceClick: { [weak container] index in
           container?.switchWorkspace(to: index)
         },
@@ -450,6 +471,9 @@ final class SidebarViewController: NSViewController {
     if let m = dragEndMonitor {
       NSEvent.removeMonitor(m)
     }
+    if let token = faviconObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
   }
 
   /// Whether hover triggers should currently fire. Disabled while the
@@ -540,6 +564,28 @@ final class SidebarViewController: NSViewController {
       return pane.address.url.host() ?? pane.address.url.absoluteString
     case .settings: return "Settings"
     case .unknown: return "(unknown)"
+    }
+  }
+
+  /// Leading icon for a worklane row. Terminal panes get a stable
+  /// `terminal` SF Symbol; browser panes try the `FaviconCache` for
+  /// the host first and fall back to a generic `globe` symbol while
+  /// the fetch is in flight (or on failure).
+  private static func displayIcon(for pane: PaneModel) -> NSImage? {
+    switch pane.address.kind {
+    case .terminal:
+      return NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
+    case .browser:
+      if let host = pane.address.url.host(percentEncoded: false),
+        let img = FaviconCache.shared.image(for: host)
+      {
+        return img
+      }
+      return NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    case .settings:
+      return NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+    case .unknown:
+      return NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: nil)
     }
   }
 }
