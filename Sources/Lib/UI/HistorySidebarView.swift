@@ -33,6 +33,7 @@ final class HistorySidebarView: NSView {
   private let emptyLabel = NSTextField(labelWithString: "No history yet")
   private var rows: [BrowsingHistory.Entry] = []
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
+  nonisolated(unsafe) private var faviconObserver: NSObjectProtocol?
 
   /// Cap on rows loaded into the sidebar list. 500 entries is
   /// comfortable for a flat scroll list; a planned search field
@@ -47,6 +48,17 @@ final class HistorySidebarView: NSView {
     setupLayout()
     reload()
     listenerToken = history.addListener { [weak self] in self?.reload() }
+    // Re-render every cell when a favicon fetch settles so rows
+    // showing the `globe` placeholder for the newly-cached host
+    // upgrade in place. Row count is capped at `rowLimit` so a
+    // single reloadData stays inexpensive.
+    faviconObserver = NotificationCenter.default.addObserver(
+      forName: FaviconCache.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.tableView.reloadData() }
+    }
   }
 
   @available(*, unavailable)
@@ -61,6 +73,9 @@ final class HistorySidebarView: NSView {
     // the closure weak-captures self, so post-dealloc invocations
     // are no-ops.
     if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = faviconObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
@@ -254,6 +269,9 @@ private final class HistorySidebarCellView: SidebarListCellView {
     return f
   }()
 
+  static let iconSize: CGFloat = 16
+
+  private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let subtitleLabel = NSTextField(labelWithString: "")
   private let actionButton = HoverIconButton()
@@ -271,6 +289,10 @@ private final class HistorySidebarCellView: SidebarListCellView {
   required init?(coder _: NSCoder) { fatalError() }
 
   private func setup() {
+    iconView.imageScaling = .scaleProportionallyUpOrDown
+    iconView.imageFrameStyle = .none
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+
     titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
     titleLabel.textColor = .labelColor
     titleLabel.lineBreakMode = .byTruncatingTail
@@ -296,13 +318,19 @@ private final class HistorySidebarCellView: SidebarListCellView {
     // Hover-revealed: the cell's tracking area toggles visibility.
     actionButton.isHidden = true
 
+    addSubview(iconView)
     addSubview(titleLabel)
     addSubview(subtitleLabel)
     addSubview(actionButton)
 
     NSLayoutConstraint.activate([
+      iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
+      iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+
       titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-      titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
       titleLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -6),
 
       subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
@@ -325,7 +353,15 @@ private final class HistorySidebarCellView: SidebarListCellView {
     titleLabel.stringValue = entry.title.isEmpty ? entry.url : entry.title
     // `host()` returns nil for atypical schemes; fall back to the
     // full URL so the row is still recognisable.
-    let host = URL(string: entry.url)?.host() ?? entry.url
+    let parsedHost = URL(string: entry.url)?.host(percentEncoded: false)
+    let host = parsedHost ?? entry.url
+    if let parsedHost, !parsedHost.isEmpty,
+      let image = FaviconCache.shared.image(for: parsedHost)
+    {
+      iconView.image = image
+    } else {
+      iconView.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    }
     // Relative time first, host last: long hosts (e.g. deep
     // artefact URLs) would otherwise consume the line and push the
     // timestamp past the truncation boundary, hiding the "when"

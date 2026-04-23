@@ -28,6 +28,7 @@ final class BookmarksSidebarView: NSView {
   private let emptyLabel = NSTextField(labelWithString: "No bookmarks yet")
   private var rows: [Bookmarks.Entry] = []
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
+  nonisolated(unsafe) private var faviconObserver: NSObjectProtocol?
 
   init(bookmarks: Bookmarks) {
     self.bookmarks = bookmarks
@@ -37,6 +38,18 @@ final class BookmarksSidebarView: NSView {
     setupLayout()
     reload()
     listenerToken = bookmarks.addListener { [weak self] in self?.reload() }
+    // Re-render every cell when a favicon fetch settles so rows
+    // showing the `globe` placeholder for the newly-cached host
+    // upgrade in place. A single reloadData is cheap — the row
+    // count is bounded by user-saved bookmarks and fits in one
+    // scroll view.
+    faviconObserver = NotificationCenter.default.addObserver(
+      forName: FaviconCache.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.tableView.reloadData() }
+    }
   }
 
   @available(*, unavailable)
@@ -51,6 +64,9 @@ final class BookmarksSidebarView: NSView {
     // the closure weak-captures self, so post-dealloc invocations
     // are no-ops.
     if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = faviconObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
@@ -305,7 +321,9 @@ enum BookmarkRowAction {
 /// the row.
 private final class BookmarksSidebarCellView: SidebarListCellView {
   static let height: CGFloat = 40
+  static let iconSize: CGFloat = 16
 
+  private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let hostLabel = NSTextField(labelWithString: "")
   private let actionButton = HoverIconButton()
@@ -323,6 +341,10 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
   required init?(coder _: NSCoder) { fatalError() }
 
   private func setup() {
+    iconView.imageScaling = .scaleProportionallyUpOrDown
+    iconView.imageFrameStyle = .none
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+
     titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
     titleLabel.textColor = .labelColor
     titleLabel.lineBreakMode = .byTruncatingTail
@@ -348,13 +370,19 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
     // Hover-revealed: the cell's tracking area toggles visibility.
     actionButton.isHidden = true
 
+    addSubview(iconView)
     addSubview(titleLabel)
     addSubview(hostLabel)
     addSubview(actionButton)
 
     NSLayoutConstraint.activate([
+      iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
+      iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+
       titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-      titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+      titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
       titleLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -6),
 
       hostLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
@@ -375,9 +403,15 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
   func configure(with entry: Bookmarks.Entry) {
     currentID = entry.id
     titleLabel.stringValue = entry.title.isEmpty ? entry.url : entry.title
+    let host = URL(string: entry.url)?.host(percentEncoded: false)
     // Fall back to the full URL if the host can't be parsed — rare
     // but possible for entries stored with an atypical scheme.
-    hostLabel.stringValue = URL(string: entry.url)?.host() ?? entry.url
+    hostLabel.stringValue = host ?? entry.url
+    if let host, !host.isEmpty, let image = FaviconCache.shared.image(for: host) {
+      iconView.image = image
+    } else {
+      iconView.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    }
     // Tooltips surface the full text when the compact 260pt sidebar
     // width truncates either label. The title tooltip shows the URL
     // as a secondary line so a hover reveals "what is this?" even
