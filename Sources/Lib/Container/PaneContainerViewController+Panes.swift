@@ -196,6 +196,39 @@ extension PaneContainerViewController {
       bv.onDownloadStarted = { [weak self] wkDownload in
         self?.downloadsManager.adopt(wkDownload)
       }
+    } else if let fv = pane.finderView {
+      // Finder pane: cwd, focus, navigation enabledness, and titles
+      // all flow through the same handlers the browser pane uses, so
+      // the URL bar / sidebar / window-title pipelines stay uniform.
+      // The pane.address rebuild here is what keeps the URL bar
+      // display, sidebar worklane label, and session.json in lock
+      // step with the directory the user is currently browsing.
+      fv.onPathChange = { [weak pane] url in
+        guard let pane else { return }
+        let newAddress = PaneAddress.finder(path: url.path(percentEncoded: false))
+        pane.address = newAddress
+        pane.urlBar.setDisplayURL(newAddress.displayString)
+      }
+      fv.onTitleChange = { [weak self, weak pane] title in
+        guard let self, let pane else { return }
+        self.handleTitleChange(pane: pane, title: title)
+      }
+      fv.onFocusChanged = { [weak self, weak pane] in
+        guard let self, let pane else { return }
+        self.handleFocusChange(from: pane)
+      }
+      fv.onNavigationStateChange = { [weak pane] canBack, canForward in
+        pane?.urlBar.setNavigationEnabled(back: canBack, forward: canForward)
+      }
+      // Initial enabledness — the navigation stack starts empty so
+      // both arrows render disabled until the first navigate.
+      pane.urlBar.setNavigationEnabled(back: false, forward: false)
+      pane.urlBar.setReloadEnabled(true)
+      // Title kicks the sidebar worklane row to the cwd's leaf name
+      // before the first navigate; without this the row reads
+      // "Finder" until the user clicks anything.
+      let initialTitle = fv.currentURL.lastPathComponent
+      handleTitleChange(pane: pane, title: initialTitle.isEmpty ? "Finder" : initialTitle)
     } else {
       // Terminal/other panes: navigation buttons always disabled
       pane.urlBar.setNavigationEnabled(back: false, forward: false)
@@ -217,15 +250,29 @@ extension PaneContainerViewController {
       pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
     }
 
-    // URL bar: back/forward/reload for browser panes
+    // URL bar: back/forward/reload route to browser or finder depending
+    // on which content the pane carries. Stop applies only to browser
+    // (a directory listing has nothing to interrupt).
     pane.urlBar.onBack = { [weak pane] in
-      pane?.browserView?.webView.goBack()
+      if let bv = pane?.browserView {
+        bv.webView.goBack()
+      } else if let fv = pane?.finderView {
+        fv.goBack()
+      }
     }
     pane.urlBar.onForward = { [weak pane] in
-      pane?.browserView?.webView.goForward()
+      if let bv = pane?.browserView {
+        bv.webView.goForward()
+      } else if let fv = pane?.finderView {
+        fv.goForward()
+      }
     }
     pane.urlBar.onReload = { [weak pane] in
-      pane?.browserView?.webView.reload()
+      if let bv = pane?.browserView {
+        bv.webView.reload()
+      } else if let fv = pane?.finderView {
+        fv.reload()
+      }
     }
     pane.urlBar.onStop = { [weak pane] in
       pane?.browserView?.webView.stopLoading()

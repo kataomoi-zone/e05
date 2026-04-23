@@ -13,6 +13,12 @@ public enum PaneWidthPreset: Equatable {
 public enum PaneContent {
   case terminal(GhosttyTerminalView)
   case browser(BrowserPaneView)
+  /// Native file-browser pane backed by `FinderPaneView`. Adding new
+  /// cases here forces compile errors at every switch site (rawContentView,
+  /// preferredFirstResponder, findHelper, init, sidebar display helpers),
+  /// so the enum exhaustiveness check works as the implicit checklist
+  /// for special-pane introductions.
+  case finder(FinderPaneView)
 }
 
 /// A single pane within a column — either a terminal or a browser.
@@ -56,11 +62,12 @@ public final class PaneModel {
     return v
   }()
 
-  /// The raw content NSView (terminal / browser).
+  /// The raw content NSView (terminal / browser / finder).
   public var rawContentView: NSView {
     switch content {
     case .terminal(let tv): return tv
     case .browser(let bv): return bv
+    case .finder(let fv): return fv
     }
   }
 
@@ -76,16 +83,24 @@ public final class PaneModel {
     return nil
   }
 
+  /// Convenience: returns FinderPaneView if this is a finder pane.
+  public var finderView: FinderPaneView? {
+    if case .finder(let fv) = content { return fv }
+    return nil
+  }
+
   /// The pane's find-in-page driver. Both `BrowserPaneView` and
   /// `GhosttyTerminalView` conform to `FindHelper`, so the shared
   /// find-bar controller can treat the two pane kinds uniformly
-  /// instead of branching on content. An exhaustive switch here
-  /// means adding a new `PaneContent` case forces a compiler error
-  /// on the missing find strategy.
+  /// instead of branching on content. Finder panes return nil because
+  /// their search affordance is row-filtering, not in-page glyph
+  /// highlighting; the shared find bar's open guard treats nil as
+  /// "no find UI" so ⌘F is silently ignored on finder panes.
   public var findHelper: FindHelper? {
     switch content {
     case .browser(let v): return v
     case .terminal(let v): return v
+    case .finder: return nil
     }
   }
 
@@ -99,6 +114,7 @@ public final class PaneModel {
     switch content {
     case .terminal(let tv): return tv
     case .browser(let bv): return bv.webView
+    case .finder(let fv): return fv.keyboardFocusTarget
     }
   }
 
@@ -129,6 +145,21 @@ public final class PaneModel {
     case .browser:
       let bv = Self.makeBrowserView()
       self.content = .browser(bv)
+    case .finder:
+      // Empty path means the bare `e05://finder` URL — substitute the
+      // user's home directory and rebuild the address so the URL bar
+      // and session persistence reflect the actual cwd. Any non-empty
+      // path is taken at face value (file URL) and used directly.
+      let path = address.currentPath
+      let initialURL: URL
+      if path.isEmpty {
+        initialURL = FileManager.default.homeDirectoryForCurrentUser
+        self.address = PaneAddress.finder(path: initialURL.path(percentEncoded: false))
+      } else {
+        initialURL = URL(fileURLWithPath: path, isDirectory: true)
+      }
+      let fv = FinderPaneView(initialURL: initialURL)
+      self.content = .finder(fv)
     case .settings:
       // Settings is planned but not yet implemented. Log and fall
       // back to a blank browser so users who type `e05://settings`
@@ -239,7 +270,7 @@ public final class PaneModel {
 
     // Start with URL bar hidden
     applyURLBarVisibility()
-    urlBar.setDisplayURL(isBlankBrowser ? "" : address.description)
+    urlBar.setDisplayURL(isBlankBrowser ? "" : address.displayString)
   }
 
   // MARK: - URL Bar Toggle

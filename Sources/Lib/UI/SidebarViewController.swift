@@ -562,6 +562,9 @@ final class SidebarViewController: NSViewController {
     case .terminal: return "Terminal"
     case .browser:
       return pane.address.url.host() ?? pane.address.url.absoluteString
+    case .finder:
+      let last = pane.address.url.lastPathComponent
+      return last.isEmpty || last == "/" ? "Finder" : last
     case .settings: return "Settings"
     case .unknown: return "(unknown)"
     }
@@ -582,6 +585,8 @@ final class SidebarViewController: NSViewController {
         return img
       }
       return NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    case .finder:
+      return NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
     case .settings:
       return NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
     case .unknown:

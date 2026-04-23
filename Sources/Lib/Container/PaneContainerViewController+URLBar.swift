@@ -136,10 +136,20 @@ extension PaneContainerViewController {
       setFocus(columnIndex: colIdx, paneIndex: paneIdx)
     } else {
       // Same type: navigate in place
-      // Browser → browser: load new URL. Terminal → terminal: no-op (address update only).
+      // Browser → browser: load new URL. Terminal → terminal: no-op
+      // (address update only). Finder → finder: navigate the file
+      // browser to the new path; the pane.address rebuild then comes
+      // back through `FinderPaneView.onPathChange` so the URL bar
+      // ends up displaying whatever path the finder actually resolved
+      // to (handles symlinks and trailing-slash normalisation).
       pane.address = newAddress
       if let bv = pane.browserView {
         bv.navigate(to: newAddress.url.absoluteString)
+      } else if let fv = pane.finderView, newAddress.kind == .finder {
+        let path = newAddress.currentPath
+        if !path.isEmpty {
+          fv.navigate(to: URL(fileURLWithPath: path, isDirectory: true))
+        }
       }
       view.window?.makeFirstResponder(pane.preferredFirstResponder)
     }

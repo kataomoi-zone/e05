@@ -238,6 +238,15 @@ extension PaneContainerViewController {
         handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
       ),
       Action(
+        id: "new_finder",
+        title: "New Finder Column",
+        // No keyboard shortcut: ⌥⌃F is taken by Toggle Fold and ⌘F by
+        // Find in Page. The palette is the discovery surface for now;
+        // a binding can be added once the customisation phase exposes
+        // a way for users to claim a free chord.
+        handler: { [weak self] in self?.addColumn(address: PaneAddress.finder(path: "")) }
+      ),
+      Action(
         id: "command_palette",
         title: "Command Palette",
         keyEquivalent: "p",

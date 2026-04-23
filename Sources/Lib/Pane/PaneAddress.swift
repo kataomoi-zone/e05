@@ -4,6 +4,11 @@ import Foundation
 ///
 /// Supported schemes:
 /// - `e05://terminal` — terminal pane
+/// - `e05://finder[/absolute-path]` — native file-browser pane. The
+///   current working directory travels in the URL path, so the address
+///   remains a single source of truth for session persistence, sidebar
+///   worklane labels, and URL-bar display; `currentPath` decodes it back
+///   into a filesystem path.
 /// - `e05://settings` — settings pane (future)
 /// - `https://...`, `http://...` — browser pane
 ///
@@ -23,6 +28,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
       guard let host = url.host() else { return .unknown }
       switch host {
       case "terminal": return .terminal
+      case "finder": return .finder
       case "settings": return .settings
       default: return .unknown
       }
@@ -38,6 +44,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   public enum Kind: Equatable {
     case terminal
     case browser
+    case finder
     case settings
     case unknown
   }
@@ -49,7 +56,15 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   }
 
   public init?(_ string: String) {
-    guard let url = URL(string: string) else { return nil }
+    // `encodingInvalidCharacters: true` lets users type a URL with
+    // raw non-ASCII characters (e.g. `e05://finder/.../日本語フォルダ`)
+    // and still have it parse: Foundation percent-encodes the invalid
+    // bytes before building the URL. Already-encoded input passes
+    // through unchanged, so this keeps backward compatibility with
+    // any `%E6…`-style address that lands here from session.json.
+    guard let url = URL(string: string, encodingInvalidCharacters: true) else {
+      return nil
+    }
     self.url = url
   }
 
@@ -61,6 +76,57 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
   /// Blank browser address (no page loaded).
   public static let blankBrowser = PaneAddress(URL(string: "about:blank")!)
+
+  // MARK: - Finder
+
+  /// Build an `e05://finder<path>` address from an absolute filesystem path.
+  /// Empty / non-absolute input falls back to a bare `e05://finder` URL
+  /// so the containing pane can substitute the user's home directory.
+  ///
+  /// `URLComponents` handles percent-encoding automatically, so paths
+  /// with spaces, Japanese characters, or other non-ASCII bytes round
+  /// trip through `PaneAddress(String)` → `currentPath` without caller
+  /// intervention.
+  public static func finder(path: String) -> PaneAddress {
+    var components = URLComponents()
+    components.scheme = internalScheme
+    components.host = "finder"
+    if path.hasPrefix("/") {
+      components.path = path
+    }
+    // `URLComponents` with scheme + host always produces a valid URL
+    // for any String path that starts with `/`; the force-unwrap is
+    // safe. The bare `e05://finder` fallback (empty path) is also
+    // produced by URLComponents without error.
+    return PaneAddress(components.url!)
+  }
+
+  /// Filesystem path encoded in this address, percent-decoded.
+  /// Returns an empty string for non-finder addresses and for the bare
+  /// `e05://finder` root (where the caller should substitute the user's
+  /// home directory). The kind guard enforces the contract at the
+  /// getter so callers don't accidentally use `/foo` from an
+  /// `https://example.com/foo` address as a filesystem path.
+  public var currentPath: String {
+    guard kind == .finder else { return "" }
+    return url.path(percentEncoded: false)
+  }
+
+  /// Human-readable rendering of the address for the URL bar.
+  ///
+  /// Finder addresses decode the path so paths with non-ASCII
+  /// characters display as `e05://finder/Users/you/日本語フォルダ`
+  /// rather than the percent-encoded `%E6%97%A5%E6%9C%AC…`. All other
+  /// kinds fall through to `absoluteString`, which preserves the
+  /// existing browser/terminal URL display (browsers historically
+  /// surface the percent-encoded form and changing that is out of
+  /// scope for the finder work).
+  public var displayString: String {
+    if kind == .finder && !currentPath.isEmpty {
+      return "\(Self.internalScheme)://finder\(currentPath)"
+    }
+    return url.absoluteString
+  }
 
   private static let allowedSchemes: Set<String> = [internalScheme, "https", "http", "about"]
 

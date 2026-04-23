@@ -14,6 +14,117 @@ struct PaneAddressTests {
     #expect(PaneAddress.settings.kind == .settings)
   }
 
+  // MARK: - Finder
+
+  @Test("bare e05://finder resolves to finder kind with empty path")
+  func finderBareKind() {
+    let addr = PaneAddress("e05://finder")!
+    #expect(addr.kind == .finder)
+    #expect(addr.currentPath.isEmpty)
+  }
+
+  @Test("e05://finder with path resolves to finder kind and exposes the path")
+  func finderWithPath() {
+    let addr = PaneAddress("e05://finder/Users/kawarimidoll")!
+    #expect(addr.kind == .finder)
+    #expect(addr.currentPath == "/Users/kawarimidoll")
+  }
+
+  @Test("e05://finder trailing slash preserves the root path")
+  func finderRootPath() {
+    let addr = PaneAddress("e05://finder/")!
+    #expect(addr.kind == .finder)
+    #expect(addr.currentPath == "/")
+  }
+
+  @Test("PaneAddress.finder(path:) round-trips through the URL string")
+  func finderBuilderRoundTrip() {
+    let built = PaneAddress.finder(path: "/Users/kawarimidoll")
+    let parsed = PaneAddress(built.description)!
+    #expect(parsed.kind == .finder)
+    #expect(parsed.currentPath == "/Users/kawarimidoll")
+  }
+
+  @Test("PaneAddress.finder(path:) percent-encodes non-ASCII characters")
+  func finderBuilderEncodesUnicode() {
+    // Japanese, spaces, and other non-ASCII bytes must survive a round
+    // trip so session.json entries referencing directories like
+    // `~/Documents/日本語フォルダ/` restore without corruption.
+    let original = "/Users/kawarimidoll/日本語 フォルダ"
+    let built = PaneAddress.finder(path: original)
+    let parsed = PaneAddress(built.description)!
+    #expect(parsed.kind == .finder)
+    #expect(parsed.currentPath == original)
+  }
+
+  @Test("finder displayString shows non-ASCII paths decoded for the URL bar")
+  func finderDisplayStringDecodes() {
+    // The URL bar should show `e05://finder/Users/you/日本語フォルダ`
+    // rather than the percent-encoded form; that form makes the URL
+    // bar the authoritative cwd display for a non-technical user.
+    let built = PaneAddress.finder(path: "/Users/kawarimidoll/日本語フォルダ")
+    #expect(built.displayString == "e05://finder/Users/kawarimidoll/日本語フォルダ")
+    // Round-trip: parsing the display string should land back on the
+    // same decoded path so typing the decoded URL into the URL bar
+    // navigates as expected.
+    let parsed = PaneAddress(built.displayString)!
+    #expect(parsed.kind == .finder)
+    #expect(parsed.currentPath == "/Users/kawarimidoll/日本語フォルダ")
+  }
+
+  @Test("displayString falls back to absoluteString for non-finder addresses")
+  func displayStringBrowserFallback() {
+    let https = PaneAddress("https://example.com/path")!
+    #expect(https.displayString == https.url.absoluteString)
+    #expect(PaneAddress.terminal.displayString == "e05://terminal")
+    // Bare `e05://finder` (no path) also falls back so the URL bar
+    // shows exactly what's in the address rather than inventing a
+    // trailing slash.
+    let bareFinder = PaneAddress("e05://finder")!
+    #expect(bareFinder.displayString == "e05://finder")
+  }
+
+  @Test("PaneAddress accepts raw non-ASCII URL strings")
+  func initAcceptsRawUnicode() {
+    // Users typing `e05://finder/.../日本語フォルダ` into the URL bar
+    // must reach the same address they would from parsing the encoded
+    // form; the encodingInvalidCharacters init is what makes this
+    // round-trip symmetric.
+    let addr = PaneAddress("e05://finder/Users/kawarimidoll/日本語フォルダ")
+    #expect(addr?.kind == .finder)
+    #expect(addr?.currentPath == "/Users/kawarimidoll/日本語フォルダ")
+  }
+
+  @Test("PaneAddress.finder(path:) falls back to bare host for non-absolute input")
+  func finderBuilderFallsBackToRoot() {
+    // A relative path (missing leading slash) can't be embedded as a
+    // URL path component without inventing semantics. Fall back to the
+    // bare `e05://finder` URL so the pane's init can substitute the
+    // home directory, matching how Finder opens when no folder is
+    // specified.
+    let empty = PaneAddress.finder(path: "")
+    let relative = PaneAddress.finder(path: "relative/path")
+    #expect(empty.description == "e05://finder")
+    #expect(relative.description == "e05://finder")
+    #expect(empty.kind == .finder)
+    #expect(relative.kind == .finder)
+  }
+
+  @Test("requiresContentSwitch is false between two finder addresses with different paths")
+  func finderNoSwitchBetweenPaths() {
+    let home = PaneAddress.finder(path: "/Users/kawarimidoll")
+    let tmp = PaneAddress.finder(path: "/tmp")
+    #expect(!home.requiresContentSwitch(to: tmp))
+  }
+
+  @Test("requiresContentSwitch is true between finder and browser")
+  func finderBrowserSwitch() {
+    let finder = PaneAddress.finder(path: "/Users/kawarimidoll")
+    let browser = PaneAddress("https://example.com")!
+    #expect(finder.requiresContentSwitch(to: browser))
+    #expect(browser.requiresContentSwitch(to: finder))
+  }
+
   @Test("retired special-pane hosts resolve to unknown kind")
   func retiredSpecialPanesAreUnknown() {
     // The history / bookmarks / downloads hosts used to have their
