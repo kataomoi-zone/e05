@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// A suggestion entry displayed in the URL bar dropdown.
@@ -88,14 +89,24 @@ public struct Suggestion: Equatable {
 /// - `secondary`: bottom-line text (e.g. URL). Empty string when absent.
 /// - `accessory`: trailing-edge text (e.g. keyboard shortcut "⌥⌃L").
 ///   `nil` hides the label entirely.
-public struct SuggestionCellModel: Equatable {
+/// - `leadingImage`: 16pt icon rendered before the text stack (favicon
+///   for URL rows, SF Symbol for actions). `nil` collapses the icon
+///   slot so action rows that opt out don't leave dead whitespace.
+public struct SuggestionCellModel {
   public let primary: String
   public let secondary: String
   public let accessory: String?
+  public let leadingImage: NSImage?
 
-  public init(primary: String, secondary: String, accessory: String? = nil) {
+  public init(
+    primary: String,
+    secondary: String,
+    accessory: String? = nil,
+    leadingImage: NSImage? = nil
+  ) {
     self.primary = primary
     self.secondary = secondary
     self.accessory = accessory
+    self.leadingImage = leadingImage
   }
 }

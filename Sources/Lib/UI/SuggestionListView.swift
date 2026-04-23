@@ -291,9 +291,23 @@ extension SuggestionListView: NSTableViewDataSource {
 /// `NSTableView`'s `viewFor:` delegate accepts any `NSView`.
 @MainActor
 private final class SuggestionCellView: NSView {
+  let iconView = NSImageView()
   let primaryLabel = NSTextField(labelWithString: "")
   let secondaryLabel = NSTextField(labelWithString: "")
   let accessoryLabel = NSTextField(labelWithString: "")
+
+  /// Leading edge of the text stack. Points at the iconView trailing
+  /// anchor when the model carries an icon, or flush at 8pt from the
+  /// cell's leading edge when the slot is empty. Toggled in `apply`
+  /// so action rows without icons don't leave a 22pt gap.
+  private var textLeadingToIcon: NSLayoutConstraint!
+  private var textLeadingFlush: NSLayoutConstraint!
+
+  /// Width of the icon slot. Collapses to 0 for icon-less rows so
+  /// the text stack reclaims the horizontal space.
+  private var iconWidth: NSLayoutConstraint!
+
+  static let iconSize: CGFloat = 16
 
   // Flipped (top-down) coordinates match the enclosing NSTableView/
   // NSTableRowView so topAnchor/bottomAnchor constraints map to their
@@ -321,9 +335,26 @@ private final class SuggestionCellView: NSView {
       accessoryLabel.stringValue = ""
       accessoryLabel.isHidden = true
     }
+    if let image = model.leadingImage {
+      iconView.image = image
+      iconView.isHidden = false
+      iconWidth.constant = Self.iconSize
+      textLeadingFlush.isActive = false
+      textLeadingToIcon.isActive = true
+    } else {
+      iconView.image = nil
+      iconView.isHidden = true
+      iconWidth.constant = 0
+      textLeadingToIcon.isActive = false
+      textLeadingFlush.isActive = true
+    }
   }
 
   private func configure() {
+    iconView.imageScaling = .scaleProportionallyUpOrDown
+    iconView.imageFrameStyle = .none
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+
     primaryLabel.font = Self.primaryFont
     primaryLabel.textColor = .white
     primaryLabel.lineBreakMode = .byTruncatingTail
@@ -347,9 +378,17 @@ private final class SuggestionCellView: NSView {
     // compress first when the row is too narrow.
     accessoryLabel.setContentHuggingPriority(.required, for: .horizontal)
 
+    addSubview(iconView)
     addSubview(primaryLabel)
     addSubview(secondaryLabel)
     addSubview(accessoryLabel)
+
+    iconWidth = iconView.widthAnchor.constraint(equalToConstant: Self.iconSize)
+    textLeadingToIcon = primaryLabel.leadingAnchor.constraint(
+      equalTo: iconView.trailingAnchor, constant: 6)
+    textLeadingFlush = primaryLabel.leadingAnchor.constraint(
+      equalTo: leadingAnchor, constant: 8)
+    textLeadingToIcon.isActive = true
 
     // Flush layout: title pinned to the cell top, secondary pinned 2pt
     // below. No top/bottom padding — padding here would make the single-
@@ -360,11 +399,15 @@ private final class SuggestionCellView: NSView {
     // secondary trailing constraints target the accessory's leading
     // anchor with an 8pt gap so long titles don't collide with shortcuts.
     NSLayoutConstraint.activate([
-      primaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconWidth,
+      iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+
       primaryLabel.topAnchor.constraint(equalTo: topAnchor),
       primaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
-      secondaryLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      secondaryLabel.leadingAnchor.constraint(equalTo: primaryLabel.leadingAnchor),
       secondaryLabel.topAnchor.constraint(equalTo: primaryLabel.bottomAnchor, constant: 2),
       secondaryLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
       secondaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),

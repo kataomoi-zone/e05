@@ -443,13 +443,39 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// `SuggestionListView`. The primary line uses `displayTitle` (which
   /// already prefixes bookmarks with `★`); the URL becomes the secondary
   /// line. No accessory is set for URL-bar suggestions — that slot is
-  /// reserved for the command-palette action keyboard shortcuts.
+  /// reserved for the command-palette action keyboard shortcuts. The
+  /// leading image is the host's cached favicon when available, or a
+  /// generic `globe` SF Symbol as a placeholder while the fetch warms.
+  @MainActor
   private static func cellModel(from suggestion: Suggestion) -> SuggestionCellModel {
     SuggestionCellModel(
       primary: suggestion.displayTitle,
       secondary: suggestion.url,
-      accessory: nil
+      accessory: nil,
+      leadingImage: faviconImage(for: suggestion.url)
     )
+  }
+
+  /// Resolve the host from `urlString` and return the matching favicon
+  /// from the shared cache. Falls back to a `globe` SF Symbol when the
+  /// host is missing, untracked, or the cache hasn't resolved it yet —
+  /// the same placeholder the sidebar worklane uses, so cold rows in
+  /// both surfaces look consistent. Search-engine rows get a dedicated
+  /// magnifying-glass icon so the row reads as an action rather than
+  /// a navigation to the search engine's homepage.
+  @MainActor
+  private static func faviconImage(for urlString: String) -> NSImage? {
+    if PaneAddress.isSearchQuery(urlString: urlString) {
+      return NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+    }
+    if let url = URL(string: urlString),
+      let host = url.host(percentEncoded: false),
+      !host.isEmpty,
+      let image = FaviconCache.shared.image(for: host)
+    {
+      return image
+    }
+    return NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
   }
 
   // MARK: - Actions

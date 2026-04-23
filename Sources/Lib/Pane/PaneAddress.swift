@@ -170,6 +170,25 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   // TODO: make configurable via user config
   private static let searchTemplate = "https://duckduckgo.com/?q=%s"
 
+  /// Whether `urlString` was produced by `searchURL(query:)`. URL-bar
+  /// UI branches on this to render a magnifying-glass icon for search
+  /// rows instead of the search engine's own favicon — so the row
+  /// reads as "run a search" rather than "navigate to duckduckgo.com".
+  /// Derived from `searchTemplate` so it tracks template changes
+  /// automatically.
+  ///
+  /// The walk relies on the placeholder starting with `%` (printf
+  /// `%s` convention). If the template is ever rewritten with a
+  /// different sentinel (`{query}`, `$QUERY`, …), this would walk
+  /// the entire template and match no URL — a safe degradation
+  /// relative to the dangerous failure mode of matching every URL,
+  /// which is blocked by the `!prefix.isEmpty` guard. Either way,
+  /// rework this alongside any template syntax change.
+  public static func isSearchQuery(urlString: String) -> Bool {
+    let prefix = searchTemplate.prefix(while: { $0 != "%" })
+    return !prefix.isEmpty && urlString.hasPrefix(prefix)
+  }
+
   /// Build a browser address for a search query using the default search engine.
   public static func searchURL(query: String) -> PaneAddress? {
     // .urlQueryAllowed keeps `+` unencoded, but servers may interpret it as
