@@ -394,24 +394,38 @@ extension PaneContainerViewController {
   }
 
   /// Compute where the scroll view should land so `column` is
-  /// visible. Call with the layout already settled at the column's
-  /// final width — reading the frame during the insert tween would
-  /// capture an intermediate width and target the wrong X. Returns
-  /// `nil` when the whole content already fits.
+  /// centred within the visible (post-inset) region. Call with the
+  /// layout already settled at the column's final width — reading
+  /// the frame during the insert tween would capture an intermediate
+  /// width and target the wrong X. Returns `nil` when the whole
+  /// content already fits in view.
+  ///
+  /// Honours `scrollView.contentInsets` so a column doesn't end up
+  /// hidden behind the pinned sidebar: the visible region is
+  /// `(insets.left, scrollView.bounds.width - insets.right)`, the
+  /// scroll origin's lower bound is `-insets.left` (the natural
+  /// "left edge" with the inset present), and centring is computed
+  /// against the post-inset midpoint rather than the raw bounds.
   func computeScrollTargetX(for column: ColumnModel) -> CGFloat? {
     let columnFrame = column.containerView.frame
     let visibleWidth = scrollView.contentView.bounds.width
     let contentWidth = stackView.frame.width
-    guard contentWidth > visibleWidth else { return nil }
+    let insets = scrollView.contentInsets
+    let effectiveVisibleWidth = visibleWidth - insets.left - insets.right
+    guard contentWidth > effectiveVisibleWidth else { return nil }
 
     let targetX: CGFloat
-    if columnFrame.width >= visibleWidth {
-      targetX = columnFrame.minX
+    if columnFrame.width >= effectiveVisibleWidth {
+      // Column can't fit, pin its left edge to the visible region's
+      // leading edge (i.e. just past the sidebar inset).
+      targetX = columnFrame.minX - insets.left
     } else {
-      targetX = columnFrame.midX - visibleWidth / 2
+      let visibleCenter = (insets.left + visibleWidth - insets.right) / 2
+      targetX = columnFrame.midX - visibleCenter
     }
-    let maxScrollX = contentWidth - visibleWidth
-    return max(0, min(maxScrollX, targetX))
+    let minScrollX = -insets.left
+    let maxScrollX = contentWidth - visibleWidth + insets.right
+    return max(minScrollX, min(maxScrollX, targetX))
   }
 
   /// Tween the scroll view to the given X in its own animation

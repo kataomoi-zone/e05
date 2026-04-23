@@ -515,25 +515,13 @@ extension PaneContainerViewController {
 
   func scrollToColumn(at index: Int) {
     guard let column = columns[safe: index] else { return }
-    let targetView = column.containerView
 
     view.layoutSubtreeIfNeeded()
-
-    let columnFrame = targetView.frame
-    let visibleWidth = scrollView.contentView.bounds.width
-    let contentWidth = stackView.frame.width
-
-    if contentWidth <= visibleWidth { return }
-
-    let targetX: CGFloat
-    if columnFrame.width >= visibleWidth {
-      targetX = columnFrame.minX
-    } else {
-      targetX = columnFrame.midX - visibleWidth / 2
-    }
-
-    let maxScrollX = contentWidth - visibleWidth
-    let clampedX = max(0, min(maxScrollX, targetX))
+    // Centre / clamp logic lives in `computeScrollTargetX` so the
+    // focus-driven scroll and the insert/animate-in scroll both
+    // honour `contentInsets.left` (= the pinned-sidebar inset)
+    // and resolve a focused column's scroll target the same way.
+    guard let clampedX = computeScrollTargetX(for: column) else { return }
 
     // Defer the animator call so it lands on a fresh run-loop tick.
     // Mouse-event-driven paths (direct pane click, sidebar row click)

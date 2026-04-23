@@ -319,6 +319,23 @@ public final class PaneContainerViewController: NSViewController {
         // `workspace.scrollX` puts the viewport where it was saved.
         restoreScroll(in: currentWorkspace)
         NSLog("[e05/ws] viewDidAppear restoreScroll x=%f", currentWorkspace.scrollX)
+
+        // The saved `scrollX` lives in document-view coordinates and
+        // doesn't know about the current `contentInsets.left` — a
+        // session that was saved with the sidebar unpinned and is
+        // now restored with it pinned (or vice versa) puts the
+        // focused column behind the sidebar. Snap to a centred
+        // origin (via `computeScrollTargetX`, which honours the
+        // inset) when the focused column ended up outside the
+        // visible region. Direct setBoundsOrigin matches the
+        // immediate-snap idiom the rest of `restoreScroll` uses
+        // instead of triggering an entrance tween.
+        if let focused = columns[safe: focusedColumnIndex],
+          !scrollView.documentVisibleRect.contains(focused.containerView.frame),
+          let targetX = computeScrollTargetX(for: focused)
+        {
+          scrollView.contentView.setBoundsOrigin(NSPoint(x: targetX, y: 0))
+        }
       }
     }
   }
