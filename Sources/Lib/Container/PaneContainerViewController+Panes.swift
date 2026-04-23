@@ -55,6 +55,24 @@ extension PaneContainerViewController {
     columns.insert(column, at: insertIndex)
 
     rebuildStackView()
+
+    // Pin the column's height to the hosting workspace stack so the
+    // vertical layout is never ambiguous. Without this, the default
+    // `.centerY` alignment of `NSStackView(.horizontal)` leaves each
+    // column's height up to AppKit's ambiguity-resolution fallback.
+    // Columns created before the window finishes sizing (startup /
+    // session restore) fell back to window height and looked fine;
+    // columns inserted mid-session (`ctrl+opt+b`, a bookmark /
+    // history activation, or any other `addColumn` callsite) landed
+    // with an arbitrary height that often exceeded the window, so
+    // the pane rendered past the window bottom. Activated after
+    // `rebuildStackView()` so both views share a common ancestor —
+    // activating against `stackView.heightAnchor` before that throws
+    // `NSInternalInconsistencyException` and kills the startup path.
+    column.containerView.heightAnchor
+      .constraint(equalTo: currentWorkspaceVC.stackView.heightAnchor)
+      .isActive = true
+
     view.layoutSubtreeIfNeeded()
 
     // Capture the scroll target while the layout still reflects
