@@ -247,6 +247,16 @@ extension PaneContainerViewController {
         handler: { [weak self] in self?.addColumn(address: PaneAddress.finder(path: "")) }
       ),
       Action(
+        id: "toggle_hidden_files",
+        title: "Toggle Hidden Files",
+        // Flip the global finder-pane "show hidden files" setting.
+        // Static label mirrors the other `toggle_*` actions that
+        // read the action by intent ("Toggle Fold", "Toggle URL
+        // Bar") rather than by post-flip state; the effect is
+        // visible in the finder pane itself immediately on trigger.
+        handler: { FinderSettings.toggleShowHiddenFiles() }
+      ),
+      Action(
         id: "command_palette",
         title: "Command Palette",
         keyEquivalent: "p",

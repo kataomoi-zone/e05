@@ -97,6 +97,15 @@ public final class FinderPaneView: NSView {
   private var currentSortKey: SortKey = .name
   private var sortAscending: Bool = true
 
+  /// Block-based observer for `FinderSettings.didChangeNotification`.
+  /// Held so `deinit` can pass the token to `removeObserver`:
+  /// NotificationCenter retains the closure until the token is
+  /// explicitly handed back, so `[weak self]` alone won't free the
+  /// subscription when the pane tears down. `nonisolated(unsafe)` is
+  /// required because Swift 6 makes `deinit` nonisolated by default
+  /// while the property type itself is non-Sendable.
+  nonisolated(unsafe) private var settingsObserver: NSObjectProtocol?
+
   public init(initialURL: URL) {
     self.currentURL = initialURL
     self.tableView = FinderTableView()
@@ -116,6 +125,19 @@ public final class FinderPaneView: NSView {
       self?.onFocusChanged?()
     }
 
+    // Re-enumerate the current directory whenever the global
+    // hidden-files toggle flips so every open finder pane picks up
+    // the new filter at once, matching Finder's application-wide
+    // behaviour. Matches the sidebar favicon observer pattern
+    // (`BookmarksSidebarView` et al.).
+    settingsObserver = NotificationCenter.default.addObserver(
+      forName: FinderSettings.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.reload() }
+    }
+
     loadDirectory(url: initialURL, pushHistory: false, announce: false)
   }
 
@@ -124,11 +146,18 @@ public final class FinderPaneView: NSView {
     fatalError()
   }
 
-  // No `deinit` needed: `DirectoryMonitor`'s own `deinit` cancels the
-  // DispatchSource. Calling `MainActor.assumeIsolated` from this
-  // class's deinit would crash if the last reference were ever
-  // dropped on a non-main thread (autorelease pool drains, Combine
-  // chains, etc.) — Swift 6 deinit is nonisolated by default.
+  deinit {
+    // `DirectoryMonitor` cancels its own DispatchSource in its
+    // deinit; only the block-based NotificationCenter observer needs
+    // explicit release here. `removeObserver(_:)` is nonisolated so
+    // calling it from the Swift 6 default nonisolated deinit is safe
+    // — no `MainActor.assumeIsolated` hop, and therefore none of the
+    // "last reference released off-main" crash risk that touching
+    // MainActor-isolated properties from deinit would carry.
+    if let token = settingsObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+  }
 
   // MARK: - Setup
 
@@ -294,11 +323,20 @@ public final class FinderPaneView: NSView {
       }
       : []
 
+    // Honour the global hidden-files toggle every reload: the setting
+    // can flip between a cwd's first load and a directory-monitor
+    // burst reload, so baking the options once at init would leave
+    // open panes out of sync with the current preference.
+    var options: FileManager.DirectoryEnumerationOptions =
+      [.skipsSubdirectoryDescendants, .skipsPackageDescendants]
+    if !FinderSettings.showHiddenFiles {
+      options.insert(.skipsHiddenFiles)
+    }
     var loaded: [FileItem] = []
     if let enumerator = FileManager.default.enumerator(
       at: currentURL,
       includingPropertiesForKeys: Array(FileItem.resourceKeys),
-      options: [.skipsSubdirectoryDescendants, .skipsHiddenFiles, .skipsPackageDescendants]
+      options: options
     ) {
       for case let url as URL in enumerator {
         loaded.append(FileItem(url: url))
@@ -566,6 +604,23 @@ extension FinderPaneView: NSTableViewDelegate {
     }
   }
 
+  /// Supply a `FinderRowView` so hidden filesystem entries (dotfiles,
+  /// `~/Library`, anything with `isHidden` set) can render at reduced
+  /// opacity while leaving the selection highlight at full intensity.
+  /// Matches Finder's list view under `⌘⇧.`: hidden rows dim on rest,
+  /// then snap back to full brightness on selection so the blue
+  /// highlight reads the same for hidden and non-hidden rows.
+  public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    let rowView =
+      tableView.makeView(withIdentifier: Self.rowIdentifier, owner: nil) as? FinderRowView
+      ?? FinderRowView()
+    rowView.identifier = Self.rowIdentifier
+    rowView.dimmed = row >= 0 && row < items.count && items[row].isHidden
+    return rowView
+  }
+
+  private static let rowIdentifier = NSUserInterfaceItemIdentifier("finder.row")
+
   private static func makeNameCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
     let cell = NSTableCellView()
     cell.identifier = identifier
@@ -746,6 +801,35 @@ extension FinderPaneView {
   fileprivate func moveSelectionRelative(by offset: Int) { moveSelection(by: offset) }
   fileprivate func selectAbsoluteRow(_ row: Int) { selectRow(row) }
   fileprivate var lastRowIndex: Int { max(0, items.count - 1) }
+}
+
+// MARK: - Row View
+
+/// `NSTableRowView` subclass that dims its cells when the row belongs
+/// to a hidden filesystem entry, and restores full opacity while the
+/// row is selected. Overriding `isSelected`'s didSet keeps the alpha
+/// in lockstep with AppKit's selection state without needing an
+/// explicit `tableViewSelectionDidChange` sweep — AppKit KVO-signals
+/// selection changes directly onto each row view.
+///
+/// Nothing else is overridden, so the default selection highlight
+/// (blue fill in list-view inset style) draws as normal; we only
+/// ride on top of it with the alpha tweak.
+@MainActor
+private final class FinderRowView: NSTableRowView {
+  var dimmed: Bool = false {
+    didSet { applyAlpha() }
+  }
+
+  override var isSelected: Bool {
+    didSet { applyAlpha() }
+  }
+
+  private func applyAlpha() {
+    alphaValue = (dimmed && !isSelected) ? Self.dimmedAlpha : 1.0
+  }
+
+  private static let dimmedAlpha: CGFloat = 0.5
 }
 
 // MARK: - Status Bar View
