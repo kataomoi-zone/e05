@@ -106,6 +106,29 @@ public final class FinderPaneView: NSView {
   /// while the property type itself is non-Sendable.
   nonisolated(unsafe) private var settingsObserver: NSObjectProtocol?
 
+  /// Set while the Name column's text field is handed off to the
+  /// field editor for inline rename. Two effects hang off this:
+  /// - `scheduleDebouncedReload` skips reloads so the in-flight
+  ///   `moveItem` event we're about to emit doesn't blow the edited
+  ///   cell out of the table mid-keystroke.
+  /// - `controlTextDidEndEditing` uses it to distinguish a genuine
+  ///   rename commit from spurious end-editing notifications (the
+  ///   field editor posts one during teardown).
+  private var isRenaming: Bool = false
+
+  /// Row index the field editor is attached to during rename. Captured
+  /// alongside `isRenaming` so the commit path can resolve the original
+  /// item even if the sort or a concurrent filesystem event reshuffles
+  /// `items` between begin and end editing.
+  private var renamingRow: Int?
+
+  /// Whether the table has at least one selected row. Exposed so the
+  /// Move-to-Trash action can disable its menu item and palette entry
+  /// when nothing is selected.
+  public var hasSelection: Bool {
+    !tableView.selectedRowIndexes.isEmpty
+  }
+
   public init(initialURL: URL) {
     self.currentURL = initialURL
     self.tableView = FinderTableView()
@@ -307,9 +330,22 @@ public final class FinderPaneView: NSView {
   }
 
   private func scheduleDebouncedReload() {
+    // Suppress monitor-driven reloads while the Name column's text
+    // field is the field editor's client. A reload would drop the
+    // cell view mid-keystroke, ending the edit session and losing
+    // unsaved input. The post-rename explicit `reloadItems` call
+    // inside `controlTextDidEndEditing` picks up the `moveItem`'s
+    // directory-monitor event idempotently.
+    guard !isRenaming else { return }
     pendingReload?.cancel()
     let work = DispatchWorkItem { [weak self] in
-      self?.reloadItems(preservingSelection: true)
+      // Re-check at execution time: rename can start inside the
+      // debounce window (createNewFolder's inotify event is scheduled
+      // first, then `beginRename` fires 50ms later via asyncAfter, so
+      // the work block wakes up 100ms in with `isRenaming = true` and
+      // would otherwise blow the field editor off the cell).
+      guard let self, !self.isRenaming else { return }
+      self.reloadItems(preservingSelection: true)
     }
     pendingReload = work
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.reloadDebounceInterval, execute: work)
@@ -476,6 +512,137 @@ public final class FinderPaneView: NSView {
     tableView.scrollRowToVisible(row)
   }
 
+  // MARK: - Rename / New Folder / Trash
+
+  /// Hand the selected row's Name column off to the field editor for
+  /// inline rename. No-op when nothing is selected, when a rename is
+  /// already in flight, or when the cell view can't be materialised
+  /// (the row scrolled off-screen and the reuse pool is empty).
+  ///
+  /// Bound to Return / numpad-Enter on the table view so Finder's
+  /// `↵ = rename` convention applies while double-click, Right arrow,
+  /// and vim-`l` keep the open-entry affordances — mirroring Finder
+  /// list-view key assignments.
+  public func beginRename() {
+    guard !isRenaming,
+      let row = tableView.selectedRowIndexes.first,
+      row < items.count
+    else { return }
+    guard let nameColumnIndex = tableView.tableColumns.firstIndex(where: { $0.identifier == Self.nameColumn })
+    else { return }
+    // `editColumn` silently no-ops unless the table is first responder
+    // — invocations routed via the menu bar / command palette leave
+    // first responder parked on the window (new folder's ⌘⇧N is the
+    // visible symptom). Reclaim it explicitly so rename engages on
+    // every trigger, not just the keyDown path where the table is
+    // already focused.
+    if let window = tableView.window, window.firstResponder !== tableView {
+      window.makeFirstResponder(tableView)
+    }
+    tableView.scrollRowToVisible(row)
+    // Flush the full layout tree up to the window root. The
+    // pane-local + tableView-local passes alone miss the cascade
+    // through scrollView / clipView that a fresh `reloadItems` kicks
+    // off on a cold cell-view reuse pool — that cascade was the
+    // extra async pass racing `editColumn` on the first rename
+    // after `createNewFolder` (subsequent renames hit warm cells
+    // and laid out in one pass, which is why the flash only
+    // appeared once per session).
+    tableView.window?.layoutIfNeeded()
+    layoutSubtreeIfNeeded()
+    tableView.layoutSubtreeIfNeeded()
+    guard
+      let cellView = tableView.view(atColumn: nameColumnIndex, row: row, makeIfNecessary: true)
+        as? NSTableCellView,
+      let textField = cellView.textField
+    else { return }
+    textField.delegate = self
+    isRenaming = true
+    renamingRow = row
+    tableView.editColumn(nameColumnIndex, row: row, with: nil, select: true)
+    // Force a synchronous redraw so the field editor renders in the
+    // same run-loop tick it was attached. `editColumn` hides the
+    // cell's own textField immediately but the field editor doesn't
+    // paint until the next drawing pass — that 1-frame gap is the
+    // dark rectangle that flashed under the new folder's row on the
+    // first createNewFolder → beginRename path.
+    tableView.window?.displayIfNeeded()
+  }
+
+  /// Create `untitled folder` (or `untitled folder N` on collision) in
+  /// the current cwd and drop straight into rename mode, matching
+  /// Finder's ⌘⇧N flow. The directory-monitor reload-debounce picks
+  /// up the write as a side effect, so the explicit reload here is
+  /// primarily for the synchronous "select the row, start editing"
+  /// path that needs the new item resolvable before `beginRename`.
+  public func createNewFolder() {
+    let fm = FileManager.default
+    let base = "untitled folder"
+    var name = base
+    var suffix = 2
+    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false)) {
+      name = "\(base) \(suffix)"
+      suffix += 1
+    }
+    let target = currentURL.appendingPathComponent(name)
+    do {
+      try fm.createDirectory(at: target, withIntermediateDirectories: false)
+    } catch {
+      logger.error(
+        "Failed to create new folder at \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+      return
+    }
+    reloadItems(preservingSelection: false)
+    // Match by `lastPathComponent` rather than by `URL` equality:
+    // `appendingPathComponent(name)` and the URL that
+    // `FileManager.enumerator` hands back can differ on trailing
+    // slash, percent-encoding, or symlink resolution, so `==` would
+    // silently miss the row and bail out before `beginRename` ever
+    // ran. A directory's immediate children have unique names, so
+    // last-component matching is safe and resilient.
+    guard let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
+    tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    tableView.scrollRowToVisible(row)
+    // Defer `beginRename` until after the menu bar / command palette
+    // that triggered this action has finished closing. A plain
+    // `DispatchQueue.main.async` fires on the next run-loop tick
+    // which can still overlap with the closing view's final focus /
+    // layout events, and the end-of-edit notification they emit can
+    // collapse the rename session immediately after it starts. A
+    // short delay gives AppKit time to settle before the field
+    // editor attaches.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+      MainActor.assumeIsolated { self?.beginRename() }
+    }
+  }
+
+  /// Send every selected row to the Trash via
+  /// `FileManager.trashItem(at:resultingItemURL:)`. No confirmation
+  /// dialog — Finder doesn't show one for ⌘⌫ either, and the OS-level
+  /// Undo stack (⌘Z inside Finder, or manually via Trash) is the
+  /// recovery path. Failures log and continue so a permission error
+  /// on one file doesn't block the rest of the batch.
+  public func trashSelection() {
+    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
+      idx < items.count ? items[idx].url : nil
+    }
+    guard !urls.isEmpty else { return }
+    for url in urls {
+      do {
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+      } catch {
+        logger.error(
+          "Failed to trash \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+    // The directory monitor event that follows will schedule a
+    // debounced reload. An explicit reload here would race the
+    // monitor and could flash a stale row set; let the debounce
+    // layer do its job.
+  }
+
   // MARK: - Quick Look
 
   fileprivate func toggleQuickLook() {
@@ -629,9 +796,25 @@ extension FinderPaneView: NSTableViewDelegate {
     imageView.translatesAutoresizingMaskIntoConstraints = false
     imageView.imageScaling = .scaleProportionallyDown
 
-    let textField = NSTextField(labelWithString: "")
+    // Plain `NSTextField` rather than the label factory. `isEditable`
+    // is left `true` permanently so `beginRename`'s `editColumn` call
+    // can reliably hand the cell off to the field editor on every
+    // invocation — toggling editability after the cell has been
+    // recycled through the reuse pool was flaky in practice (rename
+    // engaged the first time but not subsequent times). A view-based
+    // NSTableView does not auto-engage edit mode on click just
+    // because `isEditable` is true; the cell only enters edit mode
+    // when `editColumn` is called explicitly from `beginRename`.
+    let textField = NSTextField()
+    textField.isBordered = false
+    textField.isBezeled = false
+    textField.drawsBackground = false
+    textField.isEditable = true
+    textField.isSelectable = true
+    textField.focusRingType = .none
     textField.font = .systemFont(ofSize: 13)
     textField.lineBreakMode = .byTruncatingTail
+    textField.cell?.usesSingleLineMode = true
     textField.translatesAutoresizingMaskIntoConstraints = false
 
     cell.addSubview(imageView)
@@ -669,6 +852,102 @@ extension FinderPaneView: NSTableViewDelegate {
       textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
     ])
     return cell
+  }
+}
+
+// MARK: - NSTextFieldDelegate (rename)
+
+extension FinderPaneView: NSTextFieldDelegate {
+  /// Intercept the ESC key while the field editor is attached.
+  /// AppKit's default `cancelOperation` path does **not** always
+  /// fire `controlTextDidEndEditing` on macOS — the field editor
+  /// tears down directly and our `isRenaming` flag would be left
+  /// `true`, blocking the next `beginRename` via its `guard` check.
+  /// Handling the selector explicitly lets us reset state and
+  /// return first responder to the table so a subsequent ↵ engages
+  /// rename again. `insertNewline:` falls through to AppKit so the
+  /// normal end-editing path still posts `controlTextDidEndEditing`
+  /// for the commit branch.
+  public func control(
+    _ control: NSControl,
+    textView: NSTextView,
+    doCommandBy commandSelector: Selector
+  ) -> Bool {
+    guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else {
+      return false
+    }
+    isRenaming = false
+    renamingRow = nil
+    if let textField = control as? NSTextField {
+      textField.delegate = nil
+    }
+    // Revert the display from the field editor's working copy to
+    // whatever the items array says — matches ESC cancel semantics.
+    reloadItems(preservingSelection: true)
+    if let window = tableView.window {
+      window.makeFirstResponder(tableView)
+    }
+    return true
+  }
+
+  /// Fires when the field editor detaches via the commit path (↵
+  /// / focus loss). The ESC cancel path is routed through
+  /// `control(_:textView:doCommandBy:)` above and never reaches
+  /// here, so this handler only needs to cover commits.
+  public func controlTextDidEndEditing(_ notification: Notification) {
+    guard isRenaming, let textField = notification.object as? NSTextField else { return }
+    let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let row = renamingRow ?? -1
+    isRenaming = false
+    renamingRow = nil
+    // `isEditable` / `isSelectable` stay `true`: flipping them back to
+    // `false` between edits leaves the cell's field-editor bindings in
+    // an intermediate state that intermittently refuses the next
+    // `editColumn`. `delegate` is safe to clear so a spurious
+    // end-editing notification from a recycled cell's field editor
+    // doesn't re-enter this handler.
+    textField.delegate = nil
+
+    defer {
+      // After the field editor tears down, first responder can end up
+      // parked on the window itself instead of cascading back to the
+      // table — keyDown for ↵ / ⌘⌫ then never reaches
+      // `FinderTableView.keyDown`. Explicitly re-installing the table
+      // as first responder restores the keyboard navigation, matching
+      // what Finder's list-view rename flow does on ESC / ↵.
+      if let window = tableView.window {
+        window.makeFirstResponder(tableView)
+      }
+    }
+
+    guard row >= 0, row < items.count else {
+      reloadItems(preservingSelection: true)
+      return
+    }
+    let oldItem = items[row]
+    guard !newName.isEmpty, newName != oldItem.name else {
+      // No change or empty name — revert the display. The field
+      // editor may have left the text field's stringValue in an
+      // intermediate state, so a reload re-seeds every cell from
+      // `items` and clears any lingering edit artifacts.
+      reloadItems(preservingSelection: true)
+      return
+    }
+    let target = currentURL.appendingPathComponent(newName)
+    do {
+      try FileManager.default.moveItem(at: oldItem.url, to: target)
+    } catch {
+      logger.error(
+        "Rename failed \(oldItem.url.path, privacy: .public) → \(newName, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+      reloadItems(preservingSelection: true)
+      return
+    }
+    reloadItems(preservingSelection: false)
+    if let newRow = items.firstIndex(where: { $0.url == target }) {
+      tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
+      tableView.scrollRowToVisible(newRow)
+    }
   }
 }
 
@@ -728,9 +1007,9 @@ private final class FinderTableView: NSTableView {
         pane.toggleQuickLook()
         return
       }
-    case 36, 76:  // Return / numpad enter
+    case 36, 76:  // Return / numpad enter — rename, matching Finder list view
       if flags.isEmpty {
-        pane.openSelectedRow()
+        pane.beginRenameEntry()
         return
       }
     case 51:  // Delete / Backspace — go up, matches Finder
@@ -800,6 +1079,7 @@ extension FinderPaneView {
   fileprivate func openSelectedRow() { openSelected() }
   fileprivate func moveSelectionRelative(by offset: Int) { moveSelection(by: offset) }
   fileprivate func selectAbsoluteRow(_ row: Int) { selectRow(row) }
+  fileprivate func beginRenameEntry() { beginRename() }
   fileprivate var lastRowIndex: Int { max(0, items.count - 1) }
 }
 

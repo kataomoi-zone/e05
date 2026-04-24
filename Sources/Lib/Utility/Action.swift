@@ -71,7 +71,21 @@ public struct Action {
     if mask.contains(.option) { parts.append("⌥") }
     if mask.contains(.shift) { parts.append("⇧") }
     if mask.contains(.command) { parts.append("⌘") }
-    parts.append(key.uppercased())
+    parts.append(specialKeyGlyphs[key] ?? key.uppercased())
     return parts.joined()
   }
+
+  /// Translate unprintable control characters into the Apple menu
+  /// glyphs they represent. Without this, a palette row bound to
+  /// `"\u{8}"` (NSBackspaceCharacter) would render as `⌘` followed by
+  /// an invisible BS byte; with the map it reads as `⌘⌫` — the same
+  /// label NSMenu draws in the Pane menu.
+  private static let specialKeyGlyphs: [String: String] = [
+    "\u{8}": "⌫",
+    "\u{7F}": "⌦",
+    "\u{1B}": "⎋",
+    "\t": "⇥",
+    "\r": "⏎",
+    " ": "␣",
+  ]
 }

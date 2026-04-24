@@ -257,6 +257,30 @@ extension PaneContainerViewController {
         handler: { FinderSettings.toggleShowHiddenFiles() }
       ),
       Action(
+        id: "new_folder",
+        title: "New Folder",
+        keyEquivalent: "n",
+        modifierMask: [.command, .shift],
+        handler: { [weak self] in self?.focusedPane?.finderView?.createNewFolder() },
+        validate: { [weak self] in (self?.focusedPane?.finderView != nil, nil) }
+      ),
+      Action(
+        id: "move_to_trash",
+        title: "Move to Trash",
+        // `"\u{8}"` (`NSBackspaceCharacter`) is the macOS standard for
+        // ⌘⌫ menu shortcuts — Finder.app and Xcode's "Move to Trash"
+        // items use the same character. NSMenu renders it as the ⌫
+        // glyph and `performKeyEquivalent` claims Command+Backspace.
+        // `"\u{7F}"` (`NSDeleteCharacter`) renders as ⌦ instead and
+        // binds forward-delete, which isn't what users expect.
+        keyEquivalent: "\u{8}",
+        modifierMask: [.command],
+        handler: { [weak self] in self?.focusedPane?.finderView?.trashSelection() },
+        validate: { [weak self] in
+          ((self?.focusedPane?.finderView?.hasSelection) ?? false, nil)
+        }
+      ),
+      Action(
         id: "command_palette",
         title: "Command Palette",
         keyEquivalent: "p",
