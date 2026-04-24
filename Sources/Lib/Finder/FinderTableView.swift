@@ -16,6 +16,20 @@ final class FinderTableView: NSTableView {
 
   override var acceptsFirstResponder: Bool { true }
 
+  /// Advertises the operations this pane is willing to perform when a
+  /// drag originated here lands on a drop target. Returning
+  /// `[.move, .copy]` lets recipients (Finder, editors, other e05
+  /// panes) pick whichever applies — Finder uses `.move` within a
+  /// volume and `.copy` across volumes, editors typically pick
+  /// `.copy` to read the file open. The AppKit default (`[]`) causes
+  /// every drop to fail silently.
+  override func draggingSession(
+    _ session: NSDraggingSession,
+    sourceOperationMaskFor context: NSDraggingContext
+  ) -> NSDragOperation {
+    [.move, .copy]
+  }
+
   override func becomeFirstResponder() -> Bool {
     let result = super.becomeFirstResponder()
     if result { onFocusChanged?() }
