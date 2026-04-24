@@ -22,6 +22,31 @@ final class FinderTableView: NSTableView {
     return result
   }
 
+  /// Right-click / control-click entry. Adjusts selection to mirror
+  /// Finder before delegating menu construction to the pane:
+  /// - row click inside the current selection keeps the selection
+  ///   intact (so multi-target actions stay coherent);
+  /// - row click outside collapses to a single-row selection on the
+  ///   clicked target;
+  /// - empty-area click leaves the selection untouched and shows the
+  ///   directory-level menu.
+  override func menu(for event: NSEvent) -> NSMenu? {
+    // Cancel any in-flight rename first so the menu opens against the
+    // on-disk filename, not the field editor's unsaved working copy.
+    // Finder list-view behaves the same way: right-click during rename
+    // reverts the edit before surfacing the context menu.
+    enclosingFinderPane?.cancelRenameIfActive()
+
+    let point = convert(event.locationInWindow, from: nil)
+    let clickedRow = row(at: point)
+
+    if clickedRow >= 0, !selectedRowIndexes.contains(clickedRow) {
+      selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+    }
+
+    return enclosingFinderPane?.buildContextMenu(clickedRow: clickedRow)
+  }
+
   override func keyDown(with event: NSEvent) {
     guard let pane = enclosingFinderPane else {
       super.keyDown(with: event)

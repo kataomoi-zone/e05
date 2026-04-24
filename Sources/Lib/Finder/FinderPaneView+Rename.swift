@@ -66,6 +66,29 @@ extension FinderPaneView {
     tableView.window?.displayIfNeeded()
   }
 
+  /// Exit an in-flight rename session as if the user pressed ESC: the
+  /// field editor's edited value is discarded, the cell reloads from
+  /// `items`, and the table reclaims first responder. No-op when no
+  /// rename is in flight.
+  ///
+  /// Clearing `isRenaming` before `reloadItems` is what makes this
+  /// safe: the cell replacement detaches the field editor and posts
+  /// `controlTextDidEndEditing`, but its commit branch bails on the
+  /// `guard isRenaming` so the edited text never reaches `moveItem`.
+  /// Mirrors the ESC path in `control(_:textView:doCommandBy:)` below;
+  /// used by `FinderTableView.menu(for:)` so right-clicking during
+  /// rename cancels the edit (matching Finder's list-view behaviour)
+  /// before the context menu is built.
+  public func cancelRenameIfActive() {
+    guard isRenaming else { return }
+    isRenaming = false
+    renamingRow = nil
+    reloadItems(preservingSelection: true)
+    if let window = tableView.window {
+      window.makeFirstResponder(tableView)
+    }
+  }
+
   // MARK: - New folder
 
   /// Create `untitled folder` (or `untitled folder N` on collision) in
