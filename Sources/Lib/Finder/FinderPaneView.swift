@@ -164,6 +164,7 @@ public final class FinderPaneView: NSView {
 
     tableView.dataSource = self
     tableView.delegate = self
+    tableView.registerForDraggedTypes([.fileURL, .URL])
     tableView.onFocusChanged = { [weak self] in
       self?.onFocusChanged?()
     }
