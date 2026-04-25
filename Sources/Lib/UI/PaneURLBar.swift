@@ -363,7 +363,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
   /// Update the displayed URL text.
   public func setDisplayURL(_ urlString: String) {
-    urlField.stringValue = urlString
+    writeURLFieldText(urlString)
   }
 
   /// Enable/disable back and forward buttons.
@@ -406,6 +406,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   }
 
   /// Focus the URL field and select all text for quick editing.
+  ///
+  /// `selectText(nil)` is the final say on selection here: callers
+  /// that pre-fill the field via `setDisplayURL` (e.g. `focusURLBar`)
+  /// rely on this to override whatever caret position
+  /// `writeURLFieldText` parked. Anyone changing the post-focus
+  /// selection should walk that prefill chain too.
   public func focusURLField() {
     urlField.refusesFirstResponder = false
     window?.makeFirstResponder(urlField)
@@ -434,9 +440,33 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   // MARK: - Suggestions
 
   private func acceptSuggestion(_ suggestion: Suggestion) {
-    urlField.stringValue = suggestion.url
+    writeURLFieldText(suggestion.url)
     suggestionList.dismiss()
     onNavigate?(suggestion.url)
+  }
+
+  /// Push `text` into the URL field while keeping the cell value and
+  /// the field editor in sync. Writing only `urlField.stringValue`
+  /// updates the cell but leaves the shared field editor's glyph
+  /// store and selection untouched, so the next time the editor is
+  /// re-attached (e.g. the user hits ⌘L again after a navigation)
+  /// the stale glyphs paint on top of the fresh cell text and the
+  /// caret reads as position 0. Routing through `currentEditor()`
+  /// when one exists keeps both stores aligned.
+  ///
+  /// The end-of-text caret this parks is the safe default for
+  /// callers writing into an actively edited field (the user keeps
+  /// typing where the new text ends). Focus-shortcut paths that
+  /// pre-fill and then call `focusURLField` get their final
+  /// selection from `selectText(nil)` instead, matching mainstream
+  /// browsers' "select all on ⌘L" behaviour.
+  private func writeURLFieldText(_ text: String) {
+    if let editor = urlField.currentEditor() {
+      editor.string = text
+      editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+    } else {
+      urlField.stringValue = text
+    }
   }
 
   /// Project a `Suggestion` into the presentation-only model consumed by
