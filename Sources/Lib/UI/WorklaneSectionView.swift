@@ -5,12 +5,29 @@ import AppKit
 /// intentionally not surfaced — the sidebar gives an overview; the
 /// workspace scroll strip is the detail view.
 ///
-/// Rebuild strategy (stage 2): blow away all `arrangedSubviews` and
-/// rebuild from scratch on every `reload(...)`. With the current
-/// invariants (≤ 5 workspaces × small pane counts) the cost is
-/// negligible; diff-based reload is a stage 5 optimization candidate.
+/// Hosted inside an `NSScrollView` so the section height stays bounded
+/// by its parent and content overflow scrolls vertically. Without the
+/// scroller the stack's intrinsic height would push the sidebar past
+/// the window bottom once enough workspaces accumulated.
+///
+/// Rebuild strategy: blow away all `arrangedSubviews` and rebuild from
+/// scratch on every `reload(...)`. Workspace and pane counts in practice
+/// stay small, so the cost is negligible; diff-based reload remains an
+/// optimization candidate if the list ever grows large.
+
+/// Clip view that uses top-down (flipped) coordinates so a documentView
+/// shorter than the clip area anchors to the top edge. The stock
+/// `NSClipView` reports `isFlipped == false`, which leaves a too-short
+/// stack hugging the bottom — a cosmetic regression that surfaced as
+/// soon as the worklane started living inside a scroll view.
+@MainActor
+private final class FlippedClipView: NSClipView {
+  override var isFlipped: Bool { true }
+}
+
 @MainActor
 final class WorklaneSectionView: NSView {
+  private let scrollView = NSScrollView()
   private let stackView = NSStackView()
 
   init() {
@@ -29,12 +46,36 @@ final class WorklaneSectionView: NSView {
     stackView.alignment = .leading
     stackView.distribution = .fill
     stackView.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(stackView)
+
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.autohidesScrollers = true
+    scrollView.verticalScrollElasticity = .allowed
+    scrollView.horizontalScrollElasticity = .none
+    // Replace the default clip view with a flipped one so a short stack
+    // sticks to the top of the visible region. Set the clip view *before*
+    // assigning `documentView` — `NSScrollView.contentView=` re-parents
+    // any existing documentView into the new clip view, but going in the
+    // other order works equally well in practice.
+    scrollView.contentView = FlippedClipView()
+    scrollView.documentView = stackView
+    addSubview(scrollView)
+
     NSLayoutConstraint.activate([
-      stackView.topAnchor.constraint(equalTo: topAnchor),
-      stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      stackView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      stackView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+      scrollView.topAnchor.constraint(equalTo: topAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+      // Pin stack width to the clip view so rows lay out flush across
+      // the sidebar with no horizontal scrolling. Height is left
+      // intrinsic — the stack grows downward and scrolls inside the
+      // clip view once it exceeds the available height.
+      stackView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+      stackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+      stackView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
     ])
   }
 

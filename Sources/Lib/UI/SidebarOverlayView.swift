@@ -117,11 +117,15 @@ final class SidebarOverlayView: NSView {
 
       // worklane and placeholder occupy the same rect — only one
       // is visible at a time, toggled by the view controller in
-      // response to mode changes.
+      // response to mode changes. Worklane is pinned to the full
+      // available height (rather than `lessThanOrEqualTo`) so its
+      // internal scroll view has a bounded frame to scroll within;
+      // letting it shrink with content meant unbounded growth pushed
+      // the sidebar past the window edge as workspaces accumulated.
       worklane.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
       worklane.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
       worklane.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
-      worklane.bottomAnchor.constraint(lessThanOrEqualTo: places.topAnchor, constant: -8),
+      worklane.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
 
       placeholder.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
       placeholder.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
