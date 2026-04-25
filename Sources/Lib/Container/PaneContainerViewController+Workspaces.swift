@@ -1,37 +1,30 @@
 import AppKit
 
 extension PaneContainerViewController {
-  // MARK: - Limits
-
-  /// Upper bound on concurrent workspaces. Currently a compile-time
-  /// constant; a later config plumbing pass can expose it to the user.
-  public static let maxWorkspaces = 5
-
-  public var canCreateWorkspace: Bool {
-    workspaces.count < Self.maxWorkspaces
-  }
-
   // MARK: - Accent color palette
 
-  /// Fixed palette mapped positionally: `palette[i]` is the color for the
-  /// workspace displayed as "Workspace \(i + 1)". Because it tracks array
-  /// position — not an id baked into the workspace itself — number and
-  /// color stay aligned when workspaces are added or removed.
+  /// Fixed palette mapped positionally: `palette[i % palette.count]` is the
+  /// color for the workspace displayed as "Workspace \(i + 1)". Because it
+  /// tracks array position — not an id baked into the workspace itself —
+  /// number and color stay aligned when workspaces are added or removed.
+  /// Workspaces beyond the palette length cycle back to the first color;
+  /// a later config plumbing pass can expose this list to the user.
   public static let accentColorPalette: [NSColor] = [
-    .systemBlue,
-    .systemGreen,
-    .systemOrange,
-    .systemPurple,
-    .systemRed,
+    NSColor(srgbRed: 0xce / 255, green: 0x05 / 255, blue: 0x5b / 255, alpha: 1),
+    NSColor(srgbRed: 0xb0 / 255, green: 0xbf / 255, blue: 0x1f / 255, alpha: 1),
+    NSColor(srgbRed: 0xec / 255, green: 0x6e / 255, blue: 0x65 / 255, alpha: 1),
+    NSColor(srgbRed: 0x02 / 255, green: 0x79 / 255, blue: 0xc2 / 255, alpha: 1),
   ]
 
-  /// Accent color for the workspace at `position`. Returns the first
-  /// palette entry for out-of-range indices so callers (e.g. the focus
-  /// border during a transient empty-state) stay total. Falls back all
-  /// the way to `.systemBlue` if the palette itself is empty, keeping
-  /// this function total even under that theoretically impossible state.
+  /// Accent color for the workspace at `position`. Wraps via modulo so any
+  /// non-negative index resolves to a palette entry, keeping this function
+  /// total even when the workspace count exceeds the palette length.
+  /// Falls back to `.systemBlue` if the palette itself is empty (a
+  /// theoretically impossible state, guarded for safety).
   public static func accentColor(forWorkspaceAt position: Int) -> NSColor {
-    accentColorPalette[safe: position] ?? accentColorPalette.first ?? .systemBlue
+    guard !accentColorPalette.isEmpty else { return .systemBlue }
+    let safePosition = max(position, 0)
+    return accentColorPalette[safePosition % accentColorPalette.count]
   }
 
   // MARK: - Switching
@@ -216,10 +209,6 @@ extension PaneContainerViewController {
   /// initial terminal column, then slide it up into view.
   public func createWorkspace() {
     NSLog("[e05/ws] createWorkspace entry: focused=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
-    guard canCreateWorkspace else {
-      NSLog("[e05/ws] createWorkspace guard failed (max reached)")
-      return
-    }
 
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x

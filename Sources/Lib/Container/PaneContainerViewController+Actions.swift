@@ -316,7 +316,6 @@ extension PaneContainerViewController {
         id: "workspace_new",
         title: "New Workspace",
         handler: { [weak self] in self?.createWorkspace() },
-        validate: { [weak self] in (self?.canCreateWorkspace ?? false, nil) },
         separatorBefore: true
       ),
       Action(

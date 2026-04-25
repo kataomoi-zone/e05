@@ -111,17 +111,12 @@ final class SidebarViewController: NSViewController {
       container.addColumn(address: PaneAddress(url))
     }
     bookmarksView.onOpenInNewWorkspace = { [weak container] urlString in
-      guard let container, let url = URL(string: urlString),
-        container.canCreateWorkspace
-      else { return }
+      guard let container, let url = URL(string: urlString) else { return }
       // UX policy: always open in a newly created workspace.
       // `createWorkspace()` auto-adds a terminal column; the
       // bookmark's browser column lands alongside it. Replacing
       // the auto-terminal is deferred until we see the ergonomics
-      // in practice. Guarded on `canCreateWorkspace` so that at
-      // the workspace cap we no-op instead of falling through to
-      // `addColumn` which would silently land the bookmark in
-      // the current workspace.
+      // in practice.
       container.createWorkspace()
       container.addColumn(address: PaneAddress(url))
     }
@@ -139,12 +134,8 @@ final class SidebarViewController: NSViewController {
       container.addColumn(address: PaneAddress(url))
     }
     historyView.onOpenInNewWorkspace = { [weak container] urlString in
-      guard let container, let url = URL(string: urlString),
-        container.canCreateWorkspace
-      else { return }
-      // UX policy: open in a newly created workspace. Same guard
-      // story as bookmarks — at the workspace cap we no-op to
-      // avoid accidentally polluting the current workspace.
+      guard let container, let url = URL(string: urlString) else { return }
+      // UX policy: open in a newly created workspace, mirroring bookmarks.
       container.createWorkspace()
       container.addColumn(address: PaneAddress(url))
     }
