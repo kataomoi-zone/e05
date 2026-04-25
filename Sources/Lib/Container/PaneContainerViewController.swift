@@ -210,6 +210,14 @@ public final class PaneContainerViewController: NSViewController {
   /// above (-height). Switching animates that constant. This replaces
   /// the `NSViewController.transition` path (which dropped its completion
   /// handler silently after the first call) with a plain layout animation.
+  ///
+  /// New workspace views are inserted *below* the edge hit zone (and
+  /// therefore below the sidebar overlay) when one is present, so a
+  /// runtime-created workspace doesn't bury the sidebar under itself —
+  /// `addSubview(_:)` would otherwise place the new view at the very top
+  /// of the z-order and cover the sidebar. Initial install (during
+  /// `viewDidLoad`, before `installSidebar`) falls through to the plain
+  /// `addSubview` path.
   func installWorkspaceView(_ vc: WorkspaceViewController, makeCurrent: Bool = false) {
     let wv = vc.view
     wv.translatesAutoresizingMaskIntoConstraints = false
@@ -218,7 +226,11 @@ public final class PaneContainerViewController: NSViewController {
     // before the window is sized). `viewDidLayout` will later push
     // their top constants to ±window.height.
     wv.isHidden = !makeCurrent
-    view.addSubview(wv)
+    if let edgeHitZone {
+      view.addSubview(wv, positioned: .below, relativeTo: edgeHitZone)
+    } else {
+      view.addSubview(wv)
+    }
 
     let initialConstant: CGFloat = makeCurrent ? 0 : max(view.bounds.height, 1)
     let top = wv.topAnchor.constraint(equalTo: view.topAnchor, constant: initialConstant)
