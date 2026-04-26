@@ -1,61 +1,14 @@
 import AppKit
 
 /// Shared components for the sidebar's list-based modes (bookmarks,
-/// history, downloads). Each mode's table stack shares:
-/// - emacs-style Ctrl+N / Ctrl+P navigation alongside Delete / Return
-///   key interception in the table view (`SidebarListTableView`)
+/// history, downloads). The sidebar is mouse-only; keyboard navigation
+/// is intentionally absent. Shared infrastructure:
 /// - hover-to-select row highlighting with non-emphasized selection
 ///   color so the list's focus state never flashes blue when
 ///   first-responder moves between the sidebar and the pane stack
 ///   (`SidebarListRowView`)
 /// - hover-revealed trailing action buttons whose visibility survives
 ///   scroll-out under a stationary cursor (`SidebarListCellView`)
-
-/// `NSTableView` subclass used by every sidebar list mode. Intercepts
-/// Delete / Backspace → `onDeleteKey`, Return / Enter → `onActivateRow`,
-/// and adds Ctrl+N / Ctrl+P alongside the default arrow keys.
-@MainActor
-final class SidebarListTableView: NSTableView {
-  var onDeleteKey: (() -> Void)?
-  var onActivateRow: (() -> Void)?
-
-  override func keyDown(with event: NSEvent) {
-    switch event.keyCode {
-    case 51, 117:
-      onDeleteKey?()
-      return
-    case 36, 76:
-      onActivateRow?()
-      return
-    default:
-      break
-    }
-
-    if event.modifierFlags.contains(.control) {
-      switch event.charactersIgnoringModifiers {
-      case "n":
-        moveSelection(by: 1)
-        return
-      case "p":
-        moveSelection(by: -1)
-        return
-      default:
-        break
-      }
-    }
-
-    super.keyDown(with: event)
-  }
-
-  private func moveSelection(by delta: Int) {
-    let count = numberOfRows
-    guard count > 0 else { return }
-    let base = selectedRow >= 0 ? selectedRow : (delta > 0 ? -1 : count)
-    let target = max(0, min(count - 1, base + delta))
-    selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
-    scrollRowToVisible(target)
-  }
-}
 
 /// Row view that moves the table selection on hover (unifying mouse
 /// and keyboard feedback into a single highlight) and forces the

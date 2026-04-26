@@ -53,7 +53,7 @@ final class DownloadsSidebarView: NSView {
   private let manager: DownloadsManager
   private var listenerToken: DownloadsListenerToken?
   private let scrollView = NSScrollView()
-  private let tableView = SidebarListTableView()
+  private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "No downloads")
   private var rows: [Download] = []
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -99,15 +99,6 @@ final class DownloadsSidebarView: NSView {
     tableView.action = #selector(handleClick)
     tableView.dataSource = self
     tableView.delegate = self
-    tableView.onDeleteKey = { [weak self] in
-      guard let self else { return }
-      self.removeRow(at: self.tableView.selectedRow)
-    }
-    tableView.onActivateRow = { [weak self] in
-      guard let self else { return }
-      self.activateRow(at: self.tableView.selectedRow)
-    }
-
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
@@ -209,15 +200,6 @@ final class DownloadsSidebarView: NSView {
     onShowInFinder?(entry.destination)
   }
 
-  private func removeRow(at index: Int) {
-    guard rows.indices.contains(index) else { return }
-    let entry = rows[index]
-    // Removal goes through the manager; its listener-driven reload
-    // keeps the UI and data source in sync regardless of which
-    // entry point triggered it (this list's × button, Delete key,
-    // any future automation).
-    onRemove?(entry.id)
-  }
 }
 
 // MARK: - NSTableViewDataSource

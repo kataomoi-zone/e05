@@ -85,6 +85,9 @@ private final class PlacesRow: NSView {
   private let iconView = NSImageView()
   private let label = NSTextField(labelWithString: "")
   private let badge = DownloadsBadgeView()
+  private var trackingArea: NSTrackingArea?
+  private var isHovered = false
+  private var isSelected = false
 
   init(mode: SidebarMode) {
     self.mode = mode
@@ -96,6 +99,28 @@ private final class PlacesRow: NSView {
 
   @available(*, unavailable)
   required init?(coder _: NSCoder) { fatalError() }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let old = trackingArea { removeTrackingArea(old) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
+
+  override func mouseEntered(with _: NSEvent) {
+    isHovered = true
+    applyBackground()
+  }
+
+  override func mouseExited(with _: NSEvent) {
+    isHovered = false
+    applyBackground()
+  }
 
   private func setupLayout() {
     iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -135,19 +160,30 @@ private final class PlacesRow: NSView {
   }
 
   func setSelected(_ selected: Bool) {
-    if selected {
-      // Subtle tint that reads in both light and dark appearances
-      // against the sidebar's Liquid Glass background.
-      layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.15).cgColor
-      layer?.cornerRadius = 4
-      iconView.contentTintColor = .labelColor
-      label.font = .systemFont(ofSize: 13, weight: .semibold)
-    } else {
-      layer?.backgroundColor = nil
-      layer?.cornerRadius = 0
-      iconView.contentTintColor = .secondaryLabelColor
-      label.font = .systemFont(ofSize: 13)
+    isSelected = selected
+    iconView.contentTintColor = selected ? .labelColor : .secondaryLabelColor
+    label.font = selected
+      ? .systemFont(ofSize: 13, weight: .semibold)
+      : .systemFont(ofSize: 13)
+    applyBackground()
+  }
+
+  /// Resolve `layer.backgroundColor` from the current selection +
+  /// hover state. Selected rows take a stronger tint than a passive
+  /// hover so the active mode keeps reading as active even while the
+  /// pointer roams over its neighbours. Subtle white tints carry over
+  /// from the previous design — they read in both light and dark
+  /// appearances against the sidebar's Liquid Glass background.
+  private func applyBackground() {
+    let alpha: CGFloat
+    switch (isSelected, isHovered) {
+    case (true, _): alpha = 0.15
+    case (false, true): alpha = 0.08
+    case (false, false): alpha = 0
     }
+    layer?.backgroundColor =
+      alpha > 0 ? NSColor(white: 1.0, alpha: alpha).cgColor : nil
+    layer?.cornerRadius = alpha > 0 ? 4 : 0
   }
 
   func setBadge(count: Int) {

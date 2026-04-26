@@ -28,7 +28,7 @@ final class HistorySidebarView: NSView {
   private let history: BrowsingHistory
   private var listenerToken: BrowsingHistoryListenerToken?
   private let scrollView = NSScrollView()
-  private let tableView = SidebarListTableView()
+  private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "No history yet")
   private var rows: [BrowsingHistory.Entry] = []
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -94,15 +94,6 @@ final class HistorySidebarView: NSView {
     tableView.action = #selector(handleClick)
     tableView.dataSource = self
     tableView.delegate = self
-    tableView.onDeleteKey = { [weak self] in
-      guard let self else { return }
-      self.deleteRow(at: self.tableView.selectedRow)
-    }
-    tableView.onActivateRow = { [weak self] in
-      guard let self else { return }
-      self.activateRow(at: self.tableView.selectedRow, newWorkspace: false)
-    }
-
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
@@ -173,16 +164,6 @@ final class HistorySidebarView: NSView {
     }
   }
 
-  private func deleteRow(at index: Int) {
-    guard rows.indices.contains(index) else { return }
-    let entry = rows[index]
-    // Remove from the store first — its listener will trigger
-    // `reload()`, which keeps the row removal and selection
-    // restoration consistent regardless of which entry point
-    // (this list's × button, the URL bar, command palette, …)
-    // triggered the delete.
-    history.delete(id: entry.id)
-  }
 }
 
 // MARK: - NSTableViewDataSource

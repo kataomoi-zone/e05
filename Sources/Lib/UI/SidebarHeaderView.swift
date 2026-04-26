@@ -9,6 +9,15 @@ import AppKit
 final class SidebarHeaderView: NSView {
   static let height: CGFloat = 36
 
+  /// Leading inset that clears the OS traffic lights. Measured on
+  /// macOS 26 (Tahoe) where the standard close/min/zoom cluster
+  /// occupies ~70pt; 78pt gives an 8pt gap to the app title that
+  /// follows. Values may drift on later OS versions; if the title
+  /// starts overlapping the buttons, switch to a runtime read of
+  /// `window.standardWindowButton(.closeButton)?.superview?.frame.maxX`
+  /// instead of this constant.
+  private static let trafficLightInset: CGFloat = 78
+
   let pinButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -17,6 +26,19 @@ final class SidebarHeaderView: NSView {
     b.imagePosition = .imageOnly
     b.imageScaling = .scaleProportionallyDown
     return b
+  }()
+
+  // TODO: read the version segment from `CFBundleShortVersionString`
+  // once a release pipeline exists; the literal serves until then.
+  private let titleLabel: NSTextField = {
+    let label = NSTextField(labelWithString: "E05 alpha")
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.font = .systemFont(ofSize: 11, weight: .medium)
+    label.textColor = .secondaryLabelColor
+    label.lineBreakMode = .byTruncatingTail
+    label.maximumNumberOfLines = 1
+    label.drawsBackground = false
+    return label
   }()
 
   /// Invoked when the user clicks the pin toggle. The view controller
@@ -45,6 +67,7 @@ final class SidebarHeaderView: NSView {
     pinButton.target = self
     pinButton.action = #selector(pinTapped(_:))
     addSubview(pinButton)
+    addSubview(titleLabel)
 
     NSLayoutConstraint.activate([
       heightAnchor.constraint(equalToConstant: Self.height),
@@ -52,6 +75,9 @@ final class SidebarHeaderView: NSView {
       pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       pinButton.widthAnchor.constraint(equalToConstant: 22),
       pinButton.heightAnchor.constraint(equalToConstant: 22),
+      titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.trafficLightInset),
+      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
+      titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }
 

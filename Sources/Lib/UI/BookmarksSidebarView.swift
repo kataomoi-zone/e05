@@ -23,7 +23,7 @@ final class BookmarksSidebarView: NSView {
   private let bookmarks: Bookmarks
   private var listenerToken: BookmarksListenerToken?
   private let scrollView = NSScrollView()
-  private let tableView = SidebarListTableView()
+  private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "No bookmarks yet")
   private var rows: [Bookmarks.Entry] = []
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -85,15 +85,6 @@ final class BookmarksSidebarView: NSView {
     tableView.action = #selector(handleClick)
     tableView.dataSource = self
     tableView.delegate = self
-    tableView.onDeleteKey = { [weak self] in
-      guard let self else { return }
-      self.deleteRow(at: self.tableView.selectedRow)
-    }
-    tableView.onActivateRow = { [weak self] in
-      guard let self else { return }
-      self.activateRow(at: self.tableView.selectedRow, newWorkspace: false)
-    }
-
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
@@ -164,15 +155,6 @@ final class BookmarksSidebarView: NSView {
     }
   }
 
-  private func deleteRow(at index: Int) {
-    guard rows.indices.contains(index) else { return }
-    let entry = rows[index]
-    // Remove from the store first — its listener will trigger
-    // `reload()`, which handles the row removal and selection
-    // restoration consistently with any external deletion source
-    // (URL bar, command palette, etc.).
-    bookmarks.remove(id: entry.id)
-  }
 }
 
 // MARK: - NSTableViewDataSource
