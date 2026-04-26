@@ -6,10 +6,14 @@ extension PaneContainerViewController {
 
   /// Capture the current layout as a serializable session state.
   public func captureSession() -> SessionState {
-    // Snapshot the live scroll offset onto the current workspace so it's
-    // included in the save. Other workspaces already have their scrollX
-    // recorded when they were last switched away from.
-    currentWorkspace.scrollX = scrollView.contentView.bounds.origin.x
+    // Snapshot the live scroll offset onto the current workspace so
+    // it's included in the save. Other workspaces already have their
+    // scrollX recorded when they were last switched away from.
+    // `scrollX` is logical (state-independent), so subtract the
+    // active hover-peek compensation — otherwise a save while peek
+    // is open would persist a 260pt shift that the next launch
+    // (which never restores `.hoverPeek`) couldn't undo.
+    currentWorkspace.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
 
     NSLog("[e05/ws] captureSession: focusedWsIdx=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
     for (i, ws) in workspaces.enumerated() {

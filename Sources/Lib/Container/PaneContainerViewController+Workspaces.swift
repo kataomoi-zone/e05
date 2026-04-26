@@ -75,7 +75,7 @@ extension PaneContainerViewController {
     closeFindBar()
 
     let outgoing = currentWorkspace
-    outgoing.scrollX = scrollView.contentView.bounds.origin.x
+    outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     preserveSurfaces(in: outgoing)
 
     clearAllFocusBorders(in: outgoing)
@@ -211,7 +211,7 @@ extension PaneContainerViewController {
     NSLog("[e05/ws] createWorkspace entry: focused=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
 
     let outgoing = currentWorkspace
-    outgoing.scrollX = scrollView.contentView.bounds.origin.x
+    outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     preserveSurfaces(in: outgoing)
     clearAllFocusBorders(in: outgoing)
 
@@ -306,7 +306,7 @@ extension PaneContainerViewController {
 
     // Preserve surfaces on the outgoing side — both the pane being moved
     // and any other panes left behind in source-workspace columns.
-    sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x
+    sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     preserveSurfaces(in: sourceWs)
 
     // Blanket-clear focus borders on both sides so neither workspace's
@@ -447,8 +447,11 @@ extension PaneContainerViewController {
   /// Restore the workspace's saved horizontal scroll position. Called
   /// after `restoreFocusInCurrentWorkspace` to override the default
   /// "scroll-to-focused-column" behavior — we want switching back to
-  /// land the user exactly where they left off.
+  /// land the user exactly where they left off. `scrollX` is stored
+  /// in logical coordinates; the live `bounds.origin.x` always
+  /// includes the active hover-peek compensation on top.
   func restoreScroll(in workspace: WorkspaceModel) {
-    scrollView.contentView.setBoundsOrigin(NSPoint(x: workspace.scrollX, y: 0))
+    let liveX = workspace.scrollX + hoverPeekScrollCompensation
+    scrollView.contentView.setBoundsOrigin(NSPoint(x: liveX, y: 0))
   }
 }

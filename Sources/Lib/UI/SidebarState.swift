@@ -23,12 +23,13 @@ public enum SidebarState: Equatable {
   var isRevealed: Bool { self != .hidden }
 
   /// Whether the workspace's scroll strip should reserve a leading
-  /// inset matching the sidebar's width. Only `.pinnedOpen` reserves
-  /// — `.hoverPeek` overlays without shifting the columns. The name
-  /// is deliberate: earlier revisions pushed the whole workspace
-  /// root right and "pushesContent" reflected that, but the current
-  /// implementation only inflates `scrollView.contentInsets.left`,
-  /// which keeps the root spanning the full window so the sidebar
-  /// glass has a blur source behind it.
-  var reservesLeadingScrollInset: Bool { self == .pinnedOpen }
+  /// inset matching the sidebar's width. Both revealed states reserve
+  /// the inset: `.pinnedOpen` for the obvious shifted layout and
+  /// `.hoverPeek` for AppKit's dispatch logic. The hoverPeek path
+  /// then re-introduces the inset's worth of `bounds.origin.x` (in
+  /// `applySidebarLayout`) to cancel the visual shift, leaving the
+  /// columns at their pre-peek position visually while the inset
+  /// itself keeps cursor / tracking dispatch off the leading
+  /// `sidebarWidth` strip.
+  var reservesLeadingScrollInset: Bool { self != .hidden }
 }

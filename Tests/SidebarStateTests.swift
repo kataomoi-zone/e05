@@ -12,12 +12,15 @@ struct SidebarStateTests {
     #expect(SidebarState.pinnedOpen.isRevealed == true)
   }
 
-  @Test("reservesLeadingScrollInset is true only for .pinnedOpen")
+  @Test("reservesLeadingScrollInset matches isRevealed")
   func reservesLeadingScrollInset() {
     #expect(SidebarState.hidden.reservesLeadingScrollInset == false)
-    // Hover peek overlays the content — crucial so the workspace
-    // doesn't reshuffle columns on a transient reveal.
-    #expect(SidebarState.hoverPeek.reservesLeadingScrollInset == false)
+    // Both revealed states inflate `contentInsets.left`. The hover-peek
+    // path then compensates with a matching `bounds.origin.x` advance
+    // to cancel the visual shift, but the inset itself is required so
+    // AppKit's cursor / tracking dispatch treats the leading strip as
+    // off-document.
+    #expect(SidebarState.hoverPeek.reservesLeadingScrollInset == true)
     #expect(SidebarState.pinnedOpen.reservesLeadingScrollInset == true)
   }
 

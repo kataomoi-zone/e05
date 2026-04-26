@@ -32,6 +32,48 @@ public final class PaneContainerViewController: NSViewController {
   /// cursor can reveal a hidden sidebar by approaching the left edge.
   weak var edgeHitZone: EdgeHoverHitZoneView?
 
+  /// Transparent absorber covering the leftmost ``sidebarWidth``
+  /// while the sidebar is in unpinned hover-peek. Sits in z-order
+  /// between the workspace VCs and the sidebar overlay so the
+  /// cursor / hit-test / responder mechanisms find it first and
+  /// never descend into the panes that physically extend under the
+  /// glass during a peek. See ``SidebarPeekShieldView``. Hidden in
+  /// `.hidden` and `.pinnedOpen` (where the workspace's
+  /// `scrollView.contentInsets.left` already keeps panes off the
+  /// sidebar's footprint).
+  weak var peekShield: SidebarPeekShieldView?
+
+  /// Hover-peek's "visual shift cancel" offset currently applied to
+  /// every workspace's `clipView.bounds.origin.x`. While the sidebar
+  /// is in `.hoverPeek` we inflate `scrollView.contentInsets.left`
+  /// (so AppKit treats the leading strip as off-document for cursor
+  /// and tracking dispatch) AND advance the scroll origin by the
+  /// same amount, so the visible content lands at its pre-peek
+  /// position. This property records the currently-applied advance
+  /// so `applySidebarLayout` can dispatch the *delta* to each
+  /// scroll view rather than recompute absolute offsets.
+  ///
+  /// `WorkspaceModel.scrollX` is stored in *logical* coordinates —
+  /// i.e. the value the user perceives as their scroll position,
+  /// independent of the active sidebar state. Save sites subtract
+  /// this compensation (`live - compensation = logical`) and restore
+  /// sites add it back (`logical + compensation = live`). The
+  /// invariant `live bounds.origin.x = ws.scrollX + compensation`
+  /// holds for every workspace VC at all times: `applySidebarLayout`
+  /// dispatches the delta to *every* VC's live origin so non-current
+  /// workspaces stay in sync with the new compensation, and a save
+  /// of any one VC always recovers the same logical scrollX.
+  var hoverPeekScrollCompensation: CGFloat = 0
+
+  /// `scrollView.contentInsets.left` currently set on every
+  /// workspace VC. Tracked centrally so `applySidebarLayout` can
+  /// compute the inset delta against the previous *target* value
+  /// rather than reading a (possibly mid-animation) live value off
+  /// one of the scroll views, and so `installWorkspaceView` can
+  /// initialise a freshly-inserted workspace's inset to the same
+  /// value as its peers without going through the sidebar VC.
+  var currentLeadingInset: CGFloat = 0
+
   var currentWorkspace: WorkspaceModel {
     precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
     return workspaces[focusedWorkspaceIndex]
@@ -247,12 +289,23 @@ public final class PaneContainerViewController: NSViewController {
     ])
     vc.topConstraint = top
     // `viewDidLoad` runs before `installSidebar`, so the first call
-    // here resolves to 0 (sidebarVC nil); `createWorkspace` /
-    // `restoreSession` addenda honour the current pinned inset so a
-    // new workspace doesn't open with the leftmost column buried
-    // under a pinned sidebar.
-    let pinnedInset = sidebarVC?.currentState.reservesLeadingScrollInset == true ? Self.sidebarWidth : 0
-    vc.scrollView.contentInsets.left = pinnedInset
+    // here resolves to 0 (`currentLeadingInset` defaults to 0 and
+    // `applyInitialState` rewrites it during `installSidebar`).
+    // `createWorkspace` / `restoreSession` addenda honour the
+    // current pinned inset so a new workspace doesn't open with the
+    // leftmost column buried under a pinned sidebar.
+    vc.scrollView.contentInsets.left = currentLeadingInset
+    // Seed the live scroll origin from the workspace's logical
+    // `scrollX` plus the active hover-peek compensation, so the
+    // invariant `live bounds.origin.x = ws.scrollX + compensation`
+    // holds from the moment the VC enters the hierarchy. Used by
+    // both `createWorkspace` (scrollX = 0, compensation possibly
+    // non-zero while peeking) and `restoreSession` (scrollX = saved
+    // logical, compensation = 0 since peek isn't restored).
+    let initialOriginX = vc.workspace.scrollX + hoverPeekScrollCompensation
+    if initialOriginX != 0 {
+      vc.scrollView.contentView.setBoundsOrigin(NSPoint(x: initialOriginX, y: 0))
+    }
 
     NSLog(
       "[e05/ws] installWorkspaceView wsId=%@ current=%@ topConstant=%f bounds.h=%f hidden=%@",

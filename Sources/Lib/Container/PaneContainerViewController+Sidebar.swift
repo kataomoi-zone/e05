@@ -43,6 +43,24 @@ extension PaneContainerViewController {
     ])
     edgeHitZone = hitZone
 
+    // Peek shield sits between the workspace VCs (already in the
+    // subviews list) and the sidebar (added next), so it absorbs any
+    // cursor / hit-test fall-through that NSGlassEffectView's
+    // transparent regions would otherwise let descend into the
+    // panes underneath. Hidden by default; the state-machine
+    // application below toggles it for `.hoverPeek`.
+    let shield = SidebarPeekShieldView()
+    shield.translatesAutoresizingMaskIntoConstraints = false
+    shield.isHidden = true
+    view.addSubview(shield)
+    NSLayoutConstraint.activate([
+      shield.topAnchor.constraint(equalTo: view.topAnchor),
+      shield.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      shield.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      shield.widthAnchor.constraint(equalToConstant: Self.sidebarWidth),
+    ])
+    peekShield = shield
+
     let vc = SidebarViewController()
     vc.container = self
     addChild(vc)
@@ -112,13 +130,37 @@ extension PaneContainerViewController {
     }
 
     let sidebarConst: CGFloat = state.isRevealed ? 0 : -Self.sidebarWidth
-    // Pinned state inflates each workspace's `scrollView.contentInsets.left`
-    // so the leftmost column starts past the sidebar without pushing the
-    // whole workspace root — the root spans the full window width in
-    // every state, and any column scrolled under the sidebar gives the
-    // glass a multi-coloured blur source so the panel reads as Liquid
-    // Glass instead of an opaque slab.
+    // Both revealed states inflate each workspace's
+    // `scrollView.contentInsets.left` so the leftmost column starts
+    // past the sidebar — the root spans the full window width in
+    // every state, and any column scrolled under the sidebar gives
+    // the glass a multi-coloured blur source so the panel reads as
+    // Liquid Glass instead of an opaque slab. AppKit also treats the
+    // leading inset region as off-document for cursor / tracking
+    // dispatch, which is what keeps clicks, link `:hover`, finder
+    // resize cursors, etc. from leaking through the glass while the
+    // sidebar covers them.
     let pinnedInset: CGFloat = state.reservesLeadingScrollInset ? Self.sidebarWidth : 0
+
+    // Hover-peek visually overlays without shifting the columns —
+    // pinned shifts, hover-peek doesn't. The inset above is applied
+    // for both, so for hover-peek we have to advance each clip
+    // view's `bounds.origin.x` by the inset width to cancel the
+    // visual shift the inset would otherwise introduce. Track the
+    // currently-applied compensation on the container and dispatch
+    // the *delta* on every state change so the user's scroll
+    // position relative to the sidebar state stays coherent across
+    // hidden ↔ peek ↔ pinned transitions.
+    let newCompensation: CGFloat = (state == .hoverPeek) ? Self.sidebarWidth : 0
+    let scrollDelta = newCompensation - hoverPeekScrollCompensation
+    let insetDelta = pinnedInset - currentLeadingInset
+    hoverPeekScrollCompensation = newCompensation
+    currentLeadingInset = pinnedInset
+
+    // The peek shield only matters in `.hoverPeek`: hidden state has
+    // no sidebar to leak under, and pinned shifts the workspace via
+    // the inset above so the panes already sit clear of x<sidebarWidth.
+    peekShield?.isHidden = (state != .hoverPeek)
 
     applyTrafficLights(revealed: state.isRevealed, animated: animated)
 
@@ -126,11 +168,29 @@ extension PaneContainerViewController {
       sidebarLeadingConstraint?.constant = sidebarConst
       for vc in workspaceVCs {
         vc.scrollView.contentInsets.left = pinnedInset
+        if scrollDelta != 0 {
+          var origin = vc.scrollView.contentView.bounds.origin
+          origin.x += scrollDelta
+          vc.scrollView.contentView.setBoundsOrigin(origin)
+        }
       }
       view.layoutSubtreeIfNeeded()
       completion?()
       return
     }
+
+    // Whether the visible content position changes between the
+    // outgoing and incoming states. `.hoverPeek` is reached by
+    // advancing both the inset (push content right) and the scroll
+    // origin (compensate by an equal amount), so the *visible*
+    // column strip stays put — the inset and origin shifts cancel.
+    // `.hidden` ↔ `.pinnedOpen` transitions only move the inset, so
+    // the columns slide. `.hoverPeek` ↔ `.pinnedOpen` only moves
+    // the origin (inset stays at `sidebarWidth` in both), so the
+    // columns also slide. `insetDelta` and `scrollDelta` are derived
+    // from the *target* values tracked on the container, so the
+    // exact `== 0` compare is safe (both are integer-valued).
+    let snapContent = (insetDelta - scrollDelta == 0)
 
     // Drop the animation onto the next run-loop tick so that any
     // mouseEntered/Exited event that triggered this transition has
@@ -143,20 +203,49 @@ extension PaneContainerViewController {
         completion?()
         return
       }
+      if snapContent {
+        // `.hoverPeek` transitions only — the inset/origin shifts
+        // cancel visually, so we snap them synchronously and let the
+        // sidebar leading constraint animate alone. This avoids the
+        // start-delay that NSClipView's `animator().bounds.origin`
+        // exhibits: the clip view routes through NSScrollView's
+        // internal scroll machinery, which has its own deceleration
+        // timing that NSAnimationContext.duration does not fully
+        // override. The lag (~0.1–0.2s on a 0.2s sidebar slide) was
+        // visible to the user as the column strip drifting briefly
+        // out from under the sidebar at the head of the tween.
+        for vc in self.workspaceVCs {
+          vc.scrollView.contentInsets.left = pinnedInset
+          if scrollDelta != 0 {
+            var origin = vc.scrollView.contentView.bounds.origin
+            origin.x += scrollDelta
+            vc.scrollView.contentView.setBoundsOrigin(origin)
+          }
+        }
+      }
       NSAnimationContext.runAnimationGroup(
         { ctx in
           ctx.duration = Self.sidebarAnimationDuration
           ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
           ctx.allowsImplicitAnimation = true
           self.sidebarLeadingConstraint?.animator().constant = sidebarConst
-          for vc in self.workspaceVCs {
-            // NSScrollView is `NSAnimatablePropertyContainer`; assigning
-            // a fresh `NSEdgeInsets` through the animator interpolates
-            // the inset, so the column strip slides into its new
-            // start position in lockstep with the sidebar slide.
-            var insets = vc.scrollView.contentInsets
-            insets.left = pinnedInset
-            vc.scrollView.animator().contentInsets = insets
+          if !snapContent {
+            for vc in self.workspaceVCs {
+              // NSScrollView is `NSAnimatablePropertyContainer`;
+              // assigning a fresh `NSEdgeInsets` through the animator
+              // interpolates the inset, so the column strip slides
+              // into its new start position in lockstep with the
+              // sidebar slide. Used for `.hidden` ↔ `.pinnedOpen`.
+              if insetDelta != 0 {
+                var insets = vc.scrollView.contentInsets
+                insets.left = pinnedInset
+                vc.scrollView.animator().contentInsets = insets
+              }
+              if scrollDelta != 0 {
+                let newX = vc.scrollView.contentView.bounds.origin.x + scrollDelta
+                vc.scrollView.contentView.animator().bounds.origin.x = newX
+              }
+            }
           }
           self.view.layoutSubtreeIfNeeded()
         },
