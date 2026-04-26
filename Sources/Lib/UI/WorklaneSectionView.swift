@@ -59,7 +59,15 @@ final class WorklaneSectionView: NSView {
     // assigning `documentView` — `NSScrollView.contentView=` re-parents
     // any existing documentView into the new clip view, but going in the
     // other order works equally well in practice.
-    scrollView.contentView = FlippedClipView()
+    //
+    // `NSScrollView.drawsBackground=false` is *not* propagated to a clip
+    // view installed afterwards, so the new clip view keeps its default
+    // `drawsBackground=true` and paints `controlBackgroundColor` over
+    // the parent Liquid Glass — visible as an opaque dark slab in dark
+    // mode. Disable it explicitly on the replacement.
+    let clipView = FlippedClipView()
+    clipView.drawsBackground = false
+    scrollView.contentView = clipView
     scrollView.documentView = stackView
     addSubview(scrollView)
 
