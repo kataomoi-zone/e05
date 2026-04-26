@@ -284,6 +284,12 @@ public final class PaneContainerViewController: NSViewController {
   /// `onFocusChanged` callback rewrites `ws.focusedColumnIndex` to 0.
   /// Snapshotting the intended target lets us re-apply from the clean
   /// value, not whatever ended up in memory after the clobber.
+  ///
+  /// Doubles as a cold-restore latch: while non-nil, `handleFocusChange`
+  /// drops AppKit-driven focus changes so the `_setUpFirstResponder`
+  /// cascade can't schedule a `scrollToColumn(at: 0)` that would clobber
+  /// the saved scrollX. Cleared in `viewDidAppear` immediately before
+  /// re-applying the snapshotted focus.
   var pendingInitialFocus: (workspaceIndex: Int, columnIndex: Int, paneIndex: Int)?
 
   public override func viewDidAppear() {

@@ -565,6 +565,23 @@ extension PaneContainerViewController {
     NSLog(
       "[e05/ws] handleFocusChange paneId=%@ addr=%@",
       String(describing: pane.id), pane.address.description)
+    // Cold-restore guard: while `pendingInitialFocus` is non-nil the
+    // session restore is still in flight and `viewDidAppear` hasn't
+    // re-applied the saved focus yet. AppKit's `_setUpFirstResponder`
+    // cascade lands first responder on the leftmost keyboard-focusable
+    // view during the window's initial responder selection, which
+    // would otherwise route through here and trigger
+    // `setFocus(scroll: true)` → a deferred `scrollToColumn(at: 0)`
+    // animator that races `viewDidAppear`'s snap. The animator wins
+    // because it dispatches onto a later run-loop tick, leaving the
+    // viewport at column 0 — the "focus restored briefly, then forced
+    // to leftmost" startup symptom. Dropping the AppKit-driven change
+    // here keeps the saved scrollX intact; viewDidAppear's
+    // `pendingInitialFocus` re-apply restores focus cleanly.
+    if pendingInitialFocus != nil {
+      NSLog("[e05/ws] handleFocusChange skipped: pending initial focus")
+      return
+    }
     // O(1) short-circuit: already the focused pane → nothing to do.
     // Any other case falls through to focusPane, which handles both
     // same-WS and cross-WS cases (and its own reentrancy guard).
