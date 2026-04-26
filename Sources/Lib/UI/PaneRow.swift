@@ -6,7 +6,9 @@ import AppKit
 /// (matching the in-content focus border) so the sidebar mirrors the
 /// workspace focus state. Clicking fires `onClick` which the sidebar
 /// routes to `PaneContainerViewController.focusPane(id:)` (cross-WS
-/// safe via the stage 0-A API).
+/// safe via the stage 0-A API). The hover-revealed × button fires
+/// `onClose`, which routes to
+/// `PaneContainerViewController.closePane(id:)`.
 @MainActor
 final class PaneRow: NSView {
   static let height: CGFloat = 24
@@ -14,9 +16,25 @@ final class PaneRow: NSView {
 
   let paneId: ULID
   var onClick: (() -> Void)?
+  var onClose: (() -> Void)?
 
   private let iconView = NSImageView()
   private let label = NSTextField(labelWithString: "")
+  private let closeButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close pane")
+    b.toolTip = "Close pane"
+    b.isHidden = true
+    return b
+  }()
+  private var trackingArea: NSTrackingArea?
+  private var isHovered = false
+  private var isCurrentPane = false
 
   init(paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor, isCurrent: Bool) {
     self.paneId = paneId
@@ -43,6 +61,10 @@ final class PaneRow: NSView {
     label.font = NSFont.systemFont(ofSize: 12)
     addSubview(label)
 
+    closeButton.target = self
+    closeButton.action = #selector(closeTapped(_:))
+    addSubview(closeButton)
+
     NSLayoutConstraint.activate([
       heightAnchor.constraint(equalToConstant: Self.height),
       // Favicon / SF-symbol slot sits in the indent that used to be
@@ -54,12 +76,18 @@ final class PaneRow: NSView {
       iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
 
       label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
-      label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+      closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      closeButton.widthAnchor.constraint(equalToConstant: 16),
+      closeButton.heightAnchor.constraint(equalToConstant: 16),
     ])
   }
 
   private func configure(title: String, icon: NSImage?, accentColor: NSColor, isCurrent: Bool) {
+    isCurrentPane = isCurrent
     label.stringValue = title
     label.alphaValue = isCurrent ? 1.0 : 0.8
     iconView.image = icon
@@ -75,8 +103,49 @@ final class PaneRow: NSView {
     }
   }
 
-  override func mouseDown(with event: NSEvent) {
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let old = trackingArea { removeTrackingArea(old) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
+
+  override func mouseEntered(with _: NSEvent) {
+    isHovered = true
+    closeButton.isHidden = false
+    applyHoverBackground()
+  }
+
+  override func mouseExited(with _: NSEvent) {
+    isHovered = false
+    closeButton.isHidden = true
+    applyHoverBackground()
+  }
+
+  private func applyHoverBackground() {
+    // Skip the hover tint on the focused pane: it already wears a
+    // 2pt accent border, and stacking a translucent fill on top of
+    // that reads as a state change instead of a hover affordance.
+    if isCurrentPane {
+      layer?.backgroundColor = nil
+      return
+    }
+    layer?.backgroundColor =
+      isHovered ? NSColor(white: 1.0, alpha: 0.08).cgColor : nil
+    layer?.cornerRadius = isHovered ? 4 : 0
+  }
+
+  override func mouseDown(with _: NSEvent) {
     onClick?()
+  }
+
+  @objc private func closeTapped(_: NSButton) {
+    onClose?()
   }
 
   override func resetCursorRects() {

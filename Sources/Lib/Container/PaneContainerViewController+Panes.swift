@@ -854,6 +854,81 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Close any pane by id, regardless of which workspace owns it.
+  /// Used by the sidebar worklane's hover-revealed × button.
+  ///
+  /// Current-workspace closes route to `removePane(columnIndex:paneIndex:)`
+  /// so the user sees the same fade / column-collapse animation as a
+  /// click on the in-pane × button. Non-current closes operate
+  /// directly on the target workspace's model and stack view —
+  /// switching just to play the close animation against an off-screen
+  /// workspace would add a slide the user didn't ask for and never
+  /// gets to see. Cross-workspace closes do not stash an undo entry:
+  /// the existing recently-closed pipeline is rooted in current-WS
+  /// state and per-workspace by design.
+  public func closePane(id paneId: ULID) {
+    for (wsIdx, ws) in workspaces.enumerated() {
+      for (colIdx, col) in ws.columns.enumerated() {
+        guard let paneIdx = col.panes.firstIndex(where: { $0.id == paneId })
+        else { continue }
+        if wsIdx == focusedWorkspaceIndex {
+          removePane(columnIndex: colIdx, paneIndex: paneIdx)
+        } else {
+          removePaneInBackgroundWorkspace(
+            wsIndex: wsIdx, columnIndex: colIdx, paneIndex: paneIdx)
+        }
+        return
+      }
+    }
+  }
+
+  /// Remove a pane from a non-current workspace without animating —
+  /// the workspace's view is hidden so a tween would only delay the
+  /// model update. Mirrors the bookkeeping of
+  /// `removePane(columnIndex:paneIndex:)` minus the focus / scroll /
+  /// undo machinery, which is current-WS only. The pane being
+  /// removed itself isn't stashed for undo; if removing it empties
+  /// the workspace, the cascade into `closeWorkspace(at:)` runs
+  /// `flushRecentlyClosed(in:)` on the way out, releasing any *other*
+  /// stash entries that were captured while this workspace was
+  /// previously current.
+  private func removePaneInBackgroundWorkspace(
+    wsIndex: Int, columnIndex: Int, paneIndex: Int
+  ) {
+    guard workspaces.indices.contains(wsIndex) else { return }
+    let ws = workspaces[wsIndex]
+    let vc = workspaceVCs[wsIndex]
+    guard ws.columns.indices.contains(columnIndex),
+      ws.columns[columnIndex].panes.indices.contains(paneIndex)
+    else { return }
+
+    let column = ws.columns[columnIndex]
+    let pane = column.panes.remove(at: paneIndex)
+    clearFocusBorder(pane)
+    // Cross-WS close skips the undo stash, so release the surface
+    // eagerly rather than detaching it.
+    pane.terminalView?.keepSurfaceAlive = false
+    pane.containerView.removeFromSuperview()
+
+    if column.panes.isEmpty {
+      ws.columns.remove(at: columnIndex)
+      column.containerView.removeFromSuperview()
+      if ws.columns.isEmpty {
+        // Last pane in last column → workspace itself is empty;
+        // tear it down through the same path the × on the workspace
+        // header would take.
+        closeWorkspace(at: wsIndex)
+        return
+      }
+      ws.focusedColumnIndex = min(columnIndex, ws.columns.count - 1)
+      rebuildStackView(in: vc)
+    } else {
+      column.focusedPaneIndex = min(paneIndex, column.panes.count - 1)
+      rebuildColumnView(column: column)
+    }
+    notifySidebarWorklaneDidChange()
+  }
+
   /// Close the focused pane. Shows a confirmation dialog if a process is running.
   public func removeCurrentPane() {
     guard let column = columns[safe: focusedColumnIndex],

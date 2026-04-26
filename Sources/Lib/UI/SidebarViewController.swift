@@ -235,6 +235,12 @@ final class SidebarViewController: NSViewController {
         },
         onPaneClick: { [weak container] id in
           container?.focusPane(id: id)
+        },
+        onWorkspaceClose: { [weak container] index in
+          container?.closeWorkspace(at: index)
+        },
+        onPaneClose: { [weak container] id in
+          container?.closePane(id: id)
         }
       ))
   }

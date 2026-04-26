@@ -120,6 +120,8 @@ final class WorklaneSectionView: NSView {
     let paneIcon: (PaneModel) -> NSImage?
     let onWorkspaceClick: (Int) -> Void
     let onPaneClick: (ULID) -> Void
+    let onWorkspaceClose: (Int) -> Void
+    let onPaneClose: (ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -138,6 +140,7 @@ final class WorklaneSectionView: NSView {
         isCurrent: isCurrentWs
       )
       header.onClick = { [onClick = input.onWorkspaceClick] in onClick(wsIdx) }
+      header.onClose = { [onClose = input.onWorkspaceClose] in onClose(wsIdx) }
       stackView.addArrangedSubview(header)
       NSLayoutConstraint.activate([
         header.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
@@ -156,6 +159,7 @@ final class WorklaneSectionView: NSView {
           )
           let capturedId = pane.id
           row.onClick = { [onClick = input.onPaneClick] in onClick(capturedId) }
+          row.onClose = { [onClose = input.onPaneClose] in onClose(capturedId) }
           stackView.addArrangedSubview(row)
           NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),

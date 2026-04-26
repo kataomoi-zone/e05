@@ -283,6 +283,46 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Close a workspace by index. Current-workspace closes route to
+  /// `closeCurrentWorkspace` for the existing slide animation;
+  /// non-current closes tear the workspace's view down without
+  /// animating since the user can't see it on screen anyway —
+  /// switching to a workspace just to dismiss it would burn a
+  /// no-information slide.
+  public func closeWorkspace(at index: Int) {
+    guard workspaces.indices.contains(index) else { return }
+    if index == focusedWorkspaceIndex {
+      closeCurrentWorkspace()
+      return
+    }
+    let closing = workspaces[index]
+    let closingVC = workspaceVCs[index]
+    NSLog(
+      "[e05/ws] closeWorkspace(at:%d) non-current: focused=%d wsCount=%d",
+      index, focusedWorkspaceIndex, workspaces.count)
+
+    for column in closing.columns {
+      for pane in column.panes {
+        pane.terminalView?.keepSurfaceAlive = false
+        clearFocusBorder(pane)
+      }
+    }
+    flushRecentlyClosed(in: closing)
+
+    workspaces.remove(at: index)
+    workspaceVCs.remove(at: index)
+    closingVC.view.removeFromSuperview()
+    closingVC.removeFromParent()
+
+    // Closing a workspace at a smaller index shifts the focused
+    // workspace one slot to the left in the array even though its
+    // identity hasn't changed.
+    if index < focusedWorkspaceIndex {
+      focusedWorkspaceIndex -= 1
+    }
+    notifySidebarWorklaneDidChange()
+  }
+
   // MARK: - Move pane across workspaces
 
   /// Move the focused pane into the target workspace as a new single-pane
