@@ -23,6 +23,26 @@ import AppKit
 @MainActor
 private final class FlippedClipView: NSClipView {
   override var isFlipped: Bool { true }
+
+  // Absorb mouse events so the empty area below the worklane's stack
+  // doesn't pass through `NSGlassEffectView`'s transparent regions to
+  // the workspace pane underneath. The bookmarks / history / downloads
+  // sidebar modes use `NSTableView`, which absorbs empty-area clicks
+  // built-in; the worklane uses `NSScrollView` + `NSStackView`, which
+  // forwards `mouseDown` up the responder chain via the NSResponder
+  // default — and somewhere in that path the click leaks through the
+  // glass to the webview, letting the user select text or follow links
+  // through the sidebar's empty space. Empty overrides stop the chain
+  // here, matching the table-view behaviour the other modes inherit.
+  //
+  // `scrollWheel`, `magnify`, and `swipe` are intentionally not
+  // overridden so the enclosing `NSScrollView`'s default panning
+  // (vertical wheel scroll, trackpad two-finger scroll, momentum
+  // scroll) keeps working — only primary-button click and drag are
+  // absorbed.
+  override func mouseDown(with _: NSEvent) {}
+  override func mouseDragged(with _: NSEvent) {}
+  override func mouseUp(with _: NSEvent) {}
 }
 
 @MainActor

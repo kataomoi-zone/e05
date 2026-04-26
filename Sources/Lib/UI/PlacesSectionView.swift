@@ -59,6 +59,18 @@ final class PlacesSectionView: NSView {
   func setDownloadsBadge(count: Int) {
     rows[.downloads]?.setBadge(count: count)
   }
+
+  // Absorb mouse events that land on the 2pt gaps between the four
+  // mode rows (and on any padding around the stack). Without these
+  // overrides the click would forward up the responder chain via the
+  // `NSResponder` default and leak through `NSGlassEffectView`'s
+  // transparent regions to the workspace pane underneath, letting the
+  // user click links / select text in the WebView through the
+  // sidebar's footer area. Same pattern as `FlippedClipView` in the
+  // worklane — `scrollWheel` etc. are intentionally not overridden.
+  override func mouseDown(with _: NSEvent) {}
+  override func mouseDragged(with _: NSEvent) {}
+  override func mouseUp(with _: NSEvent) {}
 }
 
 /// One clickable row in `PlacesSectionView`: icon + label, with an

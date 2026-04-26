@@ -208,6 +208,52 @@ final class SidebarOverlayView: NSView {
     syncHoverWithCurrentCursor()
   }
 
+  // Cursor over the sidebar's transparent gaps must read as `arrow`,
+  // not whatever the workspace pane underneath would install (link
+  // hover → pointing hand, text → I-beam). Use the older cursor-rect
+  // mechanism rather than a `cursorUpdate` tracking area: AppKit
+  // resolves cursor rects hierarchically so a row's own cursor rect
+  // (PaneRow / WorkspaceHeaderRow / PlacesRow / SidebarListCellView →
+  // pointing hand) wins over this fallback when the cursor is over
+  // its bounds. A `cursorUpdate` tracking area on the overlay would
+  // have out-claimed every child instead, breaking row hover cursors
+  // entirely (verified regression in macOS 26 Tahoe).
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .arrow)
+  }
+
+  /// Block click-through in the sidebar's transparent regions. The
+  /// glass panel intentionally has empty space between rows and around
+  /// the worklane, but those gaps must still feel like sidebar surface
+  /// to the user — clicking there should not select text or follow a
+  /// link in the workspace pane sitting visually behind the sidebar.
+  ///
+  /// `NSGlassEffectView` reports its transparent areas as non-hit
+  /// (returns nil for points its own subviews don't cover), so without
+  /// this override AppKit descends past the sidebar overlay and lands
+  /// on the workspace pane underneath. Forcing a non-nil return for
+  /// any in-bounds point closes that gap.
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    let local = convert(point, from: superview)
+    guard !isHidden, window != nil, bounds.contains(local) else {
+      return super.hitTest(point)
+    }
+    return super.hitTest(point) ?? self
+  }
+
+  // Final-stop absorbers for any click that bubbles up through the
+  // responder chain from a structural subview (NSGlassEffectView's
+  // content `NSView`, the empty padding around `worklane` /
+  // `places` / `header`, etc.) without one of the per-container
+  // absorbers (`FlippedClipView` for worklane, `PlacesSectionView`
+  // for the bottom strip) catching it first. Without this the
+  // `NSResponder` default forwards mouseDown all the way up past the
+  // overlay, where `NSGlassEffectView`'s pass-through delivers the
+  // click to the workspace pane visually beneath.
+  override func mouseDown(with _: NSEvent) {}
+  override func mouseDragged(with _: NSEvent) {}
+  override func mouseUp(with _: NSEvent) {}
+
   override func mouseEntered(with _: NSEvent) { onHoverEnter?() }
 
   override func mouseExited(with _: NSEvent) {
