@@ -701,14 +701,29 @@ extension BrowserPaneView: FindHelper {
   }
 
   public func endFind() {
+    // Belt-and-braces clear so no painted highlight survives a
+    // stale `CSS.highlights` registry entry on Tahoe-era WebKit:
+    // 1. Drop the registry entries (the documented kill switch).
+    // 2. Remove the injected `<style id="__e05FindStyle">` so the
+    //    `::highlight(...)` rules backing any leftover paint go
+    //    away with it. The find script's existence guard re-injects
+    //    the tag on the next session, so this stays self-healing.
+    // 3. Null the `__e05Find` state and clear the selection so the
+    //    follow-up session starts from scratch.
     let script = """
-      window.__e05Find = null;
-      if (typeof CSS !== 'undefined' && CSS.highlights) {
-        CSS.highlights.delete('e05-find');
-        CSS.highlights.delete('e05-find-current');
-      }
-      const sel = window.getSelection();
-      if (sel) sel.removeAllRanges();
+      (function() {
+        try {
+          window.__e05Find = null;
+          if (typeof CSS !== 'undefined' && CSS.highlights) {
+            CSS.highlights.delete('e05-find');
+            CSS.highlights.delete('e05-find-current');
+          }
+          const style = document.getElementById('__e05FindStyle');
+          if (style) style.remove();
+          const sel = window.getSelection();
+          if (sel) sel.removeAllRanges();
+        } catch (e) {}
+      })();
       """
     webView.evaluateJavaScript(script, completionHandler: nil)
   }
@@ -722,9 +737,15 @@ extension BrowserPaneView: FindHelper {
     if (!document.getElementById('__e05FindStyle')) {
       const style = document.createElement('style');
       style.id = '__e05FindStyle';
+      // Tuned for visibility against light-mode page backgrounds:
+      // alpha around 0.7 keeps the underlying text legible while
+      // making the all-match highlight stand out against white,
+      // and the orange current-match stays distinct from the
+      // yellow surround. Earlier values (0.45 yellow) blended into
+      // light text colours so the all-match layer looked absent.
       style.textContent =
-        '::highlight(e05-find) { background-color: rgba(255, 255, 0, 0.45); color: inherit; } ' +
-        '::highlight(e05-find-current) { background-color: rgba(255, 128, 0, 0.75); color: inherit; }';
+        '::highlight(e05-find) { background-color: rgba(255, 215, 0, 0.7); color: inherit; } ' +
+        '::highlight(e05-find-current) { background-color: rgba(255, 140, 0, 0.9); color: inherit; }';
       document.head.appendChild(style);
     }
 
@@ -819,6 +840,16 @@ extension BrowserPaneView: FindHelper {
     const currentNode = currentRange.startContainer;
 
     if (typeof CSS !== 'undefined' && CSS.highlights) {
+      // Drop any prior registration before installing the new one.
+      // `CSS.highlights.set` is documented to replace the highlight
+      // at a given key, but WebKit (Tahoe-era) sometimes leaves the
+      // previous Range set painted when the registry entry is
+      // overwritten with a different match collection — the old
+      // needle's hits stay highlighted alongside the new ones.
+      // Explicit `delete` before `set` clears the painted state
+      // deterministically.
+      CSS.highlights.delete('e05-find');
+      CSS.highlights.delete('e05-find-current');
       const allHl = new Highlight();
       for (const r of matches) allHl.add(r);
       CSS.highlights.set('e05-find', allHl);
