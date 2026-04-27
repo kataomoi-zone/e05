@@ -3,17 +3,14 @@ import AppKit
 extension PaneContainerViewController {
   // MARK: - Find in Page
 
-  /// Open the find bar on the focused browser pane. When the URL bar
-  /// is hidden it is revealed first so the pane's bar stack has a
-  /// populated row above it (mirroring `focusURLBar`'s behaviour).
-  /// Switching between panes rebinds the shared callback set to the
-  /// new target so ⌘G / ⌘⇧G always refer to the pane whose bar is
-  /// currently revealed.
+  /// Open the find bar on the focused browser pane. The bar floats
+  /// over the pane content as a bottom-anchored pill, so opening it
+  /// is independent of the URL bar's visibility — both can be toggled
+  /// freely without visual conflict. Switching between panes rebinds
+  /// the shared callback set to the new target so ⌘G / ⌘⇧G always
+  /// refer to the pane whose bar is currently revealed.
   public func openFindBar() {
     guard let pane = focusedPane, pane.findHelper != nil else { return }
-    if !urlBarVisible {
-      toggleURLBarVisibility()
-    }
     // If a previous session still has its bar revealed on another
     // pane, dismiss it end-to-end first — each pane has its own bar
     // and we want only the newly-targeted one visible, with the

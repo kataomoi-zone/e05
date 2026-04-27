@@ -121,13 +121,11 @@ extension PaneContainerViewController {
     animated: Bool,
     completion: (@MainActor @Sendable () -> Void)?
   ) {
-    // Dismiss the find bar whenever the sidebar becomes visible. Both
-    // overlays claim the top-left region of the window, and stacking
-    // them reads as clutter — revealing the sidebar is the louder
-    // signal so the find session yields.
-    if state.isRevealed {
-      closeFindBar()
-    }
+    // The find bar floats centered at the pane bottom and the
+    // sidebar slides in from the leading edge — they no longer
+    // overlap visually, so revealing the sidebar leaves any open
+    // find session intact. Auto-close on focus changes / workspace
+    // switches still applies through `setFocus` and `switchWorkspace`.
 
     let sidebarConst: CGFloat = state.isRevealed ? 0 : -Self.sidebarWidth
     // Both revealed states inflate each workspace's
