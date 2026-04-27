@@ -7,7 +7,10 @@ import AppKit
 /// Clicking fires `onClick` which the sidebar routes to
 /// `PaneContainerViewController.switchWorkspace(to:)`. The hover-
 /// revealed × button fires `onClose`, which routes to
-/// `PaneContainerViewController.closeWorkspace(at:)`.
+/// `PaneContainerViewController.closeWorkspace(at:)`. The hover-
+/// revealed leading chevron fires `onToggleCollapse`, which the
+/// sidebar uses to hide / show this workspace's pane rows in the
+/// worklane (UI-only state, not persisted).
 @MainActor
 final class WorkspaceHeaderRow: NSView {
   static let height: CGFloat = 28
@@ -15,9 +18,20 @@ final class WorkspaceHeaderRow: NSView {
   let workspaceIndex: Int
   var onClick: (() -> Void)?
   var onClose: (() -> Void)?
+  var onToggleCollapse: (() -> Void)?
 
   private let indicator = NSView()
   private let label = NSTextField(labelWithString: "")
+  private let chevronButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.isHidden = true
+    return b
+  }()
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -32,9 +46,12 @@ final class WorkspaceHeaderRow: NSView {
   }()
   private var trackingArea: NSTrackingArea?
   private var isHovered = false
+  private var isCollapsed = false
+  private var accentColor: NSColor = .labelColor
 
-  init(index: Int, title: String, accentColor: NSColor, isCurrent: Bool) {
+  init(index: Int, title: String, accentColor: NSColor, isCurrent: Bool, isCollapsed: Bool) {
     self.workspaceIndex = index
+    self.isCollapsed = isCollapsed
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
@@ -52,9 +69,12 @@ final class WorkspaceHeaderRow: NSView {
     label.lineBreakMode = .byTruncatingTail
     label.maximumNumberOfLines = 1
     label.drawsBackground = false
+    chevronButton.target = self
+    chevronButton.action = #selector(chevronTapped(_:))
     closeButton.target = self
     closeButton.action = #selector(closeTapped(_:))
     addSubview(indicator)
+    addSubview(chevronButton)
     addSubview(label)
     addSubview(closeButton)
 
@@ -65,6 +85,14 @@ final class WorkspaceHeaderRow: NSView {
       indicator.topAnchor.constraint(equalTo: topAnchor, constant: 4),
       indicator.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
       indicator.widthAnchor.constraint(equalToConstant: 3),
+
+      // Chevron occupies the same leading slot as the accent indicator
+      // — they're mutually exclusive (one is hidden whenever the other
+      // is visible) so the label position never shifts on hover.
+      chevronButton.centerXAnchor.constraint(equalTo: indicator.centerXAnchor),
+      chevronButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      chevronButton.widthAnchor.constraint(equalToConstant: 14),
+      chevronButton.heightAnchor.constraint(equalToConstant: 14),
 
       label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 10),
       label.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
@@ -78,6 +106,7 @@ final class WorkspaceHeaderRow: NSView {
   }
 
   private func configure(title: String, accentColor: NSColor, isCurrent: Bool) {
+    self.accentColor = accentColor
     label.stringValue = title
     label.font = isCurrent ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
     label.alphaValue = isCurrent ? 1.0 : 0.6
@@ -86,6 +115,16 @@ final class WorkspaceHeaderRow: NSView {
       ? accentColor.cgColor
       : accentColor.withAlphaComponent(0.6).cgColor
     indicator.layer?.cornerRadius = 1.5
+    updateChevronIcon()
+  }
+
+  private func updateChevronIcon() {
+    let symbol = isCollapsed ? "chevron.right" : "chevron.down"
+    let description = isCollapsed ? "Expand workspace" : "Collapse workspace"
+    chevronButton.image = NSImage(
+      systemSymbolName: symbol, accessibilityDescription: description)
+    chevronButton.contentTintColor = accentColor
+    chevronButton.toolTip = description
   }
 
   override func updateTrackingAreas() {
@@ -98,17 +137,40 @@ final class WorkspaceHeaderRow: NSView {
     )
     addTrackingArea(area)
     trackingArea = area
+    // After a fold/unfold (or any other reload that wipes and rebuilds
+    // the worklane stack), AppKit doesn't synthesise a `mouseEntered`
+    // for a freshly installed tracking area whose bounds already
+    // contain the cursor — the row would stay un-highlighted until
+    // the user moved the cursor out and back in. Probe the live
+    // cursor position and resolve the hover state ourselves so the
+    // affordance survives the reload. Probing the *exit* side too is
+    // important here (unlike `EdgeHoverHitZoneView`, where exit
+    // probes broke the timer pipeline): worklane rows have no
+    // deferred timers, only direct visual flips, so syncing both
+    // directions is safe.
+    syncHoverWithCurrentCursor()
   }
 
   override func mouseEntered(with _: NSEvent) {
-    isHovered = true
-    closeButton.isHidden = false
-    applyHoverBackground()
+    setHovered(true)
   }
 
   override func mouseExited(with _: NSEvent) {
-    isHovered = false
-    closeButton.isHidden = true
+    setHovered(false)
+  }
+
+  private func syncHoverWithCurrentCursor() {
+    guard let window else { return }
+    let mouseInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    setHovered(bounds.contains(mouseInView))
+  }
+
+  private func setHovered(_ hovered: Bool) {
+    guard hovered != isHovered else { return }
+    isHovered = hovered
+    indicator.isHidden = hovered
+    chevronButton.isHidden = !hovered
+    closeButton.isHidden = !hovered
     applyHoverBackground()
   }
 
@@ -120,6 +182,10 @@ final class WorkspaceHeaderRow: NSView {
 
   override func mouseDown(with _: NSEvent) {
     onClick?()
+  }
+
+  @objc private func chevronTapped(_: NSButton) {
+    onToggleCollapse?()
   }
 
   @objc private func closeTapped(_: NSButton) {

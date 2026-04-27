@@ -4,11 +4,16 @@ import AppKit
 /// Indented under its owning workspace header. The currently focused
 /// pane gets a 2pt border in the current workspace's accent color
 /// (matching the in-content focus border) so the sidebar mirrors the
-/// workspace focus state. Clicking fires `onClick` which the sidebar
-/// routes to `PaneContainerViewController.focusPane(id:)` (cross-WS
-/// safe via the stage 0-A API). The hover-revealed × button fires
-/// `onClose`, which routes to
-/// `PaneContainerViewController.closePane(id:)`.
+/// workspace focus state. A non-current workspace's would-be-focused
+/// pane (the one a switch would land on) gets a small accent dot in
+/// the leading inset — visible enough to tell the user where focus
+/// will land without competing with the active workspace's full
+/// border.
+///
+/// Clicking fires `onClick` which the sidebar routes to
+/// `PaneContainerViewController.focusPane(id:)` (cross-WS safe via
+/// the stage 0-A API). The hover-revealed × button fires `onClose`,
+/// which routes to `PaneContainerViewController.closePane(id:)`.
 @MainActor
 final class PaneRow: NSView {
   static let height: CGFloat = 24
@@ -20,6 +25,8 @@ final class PaneRow: NSView {
 
   private let iconView = NSImageView()
   private let label = NSTextField(labelWithString: "")
+  private let focusDot = NSView()
+  private static let focusDotSize: CGFloat = 6
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -36,13 +43,18 @@ final class PaneRow: NSView {
   private var isHovered = false
   private var isCurrentPane = false
 
-  init(paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor, isCurrent: Bool) {
+  init(
+    paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor,
+    isCurrent: Bool, isOwnWorkspaceFocus: Bool
+  ) {
     self.paneId = paneId
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
     setupLayout()
-    configure(title: title, icon: icon, accentColor: accentColor, isCurrent: isCurrent)
+    configure(
+      title: title, icon: icon, accentColor: accentColor,
+      isCurrent: isCurrent, isOwnWorkspaceFocus: isOwnWorkspaceFocus)
   }
 
   @available(*, unavailable)
@@ -61,12 +73,26 @@ final class PaneRow: NSView {
     label.font = NSFont.systemFont(ofSize: 12)
     addSubview(label)
 
+    focusDot.translatesAutoresizingMaskIntoConstraints = false
+    focusDot.wantsLayer = true
+    focusDot.isHidden = true
+    addSubview(focusDot)
+
     closeButton.target = self
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
 
     NSLayoutConstraint.activate([
       heightAnchor.constraint(equalToConstant: Self.height),
+      // Dot marks "focus would land here" for non-current
+      // workspaces. Centred in the leading inset (the same gutter
+      // the workspace header uses for its 3pt accent indicator),
+      // so the two affordances read as parts of the same focus-
+      // signalling vocabulary without overlapping the icon slot.
+      focusDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
+      focusDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+      focusDot.widthAnchor.constraint(equalToConstant: Self.focusDotSize),
+      focusDot.heightAnchor.constraint(equalToConstant: Self.focusDotSize),
       // Favicon / SF-symbol slot sits in the indent that used to be
       // pure whitespace, giving browser and terminal rows a visual
       // identifier without pushing text further right.
@@ -86,7 +112,10 @@ final class PaneRow: NSView {
     ])
   }
 
-  private func configure(title: String, icon: NSImage?, accentColor: NSColor, isCurrent: Bool) {
+  private func configure(
+    title: String, icon: NSImage?, accentColor: NSColor,
+    isCurrent: Bool, isOwnWorkspaceFocus: Bool
+  ) {
     isCurrentPane = isCurrent
     label.stringValue = title
     label.alphaValue = isCurrent ? 1.0 : 0.8
@@ -101,6 +130,18 @@ final class PaneRow: NSView {
       layer?.borderColor = nil
       layer?.cornerRadius = 0
     }
+    if isOwnWorkspaceFocus {
+      // Match the 0.6 alpha the workspace header uses on its label
+      // and accent indicator when its workspace isn't the focused
+      // one — the dot belongs to that same de-emphasised "preview"
+      // tier and reads as too loud at full alpha.
+      focusDot.layer?.backgroundColor =
+        accentColor.withAlphaComponent(0.6).cgColor
+      focusDot.layer?.cornerRadius = Self.focusDotSize / 2
+      focusDot.isHidden = false
+    } else {
+      focusDot.isHidden = true
+    }
   }
 
   override func updateTrackingAreas() {
@@ -113,17 +154,34 @@ final class PaneRow: NSView {
     )
     addTrackingArea(area)
     trackingArea = area
+    // Sync hover with the live cursor position. AppKit doesn't fire
+    // `mouseEntered` for a tracking area whose bounds already
+    // contain the cursor at install time, so a worklane reload (e.g.
+    // a workspace fold/unfold or a focus change) would leave a row
+    // un-highlighted under a stationary cursor until the user moves
+    // off and back in. Probing both directions is safe here because
+    // the row has no deferred timers — only direct visual flips.
+    syncHoverWithCurrentCursor()
   }
 
   override func mouseEntered(with _: NSEvent) {
-    isHovered = true
-    closeButton.isHidden = false
-    applyHoverBackground()
+    setHovered(true)
   }
 
   override func mouseExited(with _: NSEvent) {
-    isHovered = false
-    closeButton.isHidden = true
+    setHovered(false)
+  }
+
+  private func syncHoverWithCurrentCursor() {
+    guard let window else { return }
+    let mouseInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    setHovered(bounds.contains(mouseInView))
+  }
+
+  private func setHovered(_ hovered: Bool) {
+    guard hovered != isHovered else { return }
+    isHovered = hovered
+    closeButton.isHidden = !hovered
     applyHoverBackground()
   }
 

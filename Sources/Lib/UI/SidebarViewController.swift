@@ -25,6 +25,13 @@ final class SidebarViewController: NSViewController {
   private(set) var currentMode: SidebarMode = .tabs
   private var downloadsListenerToken: DownloadsListenerToken?
 
+  /// Workspaces whose pane rows are hidden in the worklane. UI-only
+  /// state — not persisted, so a fresh launch always shows every
+  /// workspace expanded. Survives sidebar mode switches and sidebar
+  /// state transitions because it lives on the VC, not the worklane
+  /// view.
+  private var collapsedWorkspaceIds: Set<ULID> = []
+
   // MARK: - State machine
 
   /// Current sidebar state. Mutated only via `transition(to:animated:)`
@@ -222,6 +229,12 @@ final class SidebarViewController: NSViewController {
       let ws = container.workspaces[container.focusedWorkspaceIndex]
       return ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
     }()
+    // Drop collapsed-state entries for workspaces that no longer
+    // exist (closed since last reload) so the set doesn't grow
+    // unbounded over the session's lifetime.
+    let liveIds = Set(container.workspaces.map(\.id))
+    collapsedWorkspaceIds.formIntersection(liveIds)
+
     overlay.worklane.reload(
       .init(
         workspaces: container.workspaces,
@@ -230,6 +243,9 @@ final class SidebarViewController: NSViewController {
         accentColor: { PaneContainerViewController.accentColor(forWorkspaceAt: $0) },
         paneTitle: Self.displayTitle(for:),
         paneIcon: Self.displayIcon(for:),
+        isWorkspaceCollapsed: { [weak self] id in
+          self?.collapsedWorkspaceIds.contains(id) ?? false
+        },
         onWorkspaceClick: { [weak container] index in
           container?.switchWorkspace(to: index)
         },
@@ -241,8 +257,20 @@ final class SidebarViewController: NSViewController {
         },
         onPaneClose: { [weak container] id in
           container?.closePane(id: id)
+        },
+        onWorkspaceToggleCollapse: { [weak self] id in
+          self?.toggleWorkspaceCollapsed(id)
         }
       ))
+  }
+
+  private func toggleWorkspaceCollapsed(_ id: ULID) {
+    if collapsedWorkspaceIds.contains(id) {
+      collapsedWorkspaceIds.remove(id)
+    } else {
+      collapsedWorkspaceIds.insert(id)
+    }
+    reloadWorklane()
   }
 
   /// Switch the sidebar's mode area to show the given mode's content.

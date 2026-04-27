@@ -118,10 +118,12 @@ final class WorklaneSectionView: NSView {
     let accentColor: (Int) -> NSColor
     let paneTitle: (PaneModel) -> String
     let paneIcon: (PaneModel) -> NSImage?
+    let isWorkspaceCollapsed: (ULID) -> Bool
     let onWorkspaceClick: (Int) -> Void
     let onPaneClick: (ULID) -> Void
     let onWorkspaceClose: (Int) -> Void
     let onPaneClose: (ULID) -> Void
+    let onWorkspaceToggleCollapse: (ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -133,29 +135,46 @@ final class WorklaneSectionView: NSView {
     for (wsIdx, ws) in input.workspaces.enumerated() {
       let isCurrentWs = wsIdx == input.focusedWorkspaceIndex
       let wsColor = input.accentColor(wsIdx)
+      let isCollapsed = input.isWorkspaceCollapsed(ws.id)
       let header = WorkspaceHeaderRow(
         index: wsIdx,
         title: "Workspace \(wsIdx + 1)",
         accentColor: wsColor,
-        isCurrent: isCurrentWs
+        isCurrent: isCurrentWs,
+        isCollapsed: isCollapsed
       )
       header.onClick = { [onClick = input.onWorkspaceClick] in onClick(wsIdx) }
       header.onClose = { [onClose = input.onWorkspaceClose] in onClose(wsIdx) }
+      let wsId = ws.id
+      header.onToggleCollapse = {
+        [onToggle = input.onWorkspaceToggleCollapse] in onToggle(wsId)
+      }
       stackView.addArrangedSubview(header)
       NSLayoutConstraint.activate([
         header.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
         header.trailingAnchor.constraint(equalTo: stackView.trailingAnchor),
       ])
 
+      if isCollapsed { continue }
+
+      // The "would-be focused pane" of each non-current workspace —
+      // surfaced in the sidebar so the user can see where focus will
+      // land before they switch over. Always-nil for an empty
+      // workspace; for the current workspace the same pane is
+      // already covered by `focusedPaneId`, so the indent line and
+      // the in-row border don't double-decorate.
+      let ownFocusPaneId = ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
       for column in ws.columns {
         for pane in column.panes {
           let isCurrentPane = pane.id == input.focusedPaneId
+          let isOwnFocus = !isCurrentPane && pane.id == ownFocusPaneId
           let row = PaneRow(
             paneId: pane.id,
             title: input.paneTitle(pane),
             icon: input.paneIcon(pane),
             accentColor: wsColor,
-            isCurrent: isCurrentPane
+            isCurrent: isCurrentPane,
+            isOwnWorkspaceFocus: isOwnFocus
           )
           let capturedId = pane.id
           row.onClick = { [onClick = input.onPaneClick] in onClick(capturedId) }
