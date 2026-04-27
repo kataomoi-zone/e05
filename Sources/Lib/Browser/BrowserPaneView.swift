@@ -26,7 +26,7 @@ final class FocusReportingWebView: WKWebView {
 /// The browserHostView is required because WebKit manipulates frames directly when
 /// Inspector is attached. Using Auto Layout on webView would conflict with this.
 @MainActor
-public final class BrowserPaneView: NSView, WKNavigationDelegate {
+public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   public let webView: WKWebView
 
   /// Container for webView + Inspector. WebKit manages the split inside this.
@@ -64,6 +64,15 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
   /// container wires this to `DownloadsManager.adopt(_:)`; the browser
   /// stays decoupled from the download store.
   public var onDownloadStarted: ((WKDownload) -> Void)?
+  /// Called when a link should open in a new pane (new column in the
+  /// current workspace). Triggered by `target="_blank"` links,
+  /// `window.open()`, plain Cmd-clicks on links, and the
+  /// "Open in Pane" context-menu item.
+  public var onOpenInNewPane: ((URL) -> Void)?
+  /// Called when a link should open in a fresh workspace. Triggered
+  /// by Shift-clicks on links and the "Open in Workspace" context-
+  /// menu item.
+  public var onOpenInNewWorkspace: ((URL) -> Void)?
 
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
@@ -203,6 +212,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     // webView uses autoresizing mask inside browserHostView (not Auto Layout).
     // This lets WebKit manage webView.frame directly when Inspector is attached.
     webView.navigationDelegate = self
+    webView.uiDelegate = self
     webView.translatesAutoresizingMaskIntoConstraints = true
     webView.autoresizingMask = [.width, .height]
     webView.frame = browserHostView.bounds
@@ -318,6 +328,49 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
 
   // MARK: - Download Interception
 
+  /// Intercept link clicks before WebKit navigates. Modifier-flag
+  /// routing replicates the typical browser behaviour:
+  ///
+  /// - Shift-click → cancel and forward the URL to the new-workspace
+  ///   path. The host is responsible for creating the workspace and
+  ///   adding the column.
+  /// - Cmd-click → cancel and forward to the new-pane path. Since
+  ///   Cmd-clicks on plain links also trigger
+  ///   `webView(_:createWebViewWith:for:windowFeatures:)` below, the
+  ///   guard here is the canonical interception (returning `nil`
+  ///   from `createWebView` is a fallback for `target="_blank"` /
+  ///   `window.open()` only).
+  /// - Anything else → allow the navigation, fall through to the
+  ///   download / response-policy delegate below if needed.
+  ///
+  /// `modifierFlags` is empty for non-user-initiated actions
+  /// (programmatic redirects, JS-driven navigations), so this
+  /// branching only fires on real link activations.
+  public func webView(
+    _: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+  ) {
+    guard navigationAction.navigationType == .linkActivated,
+      let url = navigationAction.request.url
+    else {
+      decisionHandler(.allow)
+      return
+    }
+    let flags = navigationAction.modifierFlags
+    if flags.contains(.shift) {
+      decisionHandler(.cancel)
+      onOpenInNewWorkspace?(url)
+      return
+    }
+    if flags.contains(.command) {
+      decisionHandler(.cancel)
+      onOpenInNewPane?(url)
+      return
+    }
+    decisionHandler(.allow)
+  }
+
   /// Decide whether a response should become a download. Explicit
   /// `Content-Disposition: attachment` is the only signal; WKWebView
   /// already renders PDFs / images / media inline by default.
@@ -331,6 +384,34 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate {
     } else {
       decisionHandler(.allow)
     }
+  }
+
+  // MARK: - WKUIDelegate
+
+  /// Handle `target="_blank"` / `window.open()` / Cmd-click on links
+  /// where WebKit asks for a new web view. Always return `nil` —
+  /// e05 doesn't host secondary `WKWebView` instances inside the
+  /// same pane. Instead, forward the URL to the new-pane path so
+  /// the host creates a fresh browser column for it. Returning
+  /// `nil` here cancels the popup; the original `decidePolicyFor`
+  /// path has already cancelled the parent navigation when
+  /// applicable, so there's no double-load risk.
+  public func webView(
+    _: WKWebView,
+    createWebViewWith _: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction,
+    windowFeatures _: WKWindowFeatures
+  ) -> WKWebView? {
+    if let url = navigationAction.request.url {
+      // Shift-click on a `target="_blank"` link still opens in a new
+      // workspace; the modifierFlags survive the WebKit hop.
+      if navigationAction.modifierFlags.contains(.shift) {
+        onOpenInNewWorkspace?(url)
+      } else {
+        onOpenInNewPane?(url)
+      }
+    }
+    return nil
   }
 
   public func webView(

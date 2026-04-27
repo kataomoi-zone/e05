@@ -196,6 +196,23 @@ extension PaneContainerViewController {
       bv.onDownloadStarted = { [weak self] wkDownload in
         self?.downloadsManager.adopt(wkDownload)
       }
+      bv.onOpenInNewPane = { [weak self] url in
+        // Mirrors the bookmark / history "open in new browser
+        // column" UX policy: a browser link Cmd-click /
+        // `target="_blank"` / `window.open()` / right-click "Open
+        // in Pane" lands as a fresh column in the current workspace.
+        self?.addColumn(address: PaneAddress(url))
+      }
+      bv.onOpenInNewWorkspace = { [weak self] url in
+        // Mirrors bookmark / history "open in new workspace": the
+        // newly created workspace seeds a terminal column, and the
+        // browser column requested by the link lands alongside it.
+        // Replacing the auto-terminal is deferred until the
+        // ergonomics demand it.
+        guard let self else { return }
+        self.createWorkspace()
+        self.addColumn(address: PaneAddress(url))
+      }
     } else if let fv = pane.finderView {
       // Finder pane: cwd, focus, navigation enabledness, and titles
       // all flow through the same handlers the browser pane uses, so
