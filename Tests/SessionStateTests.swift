@@ -92,8 +92,7 @@ struct SessionStateTests {
           scrollX: 0
         )
       ],
-      focusedWorkspaceIndex: 0,
-      urlBarVisible: false
+      focusedWorkspaceIndex: 0
     )
 
     let data = try JSONEncoder().encode(session)
@@ -133,8 +132,7 @@ struct SessionStateTests {
           scrollX: 0
         )
       ],
-      focusedWorkspaceIndex: 0,
-      urlBarVisible: false
+      focusedWorkspaceIndex: 0
     )
 
     let data = try JSONEncoder().encode(session)
@@ -174,8 +172,7 @@ struct SessionStateTests {
           scrollX: 0
         )
       ],
-      focusedWorkspaceIndex: 0,
-      urlBarVisible: false
+      focusedWorkspaceIndex: 0
     )
 
     let data = try JSONEncoder().encode(session)
@@ -263,8 +260,7 @@ struct SessionStateTests {
           scrollX: 0
         )
       ],
-      focusedWorkspaceIndex: 0,
-      urlBarVisible: false
+      focusedWorkspaceIndex: 0
     )
 
     let data = try JSONEncoder().encode(session)
@@ -315,7 +311,6 @@ struct SessionStateTests {
           )
         ],
         focusedWorkspaceIndex: 0,
-        urlBarVisible: false,
         sidebarPinned: pinned
       )
 

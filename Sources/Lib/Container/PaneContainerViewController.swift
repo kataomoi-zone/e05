@@ -136,6 +136,10 @@ public final class PaneContainerViewController: NSViewController {
 
   nonisolated(unsafe) var recentlyClosed: [ClosedPane] = []
 
+  /// Window-global URL bar toggle. The menu / palette action flips
+  /// this for every pane simultaneously; per-pane `.peek` reveals
+  /// driven by ⌘L stay independent of this flag and self-collapse
+  /// when the URL field gives up first responder.
   var urlBarVisible = false
 
   var titleDebounceTimer: Timer?

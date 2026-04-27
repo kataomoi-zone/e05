@@ -7,7 +7,10 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Sessio
 public struct SessionState: Codable {
   public var workspaces: [WorkspaceState]
   public var focusedWorkspaceIndex: Int
-  public var urlBarVisible: Bool
+  /// Window-global URL bar visibility. The toggle action flips this
+  /// for every pane in lockstep; `.peek` reveals driven by ⌘L on a
+  /// single pane are ephemeral and never persisted.
+  public var urlBarVisible: Bool = false
   /// Sidebar pin state. Persists the user's choice between
   /// hover-only (false, default) and pinned-open (true) across
   /// restarts. `.hoverPeek` is ephemeral — only explicit pinning
