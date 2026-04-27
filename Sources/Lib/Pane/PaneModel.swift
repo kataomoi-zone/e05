@@ -44,16 +44,16 @@ public final class PaneModel {
   /// pane instead of stranding it over window-absolute coordinates.
   public let findBar = FindBarView()
 
-  /// Whether the URL bar is currently shown.
-  public private(set) var isURLBarVisible = false
-
-  /// Per-pane URL bar visibility state. Set by the upcoming hover
-  /// machinery in `PaneContainerViewController`; for now it tracks
-  /// the existing app-global `urlBarVisible` flag so callers can
-  /// observe per-pane state without rewiring every callsite at
-  /// once. Future steps wire the hit-zone hover scheduler and the
-  /// ⌘⇧L pin action through this field, then drop the global flag.
+  /// Per-pane URL bar visibility state. The hover-reveal machinery
+  /// in `PaneContainerViewController` mutates this directly through
+  /// `setURLBarVisible(_:)` (legacy callsites) or — once the hit
+  /// zones land — through scheduled state transitions on hover and
+  /// a ⌘⇧L pin toggle.
   public var urlBarHoverState: URLBarHoverState = .hidden
+
+  /// Whether the URL bar is currently shown. Computed from the
+  /// hover state so visibility has a single source of truth.
+  public var isURLBarVisible: Bool { urlBarHoverState.isRevealed }
 
   /// Whether the find bar is currently revealed. Controlled through
   /// `setFindBarVisible(_:)`. The bar is a floating overlay so showing
@@ -294,9 +294,40 @@ public final class PaneModel {
 
   // MARK: - URL Bar Toggle
 
+  /// Apply the window-global URL bar toggle to this pane: `true`
+  /// pins the bar open, `false` collapses it. Any active `.peek`
+  /// reveal is overwritten — when the user pins everything, the
+  /// transient peek session ends.
   public func setURLBarVisible(_ visible: Bool) {
-    guard visible != isURLBarVisible else { return }
-    isURLBarVisible = visible
+    let target: URLBarHoverState = visible ? .pinned : .hidden
+    guard target != urlBarHoverState else { return }
+    urlBarHoverState = target
+    applyURLBarVisibility()
+  }
+
+  /// Activate or release a peek reveal — the temporary on-pane URL
+  /// bar driven by ⌘L while the global toggle is off.
+  ///
+  /// `setURLBarPeek(true)` only opens the peek when the bar isn't
+  /// already pinned globally; pinning wins, so peek is a no-op
+  /// during a pinned session. `setURLBarPeek(false)` only releases
+  /// a `.peek` state — a globally-pinned bar is owned by
+  /// `setURLBarVisible(_:)` and must not be collapsed by the peek
+  /// lifecycle (Esc / committed navigation).
+  public func setURLBarPeek(_ active: Bool) {
+    let target: URLBarHoverState
+    if active {
+      // Only `.hidden` enters `.peek`. `.pinned` wins (the global
+      // toggle owns it), and `.peek → .peek` is already settled.
+      guard urlBarHoverState == .hidden else { return }
+      target = .peek
+    } else {
+      // Only release our own `.peek`. `.pinned` belongs to
+      // `setURLBarVisible(_:)`; `.hidden` is already settled.
+      guard urlBarHoverState == .peek else { return }
+      target = .hidden
+    }
+    urlBarHoverState = target
     applyURLBarVisibility()
   }
 
