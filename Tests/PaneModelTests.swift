@@ -46,30 +46,33 @@ struct PaneModelTests {
   func findBarStartsCollapsed() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
     #expect(!pane.isFindBarVisible)
-    #expect(pane.findBar.isHidden)
+    // Visibility lives on `alphaValue` so the bar can fade smoothly
+    // and stays in the layout pipeline; `isHidden` is intentionally
+    // unused.
+    #expect(pane.findBar.alphaValue == 0)
   }
 
-  @Test("setFindBarVisible toggles isHidden alongside the flag")
-  func setFindBarVisibleTogglesHidden() {
+  @Test("setFindBarVisible toggles alphaValue alongside the flag")
+  func setFindBarVisibleTogglesAlpha() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
     pane.setFindBarVisible(true)
     #expect(pane.isFindBarVisible)
-    #expect(!pane.findBar.isHidden)
+    #expect(pane.findBar.alphaValue == 1)
     pane.setFindBarVisible(false)
     #expect(!pane.isFindBarVisible)
-    #expect(pane.findBar.isHidden)
+    #expect(pane.findBar.alphaValue == 0)
   }
 
   @Test("setFindBarVisible with the same value is a no-op")
   func setFindBarVisibleIdempotent() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
     // Re-applying the default must not drive spurious constraint
-    // churn or hidden-state flips.
+    // churn or animation restarts.
     pane.setFindBarVisible(false)
     #expect(!pane.isFindBarVisible)
     pane.setFindBarVisible(true)
     pane.setFindBarVisible(true)
     #expect(pane.isFindBarVisible)
-    #expect(!pane.findBar.isHidden)
+    #expect(pane.findBar.alphaValue == 1)
   }
 }
