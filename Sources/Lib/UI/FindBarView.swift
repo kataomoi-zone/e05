@@ -1,15 +1,27 @@
 import AppKit
 
-/// Overlay shown above a focused pane for incremental find-in-page.
+/// Floating pill shown over the focused pane for incremental
+/// find-in-page. Anchored to the pane's bottom edge by `PaneModel`,
+/// rendered as a translucent dark surface so the page beneath stays
+/// visible. Independent of the URL bar — `setFindBarVisible(true)`
+/// can fire whether or not the URL bar is currently revealed.
 ///
-/// The container (`PaneContainerViewController`) manages the outer
-/// frame — this view is installed as a manual-frame subview of the
-/// window content view and repositioned whenever the focused pane
-/// changes. Height matches `PaneURLBar.barHeight` so the two sit on
-/// the same baseline when the URL bar is visible.
+/// An earlier revision wrapped the bar in `NSGlassEffectView` for
+/// Liquid Glass blur, but that caused a one-frame black flash on the
+/// very first reveal (the glass's backdrop layer is built lazily on
+/// first paint) and a brief "completion-popup-shaped" black square
+/// below the bar from the same lazy-attach window. The transient
+/// nature of the find bar made the trade-off lopsided: the visual
+/// payoff of glass was small, and the launch-time artefacts were
+/// distracting. The bar is now a plain layer-backed view with a
+/// translucent fill — same squircle shape, same close-×-leading
+/// layout, just rendered with a single CALayer fill instead of a
+/// blurred backdrop.
 @MainActor
 public final class FindBarView: NSView, NSTextFieldDelegate {
-  public static let barHeight: CGFloat = PaneURLBar.barHeight
+  /// Pill height. Tall enough to read as a discrete overlay rather
+  /// than a chrome strip; the URL bar is the latter.
+  public static let barHeight: CGFloat = 36
 
   private let searchField = NSTextField()
   private let matchCountLabel = NSTextField(labelWithString: "")
@@ -56,7 +68,12 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     super.init(frame: frame)
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = NSColor(white: 0.12, alpha: 1.0).cgColor
+    layer?.backgroundColor = NSColor(white: 0.13, alpha: 0.92).cgColor
+    layer?.cornerRadius = 12
+    layer?.cornerCurve = .continuous
+    layer?.masksToBounds = true
+    layer?.borderWidth = 0.5
+    layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
 
     setupField()
     setupMatchCountLabel()
@@ -102,17 +119,28 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
 
   private func setupField() {
     searchField.placeholderString = "Find in page..."
-    searchField.font = .systemFont(ofSize: 12)
+    searchField.font = Self.searchFont
     searchField.delegate = self
     searchField.translatesAutoresizingMaskIntoConstraints = false
     searchField.focusRingType = .none
     searchField.cell?.isScrollable = true
+    searchField.cell?.usesSingleLineMode = true
+    searchField.cell?.lineBreakMode = .byClipping
     searchField.isBezeled = false
-    searchField.drawsBackground = true
-    searchField.backgroundColor = NSColor(white: 0.18, alpha: 1.0)
+    searchField.drawsBackground = false
     searchField.textColor = .labelColor
     addSubview(searchField)
   }
+
+  /// Font driving the search field's intrinsic height.
+  private static let searchFont = NSFont.systemFont(ofSize: 12)
+
+  /// Tight height that matches the font's bounding rect plus a single
+  /// pixel of breathing room. Sizing the field to its line height
+  /// makes cell rect ≈ text rect, so AppKit's choice of top-align vs
+  /// center-align inside the cell becomes invisible — there's no
+  /// vertical space left over to misplace the glyphs in.
+  private static let searchFieldHeight: CGFloat = ceil(searchFont.boundingRectForFont.height) + 1
 
   private func setupMatchCountLabel() {
     matchCountLabel.font = .systemFont(ofSize: 11)
@@ -146,12 +174,21 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   private func setupLayout() {
     let buttonSize: CGFloat = 22
     NSLayoutConstraint.activate([
-      searchField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      // Close × on the leading edge follows macOS Safari / Firefox-on-mac
+      // convention for find bars: dismiss is the most predictable
+      // gesture and lives where the user expects it on this platform.
+      closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      closeButton.widthAnchor.constraint(equalToConstant: buttonSize),
+      closeButton.heightAnchor.constraint(equalToConstant: buttonSize),
+
+      searchField.leadingAnchor.constraint(equalTo: closeButton.trailingAnchor, constant: 8),
       searchField.centerYAnchor.constraint(equalTo: centerYAnchor),
-      searchField.heightAnchor.constraint(equalToConstant: 22),
-      // searchField → matchCountLabel → prevButton. When the count
-      // label is hidden its intrinsic size collapses to zero, so the
-      // searchField effectively extends up to the prev button.
+      searchField.heightAnchor.constraint(equalToConstant: Self.searchFieldHeight),
+      // searchField → matchCountLabel → prevButton → nextButton.
+      // When the count label is hidden its intrinsic size collapses
+      // to zero, so the searchField effectively extends up to the
+      // prev button.
       searchField.trailingAnchor.constraint(equalTo: matchCountLabel.leadingAnchor, constant: -4),
 
       matchCountLabel.trailingAnchor.constraint(equalTo: prevButton.leadingAnchor, constant: -4),
@@ -162,15 +199,10 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       prevButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
       nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 2),
+      nextButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       nextButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       nextButton.widthAnchor.constraint(equalToConstant: buttonSize),
       nextButton.heightAnchor.constraint(equalToConstant: buttonSize),
-
-      closeButton.leadingAnchor.constraint(equalTo: nextButton.trailingAnchor, constant: 2),
-      closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-      closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      closeButton.widthAnchor.constraint(equalToConstant: buttonSize),
-      closeButton.heightAnchor.constraint(equalToConstant: buttonSize),
     ])
   }
 
@@ -242,6 +274,38 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   @objc private func prevAction() { onPrev?() }
   @objc private func nextAction() { onNext?() }
   @objc private func closeAction() { onClose?() }
+
+  // MARK: - Cursor / event absorption
+  //
+  // The bar floats over WKWebView / GhosttyTerminalView surfaces.
+  // The translucent fill covers the bar's full bounds, but the
+  // search field's I-beam cursor rect would otherwise win over the
+  // page's text cursor only inside the field's narrow rect — leaving
+  // a sliver around the icons where the page-beneath cursor leaks
+  // through. Force `arrow` over the whole pill and let child views
+  // (search field → I-beam, buttons → pointing hand) override
+  // hierarchically. Empty mouse-event overrides ensure clicks on
+  // the bar's padding don't fall through to the page's text
+  // selection.
+
+  public override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .arrow)
+  }
+
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    // When the bar is invisible (alpha 0) it must let clicks fall
+    // through to the pane content beneath. Without this guard, the
+    // mouseDown/Dragged/Up overrides below would absorb every click
+    // landing in the bar's permanent 380×36 rect at the pane bottom
+    // — turning that strip into a dead zone for link clicks and
+    // text selection while no find session is active.
+    guard alphaValue > 0.01 else { return nil }
+    return super.hitTest(point)
+  }
+
+  public override func mouseDown(with _: NSEvent) {}
+  public override func mouseDragged(with _: NSEvent) {}
+  public override func mouseUp(with _: NSEvent) {}
 
   // MARK: - NSTextFieldDelegate
 

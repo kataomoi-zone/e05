@@ -19,9 +19,9 @@ struct FindBarViewTests {
     #expect(bar.searchText == "needle")
   }
 
-  @Test("bar height matches PaneURLBar so the two stack on one baseline")
-  func heightMatchesURLBar() {
-    #expect(FindBarView.barHeight == PaneURLBar.barHeight)
+  @Test("bar height is 36pt to read as a discrete floating pill")
+  func heightIsPill() {
+    #expect(FindBarView.barHeight == 36)
   }
 
   @Test("Return dispatches onNext via the text field delegate")
