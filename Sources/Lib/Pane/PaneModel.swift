@@ -47,6 +47,14 @@ public final class PaneModel {
   /// Whether the URL bar is currently shown.
   public private(set) var isURLBarVisible = false
 
+  /// Per-pane URL bar visibility state. Set by the upcoming hover
+  /// machinery in `PaneContainerViewController`; for now it tracks
+  /// the existing app-global `urlBarVisible` flag so callers can
+  /// observe per-pane state without rewiring every callsite at
+  /// once. Future steps wire the hit-zone hover scheduler and the
+  /// ⌘⇧L pin action through this field, then drop the global flag.
+  public var urlBarHoverState: URLBarHoverState = .hidden
+
   /// Whether the find bar is currently revealed. Controlled through
   /// `setFindBarVisible(_:)`. The bar is a floating overlay so showing
   /// or hiding it does not change content layout — only `alphaValue`
