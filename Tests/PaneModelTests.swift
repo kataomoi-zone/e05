@@ -75,4 +75,47 @@ struct PaneModelTests {
     #expect(pane.isFindBarVisible)
     #expect(pane.findBar.alphaValue == 1)
   }
+
+  @Test("setURLBarPeek(true) on hidden enters peek")
+  func peekFromHidden() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    #expect(pane.urlBarHoverState == .hidden)
+    pane.setURLBarPeek(true)
+    #expect(pane.urlBarHoverState == .peek)
+    #expect(pane.isURLBarVisible)
+    pane.setURLBarPeek(false)
+    #expect(pane.urlBarHoverState == .hidden)
+    #expect(!pane.isURLBarVisible)
+  }
+
+  @Test("setURLBarPeek(true) is a no-op while pinned")
+  func peekTrueIsNoOpWhilePinned() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    pane.setURLBarVisible(true)
+    #expect(pane.urlBarHoverState == .pinned)
+    pane.setURLBarPeek(true)
+    // Pinned wins: peek must not downgrade a globally-toggled bar.
+    #expect(pane.urlBarHoverState == .pinned)
+  }
+
+  @Test("setURLBarPeek(false) is a no-op while pinned")
+  func peekFalseIsNoOpWhilePinned() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    pane.setURLBarVisible(true)
+    pane.setURLBarPeek(false)
+    // Releasing peek must not collapse a pinned bar — that's owned
+    // by `setURLBarVisible(_:)`.
+    #expect(pane.urlBarHoverState == .pinned)
+  }
+
+  @Test("setURLBarVisible(true) overrides an active peek")
+  func visibleOverridesPeek() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    pane.setURLBarPeek(true)
+    #expect(pane.urlBarHoverState == .peek)
+    pane.setURLBarVisible(true)
+    // Global toggle takes over — peek session ends, the bar is now
+    // pinned alongside every other pane.
+    #expect(pane.urlBarHoverState == .pinned)
+  }
 }

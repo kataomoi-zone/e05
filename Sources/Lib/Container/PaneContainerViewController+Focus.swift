@@ -30,6 +30,15 @@ extension PaneContainerViewController {
       closeFindBar()
     }
 
+    // Collapse any ⌘L peek on the outgoing pane — the URL bar
+    // belongs to the user's current focus, so it shouldn't linger
+    // on a pane the user has just navigated away from. Pinned panes
+    // are owned by the global toggle and stay put (`setURLBarPeek`
+    // is a no-op for `.pinned`).
+    if let outgoing = focusedPane, outgoing.id != incomingPaneId {
+      outgoing.setURLBarPeek(false)
+    }
+
     // Clear ghostty focus on every terminal surface in the current
     // workspace except the incoming pane before we arm it via
     // makeFirstResponder below. AppKit's resignFirstResponder cascade

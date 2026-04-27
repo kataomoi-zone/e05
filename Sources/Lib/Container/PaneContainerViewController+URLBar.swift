@@ -126,6 +126,9 @@ extension PaneContainerViewController {
       guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
 
       let newPane = makePane(address: newAddress)
+      // The new pane joins the window's global toggle; any peek
+      // reveal that was active on the outgoing pane belongs to the
+      // dismissed bar's lifecycle and shouldn't carry over.
       newPane.setURLBarVisible(urlBarVisible)
       setupPaneCallbacks(pane: newPane, column: column)
 
@@ -155,22 +158,37 @@ extension PaneContainerViewController {
     }
   }
 
-  /// Focus the URL bar of the focused pane (⌘+L). The find bar
-  /// floats at the pane bottom and no longer competes with the URL
-  /// field for visual space, so it can stay open while a URL is
-  /// being edited.
+  /// Focus the URL bar of the focused pane (⌘+L). When the global
+  /// toggle is off the bar peeks open just for this pane — Esc or a
+  /// committed navigation collapses it again. With the toggle on
+  /// the bar is already pinned everywhere, so this only steals
+  /// first responder. The find bar floats at the pane bottom and
+  /// no longer competes with the URL field for visual space, so it
+  /// can stay open while a URL is being edited.
   public func focusURLBar(prefill: String? = nil) {
     guard let pane = focusedPane else { return }
     if !urlBarVisible {
-      toggleURLBarVisibility()
+      pane.setURLBarPeek(true)
+      // Settle the layout cycle synchronously so the URL field has
+      // its real frame when `makeFirstResponder` triggers field-
+      // editor attach. Without this the cell starts editing at a
+      // stale rect, glyph layout arrives one paint cycle later, and
+      // the resulting delay reads as a sluggish ⌘L. Only needed when
+      // peek actually flipped a constraint — pinned panes already
+      // have the bar laid out and don't pay this cost.
+      pane.containerView.layoutSubtreeIfNeeded()
     }
+    pane.headerView.hideImmediately()
     if let prefill {
       pane.urlBar.setDisplayURL(prefill)
     }
     pane.urlBar.focusURLField()
   }
 
-  /// Toggle URL bar visibility for all panes. When URL bar is shown, header overlay is suppressed.
+  /// Toggle the global URL bar visibility. The toggle action flips
+  /// this for every pane in lockstep so the user gets the same
+  /// chrome treatment across the whole window, regardless of which
+  /// pane currently has focus.
   public func toggleURLBarVisibility() {
     urlBarVisible.toggle()
     // Apply to panes across ALL workspaces so the setting is consistent

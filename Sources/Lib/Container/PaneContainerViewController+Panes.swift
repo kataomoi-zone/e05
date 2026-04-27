@@ -192,6 +192,14 @@ extension PaneContainerViewController {
       }
       bv.onLoadingStateChange = { [weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
+        // A ⌘L peek keeps the URL bar visible until the navigation
+        // it kicked off actually lands, so the user sees the address
+        // / page transition to confirmation before the bar collapses.
+        // `.peek` is a no-op for `.pinned` panes, so the global
+        // toggle stays unaffected.
+        if !isLoading {
+          pane?.setURLBarPeek(false)
+        }
       }
       bv.onDownloadStarted = { [weak self] wkDownload in
         self?.downloadsManager.adopt(wkDownload)
@@ -225,6 +233,11 @@ extension PaneContainerViewController {
         let newAddress = PaneAddress.finder(path: url.path(percentEncoded: false))
         pane.address = newAddress
         pane.urlBar.setDisplayURL(newAddress.displayString)
+        // Finder navigation completes synchronously, so the path
+        // change is the natural "navigation finished" signal —
+        // collapse any active ⌘L peek now that the user has seen
+        // the new path land in the bar.
+        pane.setURLBarPeek(false)
       }
       fv.onTitleChange = { [weak self, weak pane] title in
         guard let self, let pane else { return }
@@ -255,16 +268,34 @@ extension PaneContainerViewController {
       pane.urlBar.setReloadEnabled(false)
     }
 
-    // URL bar: navigate callback
+    // URL bar: navigate callback. Don't release a `.peek` reveal
+    // here — the bar should stay open until the navigation it
+    // kicked off lands. Browser panes collapse the peek through
+    // `onLoadingStateChange(false)` (didFinish), finder panes
+    // through `onPathChange` (sync), and terminal panes return to
+    // `.hidden` immediately because they don't navigate at all.
     pane.urlBar.onNavigate = { [weak self, weak pane] input in
       guard let self, let pane else { return }
+      let isTerminal = pane.terminalView != nil
       self.handleURLBarNavigate(pane: pane, input: input)
+      if isTerminal {
+        pane.setURLBarPeek(false)
+      }
     }
 
-    // URL bar: ESC returns focus to pane content
+    // URL bar: ESC returns focus to pane content. Cancelling is
+    // explicit user intent to abandon the peek session, so collapse
+    // immediately (a globally-pinned bar stays put — `setURLBarPeek`
+    // is a no-op when the state is `.pinned`). Restore the URL
+    // field to the pane's actual address so a re-peek doesn't
+    // surface whatever was typed mid-edit, matching Chrome / Safari /
+    // Firefox semantics where Esc reverts the URL bar.
     pane.urlBar.onCancel = { [weak pane] in
       guard let pane else { return }
+      let restoreURL = pane.isBlankBrowser ? "" : pane.address.displayString
+      pane.urlBar.setDisplayURL(restoreURL)
       pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
+      pane.setURLBarPeek(false)
     }
 
     // URL bar: back/forward/reload route to browser or finder depending
@@ -325,7 +356,9 @@ extension PaneContainerViewController {
       return self.searchSuggestions(query: query)
     }
 
-    // Sync URL bar visibility with global state
+    // Sync URL bar visibility with the window-global toggle so a
+    // pane appended to a workspace that already has the bar pinned
+    // doesn't open with a stale `.hidden` state.
     pane.setURLBarVisible(urlBarVisible)
   }
 
