@@ -129,6 +129,15 @@ extension PaneContainerViewController {
   /// leaves the bar) is the real signal that closes the peek.
   func scheduleURLBarHoverOut(pane: PaneModel) {
     guard !urlBarVisible else { return }
+    // Defer collapse while the user is typing — the suggestion list
+    // sits below the URL bar's bounds, so moving the cursor onto a
+    // suggestion fires `mouseExited` on the bar even though the user
+    // is still mid-edit. Without this guard, the 300ms timer would
+    // tear down the field editor and dismiss the suggestion list
+    // while the user is reaching for their pick. `controlTextDidEnd
+    // Editing` re-fires `onHoverExit` once the editor detaches so
+    // the close still happens on blur if the cursor is outside.
+    if pane.urlBar.isEditing { return }
     if pane.urlBar.cursorIsStillInsideBounds() { return }
     // Cursor left the hover surface — any pending hover-in is moot.
     // Drop the in-side timer so a hit zone enter that hasn't fired

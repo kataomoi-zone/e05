@@ -298,6 +298,15 @@ extension PaneContainerViewController {
       pane.setURLBarPeek(false)
     }
 
+    // URL bar: editing ended with the cursor outside the bar (e.g.
+    // user clicked a different pane while a peek was open). Collapse
+    // the peek directly instead of going through the hover scheduler
+    // — the 300ms debounce there is meant for cursor-only drift, not
+    // for first-responder loss.
+    pane.urlBar.onEditingEndedOutsideBar = { [weak pane] in
+      pane?.setURLBarPeek(false)
+    }
+
     // URL bar: back/forward/reload route to browser or finder depending
     // on which content the pane carries. Stop applies only to browser
     // (a directory listing has nothing to interrupt).

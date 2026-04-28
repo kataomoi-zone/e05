@@ -83,6 +83,19 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// to extend hover-out scheduling across the whole bar.
   public var onHoverExit: (() -> Void)?
 
+  /// The field editor detached and the cursor is no longer inside
+  /// the bar's bounds. The host uses this to collapse a `.peek`
+  /// reveal immediately rather than running another 300ms hover-out
+  /// debounce — once the user has finished typing and moved away,
+  /// there's nothing the bar should be waiting for.
+  public var onEditingEndedOutsideBar: (() -> Void)?
+
+  /// Whether the URL field is currently being edited. The hover-out
+  /// scheduler reads this to defer collapse while a field editor is
+  /// attached — letting the bar disappear mid-type would dismiss the
+  /// suggestion list and lose whatever the user just typed.
+  public var isEditing: Bool { urlField.currentEditor() != nil }
+
   private var hoverTrackingArea: NSTrackingArea?
 
   public override init(frame: NSRect) {
@@ -708,6 +721,16 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // field loses focus) → dismiss → list gone → click lost.
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      // `focusURLField` calls `selectText(nil)` right after
+      // `makeFirstResponder`, which internally tears down and rebuilds
+      // the shared field editor — that round-trip fires a transient
+      // didEnd → didBegin pair while the user is still mid-focus. By
+      // the time this async lands, the field editor has reattached and
+      // `currentEditor()` is non-nil again. Bailing here keeps a real
+      // blur from being indistinguishable from this re-attach blip,
+      // which would otherwise let `onEditingEndedOutsideBar` fire and
+      // collapse the peek the moment ⌘L opened it.
+      if self.urlField.currentEditor() != nil { return }
       // If the new first responder is inside the suggestion list,
       // the user clicked a row — don't dismiss yet; handleClick
       // will dismiss after accepting the selection.
@@ -717,6 +740,17 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         return
       }
       self.suggestionList.dismiss()
+      // Tell the host editing has ended with the cursor outside the
+      // bar so the peek can collapse right away. While the field
+      // editor was attached, hover-out fires were suppressed
+      // (`isEditing` guard in `scheduleURLBarHoverOut`) to keep the
+      // bar anchored under the user's typing — we own the close
+      // here. Routing through the regular hover scheduler would
+      // queue another 300ms wait that the user can't see any
+      // benefit from once they've already given up first responder.
+      if !self.cursorIsStillInsideBounds() {
+        self.onEditingEndedOutsideBar?()
+      }
     }
   }
 }
