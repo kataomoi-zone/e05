@@ -303,7 +303,7 @@ public final class PaneModel {
     containerView.layer?.cornerCurve = .continuous
     containerView.layer?.masksToBounds = true
 
-    applyURLBarVisibility()
+    applyURLBarVisibility(animated: false)
     urlBar.setDisplayURL(isBlankBrowser ? "" : address.displayString)
   }
 
@@ -346,23 +346,47 @@ public final class PaneModel {
     applyURLBarVisibility()
   }
 
-  private func applyURLBarVisibility() {
-    // Pure alpha flip — the bar is a floating overlay anchored to
-    // the pane's top edge, so showing or hiding it never shifts the
-    // content view beneath. `PaneURLBar.hitTest` skips alpha-zero
-    // bars so clicks fall through to the page when the bar is
-    // invisible.
-    urlBar.alphaValue = isURLBarVisible ? 1 : 0
+  private func applyURLBarVisibility(animated: Bool = true) {
+    // Cross-fade the bar over 120ms — the same cadence as the find
+    // bar so the two chrome elements feel like siblings. The bar is
+    // a floating overlay anchored to the pane's top edge, so neither
+    // alpha nor opacity animation ever shifts the content beneath.
+    // `PaneURLBar.hitTest` skips alpha-zero bars so clicks fall
+    // through to the page when the bar is invisible.
+    //
+    // `animated: false` is for the initial pane build, where the
+    // freshly-allocated `PaneURLBar` is still at its default 1.0
+    // alpha and a fade-from-visible would briefly flash the bar
+    // before settling at hidden.
+    let target: CGFloat = isURLBarVisible ? 1 : 0
     if isURLBarVisible {
-      // The cursor is typically already inside the bar's bounds
-      // when peek opens (the user just hovered the top-edge hit
-      // zone, which sits within the URL bar's 28pt rect). AppKit's
+      // Probe the cursor before the alpha animation starts. AppKit's
       // tracking area only fires `mouseEntered` on a fresh entry,
-      // so flipping alpha alone doesn't cancel the hover-out timer
-      // that the hit zone exit just scheduled. Probe explicitly so
-      // the hover scheduler sees that the cursor is still on the
-      // bar and keeps the peek alive.
+      // and the cursor is typically already inside the bar's bounds
+      // when peek opens (the user just hovered the top-edge hit
+      // zone, which sits within the URL bar's 28pt rect). Without
+      // this probe, the host's hover-out timer that the hit zone
+      // exit just scheduled would never get cancelled.
       urlBar.syncHoverWithCurrentCursor()
+    }
+    if animated {
+      // Drop any in-flight alpha animation before queuing a new one.
+      // Without this, a fast hidden → peek → hidden flick layers two
+      // 120ms tweens on top of each other and the presentation alpha
+      // briefly walks backward through the previous animation's
+      // remaining frames before settling — which also fluttters the
+      // `hitTest` alpha gate (`> 0.01`) on/off and causes click
+      // pass-through to flicker against the page beneath.
+      urlBar.layer?.removeAnimation(forKey: "opacity")
+      NSAnimationContext.runAnimationGroup { ctx in
+        ctx.duration = 0.12
+        ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ctx.allowsImplicitAnimation = true
+        urlBar.animator().alphaValue = target
+      }
+    } else {
+      urlBar.layer?.removeAnimation(forKey: "opacity")
+      urlBar.alphaValue = target
     }
   }
 
