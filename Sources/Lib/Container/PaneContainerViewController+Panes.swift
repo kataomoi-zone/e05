@@ -70,7 +70,10 @@ extension PaneContainerViewController {
     // activating against `stackView.heightAnchor` before that throws
     // `NSInternalInconsistencyException` and kills the startup path.
     column.containerView.heightAnchor
-      .constraint(equalTo: currentWorkspaceVC.stackView.heightAnchor)
+      .constraint(
+        equalTo: currentWorkspaceVC.stackView.heightAnchor,
+        constant: -(WorkspaceViewController.outerMargin * 2)
+      )
       .isActive = true
 
     view.layoutSubtreeIfNeeded()
@@ -559,13 +562,22 @@ extension PaneContainerViewController {
     let effective = effectiveVisibleWidth(in: scrollView)
     guard contentWidth > effective else { return nil }
 
+    // Reserve the same gap on either side of a left-pinned column as
+    // the perimeter outer margin, so a focused column doesn't kiss
+    // the sidebar / window edge after a focus scroll while every
+    // other gap in the layout is `outerMargin` wide.
+    let perimeter = WorkspaceViewController.outerMargin
     let targetX: CGFloat
     if columnFrame.width >= effective {
       // Column can't fit, pin its left edge to the visible region's
-      // leading edge (i.e. just past the sidebar inset).
-      targetX = columnFrame.minX - insets.left
+      // leading edge offset by `perimeter` so the gap before the
+      // column matches the rhythm of the rest of the layout.
+      targetX = columnFrame.minX - insets.left - perimeter
     } else {
-      let visibleCenter = (insets.left + visibleWidth - insets.right) / 2
+      // Centre against the post-inset midpoint. Reuse `effective` so
+      // both branches of this method derive their "visible width"
+      // from the same helper instead of repeating the inset math.
+      let visibleCenter = insets.left + effective / 2
       targetX = columnFrame.midX - visibleCenter
     }
     let minScrollX = -insets.left

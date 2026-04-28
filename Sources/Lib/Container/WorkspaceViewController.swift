@@ -11,6 +11,18 @@ import AppKit
 /// VC's stackView across workspace switches — no detach/re-attach needed.
 @MainActor
 public final class WorkspaceViewController: NSViewController {
+  /// Outer margin painted around the column strip on every side.
+  /// Matches `PaneResizeHandle.handleSize` so the gap between panes
+  /// and the gap around them feel like a single rhythm.
+  ///
+  /// Surfaced at the type level so `addColumn` can subtract twice
+  /// this value from the column-height constraint: each column is
+  /// pinned to `stackView.heightAnchor`, and an exact equal-height
+  /// pin would crush the top/bottom inset that this margin reserves.
+  /// Likely to become user-configurable later; until then the literal
+  /// stays here as a single source paired with the handle size.
+  static let outerMargin: CGFloat = PaneResizeHandle.handleSize
+
   public let workspace: WorkspaceModel
   let scrollView = OverlayScrollView()
   let stackView = NSStackView()
@@ -55,6 +67,16 @@ public final class WorkspaceViewController: NSViewController {
     stackView.orientation = .horizontal
     stackView.spacing = 0  // handles serve as spacing between panes
     stackView.detachesHiddenViews = false
+    // Outer margin around the column strip so panes don't touch the
+    // window edges (and the sidebar's right edge while pinned). See
+    // `outerMargin` for the rationale and the column-height pin
+    // adjustment that this inset depends on.
+    stackView.edgeInsets = NSEdgeInsets(
+      top: Self.outerMargin,
+      left: Self.outerMargin,
+      bottom: Self.outerMargin,
+      right: Self.outerMargin
+    )
 
     scrollView.documentView = stackView
     scrollView.translatesAutoresizingMaskIntoConstraints = false
