@@ -216,11 +216,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     webView.translatesAutoresizingMaskIntoConstraints = true
     webView.autoresizingMask = [.width, .height]
     webView.frame = browserHostView.bounds
+    // Disable the web view's own background fill so the host layer's
+    // dark color shows through before the loaded page paints. Without
+    // this, WKWebView briefly renders its default opaque white surface
+    // on first attach. `drawsBackground` is a long-stable private
+    // property accessed via KVC; there is no public replacement.
+    webView.setValue(false, forKey: "drawsBackground")
     webView.underPageBackgroundColor = NSColor(white: 0.15, alpha: 1.0)
-    webView.loadHTMLString(
-      "<html><body style='margin:0;background:#262626;'></body></html>",
-      baseURL: nil
-    )
     browserHostView.addSubview(webView)
   }
 
