@@ -138,9 +138,9 @@ extension PaneContainerViewController {
     toVC.view.isHidden = false
     // Resync every terminal surface on the incoming workspace.
     // `updateSize` skips forwarding to ghostty while the view's
-    // ancestor chain is hidden (scrollback-preservation guard added
-    // in commit ff5c3b4), so any window resize that happened while
-    // this workspace was parked stays unsent. Without this reseed,
+    // ancestor chain is hidden (scrollback-preservation guard), so
+    // any window resize that happened while this workspace was
+    // parked stays unsent. Without this reseed,
     // `ghostty_surface_set_size` is never called after the VC flips
     // back to visible — the surface keeps rendering at its last
     // pre-hide size and the pane shows a short strip of live output

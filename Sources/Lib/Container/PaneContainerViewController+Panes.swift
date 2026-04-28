@@ -155,7 +155,7 @@ extension PaneContainerViewController {
         // setFocus). A terminal exiting in a non-current workspace
         // leaves a dead pane until the user switches to that WS
         // and closes it manually. Full fix requires a
-        // `removePane(in:workspace:)` variant — see commit c90565f.
+        // `removePane(in:workspace:)` variant.
         for (colIdx, col) in self.columns.enumerated() {
           if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
             self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
