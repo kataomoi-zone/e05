@@ -219,8 +219,8 @@ final class SidebarViewController: NSViewController {
 
   /// Rebuild the worklane tree from the container's current state.
   /// Safe to call repeatedly; the implementation wipes and rebuilds
-  /// `arrangedSubviews` each time (stage 5 may switch to diff-based).
-  /// No-op if the container reference has been lost.
+  /// `arrangedSubviews` each time. No-op if the container reference
+  /// has been lost.
   func reloadWorklane() {
     guard let container else { return }
     let focusedPaneId: ULID? = {

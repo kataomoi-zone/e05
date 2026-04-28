@@ -11,9 +11,9 @@ import AppKit
 /// border.
 ///
 /// Clicking fires `onClick` which the sidebar routes to
-/// `PaneContainerViewController.focusPane(id:)` (cross-WS safe via
-/// the stage 0-A API). The hover-revealed × button fires `onClose`,
-/// which routes to `PaneContainerViewController.closePane(id:)`.
+/// `PaneContainerViewController.focusPane(id:)` (cross-WS safe).
+/// The hover-revealed × button fires `onClose`, which routes to
+/// `PaneContainerViewController.closePane(id:)`.
 @MainActor
 final class PaneRow: NSView {
   static let height: CGFloat = 24

@@ -17,7 +17,7 @@ public final class PaneContainerViewController: NSViewController {
 
   /// Sidebar child VC. Set exactly once in `viewDidLoad` via
   /// `installSidebar()`, then non-nil for the rest of the VC's life.
-  /// The implicitly-unwrapped type encodes that invariant so stage 2+
+  /// The implicitly-unwrapped type encodes that invariant so
   /// state-sync call sites don't need `guard let` boilerplate.
   var sidebarVC: SidebarViewController!
 
