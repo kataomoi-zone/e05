@@ -2,9 +2,9 @@ import Foundation
 
 /// Content mode of the sidebar's mutable top area. Each mode maps to
 /// a dedicated view slot in the overlay — `.tabs` shows the worklane
-/// tree, the other three host their respective list views. The sidebar
-/// is the sole entry point for the history / bookmarks / downloads
-/// features.
+/// tree; the others host their respective list views. The sidebar is
+/// the sole entry point for the history / bookmarks / downloads /
+/// extensions features.
 ///
 /// `allCases` order defines the visual row order in the places section.
 enum SidebarMode: CaseIterable {
@@ -12,6 +12,7 @@ enum SidebarMode: CaseIterable {
   case bookmarks
   case history
   case downloads
+  case extensions
 
   var title: String {
     switch self {
@@ -19,6 +20,7 @@ enum SidebarMode: CaseIterable {
     case .bookmarks: return "Bookmarks"
     case .history: return "History"
     case .downloads: return "Downloads"
+    case .extensions: return "Extensions"
     }
   }
 
@@ -29,6 +31,7 @@ enum SidebarMode: CaseIterable {
     case .bookmarks: return "bookmark"
     case .history: return "clock"
     case .downloads: return "arrow.down.circle"
+    case .extensions: return "puzzlepiece.extension"
     }
   }
 
@@ -40,7 +43,7 @@ enum SidebarMode: CaseIterable {
   /// fade animation could expose).
   var placeholderMessage: String {
     switch self {
-    case .tabs, .bookmarks, .history, .downloads: return ""
+    case .tabs, .bookmarks, .history, .downloads, .extensions: return ""
     }
   }
 }

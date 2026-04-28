@@ -21,6 +21,22 @@ public final class ExtensionController {
 
   private let delegateProxy: DelegateProxy
 
+  /// Activated extensions, ordered by load completion. The sidebar
+  /// extensions list reads from this array to render the per-extension
+  /// row; cells should treat the snapshot as opaque and re-fetch via
+  /// `loadedExtensions` after every `didChangeNotification`.
+  public private(set) var loadedExtensions: [LoadedExtension] = []
+
+  /// Posted on the main queue whenever `loadedExtensions` is mutated
+  /// (a successful load, an enable/disable toggle, or a future
+  /// removal). Listener views subscribe via
+  /// `NotificationCenter.addObserver(forName:...)` and re-fetch the
+  /// snapshot from the controller on each fire — mirrors the
+  /// `FaviconCache.didChangeNotification` pattern.
+  public static let didChangeNotification = Notification.Name(
+    "com.kawarimidoll.e05.ExtensionController.didChange"
+  )
+
   private init() {
     self.controller = WKWebExtensionController(configuration: .default())
     self.delegateProxy = DelegateProxy()
@@ -157,6 +173,22 @@ public final class ExtensionController {
       // feature gaps will surface here within a few hundred milliseconds.
       Self.logErrors(ctx: ctx, source: "post-load")
 
+      let entry = LoadedExtension(
+        sourceURL: url,
+        displayName: name,
+        version: ext.version,
+        manifestVersion: ext.manifestVersion,
+        icon: Self.bestIcon(for: ext)
+      )
+      loadedExtensions.append(entry)
+      // Stable display order across launches: filesystem enumeration
+      // order is not guaranteed and async-load completion order would
+      // shuffle the list further if loads ever run in parallel.
+      loadedExtensions.sort {
+        $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+      }
+      NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+
       subscribeToErrors(ctx: ctx, name: name)
       scheduleCapabilityRecheck(ctx: ctx, name: name)
     } catch {
@@ -230,6 +262,21 @@ public final class ExtensionController {
     logger.debug("Subscribed to errorsDidUpdate for '\(name, privacy: .public)'")
   }
 
+  /// Resolve the best display icon for an extension. Prefers a 32pt
+  /// action icon (toolbar / popup affordance) and falls back to the
+  /// manifest icon at the same size, so both action-bearing extensions
+  /// (uBO Lite, Bitwarden) and content-only extensions (declarative
+  /// rule packs) render with a meaningful glyph in the sidebar list.
+  /// Returns nil when neither is available; the cell paints a generic
+  /// `puzzlepiece.extension` placeholder in that case.
+  private static func bestIcon(for ext: WKWebExtension) -> NSImage? {
+    let target = NSSize(width: 32, height: 32)
+    if let actionIcon = ext.actionIcon(for: target) {
+      return actionIcon
+    }
+    return ext.icon(for: target)
+  }
+
   private static func logErrors(ctx: WKWebExtensionContext, source: String) {
     let errs = ctx.errors
     let name = ctx.webExtension.displayName ?? "(unknown)"
@@ -251,6 +298,22 @@ public final class ExtensionController {
       )
     }
   }
+}
+
+/// Snapshot of one activated extension surfaced to the sidebar list.
+/// Captured at load time so repeated reads (cell render, listener
+/// fan-out) don't re-touch the underlying `WKWebExtensionContext`.
+/// `NSImage` is not `Sendable`, so the type is `MainActor`-confined —
+/// every accessor touches it from the main queue. Stable identity for
+/// per-row routing comes from `sourceURL`: the directory or ZIP path
+/// under `~/.config/e05/extensions/` is unique per extension.
+@MainActor
+public struct LoadedExtension {
+  public let sourceURL: URL
+  public let displayName: String
+  public let version: String?
+  public let manifestVersion: Double
+  public let icon: NSImage?
 }
 
 /// Delegate wrapper kept as a private class so the controller retains it via

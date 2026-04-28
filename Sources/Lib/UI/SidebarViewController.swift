@@ -184,6 +184,15 @@ final class SidebarViewController: NSViewController {
     }
     overlay.setDownloadsView(downloadsView)
 
+    // Extensions mode reads from the process-lifetime
+    // `ExtensionController` singleton directly, so it doesn't need a
+    // container reference. The view subscribes to
+    // `ExtensionController.didChangeNotification` internally, which
+    // means async loads completing after the sidebar appears still
+    // populate the list.
+    let extensionsView = ExtensionsSidebarView()
+    overlay.setExtensionsView(extensionsView)
+
     // Re-apply the current mode so the newly installed mode views'
     // visibility matches the state machine.
     applyMode(currentMode)
@@ -303,6 +312,7 @@ final class SidebarViewController: NSViewController {
     overlay.bookmarksView?.isHidden = mode != .bookmarks
     overlay.historyView?.isHidden = mode != .history
     overlay.downloadsView?.isHidden = mode != .downloads
+    overlay.extensionsView?.isHidden = mode != .extensions
     // Placeholder is a fallback for modes whose real content view
     // hasn't been installed yet (e.g. attachContainer hasn't run).
     // Once every mode carries a real view, this collapses to an
@@ -312,6 +322,7 @@ final class SidebarViewController: NSViewController {
       || (mode == .bookmarks && overlay.bookmarksView != nil)
       || (mode == .history && overlay.historyView != nil)
       || (mode == .downloads && overlay.downloadsView != nil)
+      || (mode == .extensions && overlay.extensionsView != nil)
     overlay.placeholder.isHidden = hasRealView
     // Always assign — clearing on modes with a real view — so the
     // hidden placeholder never carries a stale string from the

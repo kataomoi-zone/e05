@@ -52,6 +52,14 @@ final class SidebarOverlayView: NSView {
   /// the absence by falling through to the placeholder.
   private(set) var downloadsView: NSView?
 
+  /// Current extensions-mode view, installed by the view controller
+  /// once the container reference is set (the view subscribes to the
+  /// process-lifetime `ExtensionController` singleton, but the install
+  /// path mirrors the other modes for symmetry). Nil until then;
+  /// `applyMode(.extensions)` tolerates the absence by falling through
+  /// to the placeholder.
+  private(set) var extensionsView: NSView?
+
   private let glass = NSGlassEffectView()
   private let content = NSView()
 
@@ -184,6 +192,24 @@ final class SidebarOverlayView: NSView {
   func setDownloadsView(_ view: NSView) {
     downloadsView?.removeFromSuperview()
     downloadsView = view
+    view.translatesAutoresizingMaskIntoConstraints = false
+    view.isHidden = true
+    content.addSubview(view)
+    NSLayoutConstraint.activate([
+      view.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+      view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 4),
+      view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -4),
+      view.bottomAnchor.constraint(equalTo: places.topAnchor, constant: -8),
+    ])
+  }
+
+  /// Install the extensions-mode view into the shared mode area.
+  /// Mirrors the other `set…View` installers — same rect, same
+  /// hidden-by-default state; the view controller flips visibility on
+  /// mode change.
+  func setExtensionsView(_ view: NSView) {
+    extensionsView?.removeFromSuperview()
+    extensionsView = view
     view.translatesAutoresizingMaskIntoConstraints = false
     view.isHidden = true
     content.addSubview(view)
