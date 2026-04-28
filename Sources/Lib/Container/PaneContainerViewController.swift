@@ -142,6 +142,22 @@ public final class PaneContainerViewController: NSViewController {
   /// when the URL field gives up first responder.
   var urlBarVisible = false
 
+  /// Monotonic counters that pair each scheduled URL bar hover-in /
+  /// hover-out with its eventual fire. Split into separate in / out
+  /// counters so cancelling a pending out doesn't accidentally
+  /// invalidate an in-flight in (or vice versa) — a single shared
+  /// counter previously let `cancelURLBarHoverOut` (called when the
+  /// cursor crossed from the hit zone onto the bar's body) bump the
+  /// generation, which then made the still-pending hover-in fire
+  /// see a generation mismatch and skip opening the peek.
+  var urlBarHoverInGeneration: Int = 0
+  var urlBarHoverOutGeneration: Int = 0
+  /// Separate timers per direction. Only the focused pane's hit
+  /// zone is active at any one time, so per-direction is enough —
+  /// no need to multiplex by pane.
+  var urlBarHoverInTimer: Timer?
+  var urlBarHoverOutTimer: Timer?
+
   var titleDebounceTimer: Timer?
   var lastShownTitle: String = ""
   static let titleDebounceInterval: TimeInterval = 0.1

@@ -74,6 +74,17 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// Called when the inline zoom indicator's "Reset" link is clicked.
   public var onZoomReset: (() -> Void)?
 
+  /// Cursor entered the URL bar's bounds. The hover scheduler in
+  /// `PaneContainerViewController` uses this to keep a peek alive
+  /// while the user is hovering the bar itself, not just the
+  /// 12pt edge hit zone above it.
+  public var onHoverEnter: (() -> Void)?
+  /// Cursor left the URL bar's bounds. Pairs with `onHoverEnter`
+  /// to extend hover-out scheduling across the whole bar.
+  public var onHoverExit: (() -> Void)?
+
+  private var hoverTrackingArea: NSTrackingArea?
+
   public override init(frame: NSRect) {
     backButton = Self.makeIconButton(
       symbol: "chevron.backward",
@@ -353,10 +364,93 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     }
   }
 
-  public override func mouseDown(with event: NSEvent) {
-    // Click on URL bar's own area (empty space, not subviews)
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    // The URL bar is a floating overlay over the pane's top edge.
+    // When it's collapsed (alpha 0) clicks must reach the page
+    // beneath instead of being absorbed by an invisible bar — the
+    // overlay otherwise turns the pane's first 28pt into a dead
+    // strip. Same pattern as `FindBarView.hitTest`.
+    guard alphaValue > 0.01 else { return nil }
+    return super.hitTest(point)
+  }
+
+  public override func mouseDown(with _: NSEvent) {
+    // Absorb empty-area clicks instead of forwarding them up the
+    // responder chain. The bar overlays a WKWebView / terminal
+    // surface; without this override, clicks landing on the URL
+    // bar's chrome (between the buttons and the URL field) bubble
+    // through to the page beneath and trigger link activations on
+    // whatever happens to be under the cursor — back / forward
+    // chevrons aren't usable while a page is loaded behind them.
     onClicked?()
-    super.mouseDown(with: event)
+  }
+
+  public override func mouseDragged(with _: NSEvent) {}
+  public override func mouseUp(with _: NSEvent) {}
+
+  public override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    // The tracking area uses `.inVisibleRect`, so AppKit re-computes
+    // the rect against the live bounds on every event — there is
+    // nothing to recreate when the view resizes. Re-adding the area
+    // on every layout pass would also re-synthesise `mouseEntered`
+    // / `mouseExited` if the cursor happened to be inside the
+    // bounds, which fights with the host's hover scheduler. Install
+    // the area lazily and leave it in place.
+    if hoverTrackingArea != nil { return }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    hoverTrackingArea = area
+  }
+
+  public override func mouseEntered(with _: NSEvent) {
+    // Tracking areas fire even when the bar is alpha 0; the host
+    // doesn't want a hover signal from an invisible overlay.
+    guard alphaValue > 0.01 else { return }
+    onHoverEnter?()
+  }
+
+  public override func mouseExited(with _: NSEvent) {
+    guard alphaValue > 0.01 else { return }
+    // Child tracking areas (HoverIconButton on the back / forward /
+    // reload / fold buttons) fire a spurious parent mouseExited
+    // when the cursor crosses into their subrect even though the
+    // cursor is still inside the URL bar's outer bounds. Re-probe
+    // the cursor position and swallow the exit if we're still
+    // within the bar — same nested-tracking-area workaround the
+    // sidebar uses.
+    if cursorIsStillInsideBounds() { return }
+    onHoverExit?()
+  }
+
+  /// Re-fire `onHoverEnter` if the cursor is already inside the
+  /// bar's bounds. AppKit's tracking area only synthesises
+  /// `mouseEntered` on bounds *entry* — when the cursor was
+  /// already inside while the bar was invisible (alpha 0) and the
+  /// bar then flips to visible, the host gets no signal that the
+  /// cursor is on the bar. Same pattern as
+  /// `EdgeHoverHitZoneView.syncHoverWithCurrentCursor`.
+  ///
+  /// No alpha guard here on purpose: the host calls this exactly
+  /// when it knows a reveal is happening, and a previous version
+  /// that gated on `alphaValue > 0.01` accidentally bailed when the
+  /// caller was about to animate alpha from 0 to 1 — the model
+  /// alpha hadn't been written yet, so the probe never fired and
+  /// the host's hover-out timer (queued by the hit zone exit a few
+  /// milliseconds earlier) ran to completion and collapsed the
+  /// fresh peek. The `mouseEntered` override below still has its
+  /// own alpha guard so AppKit-driven entries on an invisible bar
+  /// stay silent.
+  func syncHoverWithCurrentCursor() {
+    guard let window else { return }
+    let mouseInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    if bounds.contains(mouseInView) {
+      onHoverEnter?()
+    }
   }
 
   // MARK: - Public API

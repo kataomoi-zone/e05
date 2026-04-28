@@ -360,6 +360,12 @@ extension PaneContainerViewController {
     // pane appended to a workspace that already has the bar pinned
     // doesn't open with a stale `.hidden` state.
     pane.setURLBarVisible(urlBarVisible)
+
+    // Wire the top-edge hit zone to the debounced peek scheduler.
+    // The hit zone is hidden until this pane gains focus, so the
+    // schedulers are dormant for unfocused panes even though the
+    // closures are attached.
+    wireURLBarHoverScheduler(pane: pane)
   }
 
   // MARK: - Command Palette

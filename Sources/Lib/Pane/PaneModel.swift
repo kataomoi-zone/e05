@@ -138,12 +138,6 @@ public final class PaneModel {
   }
 
   private var urlBarTopConstraint: NSLayoutConstraint?
-  /// Content-top constraint used while the URL bar is visible. Anchors
-  /// directly to `urlBar.bottom`. The find bar no longer participates
-  /// in this stack — it floats over the content as a bottom-anchored
-  /// pill, so revealing or hiding it does not push the content view.
-  private var contentTopBelowBarsConstraint: NSLayoutConstraint?
-  private var contentTopToContainerConstraint: NSLayoutConstraint?
 
   /// Create a pane from a PaneAddress. Routes to the appropriate content type.
   ///
@@ -230,13 +224,14 @@ public final class PaneModel {
     findBar.translatesAutoresizingMaskIntoConstraints = false
     headerView.translatesAutoresizingMaskIntoConstraints = false
 
-    // Start both bars collapsed. URL bar visibility is settled by
-    // `applyURLBarVisibility` immediately after layout. The find
-    // bar stays in the view hierarchy with `alphaValue = 0` so
-    // reveal/hide can fade smoothly through the animator — `isHidden`
-    // flips would break any in-flight alpha animation. Hit-testing
-    // skips alpha-zero views in `FindBarView` so clicks still pass
-    // through to the content beneath the invisible bar.
+    // Both bars are floating overlays driven by `alphaValue`. The
+    // URL bar covers the top of the pane and the find bar pins to
+    // the bottom; `cv` always spans the full container, so peek /
+    // pinned / hidden transitions never shift content layout. Click
+    // pass-through is alpha-gated in `PaneURLBar.hitTest` and
+    // `FindBarView.hitTest` so an invisible bar leaves the page
+    // beneath fully interactive.
+    urlBar.alphaValue = 0
     findBar.alphaValue = 0
 
     // Top-edge hit zone is hidden until this pane gains focus —
@@ -245,37 +240,25 @@ public final class PaneModel {
     urlBarTopEdgeHitZone.isHidden = true
 
     // Order matters: `addSubview(_:)` appends to the end of the
-    // sibling list = topmost in z-order. The find bar floats over
-    // the pane content, so it must be added after `cv` to render
-    // above the WKWebView / GhosttyTerminalView / FinderPaneView
-    // surface. The hit zone sits at the very top of the pane stack
-    // (under `headerView` only) so its tracking strip stays
-    // reachable while the URL bar is hidden; once the URL bar is
-    // visible the strip overlaps the bar's chrome, which the hover
-    // scheduler handles via a pinned-state guard rather than
-    // shuffling z-order at runtime.
-    containerView.addSubview(urlBar)
+    // sibling list = topmost in z-order. `cv` goes in first so
+    // every other view paints over it. The URL bar and find bar
+    // are floating overlays. The hit zone sits above the URL bar
+    // chrome so its tracking strip stays reachable while the bar
+    // is invisible; the hover scheduler bails when the bar is
+    // already visible, so the overlapping case is handled in code
+    // rather than by shuffling z-order at runtime.
     containerView.addSubview(cv)
+    containerView.addSubview(urlBar)
     containerView.addSubview(findBar)
     containerView.addSubview(urlBarTopEdgeHitZone)
     containerView.addSubview(headerView)
 
-    // URL bar at top
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
     let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)
 
-    // Content: directly below the URL bar when visible, otherwise
-    // flush with the container top. The find bar floats over the
-    // content as a bottom-anchored pill and never participates in
-    // this stack.
-    contentTopBelowBarsConstraint = cv.topAnchor.constraint(equalTo: urlBar.bottomAnchor)
-    contentTopToContainerConstraint = cv.topAnchor.constraint(equalTo: containerView.topAnchor)
-
-    // Find bar pill is centered horizontally and sits 16pt above the
-    // pane bottom. Width is fixed so the layout stays predictable
-    // across pane sizes; if a needle ever needs to grow the field
-    // beyond this, revisit and switch to a `lessThanOrEqual` width
-    // constraint.
+    // Find bar pill is centered horizontally and sits 16pt above
+    // the pane bottom. Width is fixed so the layout stays
+    // predictable across pane sizes.
     let findBarBottomMargin: CGFloat = 16
     let findBarWidth: CGFloat = 380
 
@@ -293,6 +276,9 @@ public final class PaneModel {
       findBar.widthAnchor.constraint(equalToConstant: findBarWidth),
       findBar.heightAnchor.constraint(equalToConstant: FindBarView.barHeight),
 
+      // `cv` always spans the full container — URL bar visibility
+      // never moves the page content.
+      cv.topAnchor.constraint(equalTo: containerView.topAnchor),
       cv.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       cv.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       cv.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
@@ -317,7 +303,6 @@ public final class PaneModel {
     containerView.layer?.cornerCurve = .continuous
     containerView.layer?.masksToBounds = true
 
-    // Start with URL bar hidden
     applyURLBarVisibility()
     urlBar.setDisplayURL(isBlankBrowser ? "" : address.displayString)
   }
@@ -362,14 +347,22 @@ public final class PaneModel {
   }
 
   private func applyURLBarVisibility() {
-    urlBar.isHidden = !isURLBarVisible
-    // Deactivate first to avoid conflicting constraints
+    // Pure alpha flip — the bar is a floating overlay anchored to
+    // the pane's top edge, so showing or hiding it never shifts the
+    // content view beneath. `PaneURLBar.hitTest` skips alpha-zero
+    // bars so clicks fall through to the page when the bar is
+    // invisible.
+    urlBar.alphaValue = isURLBarVisible ? 1 : 0
     if isURLBarVisible {
-      contentTopToContainerConstraint?.isActive = false
-      contentTopBelowBarsConstraint?.isActive = true
-    } else {
-      contentTopBelowBarsConstraint?.isActive = false
-      contentTopToContainerConstraint?.isActive = true
+      // The cursor is typically already inside the bar's bounds
+      // when peek opens (the user just hovered the top-edge hit
+      // zone, which sits within the URL bar's 28pt rect). AppKit's
+      // tracking area only fires `mouseEntered` on a fresh entry,
+      // so flipping alpha alone doesn't cancel the hover-out timer
+      // that the hit zone exit just scheduled. Probe explicitly so
+      // the hover scheduler sees that the cursor is still on the
+      // bar and keeps the peek alive.
+      urlBar.syncHoverWithCurrentCursor()
     }
   }
 

@@ -169,14 +169,6 @@ extension PaneContainerViewController {
     guard let pane = focusedPane else { return }
     if !urlBarVisible {
       pane.setURLBarPeek(true)
-      // Settle the layout cycle synchronously so the URL field has
-      // its real frame when `makeFirstResponder` triggers field-
-      // editor attach. Without this the cell starts editing at a
-      // stale rect, glyph layout arrives one paint cycle later, and
-      // the resulting delay reads as a sluggish ⌘L. Only needed when
-      // peek actually flipped a constraint — pinned panes already
-      // have the bar laid out and don't pay this cost.
-      pane.containerView.layoutSubtreeIfNeeded()
     }
     pane.headerView.hideImmediately()
     if let prefill {
@@ -191,6 +183,14 @@ extension PaneContainerViewController {
   /// pane currently has focus.
   public func toggleURLBarVisibility() {
     urlBarVisible.toggle()
+    // Stop the hover scheduler before applying the new state so a
+    // collapse that was about to fire from a pre-toggle peek can't
+    // race with the just-applied `.pinned` writes. Without this, a
+    // 300ms hover-out queued just before the user pinned everything
+    // would land afterwards as a stale `setURLBarPeek(false)` —
+    // currently a no-op against `.pinned` but a fragile invariant
+    // to lean on for future changes.
+    cancelAllURLBarHoverScheduling()
     // Apply to panes across ALL workspaces so the setting is consistent
     // after workspace switch. Previously this only touched the current
     // workspace, leaving the URL bar of other workspaces out of sync.
