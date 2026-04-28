@@ -9,10 +9,10 @@ import AppKit
 /// Sized to match the other list-based modes (Bookmarks / History /
 /// Downloads): transparent background, 48pt rows showing the
 /// extension's action icon plus a two-line label (display name and
-/// version). Per-row actions (Reload / Disable / Open Options Page)
-/// land in a follow-up step; the cell is intentionally inert for now,
-/// since enabling content blockers and pre-granted permissions does
-/// not require a click target.
+/// version), with a trailing `NSSwitch` for enable/disable. Richer
+/// per-row actions (Reload, Open Options Page, View Errors) are
+/// intentionally absent — the toggle is the only interactive
+/// affordance the cell exposes.
 @MainActor
 final class ExtensionsSidebarView: NSView {
   private let scrollView = NSScrollView()
@@ -124,6 +124,9 @@ extension ExtensionsSidebarView: NSTableViewDelegate {
       tableView.makeView(withIdentifier: identifier, owner: self)
       as? ExtensionsSidebarCellView ?? ExtensionsSidebarCellView(identifier: identifier)
     cell.configure(with: rows[row])
+    cell.onToggleEnabled = { sourceURL, enabled in
+      ExtensionController.shared.setEnabled(enabled, for: sourceURL)
+    }
     return cell
   }
 
@@ -147,6 +150,14 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let subtitleLabel = NSTextField(labelWithString: "")
+  private let toggle = NSSwitch()
+  private var currentSourceURL: URL?
+
+  /// Fired when the user flips the trailing switch. The parent list
+  /// view forwards the request to `ExtensionController.setEnabled`,
+  /// which posts `didChangeNotification` on completion so this cell's
+  /// next `configure` reflects the persisted state.
+  var onToggleEnabled: ((URL, Bool) -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -174,9 +185,18 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     subtitleLabel.drawsBackground = false
     subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
+    // Compact switch keeps the trailing edge from crowding the title
+    // on the 260pt sidebar and matches the visual weight of the
+    // ellipsis buttons in other cell types.
+    toggle.controlSize = .small
+    toggle.translatesAutoresizingMaskIntoConstraints = false
+    toggle.target = self
+    toggle.action = #selector(toggleChanged)
+
     addSubview(iconView)
     addSubview(titleLabel)
     addSubview(subtitleLabel)
+    addSubview(toggle)
 
     NSLayoutConstraint.activate([
       iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -186,15 +206,24 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
 
       titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 6),
       titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
-      titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      titleLabel.trailingAnchor.constraint(equalTo: toggle.leadingAnchor, constant: -8),
 
       subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
       subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
       subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+
+      toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
+      toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
     ])
   }
 
+  @objc private func toggleChanged() {
+    guard let sourceURL = currentSourceURL else { return }
+    onToggleEnabled?(sourceURL, toggle.state == .on)
+  }
+
   func configure(with entry: LoadedExtension) {
+    currentSourceURL = entry.sourceURL
     titleLabel.stringValue = entry.displayName
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"
@@ -207,6 +236,14 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     }
     iconView.image = entry.icon
       ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+    // Dim the metadata in the disabled state so the row reads as
+    // inert at a glance, matching how Safari and Chrome dim disabled
+    // extensions in their management UIs.
+    let alpha: CGFloat = entry.isEnabled ? 1.0 : 0.45
+    iconView.alphaValue = alpha
+    titleLabel.alphaValue = alpha
+    subtitleLabel.alphaValue = alpha
+    toggle.state = entry.isEnabled ? .on : .off
     toolTip = entry.displayName
   }
 }

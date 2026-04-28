@@ -37,6 +37,30 @@ public final class ExtensionController {
     "com.kawarimidoll.e05.ExtensionController.didChange"
   )
 
+  /// Per-extension `WKWebExtensionContext` cache keyed by source-URL
+  /// filename. Built once during `load(at:)` so a toggle from the
+  /// sidebar can call `controller.load` / `controller.unload` without
+  /// re-reading the manifest. The keys mirror `disabledFilenames` so
+  /// the JSON state file stays portable across machines (the parent
+  /// directory of `~/.config/e05/extensions/` is the user-controlled
+  /// part; only the directory or ZIP basename is persisted).
+  private var contextsByFilename: [String: WKWebExtensionContext] = [:]
+
+  /// Set of source-URL filenames the user has explicitly disabled.
+  /// Persisted as JSON at `extensionsStateFileURL`. Never includes
+  /// filenames that aren't currently present on disk — the launch-time
+  /// scan only writes back known entries, so a user pruning the
+  /// extensions directory by hand doesn't accumulate stale entries.
+  private var disabledFilenames: Set<String> = []
+
+  /// One Task per active context, watching the context's
+  /// `errorsDidUpdateNotification` stream. Tracked here so a toggle
+  /// can cancel the old subscription before installing a new one — an
+  /// untracked spawn would leave the previous Task running after
+  /// `controller.unload` and a re-enable would stack a second Task on
+  /// the same context, doubling every error log entry.
+  private var errorsTasksByFilename: [String: Task<Void, Never>] = [:]
+
   private init() {
     self.controller = WKWebExtensionController(configuration: .default())
     self.delegateProxy = DelegateProxy()
@@ -50,10 +74,31 @@ public final class ExtensionController {
       .appendingPathComponent(".config/e05/extensions", isDirectory: true)
   }
 
+  /// Persistent enable/disable state for installed extensions. Stored
+  /// alongside the extensions root rather than inside it so a user
+  /// who copies an extension directory between machines doesn't drag
+  /// the state with it (the file's location matches the convention of
+  /// the other top-level stores under `~/.config/e05/`).
+  private static var extensionsStateFileURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05/extensions-state.json", isDirectory: false)
+  }
+
+  /// On-disk shape of the state file. Kept as a dedicated nested
+  /// `Codable` type so additions (e.g. per-extension permission
+  /// overrides, last-update timestamps) can be appended later without
+  /// breaking existing files — Codable synthesis tolerates unknown
+  /// keys when decoding via the default initializer.
+  private struct PersistedState: Codable {
+    var disabledFilenames: [String] = []
+  }
+
   /// Scan `extensionsRoot` and load every child as an extension. Creates
   /// the root directory if missing to match the other persistence stores
   /// under `~/.config/e05/`; an empty directory simply produces no loads.
   public func loadAll() async {
+    loadPersistedState()
+
     let root = Self.extensionsRoot
     let fm = FileManager.default
 
@@ -91,6 +136,18 @@ public final class ExtensionController {
       let isZip = entry.pathExtension.lowercased() == "zip"
       guard entryIsDir.boolValue || isZip else { continue }
       await load(at: entry)
+    }
+
+    // Re-write the state file restricted to filenames currently on
+    // disk so removed extensions stop accumulating in the disabled
+    // set. Unknown filenames still resolve to "enabled" on the next
+    // launch, but trimming on every scan keeps the file small and
+    // surfaces the live convention to anyone hand-editing it.
+    let presentFilenames = Set(contextsByFilename.keys)
+    let stale = disabledFilenames.subtracting(presentFilenames)
+    if !stale.isEmpty {
+      disabledFilenames.formIntersection(presentFilenames)
+      savePersistedState()
     }
   }
 
@@ -155,30 +212,44 @@ public final class ExtensionController {
         """
       )
 
-      try controller.load(ctx)
+      let filename = url.lastPathComponent
+      contextsByFilename[filename] = ctx
+      let isEnabled = !disabledFilenames.contains(filename)
 
-      let currentPermNames = ctx.currentPermissions.map(\.rawValue).sorted()
-      logger.info(
-        """
-        Activated '\(name, privacy: .public)' \
-        ctx[inject=\(ctx.hasInjectedContent), \
-        cmr=\(ctx.hasContentModificationRules), \
-        allURLs=\(ctx.hasAccessToAllURLs), \
-        currentPerms=[\(currentPermNames.joined(separator: ","), privacy: .public)]]
-        """
-      )
+      if isEnabled {
+        try controller.load(ctx)
 
-      // Dump the error array immediately post-load — declarativeNetRequest
-      // ruleset installation, background script boot, and any Chrome API
-      // feature gaps will surface here within a few hundred milliseconds.
-      Self.logErrors(ctx: ctx, source: "post-load")
+        let currentPermNames = ctx.currentPermissions.map(\.rawValue).sorted()
+        logger.info(
+          """
+          Activated '\(name, privacy: .public)' \
+          ctx[inject=\(ctx.hasInjectedContent), \
+          cmr=\(ctx.hasContentModificationRules), \
+          allURLs=\(ctx.hasAccessToAllURLs), \
+          currentPerms=[\(currentPermNames.joined(separator: ","), privacy: .public)]]
+          """
+        )
+
+        // Dump the error array immediately post-load — declarativeNetRequest
+        // ruleset installation, background script boot, and any Chrome API
+        // feature gaps will surface here within a few hundred milliseconds.
+        Self.logErrors(ctx: ctx, source: "post-load")
+
+        subscribeToErrors(ctx: ctx, name: name, key: filename)
+        scheduleCapabilityRecheck(ctx: ctx, name: name)
+      } else {
+        logger.info(
+          "Skipping controller.load for user-disabled '\(name, privacy: .public)'"
+        )
+      }
 
       let entry = LoadedExtension(
         sourceURL: url,
         displayName: name,
         version: ext.version,
         manifestVersion: ext.manifestVersion,
-        icon: Self.bestIcon(for: ext)
+        icon: Self.bestIcon(for: ext),
+        isEnabled: isEnabled
       )
       loadedExtensions.append(entry)
       // Stable display order across launches: filesystem enumeration
@@ -188,9 +259,6 @@ public final class ExtensionController {
         $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
       }
       NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
-
-      subscribeToErrors(ctx: ctx, name: name)
-      scheduleCapabilityRecheck(ctx: ctx, name: name)
     } catch {
       logger.error(
         """
@@ -244,13 +312,20 @@ public final class ExtensionController {
     }
   }
 
-  private func subscribeToErrors(ctx: WKWebExtensionContext, name: String) {
+  private func subscribeToErrors(ctx: WKWebExtensionContext, name: String, key: String) {
+    // Cancel the previous subscription for this context before
+    // installing a new one. Without this, an enable/disable cycle
+    // would leak the original Task — the AsyncSequence keeps the
+    // for-await alive for the lifetime of `ctx`, so it would never
+    // self-terminate after `controller.unload`.
+    errorsTasksByFilename[key]?.cancel()
+
     // AsyncSequence form keeps both producer and consumer inside the
     // MainActor isolation domain, sidestepping the Sendable barrier
     // that the block-based `addObserver(forName:object:queue:using:)`
     // trips in Swift 6 (the Notification argument is task-isolated and
     // cannot be handed to a MainActor closure safely).
-    Task { @MainActor in
+    let task = Task { @MainActor in
       let stream = NotificationCenter.default.notifications(
         named: WKWebExtensionContext.errorsDidUpdateNotification,
         object: ctx
@@ -259,6 +334,7 @@ public final class ExtensionController {
         Self.logErrors(ctx: ctx, source: "errorsDidUpdate")
       }
     }
+    errorsTasksByFilename[key] = task
     logger.debug("Subscribed to errorsDidUpdate for '\(name, privacy: .public)'")
   }
 
@@ -275,6 +351,115 @@ public final class ExtensionController {
       return actionIcon
     }
     return ext.icon(for: target)
+  }
+
+  /// Toggle the runtime activation of `sourceURL`'s extension and
+  /// persist the new state. Idempotent on the requested side: calling
+  /// with `true` for an already-enabled extension is a cheap no-op.
+  /// Failures from `controller.load` / `controller.unload` are logged
+  /// but the persisted state is still updated — the alternative
+  /// (rolling back the user's intent because WebKit had a transient
+  /// problem) makes the toggle feel unreliable in practice.
+  public func setEnabled(_ enabled: Bool, for sourceURL: URL) {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else {
+      logger.error(
+        "setEnabled(\(enabled)) for unknown source '\(filename, privacy: .public)' — ignored"
+      )
+      return
+    }
+    let wasDisabled = disabledFilenames.contains(filename)
+    guard enabled == wasDisabled else { return }
+
+    let displayName = ctx.webExtension.displayName ?? filename
+    if enabled {
+      disabledFilenames.remove(filename)
+      do {
+        try controller.load(ctx)
+        logger.info("Enabled '\(displayName, privacy: .public)'")
+        // Re-arm the diagnostics channels we wired during the initial
+        // load so a re-enabled extension produces the same telemetry
+        // as a freshly installed one. Kept inside the try so a failed
+        // load doesn't leave a subscriber attached to an inactive
+        // context.
+        subscribeToErrors(ctx: ctx, name: displayName, key: filename)
+        scheduleCapabilityRecheck(ctx: ctx, name: displayName)
+      } catch {
+        logger.error(
+          """
+          controller.load failed for '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    } else {
+      disabledFilenames.insert(filename)
+      // Tear down the diagnostics subscription so the AsyncSequence
+      // for-await self-terminates and the Task can be released.
+      errorsTasksByFilename[filename]?.cancel()
+      errorsTasksByFilename.removeValue(forKey: filename)
+      do {
+        try controller.unload(ctx)
+        logger.info("Disabled '\(displayName, privacy: .public)'")
+      } catch {
+        logger.error(
+          """
+          controller.unload failed for '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    }
+
+    // Mirror the new flag into the snapshot array so listeners that
+    // re-read `loadedExtensions` after the post observe the change
+    // without an extra round-trip through the controller.
+    if let i = loadedExtensions.firstIndex(where: { $0.sourceURL == sourceURL }) {
+      loadedExtensions[i].isEnabled = enabled
+    }
+    savePersistedState()
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+  }
+
+  private func loadPersistedState() {
+    let url = Self.extensionsStateFileURL
+    guard let data = try? Data(contentsOf: url) else {
+      // A missing file is the first-run convention, not an error —
+      // every extension defaults to enabled until the user toggles
+      // one off.
+      return
+    }
+    do {
+      let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
+      disabledFilenames = Set(decoded.disabledFilenames)
+    } catch {
+      logger.error(
+        """
+        Failed to decode extensions-state.json: \
+        \(String(describing: error), privacy: .public). \
+        Falling back to all-enabled defaults.
+        """
+      )
+    }
+  }
+
+  private func savePersistedState() {
+    let url = Self.extensionsStateFileURL
+    let payload = PersistedState(disabledFilenames: disabledFilenames.sorted())
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(payload)
+      try data.write(to: url, options: [.atomic])
+    } catch {
+      logger.error(
+        """
+        Failed to write extensions-state.json at \
+        \(url.path, privacy: .private(mask: .hash)): \
+        \(String(describing: error), privacy: .public)
+        """
+      )
+    }
   }
 
   private static func logErrors(ctx: WKWebExtensionContext, source: String) {
@@ -314,6 +499,11 @@ public struct LoadedExtension {
   public let version: String?
   public let manifestVersion: Double
   public let icon: NSImage?
+  /// Reflects whether `controller.load` is currently active for this
+  /// entry. Mutable so the controller's `setEnabled` can flip the
+  /// snapshot in place; external callers should treat the value as
+  /// read-only and route changes through `ExtensionController`.
+  public internal(set) var isEnabled: Bool
 }
 
 /// Delegate wrapper kept as a private class so the controller retains it via
