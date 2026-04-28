@@ -27,6 +27,13 @@ final class EdgeHoverHitZoneView: NSView {
   /// movement on high-DPI displays.
   static let width: CGFloat = 8
 
+  /// Height for top-edge variants of the strip (e.g. the per-pane
+  /// URL bar peek hit zone). Wider than `width` because pane
+  /// vertical splits squeeze the cursor target tighter than a
+  /// window edge, so a deliberate flick to the top still has room
+  /// to land.
+  static let topEdgeHeight: CGFloat = 12
+
   var onEnter: (() -> Void)?
   var onExit: (() -> Void)?
 

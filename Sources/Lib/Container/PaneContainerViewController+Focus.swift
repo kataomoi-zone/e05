@@ -34,9 +34,19 @@ extension PaneContainerViewController {
     // belongs to the user's current focus, so it shouldn't linger
     // on a pane the user has just navigated away from. Pinned panes
     // are owned by the global toggle and stay put (`setURLBarPeek`
-    // is a no-op for `.pinned`).
+    // is a no-op for `.pinned`). Hide the outgoing pane's top-edge
+    // hit zone too so only the focused pane reacts to hover.
     if let outgoing = focusedPane, outgoing.id != incomingPaneId {
       outgoing.setURLBarPeek(false)
+      outgoing.urlBarTopEdgeHitZone.isHidden = true
+      // Reset the hover scheduler at the focus funnel. Hiding the
+      // outgoing hit zone makes AppKit fire a synthetic
+      // `mouseExited` on its way down, which would otherwise queue a
+      // hover-out for the outgoing pane and burn a generation right
+      // before the incoming pane wants to schedule its own hover-in.
+      // Wiping both timers here keeps the new pane's scheduling on a
+      // clean counter.
+      cancelAllURLBarHoverScheduling()
     }
 
     // Clear ghostty focus on every terminal surface in the current
@@ -71,6 +81,11 @@ extension PaneContainerViewController {
     let pane = column.panes[paneIndex]
     NSLog("[e05/ws] setFocus applying pane=%@ addr=%@", String(describing: pane.id), pane.address.description)
     applyFocusBorder(pane)
+    // Activate the incoming pane's top-edge hit zone so the next
+    // hover near the pane top is observed. The hover scheduler that
+    // attaches to the zone's callbacks lands in a follow-up commit;
+    // for now the strip is just present and listening.
+    pane.urlBarTopEdgeHitZone.isHidden = false
     if pane.isBlankBrowser {
       if !pane.isURLBarVisible {
         pane.setURLBarVisible(true)

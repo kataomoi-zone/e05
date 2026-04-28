@@ -44,6 +44,16 @@ public final class PaneModel {
   /// pane instead of stranding it over window-absolute coordinates.
   public let findBar = FindBarView()
 
+  /// Transparent 12pt strip at the pane's top edge. The hover-reveal
+  /// machinery activates this on the focused pane only — the sidebar
+  /// reuses the same `EdgeHoverHitZoneView` for its leading strip,
+  /// and per-pane installs let the next focus change just flip
+  /// `isHidden` on two zones rather than tearing one down and
+  /// rebuilding it elsewhere. Callbacks are attached separately so
+  /// `setupPaneCallbacks` owns the lifecycle. Module-internal
+  /// because `EdgeHoverHitZoneView` itself is not public.
+  let urlBarTopEdgeHitZone = EdgeHoverHitZoneView()
+
   /// Per-pane URL bar visibility state. The hover-reveal machinery
   /// in `PaneContainerViewController` mutates this directly through
   /// `setURLBarVisible(_:)` (legacy callsites) or — once the hit
@@ -229,13 +239,25 @@ public final class PaneModel {
     // through to the content beneath the invisible bar.
     findBar.alphaValue = 0
 
+    // Top-edge hit zone is hidden until this pane gains focus —
+    // unfocused panes don't react to hover, so AppKit doesn't even
+    // need to install their tracking areas.
+    urlBarTopEdgeHitZone.isHidden = true
+
     // Order matters: `addSubview(_:)` appends to the end of the
-    // sibling list = topmost in z-order. The find bar floats over the
-    // pane content, so it must be added after `cv` to render above
-    // the WKWebView / GhosttyTerminalView / FinderPaneView surface.
+    // sibling list = topmost in z-order. The find bar floats over
+    // the pane content, so it must be added after `cv` to render
+    // above the WKWebView / GhosttyTerminalView / FinderPaneView
+    // surface. The hit zone sits at the very top of the pane stack
+    // (under `headerView` only) so its tracking strip stays
+    // reachable while the URL bar is hidden; once the URL bar is
+    // visible the strip overlaps the bar's chrome, which the hover
+    // scheduler handles via a pinned-state guard rather than
+    // shuffling z-order at runtime.
     containerView.addSubview(urlBar)
     containerView.addSubview(cv)
     containerView.addSubview(findBar)
+    containerView.addSubview(urlBarTopEdgeHitZone)
     containerView.addSubview(headerView)
 
     // URL bar at top
@@ -274,6 +296,14 @@ public final class PaneModel {
       cv.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       cv.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       cv.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+
+      // Top-edge hit zone spans the pane's full width. Height is
+      // owned by `EdgeHoverHitZoneView.topEdgeHeight` so any future
+      // tuning stays alongside the strip's other geometry.
+      urlBarTopEdgeHitZone.topAnchor.constraint(equalTo: containerView.topAnchor),
+      urlBarTopEdgeHitZone.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+      urlBarTopEdgeHitZone.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+      urlBarTopEdgeHitZone.heightAnchor.constraint(equalToConstant: EdgeHoverHitZoneView.topEdgeHeight),
 
       // Header overlay (top-right, only shown when URL bar is hidden)
       headerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
