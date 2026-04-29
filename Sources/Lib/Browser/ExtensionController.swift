@@ -992,12 +992,19 @@ public final class ExtensionController {
     }
     for (i, err) in errs.enumerated() {
       let ns = err as NSError
+      // userInfo carries the only signal that distinguishes one
+      // WKWebExtensionContextError code from another (especially the
+      // generic background-load failures), so emit it as `.public`
+      // — without an opt-in here unified log replaces the dictionary
+      // body with `<private>` and the log line is unactionable.
+      // Fine for a single-user dev-mode app; if this ever ships to
+      // multi-user hosts the privacy default should be revisited.
       logger.error(
         """
         [\(source, privacy: .public)] err[\(i)] for '\(name, privacy: .public)': \
         domain=\(ns.domain, privacy: .public) code=\(ns.code) \
         desc=\(ns.localizedDescription, privacy: .public) \
-        userInfo=\(String(describing: ns.userInfo))
+        userInfo=\(String(describing: ns.userInfo), privacy: .public)
         """
       )
     }
