@@ -11,8 +11,8 @@ struct PaneURLBarTests {
     let bar = PaneURLBar(frame: .zero)
     bar.setZoomPercent(1.0)
     #expect(bar.zoomContainer.isHidden)
-    #expect(bar.urlTrailingToFold?.isActive == true)
-    #expect(bar.urlTrailingToZoom?.isActive == false)
+    #expect(bar.extensionsTrailingToFold?.isActive == true)
+    #expect(bar.extensionsTrailingToZoom?.isActive == false)
   }
 
   @Test("setZoomPercent reveals the indicator and renders a rounded percent")
@@ -20,8 +20,8 @@ struct PaneURLBarTests {
     let bar = PaneURLBar(frame: .zero)
     bar.setZoomPercent(1.25)
     #expect(!bar.zoomContainer.isHidden)
-    #expect(bar.urlTrailingToFold?.isActive == false)
-    #expect(bar.urlTrailingToZoom?.isActive == true)
+    #expect(bar.extensionsTrailingToFold?.isActive == false)
+    #expect(bar.extensionsTrailingToZoom?.isActive == true)
     #expect(bar.zoomPercentLabel.stringValue == "125%")
   }
 
@@ -29,10 +29,10 @@ struct PaneURLBarTests {
   @MainActor func constraintSwap() {
     let bar = PaneURLBar(frame: .zero)
     bar.setZoomPercent(1.5)
-    #expect(bar.urlTrailingToZoom?.isActive == true)
+    #expect(bar.extensionsTrailingToZoom?.isActive == true)
     bar.setZoomPercent(1.0)
-    #expect(bar.urlTrailingToFold?.isActive == true)
-    #expect(bar.urlTrailingToZoom?.isActive == false)
+    #expect(bar.extensionsTrailingToFold?.isActive == true)
+    #expect(bar.extensionsTrailingToZoom?.isActive == false)
   }
 
   @Test("setZoomPercent treats near-unity values as the default")

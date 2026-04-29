@@ -30,11 +30,29 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   private let zoomInInlineButton: HoverIconButton
   private let zoomResetInlineButton = HoverIconButton(frame: .zero)
 
-  /// Active URL-field trailing constraint. Swapped between the zoom
-  /// container and the fold button in `setZoomPercent(_:)` so hiding
-  /// the indicator lets the URL field reclaim the trailing slot.
-  var urlTrailingToZoom: NSLayoutConstraint?
-  var urlTrailingToFold: NSLayoutConstraint?
+  /// Toolbar row for enabled web extensions, rebuilt from
+  /// `ExtensionController.loadedExtensions` whenever the controller
+  /// posts `didChangeNotification`. Placed between the URL field's
+  /// trailing edge and the zoom indicator (or the fold button when
+  /// zoom is hidden) so extensions sit at the right of the address,
+  /// matching Chrome / Safari conventions.
+  let extensionsContainer = NSStackView()
+  /// `extensionsContainer.trailing == zoomContainer.leading - 6`.
+  /// Active when the zoom indicator is visible.
+  var extensionsTrailingToZoom: NSLayoutConstraint?
+  /// `extensionsContainer.trailing == foldButton.leading - 4`.
+  /// Active in the default (zoom hidden) layout.
+  var extensionsTrailingToFold: NSLayoutConstraint?
+  /// Per-extension toolbar buttons keyed by source URL so click
+  /// handlers can recover the model identity without parsing the
+  /// button's identifier or rebuilding the lookup on every event.
+  private var extensionButtons: [URL: HoverIconButton] = [:]
+  /// Subscription to `ExtensionController.didChangeNotification`.
+  /// `nonisolated(unsafe)` mirrors the existing `Bookmarks` /
+  /// `History` sidebar observer pattern — block-based observers
+  /// retain their closure inside NotificationCenter, so the token
+  /// is removed in `deinit`.
+  nonisolated(unsafe) private var extensionsObserver: NSObjectProtocol?
 
   /// Whether the reload button currently shows the stop affordance.
   /// Owned by `setReloadButtonLoading(_:)` so the click handler can
@@ -133,6 +151,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     setupButtons()
     setupURLField()
     setupZoomIndicator()
+    setupExtensionsContainer()
     setupLayout()
   }
 
@@ -148,6 +167,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // dealloc would crash. Remove here to match `CommandPaletteView`
     // / `OverlayScrollView`, which use the same pattern.
     NotificationCenter.default.removeObserver(self)
+    // The extensions observer is the block-based form, which keeps
+    // its closure alive inside NotificationCenter until the token
+    // is removed explicitly.
+    if let token = extensionsObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
   }
 
   // MARK: - Icon Button Factory
@@ -193,6 +218,78 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     addSubview(forwardButton)
     addSubview(reloadButton)
     addSubview(foldButton)
+  }
+
+  private func setupExtensionsContainer() {
+    extensionsContainer.orientation = .horizontal
+    extensionsContainer.spacing = 2
+    extensionsContainer.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(extensionsContainer)
+
+    // Subscribe to controller-side state changes so install /
+    // remove / forget / toggle / Web Store install all reflect in
+    // the toolbar without an explicit reload from the call site.
+    extensionsObserver = NotificationCenter.default.addObserver(
+      forName: ExtensionController.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.reloadExtensions() }
+    }
+    reloadExtensions()
+  }
+
+  /// Rebuild the toolbar's extension button row from the controller's
+  /// snapshot. Disabled extensions stay out of the row entirely
+  /// (matching Chrome / Safari, which surface only currently active
+  /// actions in the toolbar). Buttons are rebuilt rather than
+  /// diff-applied because the row is bounded by the user's installed
+  /// extension count and rebuilding is simpler than tracking stable
+  /// identity across NSStackView arranged subviews.
+  private func reloadExtensions() {
+    for view in extensionsContainer.arrangedSubviews {
+      view.removeFromSuperview()
+    }
+    extensionButtons.removeAll()
+
+    let buttonSize: CGFloat = 22
+    let iconSize = NSSize(width: 16, height: 16)
+    for entry in ExtensionController.shared.loadedExtensions where entry.isEnabled {
+      let button = HoverIconButton()
+      // Prefer the action icon (toolbar/badge surface) and fall
+      // back to the extension's manifest icon — same precedence
+      // the sidebar list uses, just at a smaller size.
+      let actionIcon = ExtensionController.shared.defaultAction(for: entry.sourceURL)?
+        .icon(for: iconSize)
+      button.image = actionIcon ?? entry.icon
+      button.imagePosition = .imageOnly
+      button.bezelStyle = .inline
+      button.isBordered = false
+      button.font = .systemFont(ofSize: 10)
+      button.translatesAutoresizingMaskIntoConstraints = false
+      button.toolTip = entry.displayName
+      button.target = self
+      button.action = #selector(extensionAction(_:))
+      NSLayoutConstraint.activate([
+        button.widthAnchor.constraint(equalToConstant: buttonSize),
+        button.heightAnchor.constraint(equalToConstant: buttonSize),
+      ])
+      extensionsContainer.addArrangedSubview(button)
+      extensionButtons[entry.sourceURL] = button
+    }
+  }
+
+  @objc private func extensionAction(_ sender: NSButton) {
+    // Reverse-lookup keeps the URL out of the button's identifier
+    // (which doesn't round-trip arbitrary URLs cleanly) at the cost
+    // of an O(n) walk; n is bounded by enabled-extension count, so
+    // the constant is small and the code reads as a straight match.
+    guard let entry = extensionButtons.first(where: { $0.value === sender })
+    else { return }
+    let sourceURL = entry.key
+    ExtensionController.shared.performAction(
+      for: sourceURL, anchorView: sender, anchorRect: sender.bounds
+    )
   }
 
   private func setupZoomIndicator() {
@@ -283,20 +380,22 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
 
   private func setupLayout() {
     let buttonSize: CGFloat = 22
-    let urlToZoom = urlField.trailingAnchor.constraint(
+    // URL field's trailing edge anchors to the extensions container,
+    // which in turn anchors to either the zoom indicator (when
+    // visible) or the fold button. The dual-constraint switch lives
+    // on the extensions container, not the URL field, so the field's
+    // trailing edge stays put as zoom toggles — only the extensions
+    // row shifts.
+    let extToZoom = extensionsContainer.trailingAnchor.constraint(
       equalTo: zoomContainer.leadingAnchor, constant: -6
     )
-    let urlToFold = urlField.trailingAnchor.constraint(
+    let extToFold = extensionsContainer.trailingAnchor.constraint(
       equalTo: foldButton.leadingAnchor, constant: -4
     )
-    // Default state (zoom == 1.0): zoom indicator hidden, URL field
-    // occupies the full trailing slot up to the fold button.
-    // `setZoomPercent(_:)` flips these two constraints when a
-    // non-default zoom is applied.
-    urlToFold.isActive = true
-    urlToZoom.isActive = false
-    urlTrailingToZoom = urlToZoom
-    urlTrailingToFold = urlToFold
+    extToFold.isActive = true
+    extToZoom.isActive = false
+    extensionsTrailingToZoom = extToZoom
+    extensionsTrailingToFold = extToFold
 
     NSLayoutConstraint.activate([
       backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
@@ -315,8 +414,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
       reloadButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
       urlField.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 4),
+      urlField.trailingAnchor.constraint(
+        equalTo: extensionsContainer.leadingAnchor, constant: -6
+      ),
       urlField.centerYAnchor.constraint(equalTo: centerYAnchor),
       urlField.heightAnchor.constraint(equalToConstant: 22),
+
+      extensionsContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
 
       zoomContainer.trailingAnchor.constraint(equalTo: foldButton.leadingAnchor, constant: -4),
       zoomContainer.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -535,11 +639,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     let isAtDefault = abs(zoom - 1.0) < Self.zoomDefaultEpsilon
     zoomContainer.isHidden = isAtDefault
     if isAtDefault {
-      urlTrailingToZoom?.isActive = false
-      urlTrailingToFold?.isActive = true
+      extensionsTrailingToZoom?.isActive = false
+      extensionsTrailingToFold?.isActive = true
     } else {
-      urlTrailingToFold?.isActive = false
-      urlTrailingToZoom?.isActive = true
+      extensionsTrailingToFold?.isActive = false
+      extensionsTrailingToZoom?.isActive = true
       zoomPercentLabel.stringValue = "\(Int(round(zoom * 100)))%"
     }
   }

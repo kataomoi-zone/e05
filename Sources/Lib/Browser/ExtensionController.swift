@@ -69,10 +69,22 @@ public final class ExtensionController {
   /// the same context, doubling every error log entry.
   private var errorsTasksByFilename: [String: Task<Void, Never>] = [:]
 
+  /// View + rect captured by the most recent `performAction` call so
+  /// the controller's delegate can anchor `WKWebExtensionAction.popupPopover`
+  /// against the URL-bar button the user just clicked. WebKit can
+  /// dispatch `presentActionPopup` asynchronously after
+  /// `performAction(for:)` returns (loading the popup web view runs
+  /// off-thread), so the capture lives until the next click overwrites
+  /// it rather than being cleared at the end of `performAction`.
+  weak var pendingPopupAnchorView: NSView?
+  var pendingPopupAnchorRect: NSRect = .zero
+
   private init() {
     self.controller = WKWebExtensionController(configuration: .default())
-    self.delegateProxy = DelegateProxy()
-    self.controller.delegate = delegateProxy
+    let proxy = DelegateProxy()
+    self.delegateProxy = proxy
+    self.controller.delegate = proxy
+    proxy.controller = self
   }
 
   /// Root directory scanned at launch. Each immediate child (either an
@@ -1068,6 +1080,56 @@ public final class ExtensionController {
     return appexURL
   }
 
+  /// Default `WKWebExtensionAction` for `sourceURL`'s extension —
+  /// the toolbar/badge surface a UI built on top of. Returns `nil`
+  /// when the extension isn't loaded or the action is suppressed
+  /// (e.g. because `manifest.json` has no `action` key). Tab-scoped
+  /// actions are still TODO; we hand `nil` to `action(for:)` because
+  /// the WKWebExtensionTab protocol on PaneModel ships in a follow-up.
+  public func defaultAction(for sourceURL: URL) -> WKWebExtension.Action? {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else { return nil }
+    return ctx.action(for: nil)
+  }
+
+  /// Trigger the extension's default action and anchor any popup
+  /// popover the extension chooses to display on the supplied view.
+  /// `WKWebExtensionContext.performAction(for:)` runs synchronously
+  /// in WebKit and dispatches through `presentActionPopup`, so the
+  /// anchor capture below is read inside that callback before
+  /// returning. Action-only extensions (no popup) just no-op the
+  /// delegate and the anchor capture is harmlessly discarded.
+  public func performAction(for sourceURL: URL, anchorView: NSView, anchorRect: NSRect) {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else {
+      logger.error(
+        "performAction for unknown source '\(filename, privacy: .public)' — ignored"
+      )
+      return
+    }
+    let displayName = ctx.webExtension.displayName ?? filename
+    let action = ctx.action(for: nil)
+    // Info-level on purpose: every toolbar click should show whether
+    // the extension surfaces a popup or fires an event-only action,
+    // because that distinction is the first thing to check whenever
+    // a click feels unresponsive (popover unable to load, popup-less
+    // action hitting the suppression path, etc.).
+    logger.info(
+      """
+      performAction '\(displayName, privacy: .public)' \
+      action[presentsPopup=\(action?.presentsPopup ?? false), \
+      hasPopover=\(action?.popupPopover != nil), \
+      isEnabled=\(action?.isEnabled ?? false)]
+      """
+    )
+    pendingPopupAnchorView = anchorView
+    pendingPopupAnchorRect = anchorRect
+    ctx.performAction(for: nil)
+    // Anchor is intentionally not cleared: WebKit may dispatch
+    // presentActionPopup after this returns. The capture is
+    // single-slot; the next click overwrites it.
+  }
+
   /// Drop an app-bundle extension's controller state and remove its
   /// path from the persisted list so the next launch ignores it.
   /// Doesn't touch the on-disk `.app` — that belongs to the user;
@@ -1425,6 +1487,11 @@ public enum SourceKind: Sendable {
 /// its weak `delegate` pointer (a struct would be released immediately).
 @MainActor
 private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
+  /// Owning controller, set right after init so the popup callback
+  /// can read the URL-bar anchor capture. Weak avoids a reference
+  /// cycle with the controller's strong `delegate` pointer.
+  weak var controller: ExtensionController?
+
   // Window / tab protocol adoption on WorkspaceModel / PaneModel is a
   // follow-up change. Returning empty / nil keeps declarativeNetRequest
   // blockers working at the network layer without a tab model.
@@ -1497,22 +1564,79 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     completionHandler(patterns, nil)
   }
 
-  // Completion is called with `nil` error so the extension treats the
-  // request as handled; the popup itself is silently suppressed until
-  // the toolbar surface lands. Returning an error would make well-behaved
-  // extensions retry on every user gesture.
+  // Show the extension's popup popover anchored on the URL-bar
+  // button the user clicked. Anchor coordinates were stashed by
+  // `ExtensionController.performAction(for:anchorView:anchorRect:)`
+  // immediately before WebKit dispatched here. Completion is always
+  // `nil`: telling WebKit the request failed would invite the
+  // extension to retry on every user gesture, but a missing popup
+  // (e.g. action without a popup, missing anchor capture) is a
+  // legitimate "nothing to show" path the extension already
+  // tolerates.
   func webExtensionController(
     _: WKWebExtensionController,
-    presentActionPopup _: WKWebExtension.Action,
+    presentActionPopup action: WKWebExtension.Action,
     for context: WKWebExtensionContext,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    logger.info(
+    let name = context.webExtension.displayName ?? "(unknown)"
+    // Debug-only: the `performAction` info line already records the
+    // dispatch happened. This entry is kept for the rare case when
+    // the popover never appears and you need to check whether
+    // delegate fired at all.
+    logger.debug(
       """
-      presentActionPopup requested for \
-      '\(context.webExtension.displayName ?? "(unknown)", privacy: .public)' — \
-      suppressed until the toolbar action surface lands
+      presentActionPopup '\(name, privacy: .public)' \
+      [presentsPopup=\(action.presentsPopup), \
+      hasPopover=\(action.popupPopover != nil), \
+      anchorCaptured=\(self.controller?.pendingPopupAnchorView != nil)]
       """
+    )
+    guard let popover = action.popupPopover else {
+      logger.info(
+        """
+        presentActionPopup for '\(name, privacy: .public)' — \
+        no popupPopover (action without popup), no-op.
+        """
+      )
+      completionHandler(nil)
+      return
+    }
+    // The window/superview check guards against a workspace switch
+    // (or column rebuild) detaching the URL-bar button between the
+    // user's click and WebKit's delayed `presentActionPopup` dispatch
+    // — `popover.show(relativeTo:of:preferredEdge:)` on a view that
+    // no longer has a window crashes in older AppKit and quietly
+    // anchors to the screen origin in current AppKit, both of which
+    // are worse than dropping the popup.
+    guard let anchorView = controller?.pendingPopupAnchorView,
+      anchorView.window != nil, anchorView.superview != nil
+    else {
+      logger.info(
+        """
+        presentActionPopup for '\(name, privacy: .public)' — \
+        no live anchor view. Did the action fire after a workspace \
+        switch tore the URL bar down?
+        """
+      )
+      completionHandler(nil)
+      return
+    }
+    let anchorRect = controller?.pendingPopupAnchorRect ?? anchorView.bounds
+    // Debug-only: anchor coordinates are only useful when the
+    // popover appears in the wrong place, otherwise the click-rate
+    // telemetry from `performAction` is noisy enough.
+    logger.debug(
+      """
+      Showing popover for '\(name, privacy: .public)' anchored on \
+      \(String(describing: type(of: anchorView)), privacy: .public) \
+      rect=\(String(describing: anchorRect), privacy: .public)
+      """
+    )
+    popover.show(
+      relativeTo: anchorRect,
+      of: anchorView,
+      preferredEdge: .maxY
     )
     completionHandler(nil)
   }
