@@ -105,6 +105,8 @@ public final class ExtensionController {
     case notLoaded = 2
     case storeFetchFailed = 3
     case storeBadResponse = 4
+    case bundleNoAppex = 5
+    case bundleInvalid = 6
   }
 
   /// Chrome version pinned for the Chrome Web Store update endpoint.
@@ -223,14 +225,62 @@ public final class ExtensionController {
 
   private func load(at url: URL) async throws {
     let ext = try await WKWebExtension(resourceBaseURL: url)
-    let name = ext.displayName ?? url.lastPathComponent
+    try activate(ext: ext, sourceURL: url, sourceKind: .archive)
+  }
+
+  /// Build a `WKWebExtension` from a Safari Web Extension's `.appex`
+  /// bundle and activate it through the standard pipeline. The
+  /// bundle reference is held implicitly by the resulting context
+  /// for as long as `WKWebExtensionController` keeps it loaded —
+  /// we never copy the `.appex` into `extensionsRoot`, because
+  /// copying would invalidate any code-signed Mac app's signature.
+  private func loadFromBundle(_ bundle: Bundle, sourceURL: URL) async throws {
+    let ext: WKWebExtension
+    do {
+      ext = try await WKWebExtension(appExtensionBundle: bundle)
+    } catch {
+      // Wrap WebKit's raw error in our own `bundleInvalid` so the
+      // sidebar alert speaks the same language for `.app` / `.appex`
+      // problems as the store paths do for HTTP failures, and so
+      // the underlying WebKit text shows up in `localizedDescription`
+      // without leaking domain implementation details to UI code.
+      logger.error(
+        """
+        WKWebExtension(appExtensionBundle:) threw for \
+        \(sourceURL.lastPathComponent, privacy: .public): \
+        \(String(describing: error), privacy: .public)
+        """
+      )
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleInvalid.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not load '\(sourceURL.lastPathComponent)' as a Safari Web Extension: "
+            + (error as NSError).localizedDescription
+        ]
+      )
+    }
+    try activate(ext: ext, sourceURL: sourceURL, sourceKind: .appBundle)
+  }
+
+  /// Shared activation tail used by both the directory/ZIP and
+  /// `.appex` load paths. Builds the context, pre-grants permissions,
+  /// honours the persisted disable flag, and appends a snapshot to
+  /// `loadedExtensions`. Every call site has already produced the
+  /// `WKWebExtension` instance — this helper handles the
+  /// post-construction work that's identical across sources.
+  private func activate(
+    ext: WKWebExtension, sourceURL: URL, sourceKind: SourceKind
+  ) throws {
+    let name = ext.displayName ?? sourceURL.lastPathComponent
     let mv = String(format: "%g", ext.manifestVersion)
 
     logger.info(
       """
       Loaded manifest '\(name, privacy: .public)' \
       v\(ext.version ?? "(unknown)", privacy: .public) MV\(mv, privacy: .public) \
-      from \(url.lastPathComponent, privacy: .public) \
+      from \(sourceURL.lastPathComponent, privacy: .public) \
       caps[bg=\(ext.hasBackgroundContent), \
       persistBg=\(ext.hasPersistentBackgroundContent), \
       inject=\(ext.hasInjectedContent), \
@@ -281,7 +331,7 @@ public final class ExtensionController {
       """
     )
 
-    let filename = url.lastPathComponent
+    let filename = sourceURL.lastPathComponent
     contextsByFilename[filename] = ctx
     let isEnabled = !disabledFilenames.contains(filename)
 
@@ -313,12 +363,13 @@ public final class ExtensionController {
     }
 
     let entry = LoadedExtension(
-      sourceURL: url,
+      sourceURL: sourceURL,
       displayName: name,
       version: ext.version,
       manifestVersion: ext.manifestVersion,
       icon: Self.bestIcon(for: ext),
-      isEnabled: isEnabled
+      isEnabled: isEnabled,
+      sourceKind: sourceKind
     )
     loadedExtensions.append(entry)
     // Stable display order across launches: filesystem enumeration
@@ -450,6 +501,12 @@ public final class ExtensionController {
     }
     let displayName = oldCtx.webExtension.displayName ?? filename
     let wasEnabled = !disabledFilenames.contains(filename)
+    // Capture the prior snapshot's source kind so the rollback path
+    // can restore it without re-deriving it from controller state —
+    // future bundle-source reload support won't have to touch this
+    // code.
+    let oldSourceKind =
+      loadedExtensions.first(where: { $0.sourceURL == sourceURL })?.sourceKind ?? .archive
 
     errorsTasksByFilename[filename]?.cancel()
     errorsTasksByFilename.removeValue(forKey: filename)
@@ -489,7 +546,8 @@ public final class ExtensionController {
         sourceURL: sourceURL,
         filename: filename,
         wasEnabled: wasEnabled,
-        displayName: displayName
+        displayName: displayName,
+        sourceKind: oldSourceKind
       )
       throw error
     }
@@ -508,7 +566,8 @@ public final class ExtensionController {
     sourceURL: URL,
     filename: String,
     wasEnabled: Bool,
-    displayName: String
+    displayName: String,
+    sourceKind: SourceKind
   ) {
     contextsByFilename[filename] = oldCtx
     if wasEnabled {
@@ -539,7 +598,8 @@ public final class ExtensionController {
       version: oldExt.version,
       manifestVersion: oldExt.manifestVersion,
       icon: Self.bestIcon(for: oldExt),
-      isEnabled: wasEnabled
+      isEnabled: wasEnabled,
+      sourceKind: sourceKind
     )
     loadedExtensions.append(entry)
     loadedExtensions.sort {
@@ -809,6 +869,98 @@ public final class ExtensionController {
     }
   }
 
+  /// Load a Safari Web Extension from a code-signed Mac app's
+  /// bundled `.appex` (or a directly-passed `.appex`). The bundle is
+  /// held in place — we deliberately do **not** copy it into
+  /// `extensionsRoot`, because copying invalidates the parent app's
+  /// code signature (App Store distributions, Developer ID-signed
+  /// builds, and ad-hoc-signed local builds all care). As a
+  /// consequence:
+  ///
+  /// - The entry survives only for the lifetime of this process; the
+  ///   POC has no on-disk record so a relaunch starts without it.
+  /// - The sidebar row gates Reload and Move to Trash off so we
+  ///   never invoke `controller.unload`+rebuild on a bundle whose
+  ///   reference we'd have to re-resolve, and never `trashItem` an
+  ///   external app the user did not install through e05.
+  /// - There's no `rollbackInstall` step on failure: nothing was
+  ///   copied, so a thrown error already leaves the user's
+  ///   filesystem untouched.
+  ///
+  /// Persistence + safe relaunch handling ship in a follow-up once
+  /// the POC confirms the load path itself works.
+  public func installFromAppBundle(at sourceURL: URL) async throws {
+    let appexURL = try Self.resolveAppExtensionBundle(at: sourceURL)
+    // Same `alreadyInstalled` guard the archive paths use: silently
+    // overwriting a context that's already keyed under
+    // `appex.lastPathComponent` would orphan the previous entry's
+    // toggle/error subscriptions and let the new row mask the old
+    // one without warning.
+    let filename = appexURL.lastPathComponent
+    if contextsByFilename[filename] != nil {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.alreadyInstalled.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "An extension named '\(filename)' is already loaded. "
+            + "Remove the existing copy first if you want to replace it."
+        ]
+      )
+    }
+    guard let bundle = Bundle(url: appexURL) else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleInvalid.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not open '\(filename)' as an app extension bundle."
+        ]
+      )
+    }
+    try await loadFromBundle(bundle, sourceURL: appexURL)
+  }
+
+  /// Resolve an `.appex` URL out of the user's selection. Accepts
+  /// either an `.appex` directly or a parent `.app`; in the latter
+  /// case the lexicographically first `.appex` under
+  /// `Contents/PlugIns` wins, sorted to keep the choice
+  /// deterministic across runs.
+  private static func resolveAppExtensionBundle(at url: URL) throws -> URL {
+    if url.pathExtension.lowercased() == "appex" {
+      return url
+    }
+    let pluginsURL = url.appendingPathComponent("Contents/PlugIns", isDirectory: true)
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: pluginsURL.path) else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleNoAppex.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Selected app does not embed a Safari Web Extension."
+        ]
+      )
+    }
+    let entries =
+      ((try? fm.contentsOfDirectory(
+        at: pluginsURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+      )) ?? [])
+      .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+    guard let firstAppex = entries.first(where: { $0.pathExtension.lowercased() == "appex" })
+    else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleNoAppex.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Selected app does not embed a Safari Web Extension."
+        ]
+      )
+    }
+    return firstAppex
+  }
+
   /// Move an extension to the Trash and tear down every cache entry
   /// the controller keeps for it. The Trash is the right destination
   /// (rather than `removeItem`) so the user can put the extension
@@ -1050,6 +1202,31 @@ public struct LoadedExtension {
   /// snapshot in place; external callers should treat the value as
   /// read-only and route changes through `ExtensionController`.
   public internal(set) var isEnabled: Bool
+  /// Where the extension was loaded from. Drives the sidebar's
+  /// per-row UI gating: `.archive` rows expose the full ellipsis
+  /// menu (Reload / Move to Trash), `.appBundle` rows hide actions
+  /// that would touch a code-signed app the controller doesn't own.
+  public let sourceKind: SourceKind
+}
+
+/// How an extension reached `ExtensionController`. The value is
+/// frozen at install time and travels with the snapshot so UI code
+/// can gate destructive actions without re-inspecting the file
+/// system. `public` mirrors `LoadedExtension`; tightening both to
+/// `internal` is a follow-up bundled with the loadedExtensions
+/// access-level review.
+public enum SourceKind: Sendable {
+  /// Unpacked directory or ZIP archive under
+  /// `~/.config/e05/extensions/` — including ones the user dropped
+  /// in by hand and ones e05 wrote there from a Web Store / AMO
+  /// download. Safe targets for Reload / Move to Trash.
+  case archive
+  /// `.appex` bundle inside an external `.app` (typically a
+  /// Mac App Store app's bundled Safari Web Extension). Loaded in
+  /// place; Reload would need to recreate the bundle reference and
+  /// Move to Trash would Trash the bundling app, so both are gated
+  /// off in the sidebar UI.
+  case appBundle
 }
 
 /// Delegate wrapper kept as a private class so the controller retains it via

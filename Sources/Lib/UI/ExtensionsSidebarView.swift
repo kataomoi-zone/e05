@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import os.log
 
 private let extensionsCellLogger = Logger(
@@ -235,6 +236,20 @@ final class ExtensionsSidebarView: NSView {
     amoItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
     menu.addItem(amoItem)
 
+    menu.addItem(.separator())
+
+    let bundleItem = NSMenuItem(
+      title: "From App Bundle (POC, in-memory)…",
+      action: #selector(addFromAppBundleClicked),
+      keyEquivalent: ""
+    )
+    bundleItem.target = self
+    bundleItem.image = NSImage(systemSymbolName: "app.gift", accessibilityDescription: nil)
+    bundleItem.toolTip =
+      "Load a Safari Web Extension from a Mac app's .appex bundle. "
+      + "POC: the entry disappears on relaunch until persistence ships."
+    menu.addItem(bundleItem)
+
     let origin = NSPoint(x: 0, y: addMenuButton.bounds.height)
     menu.popUp(positioning: nil, at: origin, in: addMenuButton)
   }
@@ -259,6 +274,47 @@ final class ExtensionsSidebarView: NSView {
         try await ExtensionController.shared.installFromAMO(slug: slug)
       }
     )
+  }
+
+  @objc private func addFromAppBundleClicked() {
+    guard let host = hostWindow else { return }
+    // `.application` covers the typical Mac App Store case (the
+    // user picks Bitwarden.app and we fish the .appex out of
+    // Contents/PlugIns). The dynamic UTI for `.appex`
+    // (`com.apple.application-extension`) lets power users hand us
+    // an `.appex` directly. macOS registers the `.appex` UTI at
+    // boot, so the lookup never fails in practice — surface a
+    // diagnostic alert if it ever does instead of silently dropping
+    // the filter.
+    guard let appex = UTType(filenameExtension: "appex") else {
+      presentRowAlert(
+        title: "Could not open app picker",
+        text:
+          "macOS did not register the .appex uniform type identifier; "
+          + "the app extension picker cannot filter sensibly.",
+        style: .warning
+      )
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.message =
+      "Choose a Mac app whose Safari Web Extension you want to load, "
+      + "or pick a .appex directly."
+    panel.prompt = "Add"
+    panel.allowedContentTypes = [.application, appex]
+    panel.beginSheetModal(for: host) { [weak self] response in
+      guard response == .OK, let chosen = panel.urls.first else { return }
+      Task { @MainActor in
+        do {
+          try await ExtensionController.shared.installFromAppBundle(at: chosen)
+        } catch {
+          self?.presentAddError(error)
+        }
+      }
+    }
   }
 
   /// Shared sheet for store-sourced installs: a single text field
@@ -488,6 +544,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   private let toggle = NSSwitch()
   private let menuButton = HoverIconButton()
   private var currentSourceURL: URL?
+  private var currentSourceKind: SourceKind = .archive
 
   /// Fired when the user flips the trailing switch. The parent list
   /// view forwards the request to `ExtensionController.setEnabled`,
@@ -584,6 +641,12 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   @objc private func menuTapped() {
     guard let sourceURL = currentSourceURL else { return }
     let hasErrors = !ExtensionController.shared.errors(for: sourceURL).isEmpty
+    // Bundle-sourced rows reference an `.appex` inside an external
+    // app the controller doesn't own. Reload would need to resolve
+    // the bundle reference again, and Move to Trash would Trash that
+    // external app — both gated off until the persistence story
+    // lands.
+    let isFileBacked = currentSourceKind == .archive
     let menu = NSMenu()
     // Default-true autoenablesItems would override per-item
     // `isEnabled = false` whenever the item carries a wired
@@ -601,7 +664,8 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         title: "Reload",
         symbol: "arrow.clockwise",
         action: #selector(menuReload(_:)),
-        sourceURL: sourceURL
+        sourceURL: sourceURL,
+        enabled: isFileBacked
       )
     )
     menu.addItem(
@@ -619,7 +683,8 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         title: "Move to Trash",
         symbol: "trash",
         action: #selector(menuRemove(_:)),
-        sourceURL: sourceURL
+        sourceURL: sourceURL,
+        enabled: isFileBacked
       )
     )
 
@@ -678,6 +743,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
 
   func configure(with entry: LoadedExtension) {
     currentSourceURL = entry.sourceURL
+    currentSourceKind = entry.sourceKind
     titleLabel.stringValue = entry.displayName
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"
