@@ -53,6 +53,14 @@ public final class ExtensionController {
   /// extensions directory by hand doesn't accumulate stale entries.
   private var disabledFilenames: Set<String> = []
 
+  /// External `.appex` paths the user added through `From App Bundle…`.
+  /// Persisted as JSON at `appBundlesStateFileURL` so the bundle
+  /// auto-reloads on next launch. Pruned at scan time when the
+  /// referenced bundle has disappeared from disk (the user trashed
+  /// the host app, the path moved, etc.) so the file mirrors what's
+  /// actually loadable.
+  private var persistedAppBundlePaths: [URL] = []
+
   /// One Task per active context, watching the context's
   /// `errorsDidUpdateNotification` stream. Tracked here so a toggle
   /// can cancel the old subscription before installing a new one — an
@@ -84,6 +92,16 @@ public final class ExtensionController {
       .appendingPathComponent(".config/e05/extensions-state.json", isDirectory: false)
   }
 
+  /// Persisted list of external `.appex` paths the user added through
+  /// `From App Bundle…`. Kept in a separate file from
+  /// `extensions-state.json` because the lifecycle is different
+  /// (entries can vanish when the host app is trashed; archive
+  /// entries live and die with `extensionsRoot`).
+  private static var appBundlesStateFileURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05/extensions-app-bundles.json", isDirectory: false)
+  }
+
   /// On-disk shape of the state file. Kept as a dedicated nested
   /// `Codable` type so additions (e.g. per-extension permission
   /// overrides, last-update timestamps) can be appended later without
@@ -91,6 +109,14 @@ public final class ExtensionController {
   /// keys when decoding via the default initializer.
   private struct PersistedState: Codable {
     var disabledFilenames: [String] = []
+  }
+
+  /// On-disk shape of `appBundlesStateFileURL`. Stores absolute file
+  /// system paths (resolved to the inner `.appex`, not the parent
+  /// `.app`) so re-launch hits the same load target without
+  /// re-running the picker logic.
+  private struct PersistedAppBundles: Codable {
+    var bundlePaths: [String] = []
   }
 
   /// Domain shared by every NSError thrown from this controller.
@@ -220,6 +246,105 @@ public final class ExtensionController {
     if !stale.isEmpty {
       disabledFilenames.formIntersection(presentFilenames)
       savePersistedState()
+    }
+
+    await loadPersistedAppBundles()
+  }
+
+  /// Re-load every `.appex` the user previously added through
+  /// `From App Bundle…`. Only bundles whose host app has been
+  /// physically removed (Trashed, moved, renamed) are dropped —
+  /// transient failures (codesign cache mismatch, alreadyInstalled
+  /// from a duplicate launch path, etc.) keep their path in the
+  /// list so the next launch can retry instead of silently losing
+  /// the user's saved entry.
+  private func loadPersistedAppBundles() async {
+    loadPersistedAppBundlesState()
+    let saved = persistedAppBundlePaths
+    // Reset and rebuild from successful + retained paths. The user-
+    // facing `installFromAppBundle` is bypassed in favour of the
+    // internal core so startup re-install never touches the persist
+    // step (we'll save the full reconciled list once at the end).
+    persistedAppBundlePaths = []
+    let fm = FileManager.default
+    for bundleURL in saved {
+      guard fm.fileExists(atPath: bundleURL.path) else {
+        logger.info(
+          """
+          Pruning missing app-bundle reference \
+          \(bundleURL.path, privacy: .public)
+          """
+        )
+        continue
+      }
+      do {
+        try await loadAppBundleInternal(at: bundleURL)
+        persistedAppBundlePaths.append(bundleURL)
+      } catch {
+        // Path is on disk but the load throw'd. Could be a transient
+        // failure (codesign re-validation racing the launch, an OS
+        // upgrade-induced cache miss, alreadyInstalled if loadAll
+        // ever runs twice) — keep the path so the next launch retries
+        // instead of silently dropping the user's saved bundle.
+        persistedAppBundlePaths.append(bundleURL)
+        logger.error(
+          """
+          Failed to re-load persisted app bundle \
+          \(bundleURL.lastPathComponent, privacy: .public): \
+          \(String(describing: error), privacy: .public). \
+          Path retained for next launch.
+          """
+        )
+      }
+    }
+    // Persist the reconciled list once. Skipping the save keeps the
+    // existing file untouched if `loadPersistedAppBundlesState`
+    // detected and quarantined a corrupt original.
+    saveAppBundlesState()
+  }
+
+  private func loadPersistedAppBundlesState() {
+    let url = Self.appBundlesStateFileURL
+    guard let data = try? Data(contentsOf: url) else { return }
+    do {
+      let decoded = try JSONDecoder().decode(PersistedAppBundles.self, from: data)
+      persistedAppBundlePaths = decoded.bundlePaths.map(URL.init(fileURLWithPath:))
+    } catch {
+      // Move the bad file aside instead of overwriting it: if the
+      // user (or a buggy editor) corrupted the JSON, we want a copy
+      // they can recover from rather than silently turning it into
+      // an empty array. The next save writes a fresh file at the
+      // canonical path.
+      let quarantineURL = url.appendingPathExtension("corrupt")
+      logger.error(
+        """
+        Failed to decode extensions-app-bundles.json: \
+        \(String(describing: error), privacy: .public). \
+        Moving the original to \(quarantineURL.lastPathComponent, privacy: .public).
+        """
+      )
+      try? FileManager.default.moveItem(at: url, to: quarantineURL)
+    }
+  }
+
+  private func saveAppBundlesState() {
+    let url = Self.appBundlesStateFileURL
+    let payload = PersistedAppBundles(
+      bundlePaths: persistedAppBundlePaths.map(\.path).sorted()
+    )
+    do {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(payload)
+      try data.write(to: url, options: [.atomic])
+    } catch {
+      logger.error(
+        """
+        Failed to write extensions-app-bundles.json at \
+        \(url.path, privacy: .private(mask: .hash)): \
+        \(String(describing: error), privacy: .public)
+        """
+      )
     }
   }
 
@@ -877,19 +1002,40 @@ public final class ExtensionController {
   /// builds, and ad-hoc-signed local builds all care). As a
   /// consequence:
   ///
-  /// - The entry survives only for the lifetime of this process; the
-  ///   POC has no on-disk record so a relaunch starts without it.
+  /// - The bundle path is recorded in
+  ///   `extensions-app-bundles.json` so the next launch re-loads
+  ///   the same `.appex` automatically (`forgetAppBundleExtension`
+  ///   is the matching uninstall path).
   /// - The sidebar row gates Reload and Move to Trash off so we
   ///   never invoke `controller.unload`+rebuild on a bundle whose
   ///   reference we'd have to re-resolve, and never `trashItem` an
-  ///   external app the user did not install through e05.
+  ///   external app the user did not install through e05. The
+  ///   bundle row gets a `Forget` action instead.
   /// - There's no `rollbackInstall` step on failure: nothing was
   ///   copied, so a thrown error already leaves the user's
   ///   filesystem untouched.
-  ///
-  /// Persistence + safe relaunch handling ship in a follow-up once
-  /// the POC confirms the load path itself works.
   public func installFromAppBundle(at sourceURL: URL) async throws {
+    let resolvedURL = try await loadAppBundleInternal(at: sourceURL)
+    // User-driven installs append to the persisted list and save
+    // immediately; startup reloads bypass this and let
+    // `loadPersistedAppBundles` save once at the end of reconciliation.
+    if !persistedAppBundlePaths.contains(where: { $0.path == resolvedURL.path }) {
+      persistedAppBundlePaths.append(resolvedURL)
+      saveAppBundlesState()
+    }
+  }
+
+  /// Core install path for `.appex` sources. Resolves the bundle,
+  /// guards against duplicate filenames, and runs the standard
+  /// activation pipeline. Both the user-facing `installFromAppBundle`
+  /// and the startup `loadPersistedAppBundles` funnel through this so
+  /// the activation logic stays in one place; persistence is layered
+  /// on by the caller depending on whether this is a new install or
+  /// a startup reload. Returns the resolved `.appex` URL — the
+  /// caller often handed in a `.app` and needs to know which
+  /// internal `.appex` was actually loaded.
+  @discardableResult
+  private func loadAppBundleInternal(at sourceURL: URL) async throws -> URL {
     let appexURL = try Self.resolveAppExtensionBundle(at: sourceURL)
     // Same `alreadyInstalled` guard the archive paths use: silently
     // overwriting a context that's already keyed under
@@ -919,6 +1065,52 @@ public final class ExtensionController {
       )
     }
     try await loadFromBundle(bundle, sourceURL: appexURL)
+    return appexURL
+  }
+
+  /// Drop an app-bundle extension's controller state and remove its
+  /// path from the persisted list so the next launch ignores it.
+  /// Doesn't touch the on-disk `.app` — that belongs to the user;
+  /// uninstalling the host app is a separate operation. This is the
+  /// `.appBundle`-source counterpart to `removeExtension`'s
+  /// Move-to-Trash flow.
+  public func forgetAppBundleExtension(for sourceURL: URL) {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else {
+      logger.error(
+        "forgetAppBundleExtension for unknown source '\(filename, privacy: .public)' — ignored"
+      )
+      return
+    }
+    let displayName = ctx.webExtension.displayName ?? filename
+
+    errorsTasksByFilename[filename]?.cancel()
+    errorsTasksByFilename.removeValue(forKey: filename)
+    // Same disabledFilenames-gated unload as `removeExtension`; see
+    // there for the reasoning (entries that were never `controller.load`'d
+    // throw on unload).
+    if !disabledFilenames.contains(filename) {
+      do {
+        try controller.unload(ctx)
+      } catch {
+        logger.error(
+          """
+          controller.unload during forget failed for \
+          '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    }
+
+    contextsByFilename.removeValue(forKey: filename)
+    disabledFilenames.remove(filename)
+    loadedExtensions.removeAll { $0.sourceURL == sourceURL }
+    persistedAppBundlePaths.removeAll { $0.path == sourceURL.path }
+    savePersistedState()
+    saveAppBundlesState()
+    logger.info("Forgot app-bundle extension '\(displayName, privacy: .public)'")
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
   }
 
   /// Resolve an `.appex` URL out of the user's selection. Accepts

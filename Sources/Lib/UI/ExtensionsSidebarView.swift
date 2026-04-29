@@ -474,7 +474,12 @@ extension ExtensionsSidebarView: NSTableViewDelegate {
 enum ExtensionRowAction {
   case reload
   case viewErrors
+  /// Move the extension's source archive to the Trash and clear all
+  /// caches. `.archive` rows only.
   case remove
+  /// Drop controller state + the persisted app-bundle path entry,
+  /// leaving the host `.app` untouched. `.appBundle` rows only.
+  case forget
 }
 
 extension ExtensionsSidebarView {
@@ -505,6 +510,8 @@ extension ExtensionsSidebarView {
       )
     case .remove:
       ExtensionController.shared.removeExtension(for: sourceURL)
+    case .forget:
+      ExtensionController.shared.forgetAppBundleExtension(for: sourceURL)
     }
   }
 
@@ -678,15 +685,28 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
       )
     )
     menu.addItem(.separator())
-    menu.addItem(
-      buildMenuItem(
-        title: "Move to Trash",
-        symbol: "trash",
-        action: #selector(menuRemove(_:)),
-        sourceURL: sourceURL,
-        enabled: isFileBacked
+    if isFileBacked {
+      menu.addItem(
+        buildMenuItem(
+          title: "Move to Trash",
+          symbol: "trash",
+          action: #selector(menuRemove(_:)),
+          sourceURL: sourceURL
+        )
       )
-    )
+    } else {
+      // Bundle-sourced rows can't Trash the host `.app`; Forget is
+      // the symmetric action that drops controller state + the
+      // persisted bundle path entry.
+      menu.addItem(
+        buildMenuItem(
+          title: "Forget",
+          symbol: "eject",
+          action: #selector(menuForget(_:)),
+          sourceURL: sourceURL
+        )
+      )
+    }
 
     // Anchor flush to the menu button's bottom-left so the first item
     // sits directly under the glyph (same idiom as Bookmarks).
@@ -722,6 +742,11 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   @objc private func menuRemove(_ sender: NSMenuItem) {
     guard let sourceURL = sourceURL(from: sender) else { return }
     onRowAction?(sourceURL, .remove)
+  }
+
+  @objc private func menuForget(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, .forget)
   }
 
   /// Pull the row's URL back out of the menu item. A nil result means
