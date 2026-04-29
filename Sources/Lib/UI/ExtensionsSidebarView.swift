@@ -1,4 +1,9 @@
 import AppKit
+import os.log
+
+private let extensionsCellLogger = Logger(
+  subsystem: "com.kawarimidoll.e05", category: "ExtensionsSidebar"
+)
 
 /// Extensions list rendered inside the sidebar's `extensions` mode.
 /// Subscribes to `ExtensionController.didChangeNotification` so loads
@@ -10,9 +15,10 @@ import AppKit
 /// Downloads): transparent background, 48pt rows showing the
 /// extension's action icon plus a two-line label (display name and
 /// version), with a trailing `NSSwitch` for enable/disable and a
-/// hover-revealed ellipsis menu (`Move to Trash`). Richer per-row
-/// actions (Reload, Open Options Page, View Errors) are intentionally
-/// absent.
+/// hover-revealed ellipsis menu (`Reload`, `View Errors`, `Move to
+/// Trash`). `Open Options Page` is deferred until
+/// `WKWebExtensionTab` / `WKWebExtensionWindow` adoption gives us a
+/// `webView` that can host `webkit-extension://` URLs.
 @MainActor
 final class ExtensionsSidebarView: NSView {
   private let scrollView = NSScrollView()
@@ -222,14 +228,69 @@ extension ExtensionsSidebarView: NSTableViewDelegate {
     cell.onToggleEnabled = { sourceURL, enabled in
       ExtensionController.shared.setEnabled(enabled, for: sourceURL)
     }
-    cell.onRemove = { sourceURL in
-      ExtensionController.shared.removeExtension(for: sourceURL)
+    cell.onRowAction = { [weak self] sourceURL, action in
+      self?.handle(action: action, for: sourceURL)
     }
     return cell
   }
 
   func tableView(_: NSTableView, rowViewForRow _: Int) -> NSTableRowView? {
     SidebarListRowView()
+  }
+}
+
+// MARK: - Row action routing
+
+/// Per-row action surfaced via the trailing ellipsis menu. The cell
+/// fans these out through a single callback so this view can own all
+/// the orchestration (controller mutations, error alerts, scheduling).
+enum ExtensionRowAction {
+  case reload
+  case viewErrors
+  case remove
+}
+
+extension ExtensionsSidebarView {
+  fileprivate func handle(action: ExtensionRowAction, for sourceURL: URL) {
+    switch action {
+    case .reload:
+      Task { @MainActor in
+        do {
+          try await ExtensionController.shared.reloadExtension(for: sourceURL)
+        } catch {
+          presentRowAlert(
+            title: "Could not reload extension",
+            text: error.localizedDescription,
+            style: .warning
+          )
+        }
+      }
+    case .viewErrors:
+      let errors = ExtensionController.shared.errors(for: sourceURL)
+      let body =
+        errors.isEmpty
+        ? "No runtime errors have been reported for this extension."
+        : errors.enumerated()
+          .map { i, ns in "\(i + 1). [\(ns.domain) #\(ns.code)] \(ns.localizedDescription)" }
+          .joined(separator: "\n\n")
+      presentRowAlert(
+        title: "Extension errors", text: body, style: .informational
+      )
+    case .remove:
+      ExtensionController.shared.removeExtension(for: sourceURL)
+    }
+  }
+
+  private func presentRowAlert(title: String, text: String, style: NSAlert.Style) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = text
+    alert.alertStyle = style
+    if let host = hostWindow {
+      alert.beginSheetModal(for: host, completionHandler: nil)
+    } else {
+      alert.runModal()
+    }
   }
 }
 
@@ -258,10 +319,11 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   /// next `configure` reflects the persisted state.
   var onToggleEnabled: ((URL, Bool) -> Void)?
 
-  /// Fired when the user picks `Move to Trash` from the row's
-  /// hover-revealed menu. The parent list view delegates to
-  /// `ExtensionController.removeExtension`.
-  var onRemove: ((URL) -> Void)?
+  /// Fired when the user picks an item from the hover-revealed menu.
+  /// The single callback (rather than per-action callbacks) lets the
+  /// parent dispatch on the enum and keep all the orchestration in one
+  /// place — same idiom as `BookmarkRowAction` in `BookmarksSidebarView`.
+  var onRowAction: ((URL, ExtensionRowAction) -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -345,29 +407,92 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
 
   @objc private func menuTapped() {
     guard let sourceURL = currentSourceURL else { return }
+    let hasErrors = !ExtensionController.shared.errors(for: sourceURL).isEmpty
     let menu = NSMenu()
-    let removeItem = NSMenuItem(
-      title: "Move to Trash", action: #selector(menuRemove(_:)), keyEquivalent: ""
-    )
-    removeItem.target = self
-    removeItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
-    // Bind the URL to the menu item rather than reading
+    // Default-true autoenablesItems would override per-item
+    // `isEnabled = false` whenever the item carries a wired
+    // target/action, masking the disabled state for `View Errors`.
+    menu.autoenablesItems = false
+
+    // Bind the URL to each menu item rather than reading
     // `currentSourceURL` at fire time. The menu pop-up runs a nested
     // runloop, and a `didChangeNotification` arriving during it would
     // trigger `tableView.reloadData()` and overwrite this cell's
     // `currentSourceURL` with another row's URL — picking the wrong
-    // extension to trash. The captured value here is immutable.
-    removeItem.representedObject = sourceURL
-    menu.addItem(removeItem)
+    // extension to act on. The captured values here are immutable.
+    menu.addItem(
+      buildMenuItem(
+        title: "Reload",
+        symbol: "arrow.clockwise",
+        action: #selector(menuReload(_:)),
+        sourceURL: sourceURL
+      )
+    )
+    menu.addItem(
+      buildMenuItem(
+        title: "View Errors",
+        symbol: "exclamationmark.triangle",
+        action: #selector(menuViewErrors(_:)),
+        sourceURL: sourceURL,
+        enabled: hasErrors
+      )
+    )
+    menu.addItem(.separator())
+    menu.addItem(
+      buildMenuItem(
+        title: "Move to Trash",
+        symbol: "trash",
+        action: #selector(menuRemove(_:)),
+        sourceURL: sourceURL
+      )
+    )
+
     // Anchor flush to the menu button's bottom-left so the first item
     // sits directly under the glyph (same idiom as Bookmarks).
     let origin = NSPoint(x: 0, y: menuButton.bounds.height)
     menu.popUp(positioning: nil, at: origin, in: menuButton)
   }
 
+  private func buildMenuItem(
+    title: String,
+    symbol: String,
+    action: Selector,
+    sourceURL: URL,
+    enabled: Bool = true
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    item.representedObject = sourceURL
+    item.isEnabled = enabled
+    return item
+  }
+
+  @objc private func menuReload(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, .reload)
+  }
+
+  @objc private func menuViewErrors(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, .viewErrors)
+  }
+
   @objc private func menuRemove(_ sender: NSMenuItem) {
-    guard let sourceURL = sender.representedObject as? URL else { return }
-    onRemove?(sourceURL)
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, .remove)
+  }
+
+  /// Pull the row's URL back out of the menu item. A nil result means
+  /// the item was constructed without `representedObject` set —
+  /// `buildMenuItem` always populates it, so a nil here is a bug in
+  /// the constructor rather than a user-visible no-op.
+  private func sourceURL(from item: NSMenuItem) -> URL? {
+    if let url = item.representedObject as? URL { return url }
+    extensionsCellLogger.error(
+      "Menu item '\(item.title, privacy: .public)' fired without a representedObject URL"
+    )
+    return nil
   }
 
   @objc private func toggleChanged() {

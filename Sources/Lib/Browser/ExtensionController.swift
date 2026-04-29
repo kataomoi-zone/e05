@@ -93,6 +93,18 @@ public final class ExtensionController {
     var disabledFilenames: [String] = []
   }
 
+  /// Domain shared by every NSError thrown from this controller.
+  /// `WKWebExtensionErrorDomain` covers WebKit's own load failures;
+  /// our own validation errors (collision, missing source) live here.
+  static let errorDomain = "com.kawarimidoll.e05.Extensions"
+
+  /// Numeric code space for our NSErrors. Centralised so two callers
+  /// can't reach for the same `code: 1` literal independently.
+  private enum ErrorCode: Int {
+    case alreadyInstalled = 1
+    case notLoaded = 2
+  }
+
   /// Scan `extensionsRoot` and load every child as an extension. Creates
   /// the root directory if missing to match the other persistence stores
   /// under `~/.config/e05/`; an empty directory simply produces no loads.
@@ -357,6 +369,141 @@ public final class ExtensionController {
     return ext.icon(for: target)
   }
 
+  /// Snapshot of the extension's runtime errors at this instant.
+  /// Returns an empty array when the source isn't loaded. Calls
+  /// through to `WKWebExtensionContext.errors`, which collects parse-
+  /// time issues, declarativeNetRequest installation failures, and
+  /// Chrome-API gaps as they accumulate — useful surface for a
+  /// `View Errors` menu entry.
+  public func errors(for sourceURL: URL) -> [NSError] {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else { return [] }
+    return ctx.errors as [NSError]
+  }
+
+  /// Re-parse and reactivate the extension. Equivalent to a remove +
+  /// re-add round-trip but **preserves** the user's enable/disable
+  /// state and the source's on-disk filename. Useful after editing a
+  /// manifest or content script in place; the new context picks up
+  /// the change without a full app relaunch.
+  ///
+  /// On failure (broken manifest, unsupported manifest version, etc.)
+  /// the previously loaded context is re-installed so the sidebar row
+  /// stays exactly as it was before the attempt. The user can then
+  /// fix the source on disk and try again, or remove the extension
+  /// outright. The caller presents the error in an `NSAlert`.
+  public func reloadExtension(for sourceURL: URL) async throws {
+    let filename = sourceURL.lastPathComponent
+    guard let oldCtx = contextsByFilename[filename] else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.notLoaded.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Cannot reload — '\(filename)' is not currently loaded."
+        ]
+      )
+    }
+    let displayName = oldCtx.webExtension.displayName ?? filename
+    let wasEnabled = !disabledFilenames.contains(filename)
+
+    errorsTasksByFilename[filename]?.cancel()
+    errorsTasksByFilename.removeValue(forKey: filename)
+    if wasEnabled {
+      // Mirrors the `removeExtension` unload gate: skipping unload for
+      // disabled rows because `load(at:)` never called `controller.load`
+      // for them in the first place, so calling unload here would throw.
+      do {
+        try controller.unload(oldCtx)
+      } catch {
+        logger.error(
+          """
+          controller.unload during reload failed for \
+          '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    }
+    contextsByFilename.removeValue(forKey: filename)
+    loadedExtensions.removeAll { $0.sourceURL == sourceURL }
+
+    do {
+      // `load(at:)` reads `disabledFilenames` to decide whether to
+      // re-`controller.load`, so the user-toggled state survives the
+      // round-trip without explicit handling here.
+      try await load(at: sourceURL)
+      logger.info("Reloaded '\(displayName, privacy: .public)'")
+    } catch {
+      // Rollback: re-install the previously loaded context so the
+      // sidebar row reverts to what was visible before the reload
+      // attempt. The on-disk source still holds the broken manifest;
+      // restoring controller state lets the user keep using the
+      // working version while they fix the source.
+      restoreAfterFailedReload(
+        oldCtx: oldCtx,
+        sourceURL: sourceURL,
+        filename: filename,
+        wasEnabled: wasEnabled,
+        displayName: displayName
+      )
+      throw error
+    }
+  }
+
+  /// Re-install the previous context after a failed `reloadExtension`.
+  /// The old `WKWebExtension` is still valid (we never touched the
+  /// on-disk source during the reload attempt), so the snapshot can
+  /// be rebuilt from it and the controller re-loaded with the same
+  /// instance. Errors during rollback are logged but never re-thrown:
+  /// the caller is already in the middle of throwing the original
+  /// reload error, and a rollback failure is tertiary information at
+  /// best.
+  private func restoreAfterFailedReload(
+    oldCtx: WKWebExtensionContext,
+    sourceURL: URL,
+    filename: String,
+    wasEnabled: Bool,
+    displayName: String
+  ) {
+    contextsByFilename[filename] = oldCtx
+    if wasEnabled {
+      do {
+        try controller.load(oldCtx)
+        subscribeToErrors(ctx: oldCtx, name: displayName, key: filename)
+        scheduleCapabilityRecheck(ctx: oldCtx, name: displayName)
+      } catch {
+        // Double failure — both the new manifest load and the rollback
+        // controller.load have throw'd. The cache and snapshot still
+        // get rebuilt below so the row stays visible, but the error
+        // subscription is not re-armed; runtime errors from the old
+        // context will not surface in `View Errors` until the next
+        // successful reload (or app relaunch).
+        logger.error(
+          """
+          Rollback controller.load failed for \
+          '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    }
+    let oldExt = oldCtx.webExtension
+    let entry = LoadedExtension(
+      sourceURL: sourceURL,
+      displayName: displayName,
+      version: oldExt.version,
+      manifestVersion: oldExt.manifestVersion,
+      icon: Self.bestIcon(for: oldExt),
+      isEnabled: wasEnabled
+    )
+    loadedExtensions.append(entry)
+    loadedExtensions.sort {
+      $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+    }
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+  }
+
   /// Copy an unpacked extension folder (or ZIP archive) into
   /// `extensionsRoot` and load it, so the new entry appears in the
   /// sidebar alongside the existing extensions. Throws if the
@@ -373,8 +520,8 @@ public final class ExtensionController {
     let dst = Self.extensionsRoot.appendingPathComponent(sourceURL.lastPathComponent)
     if fm.fileExists(atPath: dst.path) {
       throw NSError(
-        domain: "com.kawarimidoll.e05.Extensions",
-        code: 1,
+        domain: Self.errorDomain,
+        code: ErrorCode.alreadyInstalled.rawValue,
         userInfo: [
           NSLocalizedDescriptionKey:
             "An extension named '\(sourceURL.lastPathComponent)' is already installed. "
