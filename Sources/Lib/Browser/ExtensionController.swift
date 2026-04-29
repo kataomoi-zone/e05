@@ -135,7 +135,21 @@ public final class ExtensionController {
       guard exists else { continue }
       let isZip = entry.pathExtension.lowercased() == "zip"
       guard entryIsDir.boolValue || isZip else { continue }
-      await load(at: entry)
+      // Tolerate a single bad extension at scan time — log and move
+      // on. `addExtension` uses the throwing form for direct user
+      // feedback, but here a startup-time scan must not abort just
+      // because one disk entry has a malformed manifest.
+      do {
+        try await load(at: entry)
+      } catch {
+        logger.error(
+          """
+          Failed to load extension at \
+          \(entry.path, privacy: .private(mask: .hash)): \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
     }
 
     // Re-write the state file restricted to filenames currently on
@@ -151,123 +165,113 @@ public final class ExtensionController {
     }
   }
 
-  private func load(at url: URL) async {
-    do {
-      let ext = try await WKWebExtension(resourceBaseURL: url)
-      let name = ext.displayName ?? url.lastPathComponent
-      let mv = String(format: "%g", ext.manifestVersion)
+  private func load(at url: URL) async throws {
+    let ext = try await WKWebExtension(resourceBaseURL: url)
+    let name = ext.displayName ?? url.lastPathComponent
+    let mv = String(format: "%g", ext.manifestVersion)
 
-      logger.info(
-        """
-        Loaded manifest '\(name, privacy: .public)' \
-        v\(ext.version ?? "(unknown)", privacy: .public) MV\(mv, privacy: .public) \
-        from \(url.lastPathComponent, privacy: .public) \
-        caps[bg=\(ext.hasBackgroundContent), \
-        persistBg=\(ext.hasPersistentBackgroundContent), \
-        inject=\(ext.hasInjectedContent), \
-        cmr=\(ext.hasContentModificationRules), \
-        opts=\(ext.hasOptionsPage), \
-        cmds=\(ext.hasCommands)]
-        """
-      )
+    logger.info(
+      """
+      Loaded manifest '\(name, privacy: .public)' \
+      v\(ext.version ?? "(unknown)", privacy: .public) MV\(mv, privacy: .public) \
+      from \(url.lastPathComponent, privacy: .public) \
+      caps[bg=\(ext.hasBackgroundContent), \
+      persistBg=\(ext.hasPersistentBackgroundContent), \
+      inject=\(ext.hasInjectedContent), \
+      cmr=\(ext.hasContentModificationRules), \
+      opts=\(ext.hasOptionsPage), \
+      cmds=\(ext.hasCommands)]
+      """
+    )
 
-      // Surface any parse-time errors immediately. For MV3 extensions
-      // that expect Chrome-specific APIs (offscreen, userScripts, ...),
-      // the parser may report non-fatal warnings here.
-      for (i, err) in ext.errors.enumerated() {
-        let ns = err as NSError
-        logger.error(
-          """
-          Parse err[\(i)] for '\(name, privacy: .public)': \
-          domain=\(ns.domain, privacy: .public) code=\(ns.code) \
-          desc=\(ns.localizedDescription, privacy: .public)
-          """
-        )
-      }
-
-      let ctx = WKWebExtensionContext(for: ext)
-
-      // Pre-grant every requested permission and host pattern so
-      // content-blocking paths run end-to-end without surfacing a
-      // prompt. Placing an extension under ~/.config/e05/extensions/
-      // is treated as explicit user trust; a richer permission flow
-      // ships with the extensions sidebar UI.
-      let permNames = ext.requestedPermissions.map(\.rawValue).sorted()
-      for perm in ext.requestedPermissions {
-        ctx.setPermissionStatus(.grantedExplicitly, for: perm)
-      }
-      let patternStrings = ext.requestedPermissionMatchPatterns
-        .map(\.string)
-        .sorted()
-      for pattern in ext.requestedPermissionMatchPatterns {
-        ctx.setPermissionStatus(.grantedExplicitly, for: pattern)
-      }
-      logger.info(
-        """
-        Pre-granted \(permNames.count) perms \
-        [\(permNames.joined(separator: ","), privacy: .public)] + \
-        \(patternStrings.count) host patterns \
-        [\(patternStrings.joined(separator: ","), privacy: .public)] \
-        for '\(name, privacy: .public)'
-        """
-      )
-
-      let filename = url.lastPathComponent
-      contextsByFilename[filename] = ctx
-      let isEnabled = !disabledFilenames.contains(filename)
-
-      if isEnabled {
-        try controller.load(ctx)
-
-        let currentPermNames = ctx.currentPermissions.map(\.rawValue).sorted()
-        logger.info(
-          """
-          Activated '\(name, privacy: .public)' \
-          ctx[inject=\(ctx.hasInjectedContent), \
-          cmr=\(ctx.hasContentModificationRules), \
-          allURLs=\(ctx.hasAccessToAllURLs), \
-          currentPerms=[\(currentPermNames.joined(separator: ","), privacy: .public)]]
-          """
-        )
-
-        // Dump the error array immediately post-load — declarativeNetRequest
-        // ruleset installation, background script boot, and any Chrome API
-        // feature gaps will surface here within a few hundred milliseconds.
-        Self.logErrors(ctx: ctx, source: "post-load")
-
-        subscribeToErrors(ctx: ctx, name: name, key: filename)
-        scheduleCapabilityRecheck(ctx: ctx, name: name)
-      } else {
-        logger.info(
-          "Skipping controller.load for user-disabled '\(name, privacy: .public)'"
-        )
-      }
-
-      let entry = LoadedExtension(
-        sourceURL: url,
-        displayName: name,
-        version: ext.version,
-        manifestVersion: ext.manifestVersion,
-        icon: Self.bestIcon(for: ext),
-        isEnabled: isEnabled
-      )
-      loadedExtensions.append(entry)
-      // Stable display order across launches: filesystem enumeration
-      // order is not guaranteed and async-load completion order would
-      // shuffle the list further if loads ever run in parallel.
-      loadedExtensions.sort {
-        $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-      }
-      NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
-    } catch {
+    // Surface any parse-time errors immediately. For MV3 extensions
+    // that expect Chrome-specific APIs (offscreen, userScripts, ...),
+    // the parser may report non-fatal warnings here.
+    for (i, err) in ext.errors.enumerated() {
+      let ns = err as NSError
       logger.error(
         """
-        Failed to load extension at \
-        \(url.path, privacy: .private(mask: .hash)): \
-        \(String(describing: error), privacy: .public)
+        Parse err[\(i)] for '\(name, privacy: .public)': \
+        domain=\(ns.domain, privacy: .public) code=\(ns.code) \
+        desc=\(ns.localizedDescription, privacy: .public)
         """
       )
     }
+
+    let ctx = WKWebExtensionContext(for: ext)
+
+    // Pre-grant every requested permission and host pattern so
+    // content-blocking paths run end-to-end without surfacing a
+    // prompt. Placing an extension under ~/.config/e05/extensions/
+    // is treated as explicit user trust; a richer permission flow
+    // ships with the extensions sidebar UI.
+    let permNames = ext.requestedPermissions.map(\.rawValue).sorted()
+    for perm in ext.requestedPermissions {
+      ctx.setPermissionStatus(.grantedExplicitly, for: perm)
+    }
+    let patternStrings = ext.requestedPermissionMatchPatterns
+      .map(\.string)
+      .sorted()
+    for pattern in ext.requestedPermissionMatchPatterns {
+      ctx.setPermissionStatus(.grantedExplicitly, for: pattern)
+    }
+    logger.info(
+      """
+      Pre-granted \(permNames.count) perms \
+      [\(permNames.joined(separator: ","), privacy: .public)] + \
+      \(patternStrings.count) host patterns \
+      [\(patternStrings.joined(separator: ","), privacy: .public)] \
+      for '\(name, privacy: .public)'
+      """
+    )
+
+    let filename = url.lastPathComponent
+    contextsByFilename[filename] = ctx
+    let isEnabled = !disabledFilenames.contains(filename)
+
+    if isEnabled {
+      try controller.load(ctx)
+
+      let currentPermNames = ctx.currentPermissions.map(\.rawValue).sorted()
+      logger.info(
+        """
+        Activated '\(name, privacy: .public)' \
+        ctx[inject=\(ctx.hasInjectedContent), \
+        cmr=\(ctx.hasContentModificationRules), \
+        allURLs=\(ctx.hasAccessToAllURLs), \
+        currentPerms=[\(currentPermNames.joined(separator: ","), privacy: .public)]]
+        """
+      )
+
+      // Dump the error array immediately post-load — declarativeNetRequest
+      // ruleset installation, background script boot, and any Chrome API
+      // feature gaps will surface here within a few hundred milliseconds.
+      Self.logErrors(ctx: ctx, source: "post-load")
+
+      subscribeToErrors(ctx: ctx, name: name, key: filename)
+      scheduleCapabilityRecheck(ctx: ctx, name: name)
+    } else {
+      logger.info(
+        "Skipping controller.load for user-disabled '\(name, privacy: .public)'"
+      )
+    }
+
+    let entry = LoadedExtension(
+      sourceURL: url,
+      displayName: name,
+      version: ext.version,
+      manifestVersion: ext.manifestVersion,
+      icon: Self.bestIcon(for: ext),
+      isEnabled: isEnabled
+    )
+    loadedExtensions.append(entry)
+    // Stable display order across launches: filesystem enumeration
+    // order is not guaranteed and async-load completion order would
+    // shuffle the list further if loads ever run in parallel.
+    loadedExtensions.sort {
+      $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+    }
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
   }
 
   /// Re-log extension capability flags a few seconds after load. The
@@ -351,6 +355,107 @@ public final class ExtensionController {
       return actionIcon
     }
     return ext.icon(for: target)
+  }
+
+  /// Copy an unpacked extension folder (or ZIP archive) into
+  /// `extensionsRoot` and load it, so the new entry appears in the
+  /// sidebar alongside the existing extensions. Throws if the
+  /// destination already exists — replacing in place would silently
+  /// drop user-toggled state and re-arm permission grants for what
+  /// could be a different version. Throws and rolls back the copy if
+  /// the load itself fails (malformed manifest, unsupported manifest
+  /// version, etc.) so a bad install doesn't leave a dead directory
+  /// that re-fails on every launch. The caller (sidebar UI) presents
+  /// the error in an `NSAlert`.
+  public func addExtension(from sourceURL: URL) async throws {
+    let fm = FileManager.default
+    try fm.createDirectory(at: Self.extensionsRoot, withIntermediateDirectories: true)
+    let dst = Self.extensionsRoot.appendingPathComponent(sourceURL.lastPathComponent)
+    if fm.fileExists(atPath: dst.path) {
+      throw NSError(
+        domain: "com.kawarimidoll.e05.Extensions",
+        code: 1,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "An extension named '\(sourceURL.lastPathComponent)' is already installed. "
+            + "Remove the existing copy first if you want to replace it."
+        ]
+      )
+    }
+    try fm.copyItem(at: sourceURL, to: dst)
+    do {
+      try await load(at: dst)
+    } catch {
+      // The copy succeeded but the manifest didn't parse / register.
+      // Removing the destination keeps the next launch's scan from
+      // re-failing on the same input and matches the user's
+      // expectation that a failed install leaves no trace.
+      try? fm.removeItem(at: dst)
+      throw error
+    }
+  }
+
+  /// Move an extension to the Trash and tear down every cache entry
+  /// the controller keeps for it. The Trash is the right destination
+  /// (rather than `removeItem`) so the user can put the extension
+  /// back if they removed the wrong one — same Finder-style policy
+  /// the e05 finder pane already uses for its `Move to Trash` action.
+  /// Cleanup proceeds even if the trash step fails: the controller
+  /// caches are still cleared, and on next launch the scan will pick
+  /// up the still-on-disk source as a fresh entry. That re-loading
+  /// behaviour is documented (not a bug); a Trash failure leaves the
+  /// extension visibly back in the list after a restart.
+  public func removeExtension(for sourceURL: URL) {
+    let filename = sourceURL.lastPathComponent
+    guard let ctx = contextsByFilename[filename] else {
+      logger.error(
+        "removeExtension for unknown source '\(filename, privacy: .public)' — ignored"
+      )
+      return
+    }
+    let displayName = ctx.webExtension.displayName ?? filename
+
+    errorsTasksByFilename[filename]?.cancel()
+    errorsTasksByFilename.removeValue(forKey: filename)
+
+    // Skip `controller.unload` for entries that were never loaded —
+    // `load(at:)` skips `controller.load` for any filename in
+    // `disabledFilenames`, so calling unload here would always throw
+    // for disabled rows. The throw itself is harmless but the
+    // resulting log line reads like a real bug.
+    if !disabledFilenames.contains(filename) {
+      do {
+        try controller.unload(ctx)
+      } catch {
+        logger.error(
+          """
+          controller.unload during remove failed for \
+          '\(displayName, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
+    }
+
+    do {
+      try FileManager.default.trashItem(at: sourceURL, resultingItemURL: nil)
+      logger.info("Trashed '\(displayName, privacy: .public)'")
+    } catch {
+      logger.error(
+        """
+        trashItem failed for '\(sourceURL.lastPathComponent, privacy: .public)': \
+        \(String(describing: error), privacy: .public). \
+        Controller caches cleared anyway; the source on disk will \
+        re-appear after the next launch's scan.
+        """
+      )
+    }
+
+    contextsByFilename.removeValue(forKey: filename)
+    disabledFilenames.remove(filename)
+    loadedExtensions.removeAll { $0.sourceURL == sourceURL }
+    savePersistedState()
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
   }
 
   /// Toggle the runtime activation of `sourceURL`'s extension and
