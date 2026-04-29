@@ -25,6 +25,7 @@ final class ExtensionsSidebarView: NSView {
   private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "")
   private let addButton = NSButton()
+  private let addMenuButton = NSButton()
   private var rows: [LoadedExtension] = []
   nonisolated(unsafe) private var changeObserver: NSObjectProtocol?
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -107,9 +108,28 @@ final class ExtensionsSidebarView: NSView {
     addButton.bezelStyle = .recessed
     addButton.font = .systemFont(ofSize: 11, weight: .medium)
     addButton.target = self
-    addButton.action = #selector(addClicked)
+    // Default action is the folder/zip picker — that path predates
+    // store install and stays the lowest-friction option for users
+    // pointing at an unpacked dev build. The dropdown to its right
+    // surfaces the alternative install sources.
+    addButton.action = #selector(addFromFolderClicked)
     addButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(addButton)
+
+    // Split-button companion: chevron.down to the right of the main
+    // Add Extension button opens a menu listing every install
+    // source. Visually flush with the main button so the pair reads
+    // as a single split control.
+    addMenuButton.image = NSImage(
+      systemSymbolName: "chevron.down", accessibilityDescription: "More install options"
+    )
+    addMenuButton.imagePosition = .imageOnly
+    addMenuButton.bezelStyle = .recessed
+    addMenuButton.target = self
+    addMenuButton.action = #selector(addMenuClicked)
+    addMenuButton.toolTip = "More install options"
+    addMenuButton.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(addMenuButton)
 
     // Two-line empty state mirroring the placeholder feel of other
     // sidebar modes. The path hint surfaces the convention so users
@@ -134,6 +154,11 @@ final class ExtensionsSidebarView: NSView {
       addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       addButton.heightAnchor.constraint(equalToConstant: 22),
 
+      addMenuButton.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+      addMenuButton.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: 2),
+      addMenuButton.widthAnchor.constraint(equalToConstant: 22),
+      addMenuButton.heightAnchor.constraint(equalToConstant: 22),
+
       scrollView.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 6),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -157,7 +182,7 @@ final class ExtensionsSidebarView: NSView {
     window ?? NSApp.keyWindow ?? NSApp.mainWindow
   }
 
-  @objc private func addClicked() {
+  @objc private func addFromFolderClicked() {
     guard let host = hostWindow else { return }
     let panel = NSOpenPanel()
     panel.canChooseFiles = true
@@ -177,18 +202,164 @@ final class ExtensionsSidebarView: NSView {
     }
   }
 
-  private func presentAddError(_ error: Error) {
+  @objc private func addMenuClicked() {
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+
+    let folderItem = NSMenuItem(
+      title: "From Folder or ZIP…",
+      action: #selector(addFromFolderClicked),
+      keyEquivalent: ""
+    )
+    folderItem.target = self
+    folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+    menu.addItem(folderItem)
+
+    menu.addItem(.separator())
+
+    let chromeItem = NSMenuItem(
+      title: "From Chrome Web Store…",
+      action: #selector(addFromChromeWebStoreClicked),
+      keyEquivalent: ""
+    )
+    chromeItem.target = self
+    chromeItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    menu.addItem(chromeItem)
+
+    let amoItem = NSMenuItem(
+      title: "From Mozilla Add-ons…",
+      action: #selector(addFromAMOClicked),
+      keyEquivalent: ""
+    )
+    amoItem.target = self
+    amoItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    menu.addItem(amoItem)
+
+    let origin = NSPoint(x: 0, y: addMenuButton.bounds.height)
+    menu.popUp(positioning: nil, at: origin, in: addMenuButton)
+  }
+
+  @objc private func addFromChromeWebStoreClicked() {
+    promptForStoreInstall(
+      title: "Install from Chrome Web Store",
+      placeholder: "https://chromewebstore.google.com/detail/<name>/<id>",
+      parser: Self.parseChromeWebStoreID,
+      install: { id in
+        try await ExtensionController.shared.installFromChromeWebStore(extensionID: id)
+      }
+    )
+  }
+
+  @objc private func addFromAMOClicked() {
+    promptForStoreInstall(
+      title: "Install from Mozilla Add-ons",
+      placeholder: "https://addons.mozilla.org/en-US/firefox/addon/<slug>/",
+      parser: Self.parseAMOSlug,
+      install: { slug in
+        try await ExtensionController.shared.installFromAMO(slug: slug)
+      }
+    )
+  }
+
+  /// Shared sheet for store-sourced installs: a single text field
+  /// accepts either a full listing URL or a bare ID/slug, the parser
+  /// closure normalises the input, and the install closure performs
+  /// the asynchronous fetch + load. Errors surface through
+  /// `presentAddError`.
+  private func promptForStoreInstall(
+    title: String,
+    placeholder: String,
+    parser: @escaping (String) -> String?,
+    install: @escaping (String) async throws -> Void
+  ) {
+    guard let host = hostWindow else { return }
     let alert = NSAlert()
-    alert.messageText = "Could not add extension"
-    alert.informativeText = error.localizedDescription
-    alert.alertStyle = .warning
-    if let host = hostWindow {
-      alert.beginSheetModal(for: host, completionHandler: nil)
-    } else {
-      // Window-less fallback — running modal still surfaces the
-      // failure rather than silently swallowing it.
-      alert.runModal()
+    alert.messageText = title
+    alert.informativeText = "Paste the listing URL or extension ID."
+    alert.addButton(withTitle: "Install")
+    alert.addButton(withTitle: "Cancel")
+
+    let field = NSTextField(string: "")
+    field.placeholderString = placeholder
+    field.translatesAutoresizingMaskIntoConstraints = false
+    // NSAlert sizes its accessoryView from a combination of the
+    // initial frame and Auto Layout's fittingSize — seeding the
+    // frame keeps the field from collapsing to a sliver before the
+    // layout pass resolves the width constraint. Same lesson the
+    // bookmarks edit sheet documents.
+    field.frame = NSRect(x: 0, y: 0, width: 380, height: 22)
+    NSLayoutConstraint.activate([
+      field.widthAnchor.constraint(equalToConstant: 380)
+    ])
+    alert.accessoryView = field
+    alert.window.initialFirstResponder = field
+
+    alert.beginSheetModal(for: host) { [weak self] response in
+      guard let self else { return }
+      guard response == .alertFirstButtonReturn else { return }
+      let raw = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let id = parser(raw), !id.isEmpty else {
+        self.presentRowAlert(
+          title: "Invalid input",
+          text: "Couldn't parse a store URL or extension ID from the input.",
+          style: .warning
+        )
+        return
+      }
+      Task { @MainActor in
+        do {
+          try await install(id)
+        } catch {
+          self.presentAddError(error)
+        }
+      }
     }
+  }
+
+  private func presentAddError(_ error: Error) {
+    presentRowAlert(
+      title: "Could not add extension",
+      text: error.localizedDescription,
+      style: .warning
+    )
+  }
+
+  /// Pull a 32-character Chrome Web Store ID out of `input`. Accepts:
+  /// - the bare ID (32 chars from the `[a-p]` alphabet Google uses)
+  /// - any Web Store URL (`chromewebstore.google.com/detail/...`,
+  ///   the legacy `chrome.google.com/webstore/...`, or any future
+  ///   variant) — the ID is uniquely formatted enough that a
+  ///   first-match regex finds it without per-host parsing.
+  ///
+  /// Marked `nonisolated` because the function is purely textual and
+  /// mainly exists for unit tests; running it off the main actor in
+  /// a future store-search pipeline costs nothing.
+  nonisolated static func parseChromeWebStoreID(_ input: String) -> String? {
+    if let match = input.firstMatch(of: #/[a-p]{32}/#) {
+      return String(match.0)
+    }
+    return nil
+  }
+
+  /// Pull an AMO slug out of `input`. Accepts:
+  /// - a bare slug (`bitwarden-password-manager`)
+  /// - any AMO listing URL (`addons.mozilla.org/<locale>/firefox/addon/<slug>/`).
+  ///
+  /// AMO slugs follow a strict lowercase-alphanumeric + `-`/`_`
+  /// alphabet starting with a letter or digit. The regex enforces
+  /// that shape both inside the URL capture and in the bare-input
+  /// path, so values like `..`, `foo:bar`, or uppercase-mixed
+  /// strings are rejected up front instead of being passed to the
+  /// AMO API as a valid-looking slug.
+  nonisolated static func parseAMOSlug(_ input: String) -> String? {
+    if let match = input.firstMatch(of: #/firefox/addon/([a-z0-9][a-z0-9_-]*)/#) {
+      return String(match.output.1)
+    }
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let match = trimmed.wholeMatch(of: #/[a-z0-9][a-z0-9_-]*/#) {
+      return String(match.0)
+    }
+    return nil
   }
 
   private func reload() {
@@ -281,6 +452,11 @@ extension ExtensionsSidebarView {
     }
   }
 
+  /// Sheet-modal alert anchored to `hostWindow`, falling back to a
+  /// freestanding modal when the view is detached. Shared landing
+  /// for store-install / row-action / add errors so all three paths
+  /// render identically and the window-detach corner case never
+  /// drops an alert silently.
   private func presentRowAlert(title: String, text: String, style: NSAlert.Style) {
     let alert = NSAlert()
     alert.messageText = title

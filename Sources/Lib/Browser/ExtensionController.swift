@@ -103,6 +103,50 @@ public final class ExtensionController {
   private enum ErrorCode: Int {
     case alreadyInstalled = 1
     case notLoaded = 2
+    case storeFetchFailed = 3
+    case storeBadResponse = 4
+  }
+
+  /// Chrome version pinned for the Chrome Web Store update endpoint.
+  /// The server uses this to decide which CRX format to return; any
+  /// recent Chrome stable release works because we accept both crx2
+  /// and crx3 in the same request. Bumping it is harmless when a new
+  /// CRX format ships, but staying on a known-good value keeps the
+  /// download path reproducible.
+  private static let chromeStoreClientVersion = "120.0.6099.225"
+
+  /// Hosts the Chrome Web Store CRX endpoint is allowed to redirect
+  /// to. The endpoint itself lives on `clients2.google.com`; the
+  /// actual blob is served from a `googleusercontent.com` subdomain
+  /// chosen at request time (e.g. `r6.googleusercontent.com`). Any
+  /// other host indicates either an open-redirect abuse or a DNS
+  /// hijack and is rejected before bytes reach the loader.
+  private static let chromeStoreAllowedHosts: Set<String> = [
+    "clients2.google.com",
+    "googleusercontent.com",
+  ]
+
+  /// Hosts addons.mozilla.org is allowed to serve metadata and xpi
+  /// downloads from. The API host is `services.addons.mozilla.org`;
+  /// xpi blobs come from `addons.mozilla.org` directly or from the
+  /// `addons.cdn.mozilla.net` CDN.
+  private static let amoAllowedHosts: Set<String> = [
+    "services.addons.mozilla.org",
+    "addons.mozilla.org",
+    "addons.cdn.mozilla.net",
+  ]
+
+  /// Match `host` against an allowlist where each entry is either an
+  /// exact host or a registrable suffix. Suffix matches require a
+  /// `.` boundary so `evil-googleusercontent.com` does not slip past
+  /// a `googleusercontent.com` entry. `nonisolated` because the
+  /// redirect delegate runs on a `URLSession` queue, not the main
+  /// actor.
+  nonisolated fileprivate static func hostMatches(
+    _ host: String, allowed: Set<String>
+  ) -> Bool {
+    if allowed.contains(host) { return true }
+    return allowed.contains { suffix in host.hasSuffix(".\(suffix)") }
   }
 
   /// Scan `extensionsRoot` and load every child as an extension. Creates
@@ -537,8 +581,231 @@ public final class ExtensionController {
       // Removing the destination keeps the next launch's scan from
       // re-failing on the same input and matches the user's
       // expectation that a failed install leaves no trace.
-      try? fm.removeItem(at: dst)
+      Self.rollbackInstall(at: dst)
       throw error
+    }
+  }
+
+  /// Download an extension from the Chrome Web Store via the public
+  /// update endpoint that Chromium itself uses, strip the CRX header,
+  /// and load the inner ZIP through the standard install path.
+  ///
+  /// The endpoint replies with a redirect to a googleusercontent
+  /// blob. A `HostAllowlistRedirectDelegate` gates redirects so an
+  /// open redirect (or DNS hijack) of `clients2.google.com` can't
+  /// stream attacker-supplied bytes into our `WKWebExtension`
+  /// loader and silently inherit the auto-promoted permission set
+  /// archive-flavoured installs grant.
+  public func installFromChromeWebStore(extensionID id: String) async throws {
+    let downloadURL = Self.chromeWebStoreCRXURL(extensionID: id)
+    let crx: Data
+    do {
+      let delegate = HostAllowlistRedirectDelegate(
+        allowedHosts: Self.chromeStoreAllowedHosts
+      )
+      let (data, response) = try await URLSession.shared.data(
+        for: URLRequest(url: downloadURL), delegate: delegate
+      )
+      // The HTTP status NSError thrown here intentionally bypasses
+      // the URLError catch below and propagates straight to the
+      // caller — an HTTP 404 from the Web Store should reach the
+      // alert verbatim, not be wrapped in a URLError-flavoured
+      // message.
+      try Self.requireOKResponse(response, source: "Chrome Web Store")
+      crx = data
+    } catch let urlError as URLError {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeFetchFailed.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not download from the Chrome Web Store: \(urlError.localizedDescription)"
+        ]
+      )
+    }
+    let zipData = try CRXArchive.extractZIP(from: crx)
+    try await installDownloadedZIP(zipData, suggestedFilename: "\(id).zip")
+  }
+
+  /// Download an extension from addons.mozilla.org via the public
+  /// addons API and load the resulting `.xpi` (which is a plain ZIP,
+  /// no header to strip). The caller hands either a slug like
+  /// `bitwarden-password-manager` or a parsed slug from a full AMO
+  /// listing URL — `parseAMOSlug` already enforces the slug
+  /// alphabet, so this method does not re-validate.
+  ///
+  /// Both the metadata request and the subsequent xpi download go
+  /// through `HostAllowlistRedirectDelegate`. The xpi URL itself is
+  /// pulled from AMO's JSON response, so we additionally verify the
+  /// declared host before issuing the second request: a compromised
+  /// metadata payload could otherwise hand back an arbitrary URL,
+  /// and the redirect filter only catches in-flight redirects, not
+  /// the initial target.
+  public func installFromAMO(slug: String) async throws {
+    let metaURL = URL(
+      string: "https://services.addons.mozilla.org/api/v5/addons/addon/\(slug)/"
+    )!
+    let metadata: AMOAddonResponse
+    do {
+      let metaDelegate = HostAllowlistRedirectDelegate(
+        allowedHosts: Self.amoAllowedHosts
+      )
+      let (data, response) = try await URLSession.shared.data(
+        for: URLRequest(url: metaURL), delegate: metaDelegate
+      )
+      try Self.requireOKResponse(response, source: "Mozilla Add-ons")
+      metadata = try JSONDecoder().decode(AMOAddonResponse.self, from: data)
+    } catch let urlError as URLError {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeFetchFailed.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not reach Mozilla Add-ons: \(urlError.localizedDescription)"
+        ]
+      )
+    } catch is DecodingError {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeBadResponse.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Mozilla Add-ons returned an unexpected response — the slug may be wrong, "
+            + "or the API surface may have changed."
+        ]
+      )
+    }
+    guard let fileURLString = metadata.currentVersion?.file?.url,
+      let xpiURL = URL(string: fileURLString)
+    else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeBadResponse.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Mozilla Add-ons listing didn't include a downloadable file URL."
+        ]
+      )
+    }
+    // Pin the xpi origin to AMO's known download hosts. The metadata
+    // payload itself is HTTPS-authenticated, but the URL it carries
+    // is otherwise a free-form string; without this gate a single
+    // tampered listing could redirect downloads to an attacker's
+    // server.
+    guard let xpiHost = xpiURL.host?.lowercased(),
+      Self.hostMatches(xpiHost, allowed: Self.amoAllowedHosts)
+    else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeBadResponse.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Mozilla Add-ons returned a download URL pointing at an unexpected host."
+        ]
+      )
+    }
+    let xpi: Data
+    do {
+      let xpiDelegate = HostAllowlistRedirectDelegate(
+        allowedHosts: Self.amoAllowedHosts
+      )
+      let (data, response) = try await URLSession.shared.data(
+        for: URLRequest(url: xpiURL), delegate: xpiDelegate
+      )
+      try Self.requireOKResponse(response, source: "Mozilla Add-ons")
+      xpi = data
+    } catch let urlError as URLError {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeFetchFailed.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not download the .xpi from Mozilla Add-ons: \(urlError.localizedDescription)"
+        ]
+      )
+    }
+    try await installDownloadedZIP(xpi, suggestedFilename: "\(slug).zip")
+  }
+
+  /// Shared landing path for store-sourced ZIP data: write the bytes
+  /// to `extensionsRoot`, then run the standard `load(at:)`. Same
+  /// rollback policy as `addExtension` — a load failure removes the
+  /// freshly-written file so dead archives don't accumulate.
+  private func installDownloadedZIP(
+    _ data: Data, suggestedFilename: String
+  ) async throws {
+    let fm = FileManager.default
+    try fm.createDirectory(at: Self.extensionsRoot, withIntermediateDirectories: true)
+    let dst = Self.extensionsRoot.appendingPathComponent(suggestedFilename)
+    if fm.fileExists(atPath: dst.path) {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.alreadyInstalled.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "An extension named '\(suggestedFilename)' is already installed. "
+            + "Remove the existing copy first if you want to replace it."
+        ]
+      )
+    }
+    try data.write(to: dst, options: [.atomic])
+    do {
+      try await load(at: dst)
+    } catch {
+      Self.rollbackInstall(at: dst)
+      throw error
+    }
+  }
+
+  /// Remove a partially-installed extension after a load failure.
+  /// Logs (rather than throws) on removeItem failure: the caller is
+  /// already in the middle of throwing the original install error,
+  /// and the worst case of a stuck file is a re-failed load on the
+  /// next launch — visible to the user as an extra log line, not as
+  /// silent corruption.
+  private static func rollbackInstall(at url: URL) {
+    do {
+      try FileManager.default.removeItem(at: url)
+    } catch {
+      logger.error(
+        """
+        Failed to roll back partial install at \
+        \(url.lastPathComponent, privacy: .public): \
+        \(String(describing: error), privacy: .public)
+        """
+      )
+    }
+  }
+
+  private static func chromeWebStoreCRXURL(extensionID id: String) -> URL {
+    var components = URLComponents(string: "https://clients2.google.com/service/update2/crx")!
+    components.queryItems = [
+      URLQueryItem(name: "response", value: "redirect"),
+      URLQueryItem(name: "prodversion", value: chromeStoreClientVersion),
+      URLQueryItem(name: "acceptformat", value: "crx2,crx3"),
+      // The `x` parameter carries an opaque sub-query of its own
+      // (`id=<id>&uc`). URLComponents percent-encodes the inner `=`
+      // and `&` when serialising the outer query, which is what the
+      // endpoint expects — the inner separators only have meaning
+      // after the server decodes the outer value.
+      URLQueryItem(name: "x", value: "id=\(id)&uc"),
+    ]
+    return components.url!
+  }
+
+  private static func requireOKResponse(
+    _ response: URLResponse, source: String
+  ) throws {
+    guard let http = response as? HTTPURLResponse else { return }
+    guard (200..<300).contains(http.statusCode) else {
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.storeFetchFailed.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "\(source) returned HTTP \(http.statusCode)."
+        ]
+      )
     }
   }
 
@@ -737,6 +1004,26 @@ public final class ExtensionController {
   }
 }
 
+/// Subset of the AMO `/api/v5/addons/addon/<slug>/` response schema
+/// used to drive `installFromAMO`. Only `current_version` requires an
+/// explicit CodingKey because the rest of the surface
+/// (`AMOVersion.file`, `AMOFile.url`) is already camelCase-compatible.
+private struct AMOAddonResponse: Decodable {
+  let currentVersion: AMOVersion?
+
+  enum CodingKeys: String, CodingKey {
+    case currentVersion = "current_version"
+  }
+}
+
+private struct AMOVersion: Decodable {
+  let file: AMOFile?
+}
+
+private struct AMOFile: Decodable {
+  let url: String
+}
+
 /// Snapshot of one activated extension surfaced to the sidebar list.
 /// Captured at load time so repeated reads (cell render, listener
 /// fan-out) don't re-touch the underlying `WKWebExtensionContext`.
@@ -852,5 +1139,37 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       """
     )
     completionHandler(nil)
+  }
+}
+
+/// Per-task `URLSessionTaskDelegate` that drops 30x redirects whose
+/// target host is outside an allowlist. Used by the store / AMO
+/// download paths so a malicious open redirect on a trusted entry
+/// host can't stream attacker bytes into the WKWebExtension loader.
+private final class HostAllowlistRedirectDelegate: NSObject, URLSessionTaskDelegate {
+  let allowedHosts: Set<String>
+
+  init(allowedHosts: Set<String>) {
+    self.allowedHosts = allowedHosts
+  }
+
+  func urlSession(
+    _: URLSession,
+    task _: URLSessionTask,
+    willPerformHTTPRedirection _: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping (URLRequest?) -> Void
+  ) {
+    guard let host = request.url?.host?.lowercased(),
+      ExtensionController.hostMatches(host, allowed: allowedHosts)
+    else {
+      // Returning nil cancels the redirect; the in-flight task
+      // surfaces as a `URLError(.cancelled)` to the caller, which
+      // the existing catch arm converts into a `storeFetchFailed`
+      // error visible in the install alert.
+      completionHandler(nil)
+      return
+    }
+    completionHandler(request)
   }
 }
