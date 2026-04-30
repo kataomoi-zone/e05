@@ -17,7 +17,14 @@ final class PlacesSectionView: NSView {
   var onSelect: ((SidebarMode) -> Void)?
 
   private let stack = NSStackView()
+  private let indicator = SelectionIndicator()
   private var buttons: [SidebarMode: PlacesButton] = [:]
+  /// The mode the indicator is currently anchored to. Tracked
+  /// separately from the per-button `isSelected` flag so layout
+  /// passes (window resize, sidebar pin transition) can re-pin the
+  /// indicator's frame without animation when the geometry shifts
+  /// underneath it.
+  private var currentMode: SidebarMode?
 
   init() {
     super.init(frame: .zero)
@@ -30,10 +37,16 @@ final class PlacesSectionView: NSView {
   required init?(coder _: NSCoder) { fatalError() }
 
   private func setupLayout() {
+    // Indicator goes in first so it sits beneath the buttons in
+    // z-order — the icons render over its tint, the way iPadOS's
+    // Liquid Glass tab bar layers its selection capsule. Hidden
+    // until `setCurrentMode` runs the first time so the chip
+    // doesn't paint at the origin before its target frame is
+    // resolved.
+    indicator.isHidden = true
+    addSubview(indicator)
+
     stack.orientation = .horizontal
-    // 4 px spacing leaves a comfortable gutter between buttons even
-    // when several modes are highlighted in transition; the equal
-    // distribution keeps the row symmetric as `SidebarMode` grows.
     stack.spacing = 4
     stack.alignment = .centerY
     stack.distribution = .fillEqually
@@ -55,16 +68,60 @@ final class PlacesSectionView: NSView {
     }
   }
 
+  override func layout() {
+    super.layout()
+    // Resync the indicator after AutoLayout finishes — the buttons'
+    // frames aren't valid until the equal-distribution pass runs, so
+    // the first paint and any width change (sidebar pin/unpin) need
+    // a fresh, animation-free pin.
+    syncIndicatorFrame(animated: false)
+  }
+
   /// Highlight the current mode's button; clear the others.
   func setCurrentMode(_ mode: SidebarMode) {
+    let isFirstSelection = currentMode == nil
+    let modeChanged = currentMode != mode
+    currentMode = mode
     for (buttonMode, button) in buttons {
       button.setSelected(buttonMode == mode)
+    }
+    // Reveal the indicator the first time we ever pick a mode (no
+    // tween — it would slide in from the origin), then animate
+    // every subsequent move so a click reads as the highlight
+    // gliding to its new home rather than teleporting.
+    if isFirstSelection {
+      indicator.isHidden = false
+      syncIndicatorFrame(animated: false)
+    } else if modeChanged {
+      syncIndicatorFrame(animated: true)
     }
   }
 
   /// Update the Downloads button badge. A count of zero hides the badge.
   func setDownloadsBadge(count: Int) {
     buttons[.downloads]?.setBadge(count: count)
+  }
+
+  /// Move the indicator's frame to the currently selected button.
+  /// `animated == false` snaps for layout-driven calls (initial
+  /// layout, sidebar resize); `animated == true` runs a short tween
+  /// for explicit user-driven mode changes.
+  private func syncIndicatorFrame(animated: Bool) {
+    guard let mode = currentMode, let target = buttons[mode] else { return }
+    let targetFrame = convert(target.bounds, from: target)
+    guard !targetFrame.isEmpty else { return }
+    if animated {
+      NSAnimationContext.runAnimationGroup { ctx in
+        // Below ~150ms the slide is short enough to read as a snap,
+        // above ~300ms rapid mode-cycling starts to feel sticky.
+        ctx.duration = 0.22
+        ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ctx.allowsImplicitAnimation = true
+        indicator.animator().frame = targetFrame
+      }
+    } else {
+      indicator.frame = targetFrame
+    }
   }
 
   // Absorb mouse events that land in the gutters between buttons (and
@@ -169,25 +226,25 @@ private final class PlacesButton: NSView {
   func setSelected(_ selected: Bool) {
     isSelected = selected
     iconView.contentTintColor = selected ? .labelColor : .secondaryLabelColor
+    // Surface the active state to VoiceOver. The default
+    // `.button` role on a custom NSView doesn't infer selection,
+    // so without this users hear "Bookmarks button" for every
+    // entry instead of "Bookmarks button, selected".
+    setAccessibilitySelected(selected)
     applyBackground()
   }
 
-  /// Resolve `layer.backgroundColor` from the current selection +
-  /// hover state. Selected buttons take a stronger tint than a passive
-  /// hover so the active mode keeps reading as active even while the
-  /// pointer roams over its neighbours. Subtle white tints carry over
-  /// from the previous design — they read in both light and dark
-  /// appearances against the sidebar's Liquid Glass background.
+  /// Resolve `layer.backgroundColor` from the hover state alone —
+  /// selection background is owned by `PlacesSectionView`'s shared
+  /// indicator so it can slide between buttons. We deliberately
+  /// suppress the hover tint while this button is the selected one
+  /// so the indicator's own tint reads cleanly without a second
+  /// layer stacked on top of it.
   private func applyBackground() {
-    let alpha: CGFloat
-    switch (isSelected, isHovered) {
-    case (true, _): alpha = 0.15
-    case (false, true): alpha = 0.08
-    case (false, false): alpha = 0
-    }
+    let showHover = isHovered && !isSelected
     layer?.backgroundColor =
-      alpha > 0 ? NSColor(white: 1.0, alpha: alpha).cgColor : nil
-    layer?.cornerRadius = alpha > 0 ? 6 : 0
+      showHover ? NSColor(white: 1.0, alpha: 0.08).cgColor : nil
+    layer?.cornerRadius = showHover ? 6 : 0
   }
 
   func setBadge(count: Int) {
@@ -206,6 +263,29 @@ private final class PlacesButton: NSView {
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)
   }
+}
+
+/// Shared selection chip that slides between mode buttons in
+/// `PlacesSectionView`. Owning the selection visual centrally (one
+/// view that animates its frame) gets the iPadOS-tab-bar effect of
+/// a highlight gliding under the icons, instead of one button
+/// fading its background out while the next fades in. Pointer
+/// events pass through so clicks still reach whichever button the
+/// indicator is currently parked over.
+@MainActor
+private final class SelectionIndicator: NSView {
+  init() {
+    super.init(frame: .zero)
+    translatesAutoresizingMaskIntoConstraints = false
+    wantsLayer = true
+    layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+    layer?.cornerRadius = 6
+  }
+
+  @available(*, unavailable)
+  required init?(coder _: NSCoder) { fatalError() }
+
+  override func hitTest(_: NSPoint) -> NSView? { nil }
 }
 
 /// Mail.app-style pill badge showing a numeric count, sized to ride
