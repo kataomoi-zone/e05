@@ -149,6 +149,55 @@ extension PaneContainerViewController {
     setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
   }
 
+  /// Advance focus across every pane in the current workspace, treating
+  /// the column / pane grid as one flat sequence: walk down the panes
+  /// of a column first, then jump to the top of the next column, and
+  /// wrap from the last column's last pane back to (0, 0). Maps to
+  /// the conventional "next tab" gesture in keyboard-driven apps.
+  public func focusNextPane() {
+    guard let column = columns[safe: focusedColumnIndex] else { return }
+    if column.focusedPaneIndex < column.panes.count - 1 {
+      setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
+    } else if let nextColumnIndex = nextNonEmptyColumnIndex(
+      from: focusedColumnIndex, step: 1
+    ) {
+      setFocus(columnIndex: nextColumnIndex, paneIndex: 0)
+    }
+  }
+
+  /// Reverse of `focusNextPane`: walk up panes within a column, then
+  /// jump to the bottom of the previous column, and wrap from (0, 0)
+  /// back to the last column's last pane.
+  public func focusPreviousPane() {
+    guard let column = columns[safe: focusedColumnIndex] else { return }
+    if column.focusedPaneIndex > 0 {
+      setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
+    } else if let prevColumnIndex = nextNonEmptyColumnIndex(
+      from: focusedColumnIndex, step: -1
+    ) {
+      let lastPaneIndex = columns[prevColumnIndex].panes.count - 1
+      setFocus(columnIndex: prevColumnIndex, paneIndex: lastPaneIndex)
+    }
+  }
+
+  /// Walk the columns array in `step` direction (+1 / -1) starting
+  /// from `start`, wrap modulo `columns.count`, and return the first
+  /// index whose column has at least one pane. Returns `nil` only
+  /// when **every** column is empty — a degenerate state that
+  /// shouldn't survive `removePane`'s column-collapse path, but
+  /// `focusNextPane` / `focusPreviousPane` need a defensive bail
+  /// because `setFocus` precondition-traps on an empty column.
+  private func nextNonEmptyColumnIndex(from start: Int, step: Int) -> Int? {
+    guard !columns.isEmpty else { return nil }
+    let count = columns.count
+    var idx = ((start + step) % count + count) % count
+    while columns[idx].panes.isEmpty {
+      if idx == start { return nil }
+      idx = ((idx + step) % count + count) % count
+    }
+    return idx
+  }
+
   // MARK: - Width Preset Cycle
 
   /// Cycle the focused column's width through the given preset list.

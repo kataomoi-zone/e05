@@ -11,8 +11,11 @@ extension PaneContainerViewController {
     var result: [Action] = [
       Action(
         id: "new_column",
-        title: "New Column",
-        keyEquivalent: "t",
+        title: "New Terminal Column",
+        // No keyboard shortcut: ⌘T is now claimed by `new_browser`
+        // because the browser column is the more common new-tab
+        // gesture. Terminal columns are still creatable from the
+        // palette and can be re-bound during the customisation phase.
         handler: { [weak self] in self?.addColumn() }
       ),
       Action(
@@ -64,6 +67,20 @@ extension PaneContainerViewController {
         keyEquivalent: "k",
         modifierMask: [.option, .control],
         handler: { [weak self] in self?.focusUp() }
+      ),
+      Action(
+        id: "next_pane",
+        title: "Next Pane",
+        keyEquivalent: "\t",
+        modifierMask: [.control],
+        handler: { [weak self] in self?.focusNextPane() }
+      ),
+      Action(
+        id: "prev_pane",
+        title: "Previous Pane",
+        keyEquivalent: "\t",
+        modifierMask: [.control, .shift],
+        handler: { [weak self] in self?.focusPreviousPane() }
       ),
       Action(
         id: "move_column_left",
@@ -233,8 +250,7 @@ extension PaneContainerViewController {
       Action(
         id: "new_browser",
         title: "New Browser Column",
-        keyEquivalent: "b",
-        modifierMask: [.option, .control],
+        keyEquivalent: "t",
         handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
       ),
       Action(
@@ -315,27 +331,30 @@ extension PaneContainerViewController {
       Action(
         id: "workspace_new",
         title: "New Workspace",
+        keyEquivalent: "n",
         handler: { [weak self] in self?.createWorkspace() },
         separatorBefore: true
       ),
       Action(
         id: "workspace_close",
         title: "Close Current Workspace",
+        keyEquivalent: "w",
+        modifierMask: [.command, .shift],
         handler: { [weak self] in self?.closeCurrentWorkspace() }
       ),
       Action(
         id: "workspace_next",
         title: "Next Workspace",
-        keyEquivalent: "\t",
-        modifierMask: [.control],
+        keyEquivalent: "]",
+        modifierMask: [.command, .shift],
         handler: { [weak self] in self?.switchWorkspaceNext() },
         validate: { [weak self] in ((self?.workspaces.count ?? 0) > 1, nil) }
       ),
       Action(
         id: "workspace_prev",
         title: "Previous Workspace",
-        keyEquivalent: "\t",
-        modifierMask: [.control, .shift],
+        keyEquivalent: "[",
+        modifierMask: [.command, .shift],
         handler: { [weak self] in self?.switchWorkspacePrevious() },
         validate: { [weak self] in ((self?.workspaces.count ?? 0) > 1, nil) }
       ),

@@ -19,6 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// action lists would require id-based lookup instead.
   private var actions: [Action] = []
 
+  /// Handle returned by `addLocalMonitorForEvents`. Held so a
+  /// re-entrant `applicationDidFinishLaunching` (test harness, state
+  /// restoration) doesn't stack monitors, and so `removeMonitor`
+  /// can pair against `installTabKeyMonitor` cleanly.
+  private var tabKeyMonitor: Any?
+
   func applicationDidFinishLaunching(_: Notification) {
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
@@ -84,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     self.window = window
 
     setupMenuKeyBindings()
+    installTabKeyMonitor()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -92,6 +99,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
   func applicationWillTerminate(_: Notification) {
     paneContainer?.saveSession()
+  }
+
+  // MARK: - Tab Key Monitor
+  //
+  // AppKit reserves the Tab key for the key-view loop
+  // (`selectNextKeyView:` / `selectPreviousKeyView:`), and that
+  // claim runs ahead of NSMenu's key-equivalent dispatch — so a
+  // menu item with `keyEquivalent: "\t"` never fires regardless of
+  // the modifier mask. Hook the keyDown stream directly so the
+  // ⌃⇥ / ⌃⇧⇥ pane-cycle gestures work like every other shortcut.
+  // The Action entries still own the menu/palette presentation;
+  // this monitor only rescues their dispatch.
+
+  private func installTabKeyMonitor() {
+    if let existing = tabKeyMonitor {
+      NSEvent.removeMonitor(existing)
+      tabKeyMonitor = nil
+    }
+    tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard let self,
+        // 0x30 is Apple's virtual key code for Tab on standard
+        // layouts. Layout switches (JIS, Dvorak) keep the same
+        // physical-position mapping, but third-party remappers
+        // like Karabiner-Elements can override it — those setups
+        // are unverified here.
+        event.keyCode == 0x30
+      else { return event }
+      let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      // Only handle plain ⌃⇥ / ⌃⇧⇥. Letting ⌘⇥ / ⌥⇥ through keeps
+      // the OS-level app switcher and any future option-tab keymap
+      // intact.
+      guard mods == .control || mods == [.control, .shift] else { return event }
+      let shifted = mods.contains(.shift)
+      guard let pc = self.paneContainer else { return event }
+      if shifted {
+        pc.focusPreviousPane()
+      } else {
+        pc.focusNextPane()
+      }
+      // Returning nil consumes the event so the responder chain
+      // doesn't go on to process Tab as a key-view loop step.
+      return nil
+    }
   }
 
   // MARK: - Menu Construction from Action Registry
