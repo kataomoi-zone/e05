@@ -227,15 +227,6 @@ final class ExtensionsSidebarView: NSView {
     chromeItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
     menu.addItem(chromeItem)
 
-    let amoItem = NSMenuItem(
-      title: "From Mozilla Add-ons…",
-      action: #selector(addFromAMOClicked),
-      keyEquivalent: ""
-    )
-    amoItem.target = self
-    amoItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-    menu.addItem(amoItem)
-
     menu.addItem(.separator())
 
     let bundleItem = NSMenuItem(
@@ -261,17 +252,6 @@ final class ExtensionsSidebarView: NSView {
       parser: Self.parseChromeWebStoreID,
       install: { id in
         try await ExtensionController.shared.installFromChromeWebStore(extensionID: id)
-      }
-    )
-  }
-
-  @objc private func addFromAMOClicked() {
-    promptForStoreInstall(
-      title: "Install from Mozilla Add-ons",
-      placeholder: "https://addons.mozilla.org/en-US/firefox/addon/<slug>/",
-      parser: Self.parseAMOSlug,
-      install: { slug in
-        try await ExtensionController.shared.installFromAMO(slug: slug)
       }
     )
   }
@@ -392,27 +372,6 @@ final class ExtensionsSidebarView: NSView {
   /// a future store-search pipeline costs nothing.
   nonisolated static func parseChromeWebStoreID(_ input: String) -> String? {
     if let match = input.firstMatch(of: #/[a-p]{32}/#) {
-      return String(match.0)
-    }
-    return nil
-  }
-
-  /// Pull an AMO slug out of `input`. Accepts:
-  /// - a bare slug (`bitwarden-password-manager`)
-  /// - any AMO listing URL (`addons.mozilla.org/<locale>/firefox/addon/<slug>/`).
-  ///
-  /// AMO slugs follow a strict lowercase-alphanumeric + `-`/`_`
-  /// alphabet starting with a letter or digit. The regex enforces
-  /// that shape both inside the URL capture and in the bare-input
-  /// path, so values like `..`, `foo:bar`, or uppercase-mixed
-  /// strings are rejected up front instead of being passed to the
-  /// AMO API as a valid-looking slug.
-  nonisolated static func parseAMOSlug(_ input: String) -> String? {
-    if let match = input.firstMatch(of: #/firefox/addon/([a-z0-9][a-z0-9_-]*)/#) {
-      return String(match.output.1)
-    }
-    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let match = trimmed.wholeMatch(of: #/[a-z0-9][a-z0-9_-]*/#) {
       return String(match.0)
     }
     return nil

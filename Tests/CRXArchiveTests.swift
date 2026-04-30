@@ -127,46 +127,6 @@ struct ExtensionsSidebarParsersTests {
     #expect(ExtensionsSidebarView.parseChromeWebStoreID("") == nil)
   }
 
-  // MARK: AMO slug
-
-  @Test("extracts slug from AMO URL")
-  func amoURL() {
-    let url = "https://addons.mozilla.org/en-US/firefox/addon/bitwarden-password-manager/"
-    #expect(ExtensionsSidebarView.parseAMOSlug(url) == "bitwarden-password-manager")
-  }
-
-  @Test("extracts slug from AMO URL with locale variant and trailing query")
-  func amoURLLocaleQuery() {
-    let url =
-      "https://addons.mozilla.org/ja/firefox/addon/ublock-origin/?utm_source=test"
-    #expect(ExtensionsSidebarView.parseAMOSlug(url) == "ublock-origin")
-  }
-
-  @Test("accepts a bare slug")
-  func bareSlug() {
-    #expect(ExtensionsSidebarView.parseAMOSlug("ublock-origin") == "ublock-origin")
-  }
-
-  @Test("rejects whitespace and slashes in bare input")
-  func amoRejectInvalid() {
-    #expect(ExtensionsSidebarView.parseAMOSlug("two words") == nil)
-    #expect(ExtensionsSidebarView.parseAMOSlug("foo/bar") == nil)
-    #expect(ExtensionsSidebarView.parseAMOSlug("") == nil)
-  }
-
-  @Test("rejects path traversal and unusual characters")
-  func amoRejectTraversal() {
-    #expect(ExtensionsSidebarView.parseAMOSlug("..") == nil)
-    #expect(ExtensionsSidebarView.parseAMOSlug(".") == nil)
-    #expect(ExtensionsSidebarView.parseAMOSlug("foo:bar") == nil)
-    #expect(ExtensionsSidebarView.parseAMOSlug("Bitwarden-Password-Manager") == nil)
-  }
-
-  @Test("rejects path traversal embedded in AMO URL")
-  func amoRejectTraversalInURL() {
-    let url = "https://addons.mozilla.org/en-US/firefox/addon/../../etc/"
-    #expect(ExtensionsSidebarView.parseAMOSlug(url) == nil)
-  }
 }
 
 extension Data {

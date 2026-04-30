@@ -289,16 +289,6 @@ public final class ExtensionController {
     "googleusercontent.com",
   ]
 
-  /// Hosts addons.mozilla.org is allowed to serve metadata and xpi
-  /// downloads from. The API host is `services.addons.mozilla.org`;
-  /// xpi blobs come from `addons.mozilla.org` directly or from the
-  /// `addons.cdn.mozilla.net` CDN.
-  private static let amoAllowedHosts: Set<String> = [
-    "services.addons.mozilla.org",
-    "addons.mozilla.org",
-    "addons.cdn.mozilla.net",
-  ]
-
   /// Match `host` against an allowlist where each entry is either an
   /// exact host or a registrable suffix. Suffix matches require a
   /// `.` boundary so `evil-googleusercontent.com` does not slip past
@@ -948,106 +938,6 @@ public final class ExtensionController {
     try await installDownloadedZIP(zipData, suggestedFilename: "\(id).zip")
   }
 
-  /// Download an extension from addons.mozilla.org via the public
-  /// addons API and load the resulting `.xpi` (which is a plain ZIP,
-  /// no header to strip). The caller hands either a slug like
-  /// `bitwarden-password-manager` or a parsed slug from a full AMO
-  /// listing URL — `parseAMOSlug` already enforces the slug
-  /// alphabet, so this method does not re-validate.
-  ///
-  /// Both the metadata request and the subsequent xpi download go
-  /// through `HostAllowlistRedirectDelegate`. The xpi URL itself is
-  /// pulled from AMO's JSON response, so we additionally verify the
-  /// declared host before issuing the second request: a compromised
-  /// metadata payload could otherwise hand back an arbitrary URL,
-  /// and the redirect filter only catches in-flight redirects, not
-  /// the initial target.
-  public func installFromAMO(slug: String) async throws {
-    let metaURL = URL(
-      string: "https://services.addons.mozilla.org/api/v5/addons/addon/\(slug)/"
-    )!
-    let metadata: AMOAddonResponse
-    do {
-      let metaDelegate = HostAllowlistRedirectDelegate(
-        allowedHosts: Self.amoAllowedHosts
-      )
-      let (data, response) = try await URLSession.shared.data(
-        for: URLRequest(url: metaURL), delegate: metaDelegate
-      )
-      try Self.requireOKResponse(response, source: "Mozilla Add-ons")
-      metadata = try JSONDecoder().decode(AMOAddonResponse.self, from: data)
-    } catch let urlError as URLError {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.storeFetchFailed.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Could not reach Mozilla Add-ons: \(urlError.localizedDescription)"
-        ]
-      )
-    } catch is DecodingError {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.storeBadResponse.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Mozilla Add-ons returned an unexpected response — the slug may be wrong, "
-            + "or the API surface may have changed."
-        ]
-      )
-    }
-    guard let fileURLString = metadata.currentVersion?.file?.url,
-      let xpiURL = URL(string: fileURLString)
-    else {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.storeBadResponse.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Mozilla Add-ons listing didn't include a downloadable file URL."
-        ]
-      )
-    }
-    // Pin the xpi origin to AMO's known download hosts. The metadata
-    // payload itself is HTTPS-authenticated, but the URL it carries
-    // is otherwise a free-form string; without this gate a single
-    // tampered listing could redirect downloads to an attacker's
-    // server.
-    guard let xpiHost = xpiURL.host?.lowercased(),
-      Self.hostMatches(xpiHost, allowed: Self.amoAllowedHosts)
-    else {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.storeBadResponse.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Mozilla Add-ons returned a download URL pointing at an unexpected host."
-        ]
-      )
-    }
-    let xpi: Data
-    do {
-      let xpiDelegate = HostAllowlistRedirectDelegate(
-        allowedHosts: Self.amoAllowedHosts
-      )
-      let (data, response) = try await URLSession.shared.data(
-        for: URLRequest(url: xpiURL), delegate: xpiDelegate
-      )
-      try Self.requireOKResponse(response, source: "Mozilla Add-ons")
-      xpi = data
-    } catch let urlError as URLError {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.storeFetchFailed.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Could not download the .xpi from Mozilla Add-ons: \(urlError.localizedDescription)"
-        ]
-      )
-    }
-    try await installDownloadedZIP(xpi, suggestedFilename: "\(slug).zip")
-  }
-
   /// Shared landing path for store-sourced ZIP data: write the bytes
   /// to `extensionsRoot`, then run the standard `load(at:)`. Same
   /// rollback policy as `addExtension` — a load failure removes the
@@ -1587,26 +1477,6 @@ public final class ExtensionController {
       )
     }
   }
-}
-
-/// Subset of the AMO `/api/v5/addons/addon/<slug>/` response schema
-/// used to drive `installFromAMO`. Only `current_version` requires an
-/// explicit CodingKey because the rest of the surface
-/// (`AMOVersion.file`, `AMOFile.url`) is already camelCase-compatible.
-private struct AMOAddonResponse: Decodable {
-  let currentVersion: AMOVersion?
-
-  enum CodingKeys: String, CodingKey {
-    case currentVersion = "current_version"
-  }
-}
-
-private struct AMOVersion: Decodable {
-  let file: AMOFile?
-}
-
-private struct AMOFile: Decodable {
-  let url: String
 }
 
 /// Snapshot of one activated extension surfaced to the sidebar list.
