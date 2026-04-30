@@ -252,6 +252,11 @@ extension PaneContainerViewController {
       for pane in column.panes {
         pane.terminalView?.keepSurfaceAlive = false
         clearFocusBorder(pane)
+        // Mirror `removePane` so extensions see `chrome.tabs.onRemoved`
+        // for every browser pane that goes down with the workspace —
+        // bridges left in `tabBridgesByPaneID` would otherwise leak
+        // identity until the next launch.
+        ExtensionController.shared.notifyTabClosed(pane)
       }
     }
 
@@ -305,6 +310,7 @@ extension PaneContainerViewController {
       for pane in column.panes {
         pane.terminalView?.keepSurfaceAlive = false
         clearFocusBorder(pane)
+        ExtensionController.shared.notifyTabClosed(pane)
       }
     }
     flushRecentlyClosed(in: closing)

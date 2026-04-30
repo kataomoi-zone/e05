@@ -20,14 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private var actions: [Action] = []
 
   func applicationDidFinishLaunching(_: Notification) {
-    // Fire off the extension load before the first browser pane is
-    // constructed. Scanning the extensions directory is cheap and the
-    // actual WKWebExtension parsing runs asynchronously, so this does
-    // not block window creation. Panes that come up before loadAll()
-    // finishes still reach the fully configured controller — only the
-    // set of loaded contexts grows once scanning completes.
-    Task { await ExtensionController.shared.loadAll() }
-
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
     // panes created before compilation completes get no blocker this
@@ -73,6 +65,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
     window.contentViewController = container
     self.paneContainer = container
+
+    // Bind the container to the extension bridge BEFORE kicking off
+    // `loadAll()`. The web-extension controller seeds its `openTabs`
+    // set once at extension load by walking
+    // `openWindowsFor → tabs(for:)`, and a missed binding leaves
+    // every loaded extension with an empty tab view that never
+    // recovers. `loadAll()` runs as a Task whose first MainActor hop
+    // happens after `applicationDidFinishLaunching` returns, so
+    // simply ordering the synchronous bind call before the Task
+    // creation is enough to win the race.
+    ExtensionController.shared.bindContainer(container)
+    Task { await ExtensionController.shared.loadAll() }
 
     window.center()
     window.makeKeyAndOrderFront(nil)

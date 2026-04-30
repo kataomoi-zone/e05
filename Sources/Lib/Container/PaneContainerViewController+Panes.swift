@@ -53,6 +53,12 @@ extension PaneContainerViewController {
 
     let insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
     columns.insert(column, at: insertIndex)
+    // Tell the extension controller about the new tab now that the
+    // pane is reachable from the workspace bridge's `tabs(for:)`
+    // walk. A no-op when no extensions are loaded yet (e.g. session
+    // restore) — the controller's startup seed picks those panes up
+    // through `openWindowsFor → tabs(for:)` instead.
+    ExtensionController.shared.notifyTabOpened(pane)
 
     rebuildStackView()
 
@@ -175,6 +181,7 @@ extension PaneContainerViewController {
         self.handleTitleChange(pane: pane, title: title)
         // Update history title for the current URL.
         self.browsingHistory.updateTitle(url: pane.address.url.absoluteString, title: title)
+        ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .title)
       }
       bv.onURLChange = { [weak self, weak pane] url in
         guard let url else { return }
@@ -184,6 +191,9 @@ extension PaneContainerViewController {
         // Record visit (skips internal pages and duplicates)
         if url.scheme == "https" || url.scheme == "http" {
           self?.browsingHistory.recordVisit(url: urlString, title: pane?.title ?? "")
+        }
+        if let pane {
+          ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .URL)
         }
       }
       bv.onFocusChanged = { [weak self, weak pane] in
@@ -202,6 +212,9 @@ extension PaneContainerViewController {
         // toggle stays unaffected.
         if !isLoading {
           pane?.setURLBarPeek(false)
+        }
+        if let pane {
+          ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .loading)
         }
       }
       bv.onDownloadStarted = { [weak self] wkDownload in
@@ -684,6 +697,11 @@ extension PaneContainerViewController {
     else { return }
 
     let pane = column.panes.remove(at: paneIndex)
+    // Fire the close notification right after the model mutation so
+    // a sync-call into `tabs(for:)` from inside `didCloseTab` no
+    // longer reports the closed tab. Cached bridge is dropped here;
+    // an undo / restore later will mint a fresh one.
+    ExtensionController.shared.notifyTabClosed(pane)
     clearFocusBorder(pane)
 
     let wasOnlyPane = column.panes.isEmpty
@@ -909,6 +927,10 @@ extension PaneContainerViewController {
       }
       setupPaneCallbacks(pane: pane, column: column)
       column.panes.insert(pane, at: paneIndex)
+      // Restored pane re-enters the extension's tab graph as a
+      // fresh tab — `notifyTabClosed` dropped the previous bridge
+      // identity, so the undo restore needs a matching open.
+      ExtensionController.shared.notifyTabOpened(pane)
 
       // Mirror `splitVertical`: snap the layout in place and
       // only tween the restored pane's alpha. Tweening the
@@ -981,6 +1003,7 @@ extension PaneContainerViewController {
 
     let column = ws.columns[columnIndex]
     let pane = column.panes.remove(at: paneIndex)
+    ExtensionController.shared.notifyTabClosed(pane)
     clearFocusBorder(pane)
     // Cross-WS close skips the undo stash, so release the surface
     // eagerly rather than detaching it.

@@ -18,6 +18,7 @@ extension PaneContainerViewController {
       NSLog("[e05/ws] setFocus guard: bad paneIndex")
       return
     }
+    let previouslyFocused = focusedPane
 
     // Dismiss the find bar whenever focus is moving to a pane other
     // than the one the bar targets. `setFocus` is the funnel point
@@ -109,6 +110,15 @@ extension PaneContainerViewController {
     // movePane*, undoClosePane) eventually calls setFocus, so hooking
     // here covers them all without sprinkling notify calls.
     notifySidebarWorklaneDidChange()
+    // Same funnel point for the extension controller — every focus
+    // move that promotes a browser pane fires `chrome.tabs.onActivated`,
+    // which Bitwarden / autofill extensions key off to refresh their
+    // popup contents. `notifyTabActivated` filters the previous-tab
+    // when the outgoing pane wasn't a browser, so terminal-focus
+    // round-trips don't synthesize phantom transitions.
+    if previouslyFocused?.id != pane.id {
+      ExtensionController.shared.notifyTabActivated(next: pane, previous: previouslyFocused)
+    }
   }
 
   public func focusLeft() {

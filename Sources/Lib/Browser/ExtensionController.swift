@@ -79,12 +79,135 @@ public final class ExtensionController {
   weak var pendingPopupAnchorView: NSView?
   var pendingPopupAnchorRect: NSRect = .zero
 
+  /// Single host-window bridge. Held strongly so the controller's
+  /// delegate can hand back the same instance from
+  /// `openWindowsFor` / `focusedWindowFor` on every query — the
+  /// `WKWebExtensionContext.openTabs` set is keyed off `NSObject`
+  /// identity, so a fresh wrapper per call would invalidate
+  /// extension-side per-tab state.
+  let workspaceBridge = WorkspaceExtensionBridge()
+
+  /// Cache of per-pane bridge wrappers keyed by `PaneModel.id`.
+  /// Built lazily by `bridge(for:)` and pruned by `notifyTabClosed`
+  /// so every `tabs(for:)` walk hands out the same instance for the
+  /// same pane.
+  private var tabBridgesByPaneID: [ULID: PaneExtensionBridge] = [:]
+
   private init() {
-    self.controller = WKWebExtensionController(configuration: .default())
+    // Mutate the default extension webViewConfiguration in place so
+    // popup / background web views inherit WebKit's
+    // `webkit-extension://` scheme handler, process pool, content
+    // controller, and any other internal wiring instead of getting a
+    // bare new config. Replacing the configuration outright with a
+    // fresh `WKWebViewConfiguration()` breaks popup loading for
+    // non-bundle extensions (popup never commits navigation,
+    // `isLoading` stays true forever).
+    //
+    // The Safari token in `applicationNameForUserAgent` is needed
+    // for extensions that pick their `DeviceType` branch by sniffing
+    // `navigator.userAgent` for ` Safari/` — without it, their
+    // Angular DI bootstrap NPEs in the api service constructor.
+    let extConfig = WKWebExtensionController.Configuration.default()
+    extConfig.webViewConfiguration.applicationNameForUserAgent =
+      "Version/17.0 Safari/605.1.15"
+    self.controller = WKWebExtensionController(configuration: extConfig)
     let proxy = DelegateProxy()
     self.delegateProxy = proxy
     self.controller.delegate = proxy
     proxy.controller = self
+  }
+
+  /// Wire the bridge to its pane container. AppDelegate calls this
+  /// once after building the container so the workspace bridge
+  /// resolves real panes by the time `loadAll()` seeds
+  /// `WKWebExtensionContext.openTabs` from
+  /// `openWindowsFor → tabs(for:)`. Calling before `loadAll` runs
+  /// is required: the open-tabs seed happens once at extension load
+  /// time, and a missed binding leaves every loaded extension with
+  /// an empty `chrome.tabs` view that never recovers.
+  public func bindContainer(_ container: PaneContainerViewController) {
+    workspaceBridge.container = container
+    logger.info("Bound PaneContainer to extension workspace bridge")
+  }
+
+  /// Resolve the bridge for `pane`, creating + caching it on first
+  /// access. Returns the same instance for repeat queries so the
+  /// controller's identity-based set tracking holds across popup
+  /// opens, focus changes, and `tabs(for:)` walks.
+  func bridge(for pane: PaneModel) -> PaneExtensionBridge {
+    if let cached = tabBridgesByPaneID[pane.id] { return cached }
+    let bridge = PaneExtensionBridge(pane: pane, container: workspaceBridge.container)
+    tabBridgesByPaneID[pane.id] = bridge
+    return bridge
+  }
+
+  // MARK: - Tab lifecycle notifications
+  //
+  // Extensions only see `chrome.tabs.*` events when these helpers
+  // fire — the controller's `openTabs` set is seeded once at
+  // extension load and otherwise relies on the host telling it
+  // every state change. Skipping any of these leaves a popup
+  // listening on `tabs.onUpdated` (Bitwarden waits on this to
+  // detect navigation finish before offering autofill) hanging
+  // indefinitely.
+  //
+  // Each helper guards on `address.kind == .browser` so terminal /
+  // finder pane mutations don't synthesise phantom tabs.
+
+  /// Tell every loaded extension that a new browser pane has come
+  /// into existence. Callers MUST insert the pane into its column
+  /// model BEFORE invoking this — WebKit may sync-call
+  /// `tabs(for:)` from inside `didOpenTab` to validate the new
+  /// tab's window membership, and a not-yet-inserted pane fails
+  /// that validation silently.
+  public func notifyTabOpened(_ pane: PaneModel) {
+    guard pane.address.kind == .browser else { return }
+    let tab = bridge(for: pane)
+    controller.didOpenTab(tab)
+  }
+
+  /// Tell every loaded extension that a browser pane has been
+  /// closed (or moved to the undo-stash). Drops the cached bridge
+  /// so a later undo / restore lands a fresh tab identity rather
+  /// than reusing the now-detached one.
+  public func notifyTabClosed(_ pane: PaneModel) {
+    guard pane.address.kind == .browser else { return }
+    guard let bridge = tabBridgesByPaneID.removeValue(forKey: pane.id) else { return }
+    controller.didCloseTab(bridge, windowIsClosing: false)
+  }
+
+  /// Tell every loaded extension that the active tab has changed.
+  /// `previous` is `nil` when there was no previously active
+  /// browser pane (e.g. focus moved from a terminal pane to a
+  /// browser pane). When `next` isn't a browser pane (focus moved
+  /// off a browser pane onto a terminal / finder pane) the
+  /// notification is suppressed — there's no sensible
+  /// representation of "no active tab" mid-session, and extensions
+  /// tolerate the active tab staying put across non-browser focus
+  /// excursions.
+  public func notifyTabActivated(next: PaneModel?, previous: PaneModel?) {
+    guard let next, next.address.kind == .browser else { return }
+    let nextBridge = bridge(for: next)
+    let previousBridge: PaneExtensionBridge?
+    if let previous, previous.address.kind == .browser, previous.id != next.id {
+      previousBridge = tabBridgesByPaneID[previous.id]
+    } else {
+      previousBridge = nil
+    }
+    controller.didActivateTab(nextBridge, previousActiveTab: previousBridge)
+  }
+
+  /// Tell every loaded extension that one of `pane`'s observable
+  /// properties has changed. The OptionSet maps directly to the
+  /// `chrome.tabs.onUpdated` payload bits — `.url` for navigation,
+  /// `.title` for the document title, `.loading` for the
+  /// loading-state flip the URL bar reload-vs-stop button mirrors.
+  public func notifyTabPropertiesChanged(
+    _ pane: PaneModel, properties: WKWebExtension.TabChangedProperties
+  ) {
+    guard pane.address.kind == .browser else { return }
+    guard let bridge = tabBridgesByPaneID[pane.id] else { return }
+    controller.didChangeTabProperties(properties, for: bridge)
   }
 
   /// Root directory scanned at launch. Each immediate child (either an
@@ -493,6 +616,7 @@ public final class ExtensionController {
 
       subscribeToErrors(ctx: ctx, name: name, key: filename)
       scheduleCapabilityRecheck(ctx: ctx, name: name)
+      Self.eagerlyLoadBackgroundContent(ctx: ctx, name: name)
     } else {
       logger.info(
         "Skipping controller.load for user-disabled '\(name, privacy: .public)'"
@@ -1309,6 +1433,7 @@ public final class ExtensionController {
         // context.
         subscribeToErrors(ctx: ctx, name: displayName, key: filename)
         scheduleCapabilityRecheck(ctx: ctx, name: displayName)
+        Self.eagerlyLoadBackgroundContent(ctx: ctx, name: displayName)
       } catch {
         logger.error(
           """
@@ -1384,6 +1509,53 @@ public final class ExtensionController {
         \(String(describing: error), privacy: .public)
         """
       )
+    }
+  }
+
+  /// Force the background page / service worker to start immediately
+  /// instead of waiting for the first `chrome.runtime.sendMessage`
+  /// from a content script or popup. Without this kick, MV3 service
+  /// workers and event-page MV2 background pages stay dormant until
+  /// a saved listener is dispatched — and on a fresh install there
+  /// are no saved listeners yet, so the popup's first
+  /// `runtime.sendMessage` waits forever for a recipient that's
+  /// never going to wake up. Symptomatically: popup HTML loads but
+  /// the JS hangs on the initial "Loading please wait..." placeholder.
+  ///
+  /// Errors are swallowed (logged) on purpose: an extension without
+  /// background content (`NoBackgroundContent`) shouldn't be a fatal
+  /// load failure, and a transient `BackgroundContentFailedToLoad`
+  /// will be re-attempted on the next sendMessage anyway.
+  private static func eagerlyLoadBackgroundContent(
+    ctx: WKWebExtensionContext, name: String
+  ) {
+    ctx.loadBackgroundContent { error in
+      Task { @MainActor in
+        if let error {
+          let ns = error as NSError
+          // Code 9 (NoBackgroundContent) is not really an error for
+          // pure declarative-net-request packs; surface it as info.
+          if ns.domain == "WKWebExtensionContextErrorDomain"
+            && ns.code == WKWebExtensionContext.Error.noBackgroundContent.rawValue
+          {
+            logger.info(
+              "loadBackgroundContent for '\(name, privacy: .public)' — no background content (declarative-only ext)"
+            )
+          } else {
+            logger.error(
+              """
+              loadBackgroundContent failed for '\(name, privacy: .public)': \
+              domain=\(ns.domain, privacy: .public) code=\(ns.code) \
+              desc=\(ns.localizedDescription, privacy: .public)
+              """
+            )
+          }
+        } else {
+          logger.info(
+            "loadBackgroundContent finished for '\(name, privacy: .public)' — bg is awake"
+          )
+        }
+      }
     }
   }
 
@@ -1492,21 +1664,32 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// cycle with the controller's strong `delegate` pointer.
   weak var controller: ExtensionController?
 
-  // Window / tab protocol adoption on WorkspaceModel / PaneModel is a
-  // follow-up change. Returning empty / nil keeps declarativeNetRequest
-  // blockers working at the network layer without a tab model.
+  // Hand back the single host window. e05's niri-style WM treats
+  // every workspace as a slice of one continuous editing surface,
+  // so the bridge unifies them into one `WKWebExtensionWindow`.
+  // Returning the empty / nil form before `bindContainer(_:)` runs
+  // is a defensive guard for races between controller load and
+  // PaneContainer assembly — once bound, every loaded extension
+  // sees the same workspace bridge identity for the rest of the
+  // session.
   func webExtensionController(
     _: WKWebExtensionController,
     openWindowsFor _: WKWebExtensionContext
   ) -> [any WKWebExtensionWindow] {
-    []
+    guard let controller, controller.workspaceBridge.container != nil else {
+      return []
+    }
+    return [controller.workspaceBridge]
   }
 
   func webExtensionController(
     _: WKWebExtensionController,
     focusedWindowFor _: WKWebExtensionContext
   ) -> (any WKWebExtensionWindow)? {
-    nil
+    guard let controller, controller.workspaceBridge.container != nil else {
+      return nil
+    }
+    return controller.workspaceBridge
   }
 
   // Three symmetric auto-grant paths — runtime-prompted permissions,
@@ -1580,15 +1763,19 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     completionHandler: @escaping (Error?) -> Void
   ) {
     let name = context.webExtension.displayName ?? "(unknown)"
-    // Debug-only: the `performAction` info line already records the
-    // dispatch happened. This entry is kept for the rare case when
-    // the popover never appears and you need to check whether
-    // delegate fired at all.
+    // Enable Web Inspector on the popup webView so a stuck popup
+    // (loader that never resolves) can be diagnosed via
+    // right-click → Inspect Element. WebKit creates the popup web
+    // view internally with developer-extras off; flipping it here
+    // is harmless because the menu entry only surfaces when the
+    // preference is true on the underlying configuration.
+    action.popupWebView?.configuration.preferences.setValue(
+      true, forKey: "developerExtrasEnabled"
+    )
     logger.debug(
       """
       presentActionPopup '\(name, privacy: .public)' \
-      [presentsPopup=\(action.presentsPopup), \
-      hasPopover=\(action.popupPopover != nil), \
+      [hasPopover=\(action.popupPopover != nil), \
       anchorCaptured=\(self.controller?.pendingPopupAnchorView != nil)]
       """
     )
