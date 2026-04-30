@@ -1626,6 +1626,83 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   // (e.g. action without a popup, missing anchor capture) is a
   // legitimate "nothing to show" path the extension already
   // tolerates.
+  // Bridge `chrome.runtime.sendNativeMessage` for hosts we know how
+  // to satisfy in-process. Bitwarden's Safari build routes every
+  // `copyToClipboard` request through `sendNativeMessage` to its
+  // companion app's `SafariWebExtensionHandler`, which on the real
+  // platform writes to `NSPasteboard.general`. WKWebExtensionController
+  // doesn't ship a native host registry, so without this hook the
+  // call resolves with no reply and the popup's copy button silently
+  // does nothing — the same code path that drives password / TOTP /
+  // username copy. Returning a synthesised reply convinces the
+  // extension that the host responded and lets its UX continue.
+  //
+  // Only specific hosts are honoured: an unrecognised
+  // `applicationIdentifier` resolves with an explicit error so future
+  // additions stay opt-in rather than silently mimicking arbitrary
+  // hosts.
+  func webExtensionController(
+    _: WKWebExtensionController,
+    sendMessage message: Any,
+    toApplicationWithIdentifier applicationIdentifier: String?,
+    for context: WKWebExtensionContext,
+    replyHandler: @escaping (Any?, Error?) -> Void
+  ) {
+    let name = context.webExtension.displayName ?? "(unknown)"
+    let host = applicationIdentifier ?? "(nil)"
+    logger.info(
+      """
+      sendMessage '\(name, privacy: .public)' \
+      → host=\(host, privacy: .public) \
+      shape=\(String(describing: type(of: message)), privacy: .public)
+      """
+    )
+    guard applicationIdentifier == "com.bitwarden.desktop",
+      let payload = message as? [String: Any],
+      let command = payload["command"] as? String
+    else {
+      replyHandler(
+        nil,
+        NSError(
+          domain: "com.kawarimidoll.e05.Extensions",
+          code: 10,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Native messaging host '\(host)' is not bridged in e05."
+          ]
+        )
+      )
+      return
+    }
+    switch command {
+    case "copyToClipboard":
+      let text = (payload["data"] as? String) ?? ""
+      let pasteboard = NSPasteboard.general
+      pasteboard.clearContents()
+      pasteboard.setString(text, forType: .string)
+      replyHandler(["status": "ok"], nil)
+    case "readFromClipboard":
+      let text = NSPasteboard.general.string(forType: .string) ?? ""
+      replyHandler(["status": "ok", "data": text], nil)
+    default:
+      // Reply with a soft error so callbacks resolve. Returning nil
+      // without an error makes the extension treat the message as a
+      // success it can't interpret, which is worse than an honest
+      // "unhandled" signal.
+      replyHandler(
+        nil,
+        NSError(
+          domain: "com.kawarimidoll.e05.Extensions",
+          code: 11,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Bitwarden native command '\(command)' is not implemented in e05."
+          ]
+        )
+      )
+    }
+  }
+
   func webExtensionController(
     _: WKWebExtensionController,
     presentActionPopup action: WKWebExtension.Action,
