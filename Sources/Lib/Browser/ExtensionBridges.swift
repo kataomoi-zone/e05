@@ -34,8 +34,52 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
   /// ahead of `bindContainer(_:)` doesn't crash.
   weak var container: PaneContainerViewController?
 
+  /// Sticky reference to the most recent browser pane that was
+  /// observed as the container's focused pane. Used as a fallback
+  /// when `focusedPane` is nil or non-browser — a popup webView
+  /// taking first responder shifts the focused pane out from under
+  /// `chrome.tabs.query({active:true})` callers, leaving the
+  /// extension with an empty result the moment its own popup opens.
+  /// Updated synchronously by `refreshSticky()` whenever the bridge
+  /// is queried, and at the boundary of every focus-changing path
+  /// in `PaneContainerViewController` via `noteFocusChanged(_:)`.
+  weak var stickyActiveBrowserPane: PaneModel?
+
+  /// Resolve the browser pane that should answer "active tab"
+  /// queries. Prefers the live focused pane (in case it's a browser
+  /// pane), otherwise falls back to the sticky reference so popup
+  /// webViews and transient terminal-pane focus don't blank out
+  /// `chrome.tabs.query({active})`.
+  func currentBrowserPane() -> PaneModel? {
+    refreshSticky()
+    if let focused = container?.focusedPane, focused.address.kind == .browser {
+      return focused
+    }
+    return stickyActiveBrowserPane
+  }
+
+  /// Snapshot the focused pane into `stickyActiveBrowserPane` if it
+  /// currently is a browser pane. No-op if the focused pane is a
+  /// terminal / e05:// pane — the previous sticky value survives,
+  /// which is the desired fallback for popup-driven focus shifts.
+  func refreshSticky() {
+    if let focused = container?.focusedPane, focused.address.kind == .browser {
+      stickyActiveBrowserPane = focused
+    }
+  }
+
+  /// Direct hook called by `PaneContainerViewController` whenever
+  /// focus moves. Lets the bridge keep `stickyActiveBrowserPane`
+  /// fresh without depending on extension-side query timing.
+  func noteFocusChanged(_ pane: PaneModel?) {
+    if let pane, pane.address.kind == .browser {
+      stickyActiveBrowserPane = pane
+    }
+  }
+
   func tabs(for _: WKWebExtensionContext) -> [any WKWebExtensionTab] {
     guard let container else { return [] }
+    refreshSticky()
     var tabs: [any WKWebExtensionTab] = []
     for workspace in container.workspaces {
       for column in workspace.columns {
@@ -48,9 +92,7 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
   }
 
   func activeTab(for _: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
-    guard let container, let pane = container.focusedPane,
-      pane.address.kind == .browser
-    else { return nil }
+    guard let pane = currentBrowserPane() else { return nil }
     return ExtensionController.shared.bridge(for: pane)
   }
 
@@ -116,10 +158,33 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   func isMuted(for _: WKWebExtensionContext) -> Bool { false }
   func isPlayingAudio(for _: WKWebExtensionContext) -> Bool { false }
   func isReaderModeActive(for _: WKWebExtensionContext) -> Bool { false }
-  func isSelected(for _: WKWebExtensionContext) -> Bool {
-    guard let pane, let container else { return false }
-    return container.focusedPane?.id == pane.id
+  // `isSelected(for:)` is intentionally not implemented: WebKit's
+  // documented default is "YES for the active tab and NO for other
+  // tabs" (WKWebExtensionTab.h:342). Sourcing it from
+  // `WorkspaceExtensionBridge.activeTab(for:)`, which already
+  // honours the sticky-active-pane fallback, keeps every active-tab
+  // query consistent without a second source of truth that could
+  // disagree during popup-driven focus shifts.
+
+  /// Resolve the window that contains this tab. Without this,
+  /// WebKit's `chrome.tabs.query({currentWindow: true})` filter
+  /// loses the tab→window association — `windowId` arrives at
+  /// extensions as `-1` and the active-tab query returns an empty
+  /// set even when `tabs(for:)` enumerates tabs correctly.
+  /// e05 is single-window by design, so every browser pane belongs
+  /// to the same workspace bridge.
+  func window(for _: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+    ExtensionController.shared.workspaceBridge
   }
+
+  /// Bypass standard host permission checks. e05 already auto-grants
+  /// every requested URL / match pattern through the controller
+  /// delegate; this is the per-tab counterpart that lets extensions
+  /// declaring only `content_scripts.matches` (without explicit
+  /// `host_permissions`) reach `chrome.tabs.sendMessage` against
+  /// their content scripts. Without it, content scripts inject but
+  /// runtime tab messaging gets rejected.
+  func shouldBypassPermissions(for _: WKWebExtensionContext) -> Bool { true }
 
   func size(for _: WKWebExtensionContext) -> CGSize {
     pane?.browserView?.webView.frame.size ?? .zero

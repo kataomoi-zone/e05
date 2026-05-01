@@ -81,6 +81,12 @@ extension PaneContainerViewController {
 
     let pane = column.panes[paneIndex]
     NSLog("[e05/ws] setFocus applying pane=%@ addr=%@", String(describing: pane.id), pane.address.description)
+    // Inform the WKWebExtension bridge of the focus change up front
+    // so the sticky "active browser pane" tracker stays current
+    // regardless of what subsequent UI work (popup webView, find bar,
+    // URL field editor) does to first responder. Apple's
+    // `chrome.tabs.query({active})` is sourced from this sticky state.
+    ExtensionController.shared.workspaceBridge.noteFocusChanged(pane)
     applyFocusBorder(pane)
     // Activate the incoming pane's top-edge hit zone so the next
     // hover near the pane top is observed. The hover scheduler that
