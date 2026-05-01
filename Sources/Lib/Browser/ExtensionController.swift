@@ -261,13 +261,17 @@ public final class ExtensionController {
 
   /// Numeric code space for our NSErrors. Centralised so two callers
   /// can't reach for the same `code: 1` literal independently.
-  private enum ErrorCode: Int {
+  /// `fileprivate` so the file's `DelegateProxy` can use the same
+  /// codes when bridging WebKit delegate failures.
+  fileprivate enum ErrorCode: Int {
     case alreadyInstalled = 1
     case notLoaded = 2
     case storeFetchFailed = 3
     case storeBadResponse = 4
     case bundleNoAppex = 5
     case bundleInvalid = 6
+    case nativeHostNotFound = 12
+    case nativeHostLaunchFailed = 13
   }
 
   /// Chrome version pinned for the Chrome Web Store update endpoint.
@@ -307,6 +311,10 @@ public final class ExtensionController {
   /// under `~/.config/e05/`; an empty directory simply produces no loads.
   public func loadAll() async {
     loadPersistedState()
+    NSLog(
+      "[e05/ext] loadAll start: disabledFilenames=[%@]",
+      disabledFilenames.sorted().joined(separator: ",")
+    )
 
     let root = Self.extensionsRoot
     let fm = FileManager.default
@@ -584,6 +592,10 @@ public final class ExtensionController {
     let filename = sourceURL.lastPathComponent
     contextsByFilename[filename] = ctx
     let isEnabled = !disabledFilenames.contains(filename)
+    NSLog(
+      "[e05/ext] loadFromBundle '%@' filename=%@ isEnabled=%@",
+      name, filename, isEnabled ? "true" : "false"
+    )
 
     if isEnabled {
       try controller.load(ctx)
@@ -644,30 +656,23 @@ public final class ExtensionController {
     Task { @MainActor in
       try? await Task.sleep(for: .seconds(3))
       let ext = ctx.webExtension
-      logger.info(
-        """
-        [+3s recheck] '\(name, privacy: .public)' \
-        ctx[inject=\(ctx.hasInjectedContent), \
-        cmr=\(ctx.hasContentModificationRules), \
-        allURLs=\(ctx.hasAccessToAllURLs)]
-        """
+      NSLog(
+        "[e05/ext] +3s recheck '%@' inject=%@ cmr=%@ allURLs=%@",
+        name,
+        ctx.hasInjectedContent ? "true" : "false",
+        ctx.hasContentModificationRules ? "true" : "false",
+        ctx.hasAccessToAllURLs ? "true" : "false"
       )
       if ext.hasInjectedContent, !ctx.hasInjectedContent {
-        logger.warning(
-          """
-          Extension '\(name, privacy: .public)' advertises injected content \
-          but the context reports inject=false after 3s — content scripts \
-          are not registered. Likely a WebKit scripting-API gap.
-          """
+        NSLog(
+          "[e05/ext] WARNING '%@' advertises injected content but ctx inject=false after 3s",
+          name
         )
       }
       if ext.hasContentModificationRules, !ctx.hasContentModificationRules {
-        logger.warning(
-          """
-          Extension '\(name, privacy: .public)' advertises content modification \
-          rules but the context reports cmr=false after 3s — declarativeNetRequest \
-          rulesets did not install.
-          """
+        NSLog(
+          "[e05/ext] WARNING '%@' advertises content modification rules but ctx cmr=false after 3s",
+          name
         )
       }
       Self.logErrors(ctx: ctx, source: "+3s recheck")
@@ -1123,18 +1128,13 @@ public final class ExtensionController {
     }
     let displayName = ctx.webExtension.displayName ?? filename
     let action = ctx.action(for: nil)
-    // Info-level on purpose: every toolbar click should show whether
-    // the extension surfaces a popup or fires an event-only action,
-    // because that distinction is the first thing to check whenever
-    // a click feels unresponsive (popover unable to load, popup-less
-    // action hitting the suppression path, etc.).
-    logger.info(
-      """
-      performAction '\(displayName, privacy: .public)' \
-      action[presentsPopup=\(action?.presentsPopup ?? false), \
-      hasPopover=\(action?.popupPopover != nil), \
-      isEnabled=\(action?.isEnabled ?? false)]
-      """
+    NSLog(
+      "[e05/ext] performAction '%@' presentsPopup=%@ hasPopover=%@ hasWebView=%@ isEnabled=%@",
+      displayName,
+      (action?.presentsPopup ?? false) ? "true" : "false",
+      (action?.popupPopover != nil) ? "true" : "false",
+      (action?.popupWebView != nil) ? "true" : "false",
+      (action?.isEnabled ?? false) ? "true" : "false"
     )
     pendingPopupAnchorView = anchorView
     pendingPopupAnchorRect = anchorRect
@@ -1428,22 +1428,15 @@ public final class ExtensionController {
           if ns.domain == "WKWebExtensionContextErrorDomain"
             && ns.code == WKWebExtensionContext.Error.noBackgroundContent.rawValue
           {
-            logger.info(
-              "loadBackgroundContent for '\(name, privacy: .public)' — no background content (declarative-only ext)"
-            )
+            NSLog("[e05/ext] '%@' has no background content (declarative-only)", name)
           } else {
-            logger.error(
-              """
-              loadBackgroundContent failed for '\(name, privacy: .public)': \
-              domain=\(ns.domain, privacy: .public) code=\(ns.code) \
-              desc=\(ns.localizedDescription, privacy: .public)
-              """
+            NSLog(
+              "[e05/ext] loadBackgroundContent FAILED '%@' domain=%@ code=%ld desc=%@",
+              name, ns.domain, ns.code, ns.localizedDescription
             )
           }
         } else {
-          logger.info(
-            "loadBackgroundContent finished for '\(name, privacy: .public)' — bg is awake"
-          )
+          NSLog("[e05/ext] loadBackgroundContent OK '%@' — bg is awake", name)
         }
       }
     }
@@ -1453,27 +1446,15 @@ public final class ExtensionController {
     let errs = ctx.errors
     let name = ctx.webExtension.displayName ?? "(unknown)"
     if errs.isEmpty {
-      logger.info(
-        "[\(source, privacy: .public)] no runtime errors for '\(name, privacy: .public)'"
-      )
+      NSLog("[e05/ext] [%@] no runtime errors for '%@'", source, name)
       return
     }
     for (i, err) in errs.enumerated() {
       let ns = err as NSError
-      // userInfo carries the only signal that distinguishes one
-      // WKWebExtensionContextError code from another (especially the
-      // generic background-load failures), so emit it as `.public`
-      // — without an opt-in here unified log replaces the dictionary
-      // body with `<private>` and the log line is unactionable.
-      // Fine for a single-user dev-mode app; if this ever ships to
-      // multi-user hosts the privacy default should be revisited.
-      logger.error(
-        """
-        [\(source, privacy: .public)] err[\(i)] for '\(name, privacy: .public)': \
-        domain=\(ns.domain, privacy: .public) code=\(ns.code) \
-        desc=\(ns.localizedDescription, privacy: .public) \
-        userInfo=\(String(describing: ns.userInfo), privacy: .public)
-        """
+      NSLog(
+        "[e05/ext] [%@] err[%d] '%@' domain=%@ code=%ld desc=%@ userInfo=%@",
+        source, i, name, ns.domain, ns.code, ns.localizedDescription,
+        String(describing: ns.userInfo)
       )
     }
   }
@@ -1533,6 +1514,14 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// can read the URL-bar anchor capture. Weak avoids a reference
   /// cycle with the controller's strong `delegate` pointer.
   weak var controller: ExtensionController?
+
+  /// Live native messaging ports, retained per `WKWebExtensionMessagePort`
+  /// identity so each long-lived connection stays alive until the
+  /// extension or host disconnects. Apple's SDK contract treats the
+  /// port object as the lifetime anchor — releasing it disconnects the
+  /// channel — so we mirror that with a dictionary keyed by port
+  /// identity instead of a free-floating Set.
+  var nativePorts: [ObjectIdentifier: NativeMessagingPort] = [:]
 
   // Hand back the single host window. e05's niri-style WM treats
   // every workspace as a slice of one continuous editing surface,
@@ -1703,6 +1692,94 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     }
   }
 
+  /// Long-lived port equivalent of `sendMessage:toApplicationWithIdentifier:`.
+  /// `chrome.runtime.connectNative(host)` lands here with the WebKit-side
+  /// `WKWebExtensionMessagePort` already wired; we resolve a Chrome-style
+  /// native messaging manifest for the requested host, spawn the binary it
+  /// names, and bridge JSON traffic between the port and the subprocess so
+  /// the extension can hold an open channel for the lifetime of the
+  /// handshake (Bitwarden's biometric unlock relies on a persistent
+  /// encryption channel established this way).
+  ///
+  /// Without this, `chrome.runtime.connectNative` falls through to the
+  /// "no action performed" default and the extension hangs on its first
+  /// `port.postMessage`. The pop-up shows "Bitwarden デスクトップアプリとの
+  /// 通信許可がなければ、ブラウザー拡張機能で生体認証を利用できません".
+  func webExtensionController(
+    _: WKWebExtensionController,
+    connectUsing port: WKWebExtension.MessagePort,
+    for context: WKWebExtensionContext,
+    completionHandler: @escaping (Error?) -> Void
+  ) {
+    let appId = port.applicationIdentifier ?? ""
+    let extName = context.webExtension.displayName ?? "(unknown)"
+    NSLog(
+      "[e05/ext] connectUsingMessagePort '%@' → host=%@",
+      extName, appId
+    )
+    logger.info(
+      """
+      connectUsingMessagePort '\(extName, privacy: .public)' \
+      → host=\(appId, privacy: .public)
+      """
+    )
+    guard !appId.isEmpty,
+      let manifest = NativeMessagingHostRegistry.manifest(forHost: appId)
+    else {
+      completionHandler(
+        NSError(
+          domain: ExtensionController.errorDomain,
+          code: ExtensionController.ErrorCode.nativeHostNotFound.rawValue,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "No native messaging manifest installed for host '\(appId)'."
+          ]
+        )
+      )
+      return
+    }
+    // Chrome convention: pass the calling extension's origin URL as the
+    // first subprocess argument so the host can identify which channel
+    // it is talking to. Bitwarden Desktop refuses to negotiate the
+    // encryption handshake without this — it routes per-extension keys
+    // by origin. Use the manifest's first allowed origin (whichever
+    // browser produced this manifest) so the host accepts us as a
+    // recognised caller.
+    let callerOrigin = manifest.allowedOrigins?.first ?? manifest.allowedExtensions?.first
+    let key = ObjectIdentifier(port)
+    do {
+      let nmPort = try NativeMessagingPort(
+        port: port,
+        manifest: manifest,
+        callerOrigin: callerOrigin
+      )
+      nmPort.onClosed = { [weak self] in
+        self?.nativePorts.removeValue(forKey: key)
+      }
+      nativePorts[key] = nmPort
+      completionHandler(nil)
+    } catch {
+      logger.error(
+        """
+        Failed launching native host '\(appId, privacy: .public)' \
+        at \(manifest.path, privacy: .public): \
+        \(error.localizedDescription, privacy: .public)
+        """
+      )
+      completionHandler(
+        NSError(
+          domain: ExtensionController.errorDomain,
+          code: ExtensionController.ErrorCode.nativeHostLaunchFailed.rawValue,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Could not launch native messaging host '\(appId)': \(error.localizedDescription)",
+            NSUnderlyingErrorKey: error,
+          ]
+        )
+      )
+    }
+  }
+
   func webExtensionController(
     _: WKWebExtensionController,
     presentActionPopup action: WKWebExtension.Action,
@@ -1719,20 +1796,15 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     action.popupWebView?.configuration.preferences.setValue(
       true, forKey: "developerExtrasEnabled"
     )
-    logger.debug(
-      """
-      presentActionPopup '\(name, privacy: .public)' \
-      [hasPopover=\(action.popupPopover != nil), \
-      anchorCaptured=\(self.controller?.pendingPopupAnchorView != nil)]
-      """
+    NSLog(
+      "[e05/ext] presentActionPopup '%@' hasPopover=%@ hasWebView=%@ anchorCaptured=%@",
+      name,
+      (action.popupPopover != nil) ? "true" : "false",
+      (action.popupWebView != nil) ? "true" : "false",
+      (self.controller?.pendingPopupAnchorView != nil) ? "true" : "false"
     )
     guard let popover = action.popupPopover else {
-      logger.info(
-        """
-        presentActionPopup for '\(name, privacy: .public)' — \
-        no popupPopover (action without popup), no-op.
-        """
-      )
+      NSLog("[e05/ext] presentActionPopup '%@' → no popupPopover, no-op", name)
       completionHandler(nil)
       return
     }
@@ -1746,26 +1818,18 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     guard let anchorView = controller?.pendingPopupAnchorView,
       anchorView.window != nil, anchorView.superview != nil
     else {
-      logger.info(
-        """
-        presentActionPopup for '\(name, privacy: .public)' — \
-        no live anchor view. Did the action fire after a workspace \
-        switch tore the URL bar down?
-        """
+      NSLog(
+        "[e05/ext] presentActionPopup '%@' → no live anchor view (workspace switch tore URL bar down?)",
+        name
       )
       completionHandler(nil)
       return
     }
     let anchorRect = controller?.pendingPopupAnchorRect ?? anchorView.bounds
-    // Debug-only: anchor coordinates are only useful when the
-    // popover appears in the wrong place, otherwise the click-rate
-    // telemetry from `performAction` is noisy enough.
-    logger.debug(
-      """
-      Showing popover for '\(name, privacy: .public)' anchored on \
-      \(String(describing: type(of: anchorView)), privacy: .public) \
-      rect=\(String(describing: anchorRect), privacy: .public)
-      """
+    NSLog(
+      "[e05/ext] showing popover '%@' anchor=%@ rect=%@",
+      name, String(describing: type(of: anchorView)),
+      String(describing: anchorRect)
     )
     popover.show(
       relativeTo: anchorRect,
