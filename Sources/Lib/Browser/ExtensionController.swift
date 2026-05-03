@@ -103,19 +103,438 @@ public final class ExtensionController {
     // non-bundle extensions (popup never commits navigation,
     // `isLoading` stays true forever).
     //
-    // The Safari token in `applicationNameForUserAgent` is needed
-    // for extensions that pick their `DeviceType` branch by sniffing
-    // `navigator.userAgent` for ` Safari/` — without it, their
-    // Angular DI bootstrap NPEs in the api service constructor.
+    // applicationNameForUserAgent appends to the WebKit base UA, so
+    // the final string ends with `Version/17.0 Chrome/120.0.0.0
+    // Safari/605.1.15`. Both tokens are needed:
+    // - `Version/…` + `Safari/…` keeps the Bitwarden Angular DI
+    //   bootstrap happy (its api service constructor expects a
+    //   non-null Safari device type when the bundle is the Mac App
+    //   Store SafariWebExtension).
+    // - `Chrome/…` short-circuits Bitwarden's `isBrowserSafariApi`
+    //   (which requires Safari **without** Chrome to flip true), so
+    //   the extension routes biometrics through the Chrome native
+    //   messaging path that desktop_proxy actually serves instead of
+    //   the Safari App-Group/XPC path that only the real Mac App
+    //   Store extension can reach.
     let extConfig = WKWebExtensionController.Configuration.default()
     extConfig.webViewConfiguration.applicationNameForUserAgent =
-      "Version/17.0 Safari/605.1.15"
+      "Version/17.0 Chrome/120.0.0.0 Safari/605.1.15"
+
+    // Forward popup / background / content script console output to
+    // NSLog so a popup webView that hangs after some user input
+    // (Bitwarden's 1-time code submit, OAuth handoff, etc.) surfaces
+    // its JS errors and request failures in the same stderr stream
+    // as the rest of the bridge — Web Inspector on a popover-hosted
+    // web view is fragile to attach to in practice.
+    let userContent = extConfig.webViewConfiguration.userContentController
+    let relayHandler = ConsoleRelayHandler()
+    userContent.addUserScript(
+      WKUserScript(
+        source: Self.consoleRelayScript,
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: false
+      )
+    )
+    userContent.add(relayHandler, name: "e05ConsoleRelay")
+    self.consoleRelayHandler = relayHandler
+
+    // Polyfill MV3-only chrome.* surfaces that WebKit's WKWebExtension
+    // does not implement. 1Password's bg invokes
+    // `chrome.offscreen.createDocument(...)` and
+    // `chrome.declarativeNetRequest.updateDynamicRules(...)` during
+    // startup; without stubs each call throws TypeError on undefined,
+    // the surrounding Promise rejects, and popup initialization stalls
+    // (visible as the "Could not parse restore point JSON. Rejecting."
+    // log followed by a perpetual loading spinner). Stubs return
+    // empty / no-op responses so callers see "feature unsupported"
+    // rather than a parse error and keep walking the init chain.
+    //
+    // Set E05_DISABLE_CHROME_POLYFILL=1 in the environment to skip
+    // the injection — useful while bisecting polyfill regressions to
+    // see whether the polyfill itself is at fault for some breakage.
+    if ProcessInfo.processInfo.environment["E05_DISABLE_CHROME_POLYFILL"] == "1" {
+      NSLog("[e05/ext] chrome MV3 polyfill DISABLED (E05_DISABLE_CHROME_POLYFILL=1)")
+    } else {
+      // Per-section disable: E05_DISABLE_POLYFILL=offscreen,notifications,...
+      // Lets us bisect a regression to a single polyfill chunk
+      // without flipping the whole shim off.
+      let disabledRaw = ProcessInfo.processInfo.environment["E05_DISABLE_POLYFILL"] ?? ""
+      let disabledNames = disabledRaw.split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+      let disabledJSON =
+        (try? String(
+          data: JSONSerialization.data(withJSONObject: disabledNames), encoding: .utf8
+        )) ?? "[]"
+      if !disabledNames.isEmpty {
+        NSLog(
+          "[e05/ext] chrome MV3 polyfill sections disabled: %@",
+          disabledNames.joined(separator: ",")
+        )
+      }
+      let prelude =
+        "window.__e05PolyfillDisabled = new Set(\(disabledJSON));\n"
+      userContent.addUserScript(
+        WKUserScript(
+          source: prelude + Self.chromeMV3PolyfillScript,
+          injectionTime: .atDocumentStart,
+          forMainFrameOnly: false
+        )
+      )
+    }
+
     self.controller = WKWebExtensionController(configuration: extConfig)
     let proxy = DelegateProxy()
     self.delegateProxy = proxy
     self.controller.delegate = proxy
     proxy.controller = self
   }
+
+  /// Retain the message handler explicitly — `WKUserContentController.add`
+  /// keeps a reference too, but holding our own makes the lifetime
+  /// obvious from the controller's surface.
+  private let consoleRelayHandler: ConsoleRelayHandler
+
+  /// JS shim injected into every extension web view. Replaces the
+  /// console methods with passthroughs that also `postMessage` to a
+  /// native handler, plus catches uncaught errors and unhandled
+  /// rejections so popup hangs caused by silent failures stop being
+  /// invisible.
+  private static let consoleRelayScript = """
+    (function() {
+      if (window.__e05ConsoleRelayInstalled) return;
+      window.__e05ConsoleRelayInstalled = true;
+      const channel = window.webkit && window.webkit.messageHandlers
+        && window.webkit.messageHandlers.e05ConsoleRelay;
+      if (!channel) return;
+      const orig = {
+        log: console.log, info: console.info,
+        warn: console.warn, error: console.error,
+      };
+      function relay(level, args) {
+        try {
+          const text = Array.from(args).map(a => {
+            if (a instanceof Error) return a.stack || (a.name + ': ' + a.message);
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch (_) { return String(a); }
+          }).join(' ');
+          const trimmed = text.length > 1000 ? text.slice(0, 1000) + '…' : text;
+          channel.postMessage({ level: level, text: trimmed, url: location.href });
+        } catch (_) {}
+      }
+      console.log = function() { relay('log', arguments); orig.log.apply(console, arguments); };
+      console.info = function() { relay('info', arguments); orig.info.apply(console, arguments); };
+      console.warn = function() { relay('warn', arguments); orig.warn.apply(console, arguments); };
+      console.error = function() { relay('error', arguments); orig.error.apply(console, arguments); };
+      window.addEventListener('error', function(e) {
+        relay('uncaught', [(e.message || '(no message)'),
+          (e.filename || '?') + ':' + (e.lineno || '?')]);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        const reason = e.reason;
+        let detail;
+        if (reason instanceof Error) {
+          // Always emit name + message; append stack when available.
+          // The earlier "stack || name+message" branch dropped the
+          // message whenever the runtime produced a stack, leaving
+          // only opaque minified frames like `JSe@…/bg.js:110:N`.
+          detail = (reason.name || 'Error') + ': ' + (reason.message || '(no message)');
+          if (reason.stack) detail += '\\n' + reason.stack;
+        } else if (reason && typeof reason === 'object') {
+          try { detail = JSON.stringify(reason); } catch (_) { detail = String(reason); }
+        } else {
+          detail = String(reason);
+        }
+        relay('unhandled-rejection', [detail]);
+      });
+    })();
+    """
+
+  /// Stubs for MV3-only `chrome.*` APIs that WKWebExtension does not
+  /// implement. Inlined into every extension web view so popup, bg
+  /// event-page, and content scripts that touch these surfaces see
+  /// the same shape Chrome would expose. Stubs report "no resources"
+  /// rather than synthesising fake state — extensions that gate on
+  /// `chrome.X.has(...)` get a clean `false`, extensions that gate on
+  /// `chrome.X !== undefined` proceed and find their callbacks become
+  /// no-ops. Logs each install so a missing stub stands out in
+  /// `/tmp/e05.log`.
+  private static let chromeMV3PolyfillScript = """
+    (function() {
+      if (window.__e05ChromeMV3PolyfillInstalled) return;
+      window.__e05ChromeMV3PolyfillInstalled = true;
+      if (typeof chrome === 'undefined') return;
+      function stubEvent() {
+        return {
+          addListener: function() {},
+          removeListener: function() {},
+          hasListener: function() { return false; },
+          hasListeners: function() { return false; },
+        };
+      }
+      function disabled(name) {
+        return window.__e05PolyfillDisabled
+          && window.__e05PolyfillDisabled.has(name);
+      }
+      var isPopupContext = (location.protocol === 'webkit-extension:')
+        && (location.pathname.indexOf('/popup') !== -1
+            || /\\bpopup[._-]?(html|index)/i.test(location.pathname));
+      if (!disabled('offscreen') && !chrome.offscreen) {
+        chrome.offscreen = {
+          Reason: {
+            AUDIO_PLAYBACK: 'AUDIO_PLAYBACK', IFRAME_SCRIPTING: 'IFRAME_SCRIPTING',
+            DOM_SCRAPING: 'DOM_SCRAPING', BLOBS: 'BLOBS', DOM_PARSER: 'DOM_PARSER',
+            USER_MEDIA: 'USER_MEDIA', DISPLAY_MEDIA: 'DISPLAY_MEDIA',
+            WEB_RTC: 'WEB_RTC', CLIPBOARD: 'CLIPBOARD',
+            LOCAL_STORAGE: 'LOCAL_STORAGE', WORKERS: 'WORKERS',
+            BATTERY_STATUS: 'BATTERY_STATUS', MATCH_MEDIA: 'MATCH_MEDIA',
+            GEOLOCATION: 'GEOLOCATION',
+          },
+          DocumentLifecycle: { ACTIVE: 'active', PRERENDER: 'prerender' },
+          createDocument: function() { return Promise.resolve(); },
+          closeDocument: function() { return Promise.resolve(); },
+          hasDocument: function() { return Promise.resolve(false); },
+        };
+        console.log('[e05/polyfill] chrome.offscreen stubbed at', location.href);
+      }
+      // chrome.scripting.ExecutionWorld: read-only enum.
+      // Additive-only when chrome.scripting exists. Earlier revision
+      // also synthesized the entire chrome.scripting object when
+      // missing, but that broke Bitwarden Cmd+Shift+L autofill —
+      // when bg has the real scripting API, our stub object replaced
+      // it in some context relay path, killing executeScript-based
+      // injection. Keep the stub strictly additive.
+      if (!disabled('scripting') && chrome.scripting && !chrome.scripting.ExecutionWorld) {
+        chrome.scripting.ExecutionWorld = {
+          ISOLATED: 'ISOLATED',
+          MAIN: 'MAIN',
+        };
+        console.log('[e05/polyfill] chrome.scripting.ExecutionWorld stubbed at', location.href);
+      }
+      // chrome.webNavigation.onCreatedNavigationTarget: present in
+      // Chrome but absent from WebKit. Same `.appex`-bypass-rewriter
+      // story as ExecutionWorld; inject here so 1Password's bg
+      // listener attach (line 110:369317 in 8.12.12) doesn't throw.
+      // stubEvent() returns a fresh object whose addListener is a
+      // no-op — WebKit doesn't track this event in any internal
+      // routing path, so synthesizing it is safe.
+      if (!disabled('webNavigation') && chrome.webNavigation
+          && !chrome.webNavigation.onCreatedNavigationTarget) {
+        chrome.webNavigation.onCreatedNavigationTarget = stubEvent();
+        console.log('[e05/polyfill] chrome.webNavigation.onCreatedNavigationTarget stubbed at', location.href);
+      }
+      if (!disabled('declarativeNetRequest') && !chrome.declarativeNetRequest) {
+        chrome.declarativeNetRequest = {
+          MAX_NUMBER_OF_DYNAMIC_AND_SESSION_RULES: 5000,
+          MAX_NUMBER_OF_REGEX_RULES: 1000,
+          DYNAMIC_RULESET_ID: '_dynamic',
+          SESSION_RULESET_ID: '_session',
+          updateDynamicRules: function() { return Promise.resolve(); },
+          getDynamicRules: function() { return Promise.resolve([]); },
+          updateSessionRules: function() { return Promise.resolve(); },
+          getSessionRules: function() { return Promise.resolve([]); },
+          updateEnabledRulesets: function() { return Promise.resolve(); },
+          getEnabledRulesets: function() { return Promise.resolve([]); },
+          updateStaticRules: function() { return Promise.resolve(); },
+          getDisabledRuleIds: function() { return Promise.resolve([]); },
+          getMatchedRules: function() { return Promise.resolve({ rulesMatchedInfo: [] }); },
+          isRegexSupported: function() { return Promise.resolve({ isSupported: true }); },
+          setExtensionActionOptions: function() { return Promise.resolve(); },
+          getAvailableStaticRuleCount: function() { return Promise.resolve(0); },
+          testMatchOutcome: function() { return Promise.resolve({ matchedRules: [] }); },
+          onRuleMatchedDebug: stubEvent(),
+        };
+        console.log('[e05/polyfill] chrome.declarativeNetRequest stubbed at', location.href);
+      }
+      if (!disabled('webRequest') && chrome.webRequest && !chrome.webRequest.onAuthRequired) {
+        chrome.webRequest.onAuthRequired = stubEvent();
+        console.log('[e05/polyfill] chrome.webRequest.onAuthRequired stubbed at', location.href);
+      }
+      // chrome.notifications polyfill is intentionally NOT here.
+      // Mutating chrome.notifications from a controller-level
+      // WKUserScript wedges the popup web view's popover render
+      // path even when guarded with a popup-context check (WebKit
+      // appears to set up the popup web view's `chrome.notifications`
+      // by mirroring whatever shape exists in the bg/extension
+      // context at popup-show time). The bg-only shim that ships
+      // inside the synthesized `_e05_bg.html` is the only safe
+      // place to install it — see ManifestRewriter for the inline
+      // script that polyfills `chrome.notifications` strictly inside
+      // the bg event-page document.
+      // chrome.runtime: getContexts / onUserScriptMessage are MV3
+      // additions WebKit may not expose. Stub so guards on optional
+      // features pass; existing runtime methods are untouched.
+      if (!disabled('runtime') && chrome.runtime) {
+        if (!chrome.runtime.getContexts) {
+          chrome.runtime.getContexts = function() { return Promise.resolve([]); };
+          console.log('[e05/polyfill] chrome.runtime.getContexts stubbed at', location.href);
+        }
+        if (!chrome.runtime.onUserScriptMessage) {
+          chrome.runtime.onUserScriptMessage = stubEvent();
+        }
+        if (!chrome.runtime.onUserScriptConnect) {
+          chrome.runtime.onUserScriptConnect = stubEvent();
+        }
+      }
+      // chrome.action / chrome.browserAction: do not touch. Earlier
+      // attempts to patch onClicked (full replace OR addListener-only)
+      // and setPopup all suppressed the toolbar click entirely on
+      // WebKit. Whatever interplay WebKit has between its proxy and
+      // the click dispatch path is too fragile to mutate from JS.
+      // Tradeoff: extensions that attach an `action.onClicked`
+      // listener AND have a default_popup will see WebKit prefer the
+      // listener, leaving the popup unreachable from the toolbar
+      // (Chrome's spec is the opposite). Document as a known
+      // limitation; affected extensions can use a non-toolbar
+      // shortcut or wait on Apple's resolution.
+      // chrome.userScripts is MV3-only; some bg code calls
+      // configureWorld / register without checking. No-op shape so
+      // listeners can attach without throwing.
+      if (!disabled('userScripts') && !chrome.userScripts) {
+        chrome.userScripts = {
+          register: function() { return Promise.resolve(); },
+          unregister: function() { return Promise.resolve(); },
+          getScripts: function() { return Promise.resolve([]); },
+          configureWorld: function() { return Promise.resolve(); },
+          resetWorldConfiguration: function() { return Promise.resolve(); },
+          getWorldConfigurations: function() { return Promise.resolve([]); },
+        };
+        console.log('[e05/polyfill] chrome.userScripts stubbed at', location.href);
+      }
+      // chrome.sidePanel is MV3-only and 1Password references it
+      // optionally; stub so guards on `typeof chrome.sidePanel` work.
+      if (!disabled('sidePanel') && !chrome.sidePanel) {
+        chrome.sidePanel = {
+          setOptions: function() { return Promise.resolve(); },
+          getOptions: function() { return Promise.resolve({}); },
+          setPanelBehavior: function() { return Promise.resolve(); },
+          getPanelBehavior: function() { return Promise.resolve({}); },
+          open: function() { return Promise.resolve(); },
+        };
+        console.log('[e05/polyfill] chrome.sidePanel stubbed at', location.href);
+      }
+      // chrome.permissions: WebKit's contains() rejects any permission
+      // name it doesn't recognise (e.g. `privacy`, `sidePanel`,
+      // `offscreen`) with `Invalid call to permissions.contains().
+      // The 'permissions' value is invalid, because '<name>' is not a
+      // valid permission`. Bitwarden's "Make Bitwarden the default
+      // password manager" flow calls
+      // `chrome.permissions.contains({permissions: ['privacy']})` to
+      // gate the autofill switch and aborts the entire setting save
+      // when the call rejects. Wrap contains() / request() to filter
+      // unknown names down to the WebKit-accepted set so the call
+      // succeeds (returning false for the unknown ones, which is
+      // strictly accurate — we don't actually have those permissions).
+      if (!disabled('permissions') && chrome.permissions) {
+        var KNOWN_PERMS = new Set([
+          'activeTab', 'alarms', 'background', 'bookmarks', 'browsingData',
+          'clipboardRead', 'clipboardWrite', 'contentSettings', 'contextMenus',
+          'cookies', 'declarativeNetRequest', 'declarativeNetRequestFeedback',
+          'declarativeNetRequestWithHostAccess', 'downloads', 'history',
+          'idle', 'management', 'menus', 'menus.overrideContext',
+          'nativeMessaging', 'notifications', 'pageCapture', 'proxy',
+          'scripting', 'search', 'storage', 'tabs', 'tabHide', 'theme',
+          'topSites', 'unlimitedStorage', 'webNavigation', 'webRequest',
+          'webRequestBlocking', 'webRequestAuthProvider',
+        ]);
+        function partitionPermissions(details) {
+          if (!details || !Array.isArray(details.permissions)) return details;
+          var keep = [];
+          var dropped = [];
+          for (var i = 0; i < details.permissions.length; i++) {
+            var p = details.permissions[i];
+            if (KNOWN_PERMS.has(p)) keep.push(p);
+            else dropped.push(p);
+          }
+          if (dropped.length) {
+            console.log('[e05/polyfill] permissions: filtering out unknown', dropped, 'at', location.href);
+          }
+          var copy = {};
+          for (var k in details) copy[k] = details[k];
+          copy.permissions = keep;
+          return copy;
+        }
+        if (typeof chrome.permissions.contains === 'function') {
+          var origContains = chrome.permissions.contains.bind(chrome.permissions);
+          chrome.permissions.contains = function(details, cb) {
+            try {
+              var hadUnknown = details && Array.isArray(details.permissions)
+                && details.permissions.some(function(p) { return !KNOWN_PERMS.has(p); });
+              var filtered = partitionPermissions(details);
+              if (hadUnknown && (!filtered.permissions || filtered.permissions.length === 0)) {
+                // Caller asked only for permissions WebKit doesn't
+                // know — answer "false" honestly without going into
+                // WebKit (which would throw).
+                if (typeof cb === 'function') cb(false);
+                return Promise.resolve(false);
+              }
+              return origContains(filtered, cb);
+            } catch (e) {
+              console.warn('[e05/polyfill] permissions.contains wrap failed:', e);
+              if (typeof cb === 'function') cb(false);
+              return Promise.resolve(false);
+            }
+          };
+        }
+        if (typeof chrome.permissions.request === 'function') {
+          var origRequest = chrome.permissions.request.bind(chrome.permissions);
+          chrome.permissions.request = function(details, cb) {
+            try {
+              var filtered = partitionPermissions(details);
+              if (!filtered.permissions || filtered.permissions.length === 0) {
+                if (typeof cb === 'function') cb(true);
+                return Promise.resolve(true);
+              }
+              return origRequest(filtered, cb);
+            } catch (e) {
+              console.warn('[e05/polyfill] permissions.request wrap failed:', e);
+              if (typeof cb === 'function') cb(false);
+              return Promise.resolve(false);
+            }
+          };
+        }
+        console.log('[e05/polyfill] chrome.permissions wrapped at', location.href);
+      }
+      // R4-2 diagnostic: log every `window.message` event that
+      // reaches Bitwarden's inline-menu wrapper iframe
+      // (overlay/menu.html). The bg → page-side wrapper
+      // `port.postMessage(initAutofillInlineMenuButton, …)` step is
+      // confirmed working (see `bg→port[autofill-inline-menu-…]`
+      // logs in bg-shim), and the wrapper iframe loads, but the
+      // sub-iframe (menu-button.html / menu-list.html) never gets
+      // its `src` set. Bitwarden's `handleWindowMessage` rejects
+      // init messages unless `event.origin === extensionOrigin` OR
+      // `event.source === globalThis.parent`. WebKit's content_script
+      // isolated worlds may break the parent-window identity check
+      // and the page→iframe origin ladder, so log what actually
+      // arrives so we can decide what guard to relax.
+      if (location.pathname.indexOf('/overlay/menu.html') !== -1) {
+        try {
+          globalThis.addEventListener('message', function(e) {
+            try {
+              var d = e.data;
+              var summary = {
+                cmd: (d && typeof d === 'object' && d.command) || '(no-command)',
+                origin: e.origin,
+                hasPortKey: !!(d && typeof d === 'object' && d.portKey),
+                sourceIsParent: e.source === globalThis.parent,
+                sourceIsSelf: e.source === globalThis,
+                parentOrigin: (function() {
+                  try { return globalThis.parent.location.origin; }
+                  catch (_) { return '(cross-origin-blocked)'; }
+                })(),
+              };
+              console.log('[e05/diag] menu.html msg ' + JSON.stringify(summary));
+            } catch (_) {}
+          }, true);
+          console.log('[e05/diag] menu.html message observer installed (extensionOrigin='
+            + (chrome.runtime.getURL ? chrome.runtime.getURL('').slice(0, -1) : '?') + ')');
+        } catch (e) {
+          console.warn('[e05/diag] menu.html observer failed:', e);
+        }
+      }
+    })();
+    """
 
   /// Wire the bridge to its pane container. AppDelegate calls this
   /// once after building the container so the workspace bridge
@@ -128,6 +547,20 @@ public final class ExtensionController {
   public func bindContainer(_ container: PaneContainerViewController) {
     workspaceBridge.container = container
     logger.info("Bound PaneContainer to extension workspace bridge")
+  }
+
+  /// Tear down every live native messaging host so quit doesn't
+  /// leave orphan `desktop_proxy` processes hanging on to user
+  /// sockets. `shutdown` is idempotent and walks `onClosed` to
+  /// remove itself from the dict, so we snapshot the values first
+  /// and iterate the copy.
+  public func shutdownAllNativePorts() {
+    let ports = Array(delegateProxy.nativePorts.values)
+    if ports.isEmpty { return }
+    NSLog("[e05/ext] shutting down %d native port(s) at app teardown", ports.count)
+    for port in ports {
+      port.shutdown(reason: "app terminating")
+    }
   }
 
   /// Resolve the bridge for `pane`, creating + caching it on first
@@ -153,6 +586,47 @@ public final class ExtensionController {
   //
   // Each helper guards on `address.kind == .browser` so terminal /
   // finder pane mutations don't synthesise phantom tabs.
+
+  /// Offer `event` to every loaded extension's command dispatcher.
+  /// Returns true if any context handled the event (the caller should
+  /// then suppress further routing, e.g. by returning `nil` from an
+  /// NSEvent local monitor). Mirrors the WKWebExtensionContext docs:
+  /// "The app should use this method to perform any extension commands
+  /// at an appropriate time in the app's event handling, like in
+  /// `sendEvent:` of NSApplication or NSWindow subclasses." We hook a
+  /// local monitor instead of subclassing NSApp so the rest of e05 can
+  /// keep using the stock NSApplication.
+  ///
+  /// Walking every loaded context is acceptable because typical install
+  /// counts are < 10 and `performCommand(for:)` early-exits on contexts
+  /// that don't bind the keystroke. Skips disabled contexts so a
+  /// quiesced extension's keymap stays inert.
+  public func performExtensionCommand(for event: NSEvent) -> Bool {
+    for entry in loadedExtensions where entry.isEnabled {
+      guard let ctx = contextsByFilename[entry.sourceURL.lastPathComponent] else { continue }
+      if ctx.performCommand(for: event) {
+        NSLog(
+          "[e05/ext] performCommand consumed event by '%@'",
+          entry.displayName
+        )
+        return true
+      }
+    }
+    return false
+  }
+
+  /// Locate the on-disk extension directory backing `context`.
+  /// `contextsByFilename` is the only mapping we own; reverse-lookup
+  /// by identity to find the install path under `extensionsRoot`.
+  /// Used by the native-messaging delegate to read the rewriter's
+  /// pre-computed `_e05_caller_origin` when handing the host an
+  /// authentic chrome-extension origin URL.
+  func extensionDirectory(for context: WKWebExtensionContext) -> URL? {
+    for (filename, ctx) in contextsByFilename where ctx === context {
+      return Self.extensionsRoot.appendingPathComponent(filename)
+    }
+    return nil
+  }
 
   /// Tell every loaded extension that a new browser pane has come
   /// into existence. Callers MUST insert the pane into its column
@@ -482,6 +956,26 @@ public final class ExtensionController {
   }
 
   private func load(at url: URL) async throws {
+    // If `url` points at an unpacked tree, run the MV3→MV2 rewriter
+    // so WKWebExtension can wake the bg via the event-page path
+    // instead of the SW path it doesn't fully implement. ZIP archives
+    // are unpacked in `installDownloadedExtension` before reaching
+    // here; ZIPs that arrive via direct `addExtension(from:)` (e.g.
+    // a user dragging a .zip in) skip the rewrite and run as-is —
+    // not ideal, but degrading gracefully beats failing the install.
+    let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+    if isDir {
+      do {
+        if try ManifestRewriter.mv3ToMV2(at: url) {
+          NSLog("[e05/ext] MV3→MV2 rewrite applied at %@", url.lastPathComponent)
+        }
+      } catch {
+        NSLog(
+          "[e05/ext] manifest rewrite skipped for %@: %@",
+          url.lastPathComponent, String(describing: error)
+        )
+      }
+    }
     let ext = try await WKWebExtension(resourceBaseURL: url)
     try activate(ext: ext, sourceURL: url, sourceKind: .archive)
   }
@@ -564,13 +1058,50 @@ public final class ExtensionController {
 
     let ctx = WKWebExtensionContext(for: ext)
 
+    // Stable identifier so chrome.storage / IndexedDB / cookies /
+    // anything else WebKit keys per-context survives app restarts.
+    // The default uniqueIdentifier is a fresh UUID every context
+    // creation, which means each launch sees the extension as a
+    // brand-new install: stored auth tokens vanish, vault encryption
+    // keys can't be located, and password managers fall back to the
+    // first-run flow. Using the source filename (e.g. the CRX
+    // basename or `<host>.appex` lastPathComponent) keeps the
+    // identifier deterministic across runs without leaking the path.
+    ctx.uniqueIdentifier = "e05.\(sourceURL.lastPathComponent)"
+
+    // Surface the extension's background page / service worker (and
+    // every popup web view it ever opens) in Safari's Develop menu so
+    // the bridge is debuggable end-to-end. Without `inspectable=true`
+    // on the context, popup web views can be inspected (we set the
+    // matching property on each popupWebView) but the background page
+    // / SW stays invisible — the most important spot to look when the
+    // chrome.* round-trip stalls. macOS 13.3+ is required.
+    ctx.isInspectable = true
+    ctx.inspectionName = "e05: \(name)"
+
     // Pre-grant every requested permission and host pattern so
     // content-blocking paths run end-to-end without surfacing a
     // prompt. Placing an extension under ~/.config/e05/extensions/
     // is treated as explicit user trust; a richer permission flow
     // ships with the extensions sidebar UI.
+    //
+    // `optionalPermissions` are pre-granted too. Bitwarden declares
+    // `nativeMessaging` as optional, and its bg gates biometric
+    // unlock on `chrome.permissions.contains({permissions:
+    // ['nativeMessaging']})` returning true — without an explicit
+    // grant the call resolves false (WebKit's default for optional
+    // perms), the bg logs "Native messaging permission is missing
+    // for biometrics", and the popup silently falls back to
+    // password unlock instead of triggering the desktop biometric
+    // prompt. Treating sideload as explicit trust covers optionals
+    // as well; Chrome's policy of asking the user at first use
+    // doesn't fit a developer-only browser.
     let permNames = ext.requestedPermissions.map(\.rawValue).sorted()
     for perm in ext.requestedPermissions {
+      ctx.setPermissionStatus(.grantedExplicitly, for: perm)
+    }
+    let optionalPermNames = ext.optionalPermissions.map(\.rawValue).sorted()
+    for perm in ext.optionalPermissions {
       ctx.setPermissionStatus(.grantedExplicitly, for: perm)
     }
     let patternStrings = ext.requestedPermissionMatchPatterns
@@ -583,6 +1114,8 @@ public final class ExtensionController {
       """
       Pre-granted \(permNames.count) perms \
       [\(permNames.joined(separator: ","), privacy: .public)] + \
+      \(optionalPermNames.count) optional perms \
+      [\(optionalPermNames.joined(separator: ","), privacy: .public)] + \
       \(patternStrings.count) host patterns \
       [\(patternStrings.joined(separator: ","), privacy: .public)] \
       for '\(name, privacy: .public)'
@@ -940,31 +1473,70 @@ public final class ExtensionController {
       )
     }
     let zipData = try CRXArchive.extractZIP(from: crx)
-    try await installDownloadedZIP(zipData, suggestedFilename: "\(id).zip")
+    try await installDownloadedExtension(zipData, suggestedFilename: "\(id).zip")
   }
 
-  /// Shared landing path for store-sourced ZIP data: write the bytes
-  /// to `extensionsRoot`, then run the standard `load(at:)`. Same
-  /// rollback policy as `addExtension` — a load failure removes the
-  /// freshly-written file so dead archives don't accumulate.
-  private func installDownloadedZIP(
+  /// Shared landing path for store-sourced ZIP data: unpack the
+  /// archive into `extensionsRoot/<basename>/`, then run the standard
+  /// `load(at:)`. Used to write the ZIP file in place and let
+  /// WKWebExtension expand it itself, but unpacking up front lets the
+  /// MV3→MV2 manifest rewriter run on the unpacked tree before
+  /// WebKit ever parses it. Same rollback policy as `addExtension` —
+  /// a load failure removes the freshly-written tree so dead installs
+  /// don't accumulate.
+  private func installDownloadedExtension(
     _ data: Data, suggestedFilename: String
   ) async throws {
     let fm = FileManager.default
     try fm.createDirectory(at: Self.extensionsRoot, withIntermediateDirectories: true)
-    let dst = Self.extensionsRoot.appendingPathComponent(suggestedFilename)
+    let dirName = (suggestedFilename as NSString).deletingPathExtension
+    let dst = Self.extensionsRoot.appendingPathComponent(dirName)
     if fm.fileExists(atPath: dst.path) {
       throw NSError(
         domain: Self.errorDomain,
         code: ErrorCode.alreadyInstalled.rawValue,
         userInfo: [
           NSLocalizedDescriptionKey:
-            "An extension named '\(suggestedFilename)' is already installed. "
+            "An extension named '\(dirName)' is already installed. "
             + "Remove the existing copy first if you want to replace it."
         ]
       )
     }
-    try data.write(to: dst, options: [.atomic])
+    let tmpZip = fm.temporaryDirectory.appendingPathComponent(
+      UUID().uuidString + "-" + suggestedFilename
+    )
+    try data.write(to: tmpZip, options: [.atomic])
+    defer { try? fm.removeItem(at: tmpZip) }
+    try fm.createDirectory(at: dst, withIntermediateDirectories: true)
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+    proc.arguments = ["-q", tmpZip.path, "-d", dst.path]
+    do {
+      try proc.run()
+    } catch {
+      Self.rollbackInstall(at: dst)
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleInvalid.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "Could not launch /usr/bin/unzip to unpack the downloaded archive: "
+            + error.localizedDescription
+        ]
+      )
+    }
+    proc.waitUntilExit()
+    guard proc.terminationStatus == 0 else {
+      Self.rollbackInstall(at: dst)
+      throw NSError(
+        domain: Self.errorDomain,
+        code: ErrorCode.bundleInvalid.rawValue,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "/usr/bin/unzip exited with status \(proc.terminationStatus); the archive is corrupt or unsupported."
+        ]
+      )
+    }
     do {
       try await load(at: dst)
     } catch {
@@ -1523,6 +2095,16 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// identity instead of a free-floating Set.
   var nativePorts: [ObjectIdentifier: NativeMessagingPort] = [:]
 
+  /// Associated-object key for the per-popup KVO token. Storing the
+  /// observation on the popup web view itself ties its lifetime to
+  /// the view (released alongside the popup), unlike a delegate-side
+  /// dictionary keyed by `ObjectIdentifier(popupView)` which leaks an
+  /// entry per popup open *and* exposes a use-after-free risk: an
+  /// `ObjectIdentifier` is just the pointer bit pattern, so a
+  /// reallocated WKWebView at the same address can land in the dict
+  /// and silently overwrite the old entry.
+  private static var popupObservationKey: UInt8 = 0
+
   // Hand back the single host window. e05's niri-style WM treats
   // every workspace as a slice of one continuous editing surface,
   // so the bridge unifies them into one `WKWebExtensionWindow`.
@@ -1742,10 +2324,33 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     // first subprocess argument so the host can identify which channel
     // it is talking to. Bitwarden Desktop refuses to negotiate the
     // encryption handshake without this — it routes per-extension keys
-    // by origin. Use the manifest's first allowed origin (whichever
-    // browser produced this manifest) so the host accepts us as a
-    // recognised caller.
-    let callerOrigin = manifest.allowedOrigins?.first ?? manifest.allowedExtensions?.first
+    // by origin.
+    //
+    // 1Password Browser Helper validates the origin against the
+    // production extension ID (`aeblfdkhh…`) derived from the CRX
+    // `key`. Our ManifestRewriter strips `key` so the manifest WebKit
+    // sees no longer carries it; pre-write the derived
+    // `chrome-extension://<id>/` to `_e05_caller_origin` next to the
+    // manifest and prefer it here. Hosts that don't validate (Bitwarden
+    // Desktop) don't care which valid-shape origin we send. Falling
+    // back to the manifest's first allowed origin keeps the older
+    // `.appex` path working.
+    let callerOrigin: String? = {
+      if let extDir = controller?.extensionDirectory(for: context) {
+        let originFile = extDir.appendingPathComponent("_e05_caller_origin")
+        if let data = try? Data(contentsOf: originFile),
+          let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !s.isEmpty
+        {
+          NSLog(
+            "[e05/ext] using derived caller origin '%@' for host '%@'",
+            s, appId
+          )
+          return s
+        }
+      }
+      return manifest.allowedOrigins?.first ?? manifest.allowedExtensions?.first
+    }()
     let key = ObjectIdentifier(port)
     do {
       let nmPort = try NativeMessagingPort(
@@ -1787,15 +2392,49 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     completionHandler: @escaping (Error?) -> Void
   ) {
     let name = context.webExtension.displayName ?? "(unknown)"
-    // Enable Web Inspector on the popup webView so a stuck popup
-    // (loader that never resolves) can be diagnosed via
-    // right-click → Inspect Element. WebKit creates the popup web
-    // view internally with developer-extras off; flipping it here
-    // is harmless because the menu entry only surfaces when the
-    // preference is true on the underlying configuration.
-    action.popupWebView?.configuration.preferences.setValue(
-      true, forKey: "developerExtrasEnabled"
-    )
+    // Enable Web Inspector access on the popup web view. The legacy
+    // `developerExtrasEnabled` preference key is the right-click
+    // "Inspect Element" gate; the modern `isInspectable` property
+    // (macOS 13.3+) is what makes the web view visible in Safari's
+    // Develop menu so a popover that closes on right-click can still
+    // be inspected via Develop → <e05> → <popup URL>.
+    if let popupView = action.popupWebView {
+      popupView.configuration.preferences.setValue(
+        true, forKey: "developerExtrasEnabled"
+      )
+      popupView.isInspectable = true
+      // Track URL / loading transitions so SPA hash navigations and
+      // post-auth route changes surface in the same trace stream as
+      // the rest of the bridge — popups don't get a navigation
+      // delegate hook from the controller, so KVO is the cheapest
+      // way to see whether the extension's router is moving at all.
+      // Stash the observation on the popup web view itself via an
+      // associated object so the token is released together with the
+      // popup; a delegate-side dictionary would leak one entry per
+      // open and risk pointer-reuse collisions.
+      let observation = popupView.observe(
+        \.url, options: [.initial, .new]
+      ) { wv, _ in
+        // KVO callbacks are typed Sendable but always fire on the
+        // observed view's queue; popup web views are main-actor only,
+        // so it's safe to assume isolation here for the isLoading /
+        // url reads.
+        MainActor.assumeIsolated {
+          NSLog(
+            "[e05/ext] popup URL '%@' loading=%@ url=%@",
+            name,
+            wv.isLoading ? "true" : "false",
+            wv.url?.absoluteString ?? "(nil)"
+          )
+        }
+      }
+      objc_setAssociatedObject(
+        popupView,
+        &Self.popupObservationKey,
+        observation,
+        .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+      )
+    }
     NSLog(
       "[e05/ext] presentActionPopup '%@' hasPopover=%@ hasWebView=%@ anchorCaptured=%@",
       name,
@@ -1826,6 +2465,15 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       return
     }
     let anchorRect = controller?.pendingPopupAnchorRect ?? anchorView.bounds
+    // Semi-transient so Inspect Element / Web Inspector can open
+    // alongside the popup without dismissing it. .transient (the
+    // default) closes the popover on every click outside its bounds,
+    // including the right-click that summons the inspector menu and
+    // the inspector window itself, which makes popup-side debugging
+    // impossible. Semi-transient still closes the popover on app
+    // switch (matching the conventional browser-popup ergonomics) but
+    // keeps it alive across in-app focus changes.
+    popover.behavior = .semitransient
     NSLog(
       "[e05/ext] showing popover '%@' anchor=%@ rect=%@",
       name, String(describing: type(of: anchorView)),
@@ -1837,6 +2485,83 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       preferredEdge: .maxY
     )
     completionHandler(nil)
+  }
+
+  /// Bridge `chrome.tabs.create` to a new browser pane in the host
+  /// container. Without this, an extension that relies on opening a
+  /// helper tab (Captcha verification, OAuth handoff, settings page
+  /// link) sees its `chrome.tabs.create` call resolve with `nil` and
+  /// silently fails — the popup looks like it hung after the user
+  /// triggered the action.
+  func webExtensionController(
+    _: WKWebExtensionController,
+    openNewTabUsing configuration: WKWebExtension.TabConfiguration,
+    for context: WKWebExtensionContext,
+    completionHandler: @escaping ((any WKWebExtensionTab)?, Error?) -> Void
+  ) {
+    let extName = context.webExtension.displayName ?? "(unknown)"
+    let url = configuration.url
+    NSLog(
+      "[e05/ext] openNewTabUsing '%@' url=%@ shouldFocus=%@",
+      extName, url?.absoluteString ?? "(nil)",
+      configuration.shouldBeActive ? "true" : "false"
+    )
+    guard let container = controller?.workspaceBridge.container else {
+      completionHandler(
+        nil,
+        NSError(
+          domain: ExtensionController.errorDomain,
+          code: 14,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Cannot create tab — host container is not yet bound."
+          ]
+        )
+      )
+      return
+    }
+    let address: PaneAddress = url.map(PaneAddress.init) ?? .blankBrowser
+    let column = container.addColumn(address: address)
+    guard let pane = column.panes.first else {
+      completionHandler(
+        nil,
+        NSError(
+          domain: ExtensionController.errorDomain,
+          code: 14,
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "Created column has no pane — this should not happen."
+          ]
+        )
+      )
+      return
+    }
+    let bridge = ExtensionController.shared.bridge(for: pane)
+    if configuration.shouldBeActive {
+      container.focusPane(id: pane.id)
+    }
+    completionHandler(bridge, nil)
+  }
+}
+
+/// Receives `postMessage` payloads from the console-relay shim
+/// installed on the controller's shared `userContentController`. Each
+/// payload is a `{level, text, url}` triple; we collapse it to a
+/// single NSLog line so popup / background / content-script console
+/// output flows into the same stderr stream as the native messaging
+/// trace, sidestepping the fragility of attaching Web Inspector to a
+/// popover-hosted web view.
+@MainActor
+private final class ConsoleRelayHandler: NSObject, WKScriptMessageHandler {
+  func userContentController(
+    _: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard let dict = message.body as? [String: Any] else { return }
+    let level = (dict["level"] as? String) ?? "?"
+    let text = (dict["text"] as? String) ?? "(empty)"
+    let url = (dict["url"] as? String) ?? "(no url)"
+    NSLog("[e05/console %@] %@ — %@", level, text, url)
   }
 }
 

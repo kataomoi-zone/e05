@@ -25,6 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// can pair against `installTabKeyMonitor` cleanly.
   private var tabKeyMonitor: Any?
 
+  /// Same handle pattern as `tabKeyMonitor` but for the extension
+  /// command dispatcher. Without this, `chrome.commands` shortcuts
+  /// declared in MV3 manifests (e.g. Bitwarden's Cmd+Shift+L
+  /// autofill) never reach `WKWebExtensionContext.performCommand`
+  /// and the keystroke just rings the system bell.
+  private var extensionCommandMonitor: Any?
+
   func applicationDidFinishLaunching(_: Notification) {
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
@@ -91,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     setupMenuKeyBindings()
     installTabKeyMonitor()
+    installExtensionCommandMonitor()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
@@ -99,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
   func applicationWillTerminate(_: Notification) {
     paneContainer?.saveSession()
+    // Native messaging hosts (Bitwarden's `desktop_proxy`, etc.)
+    // are spawned per `chrome.runtime.connectNative` call and stay
+    // alive as long as the e05 process holds the port. Without an
+    // explicit teardown the children inherit no parent and become
+    // orphans until the user logs out.
+    ExtensionController.shared.shutdownAllNativePorts()
   }
 
   // MARK: - Tab Key Monitor
@@ -141,6 +155,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       // Returning nil consumes the event so the responder chain
       // doesn't go on to process Tab as a key-view loop step.
       return nil
+    }
+  }
+
+  /// Hand keyDown events to every loaded extension's command map
+  /// before they reach the responder chain. WKWebExtensionContext
+  /// only invokes `chrome.commands.onCommand` listeners when the
+  /// host explicitly calls `performCommand(for: NSEvent)` — there's
+  /// no automatic NSEvent → extension routing. Without this hook
+  /// shortcuts like Bitwarden's Cmd+Shift+L (autofill) ring the
+  /// system bell and never reach the bg listener.
+  ///
+  /// Runs *before* the e05 Action registry handles the same
+  /// keystroke so extension shortcuts win over our menu items —
+  /// matches the precedence Chrome and Safari use for
+  /// extension-declared commands.
+  private func installExtensionCommandMonitor() {
+    if let existing = extensionCommandMonitor {
+      NSEvent.removeMonitor(existing)
+      extensionCommandMonitor = nil
+    }
+    extensionCommandMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+      if ExtensionController.shared.performExtensionCommand(for: event) {
+        return nil
+      }
+      return event
     }
   }
 
