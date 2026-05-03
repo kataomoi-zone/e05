@@ -146,7 +146,14 @@ public final class PaneModel {
   /// it; the terminal branch asserts it when needed. Unknown kinds (e.g.
   /// a session entry pointing at a retired `e05://history` URL) fall
   /// back to a blank browser so old sessions still load without crashing.
-  public init(address: PaneAddress, ghosttyApp: GhosttyApp?) {
+  ///
+  /// `dataStore` is propagated to `BrowserPaneView` so private workspaces
+  /// can isolate cookies / storage from the default profile. Nil keeps
+  /// the existing default-store behaviour for normal workspaces.
+  public init(
+    address: PaneAddress, ghosttyApp: GhosttyApp?,
+    dataStore: WKWebsiteDataStore? = nil
+  ) {
     self.address = address
     switch address.kind {
     case .terminal:
@@ -170,7 +177,9 @@ public final class PaneModel {
         isExtensionURL
         ? ExtensionController.shared.extensionContext(forExtensionURL: address.url)
         : nil
-      let bv = Self.makeBrowserView(extensionContext: extensionContext)
+      let bv = Self.makeBrowserView(
+        extensionContext: extensionContext, dataStore: dataStore
+      )
       self.content = .browser(bv)
       // Track the resolution failure so the post-`setupContainerView`
       // navigation block can render an error page instead of
@@ -200,7 +209,7 @@ public final class PaneModel {
       logger.warning(
         "Settings pane is not yet implemented — falling back to blank browser"
       )
-      let bv = Self.makeBrowserView()
+      let bv = Self.makeBrowserView(dataStore: dataStore)
       self.content = .browser(bv)
     case .unknown:
       // Retired special-pane addresses (legacy `e05://history` etc.)
@@ -219,7 +228,7 @@ public final class PaneModel {
       logger.warning(
         "Unknown pane address \(address.description, privacy: .public) — falling back to blank browser"
       )
-      let bv = Self.makeBrowserView()
+      let bv = Self.makeBrowserView(dataStore: dataStore)
       self.content = .browser(bv)
     }
     setupContainerView()
@@ -242,9 +251,12 @@ public final class PaneModel {
   private var isUnresolvedExtensionURL: Bool = false
 
   private static func makeBrowserView(
-    extensionContext: WKWebExtensionContext? = nil
+    extensionContext: WKWebExtensionContext? = nil,
+    dataStore: WKWebsiteDataStore? = nil
   ) -> BrowserPaneView {
-    let bv = BrowserPaneView(frame: .zero, extensionContext: extensionContext)
+    let bv = BrowserPaneView(
+      frame: .zero, extensionContext: extensionContext, dataStore: dataStore
+    )
     bv.translatesAutoresizingMaskIntoConstraints = false
     return bv
   }

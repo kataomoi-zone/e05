@@ -81,7 +81,7 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
     guard let container else { return [] }
     refreshSticky()
     var tabs: [any WKWebExtensionTab] = []
-    for workspace in container.workspaces {
+    for workspace in container.workspaces where !workspace.isPrivate {
       for column in workspace.columns {
         for pane in column.panes where pane.address.kind == .browser {
           tabs.append(ExtensionController.shared.bridge(for: pane))
@@ -91,8 +91,17 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
     return tabs
   }
 
+  /// Active-tab queries from extensions never resolve to a private
+  /// workspace's pane: enumerating private tabs to a content extension
+  /// running off the persistent profile would defeat the mode's
+  /// promise. e05 doesn't yet support per-extension "allow in private"
+  /// opt-in (Chrome's `incognito.spanning`), so the gate is global.
   func activeTab(for _: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
-    guard let pane = currentBrowserPane() else { return nil }
+    guard let pane = currentBrowserPane(),
+      let container,
+      let owning = container.workspaceContaining(pane: pane),
+      !owning.isPrivate
+    else { return nil }
     return ExtensionController.shared.bridge(for: pane)
   }
 

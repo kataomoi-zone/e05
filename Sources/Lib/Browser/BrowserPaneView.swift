@@ -97,7 +97,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private let isExtensionHosted: Bool
 
   public override convenience init(frame: NSRect) {
-    self.init(frame: frame, extensionContext: nil)
+    self.init(frame: frame, extensionContext: nil, dataStore: nil)
   }
 
   /// Construct a browser pane. When `extensionContext` is non-nil
@@ -116,7 +116,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// with a controller. The caller treats that as "fall back to a
   /// regular browser pane"; the resulting `webkit-extension://` load
   /// will surface as a navigation failure rather than crashing.
-  public init(frame: NSRect, extensionContext: WKWebExtensionContext?) {
+  ///
+  /// `dataStore` swaps the configuration's website data store for a
+  /// private-workspace-scoped ephemeral store when non-nil; ignored
+  /// when `extensionContext` provides its own configuration so the
+  /// extension's storage scope (controller-owned) is preserved.
+  public init(
+    frame: NSRect,
+    extensionContext: WKWebExtensionContext?,
+    dataStore: WKWebsiteDataStore?
+  ) {
     let config: WKWebViewConfiguration
     let hoverHandler = HoverLinkMessageHandler()
     let extensionConfig = extensionContext?.webViewConfiguration
@@ -133,6 +142,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       config = WKWebViewConfiguration()
       // Enable Web Inspector — required for _inspector to work.
       config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+      // Private workspaces share a workspace-scoped ephemeral data
+      // store (cookies, local storage, IndexedDB live in memory and
+      // die with the workspace). Default-store panes leave the field
+      // alone so WebKit picks up `.default()`.
+      if let dataStore {
+        config.websiteDataStore = dataStore
+      }
       // Attach the shared WKWebExtensionController before the web view is
       // created — WKWebView snapshots its configuration at init time, so
       // setting the controller afterwards is silently ignored.

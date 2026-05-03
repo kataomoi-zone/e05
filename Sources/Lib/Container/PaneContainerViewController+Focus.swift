@@ -572,28 +572,46 @@ extension PaneContainerViewController {
   func applyFocusBorder(_ pane: PaneModel) {
     let cv = pane.containerView
     cv.wantsLayer = true
-    cv.layer?.borderWidth = focusBorderWidth
-    cv.layer?.borderColor = focusBorderColor.cgColor
+    let isPrivate = workspaceContaining(pane: pane)?.isPrivate ?? false
+    if isPrivate {
+      cv.layer?.borderWidth = 0
+      cv.layer?.borderColor = nil
+      installDottedBorderOverlay(in: cv, color: focusBorderColor)
+    } else {
+      removeDottedBorderOverlay(in: cv)
+      cv.layer?.borderWidth = focusBorderWidth
+      cv.layer?.borderColor = focusBorderColor.cgColor
+    }
     NSLog(
-      "[e05/ws] applyFocusBorder paneId=%@ layerExists=%@ borderWidth=%f",
+      "[e05/ws] applyFocusBorder paneId=%@ layerExists=%@ borderWidth=%f private=%@",
       String(describing: pane.id),
       cv.layer == nil ? "no" : "yes",
-      cv.layer?.borderWidth ?? -1)
+      cv.layer?.borderWidth ?? -1,
+      isPrivate ? "yes" : "no")
 
     if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }),
       column.isFolded
     {
       column.foldedLabelView.wantsLayer = true
-      column.foldedLabelView.layer?.borderWidth = focusBorderWidth
-      column.foldedLabelView.layer?.borderColor = focusBorderColor.cgColor
+      if isPrivate {
+        column.foldedLabelView.layer?.borderWidth = 0
+        column.foldedLabelView.layer?.borderColor = nil
+        installDottedBorderOverlay(in: column.foldedLabelView, color: focusBorderColor)
+      } else {
+        removeDottedBorderOverlay(in: column.foldedLabelView)
+        column.foldedLabelView.layer?.borderWidth = focusBorderWidth
+        column.foldedLabelView.layer?.borderColor = focusBorderColor.cgColor
+      }
     }
   }
 
   func clearFocusBorder(_ pane: PaneModel) {
     let cv = pane.containerView
-    let hadBorder = (cv.layer?.borderWidth ?? 0) > 0
+    let hadBorder =
+      (cv.layer?.borderWidth ?? 0) > 0 || cv.subviews.contains(where: { $0 is DottedBorderOverlay })
     cv.layer?.borderWidth = 0
     cv.layer?.borderColor = nil
+    removeDottedBorderOverlay(in: cv)
     if hadBorder {
       NSLog("[e05/ws] clearFocusBorder paneId=%@ (had border)", String(describing: pane.id))
     }
@@ -601,6 +619,33 @@ extension PaneContainerViewController {
     if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }) {
       column.foldedLabelView.layer?.borderWidth = 0
       column.foldedLabelView.layer?.borderColor = nil
+      removeDottedBorderOverlay(in: column.foldedLabelView)
+    }
+  }
+
+  /// Install a dashed border overlay on `host`, replacing any existing
+  /// instance. The overlay uses autoresizing so it tracks the host's
+  /// bounds without explicit constraints; corner radius mirrors the
+  /// host layer's so the dashed line traces the same rounded
+  /// rectangle as the existing solid border.
+  private func installDottedBorderOverlay(in host: NSView, color: NSColor) {
+    let overlay =
+      host.subviews.first(where: { $0 is DottedBorderOverlay }) as? DottedBorderOverlay
+      ?? {
+        let new = DottedBorderOverlay(frame: host.bounds)
+        host.addSubview(new)
+        return new
+      }()
+    overlay.borderColor = color
+    overlay.borderWidth = focusBorderWidth
+    overlay.cornerRadius = host.layer?.cornerRadius ?? 0
+    overlay.frame = host.bounds
+    overlay.needsDisplay = true
+  }
+
+  private func removeDottedBorderOverlay(in host: NSView) {
+    for subview in host.subviews where subview is DottedBorderOverlay {
+      subview.removeFromSuperview()
     }
   }
 

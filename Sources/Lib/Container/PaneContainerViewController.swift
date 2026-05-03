@@ -343,9 +343,13 @@ public final class PaneContainerViewController: NSViewController {
 
   /// Factory: construct a `PaneModel` with the terminal dependency the
   /// container owns. Kept as a method so future per-pane dependencies
-  /// land in one place.
-  func makePane(address: PaneAddress) -> PaneModel {
-    PaneModel(address: address, ghosttyApp: ghosttyApp)
+  /// land in one place. The browser data store comes from the
+  /// **target** workspace (not the focused one) so panes built for a
+  /// new workspace honour its private flag even before the container
+  /// switches over to it.
+  func makePane(address: PaneAddress, in workspace: WorkspaceModel? = nil) -> PaneModel {
+    let ws = workspace ?? currentWorkspace
+    return PaneModel(address: address, ghosttyApp: ghosttyApp, dataStore: ws.dataStore)
   }
 
   private var hasAppearedOnce = false

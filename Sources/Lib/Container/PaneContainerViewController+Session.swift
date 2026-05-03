@@ -24,7 +24,22 @@ extension PaneContainerViewController {
         i, String(describing: ws.id), colFocused, paneFocused, ws.columns.count)
     }
 
-    let workspaceStates = workspaces.map { ws -> SessionState.WorkspaceState in
+    // Drop private workspaces from the snapshot: they're explicitly
+    // ephemeral and persisting their URLs would defeat the mode.
+    // `focusedWorkspaceIndex` rebases onto the surviving workspaces
+    // so the restore still lands on the right one — if the focused
+    // workspace was itself private, focus migrates to the nearest
+    // non-private predecessor (or `0` when none exists).
+    let persistedWorkspaces = workspaces.enumerated().filter { !$0.element.isPrivate }
+    let rebasedFocusedIndex: Int = {
+      if let exact = persistedWorkspaces.firstIndex(where: { $0.offset == focusedWorkspaceIndex }) {
+        return exact
+      }
+      let priorCount = persistedWorkspaces.filter { $0.offset < focusedWorkspaceIndex }.count
+      return priorCount > 0 ? priorCount - 1 : 0
+    }()
+
+    let workspaceStates = persistedWorkspaces.map { _, ws -> SessionState.WorkspaceState in
       let columnStates = ws.columns.map { column -> SessionState.ColumnState in
         let paneStates = column.panes.map { pane -> SessionState.PaneState in
           var state = SessionState.PaneState(address: pane.address.description)
@@ -62,7 +77,7 @@ extension PaneContainerViewController {
 
     return SessionState(
       workspaces: workspaceStates,
-      focusedWorkspaceIndex: focusedWorkspaceIndex,
+      focusedWorkspaceIndex: rebasedFocusedIndex,
       urlBarVisible: urlBarVisible,
       sidebarPinned: sidebarVC?.currentState == .pinnedOpen
     )

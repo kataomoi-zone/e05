@@ -45,7 +45,7 @@ final class PaneRow: NSView {
 
   init(
     paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor,
-    isCurrent: Bool, isOwnWorkspaceFocus: Bool
+    isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool
   ) {
     self.paneId = paneId
     super.init(frame: .zero)
@@ -54,7 +54,8 @@ final class PaneRow: NSView {
     setupLayout()
     configure(
       title: title, icon: icon, accentColor: accentColor,
-      isCurrent: isCurrent, isOwnWorkspaceFocus: isOwnWorkspaceFocus)
+      isCurrent: isCurrent, isOwnWorkspaceFocus: isOwnWorkspaceFocus,
+      isPrivate: isPrivate)
   }
 
   @available(*, unavailable)
@@ -114,17 +115,31 @@ final class PaneRow: NSView {
 
   private func configure(
     title: String, icon: NSImage?, accentColor: NSColor,
-    isCurrent: Bool, isOwnWorkspaceFocus: Bool
+    isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool
   ) {
     isCurrentPane = isCurrent
     label.stringValue = title
     label.alphaValue = isCurrent ? 1.0 : 0.8
     iconView.image = icon
     iconView.alphaValue = isCurrent ? 1.0 : 0.75
+    // Private workspace rows trade the solid layer border for a
+    // dotted overlay so the sidebar mirrors the in-content focus
+    // indicator's visual language.
+    subviews.removeAll { $0 is DottedBorderOverlay }
     if isCurrent {
-      layer?.borderWidth = 2
-      layer?.borderColor = accentColor.cgColor
       layer?.cornerRadius = 4
+      if isPrivate {
+        layer?.borderWidth = 0
+        layer?.borderColor = nil
+        let overlay = DottedBorderOverlay(frame: bounds)
+        overlay.borderColor = accentColor
+        overlay.borderWidth = 2
+        overlay.cornerRadius = 4
+        addSubview(overlay)
+      } else {
+        layer?.borderWidth = 2
+        layer?.borderColor = accentColor.cgColor
+      }
     } else {
       layer?.borderWidth = 0
       layer?.borderColor = nil

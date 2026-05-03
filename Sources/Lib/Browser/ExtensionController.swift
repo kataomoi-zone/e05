@@ -634,8 +634,13 @@ public final class ExtensionController {
   /// `tabs(for:)` from inside `didOpenTab` to validate the new
   /// tab's window membership, and a not-yet-inserted pane fails
   /// that validation silently.
+  ///
+  /// Private workspaces are skipped: `WorkspaceExtensionBridge.tabs(for:)`
+  /// already filters them out of the enumerated tab set, so emitting
+  /// `didOpenTab` for a pane that won't appear in the next walk would
+  /// leave extensions with a phantom-tab identity.
   public func notifyTabOpened(_ pane: PaneModel) {
-    guard pane.address.kind == .browser else { return }
+    guard pane.address.kind == .browser, !isPanePrivate(pane) else { return }
     let tab = bridge(for: pane)
     controller.didOpenTab(tab)
   }
@@ -644,9 +649,15 @@ public final class ExtensionController {
   /// closed (or moved to the undo-stash). Drops the cached bridge
   /// so a later undo / restore lands a fresh tab identity rather
   /// than reusing the now-detached one.
+  ///
+  /// Private panes never fired `didOpenTab`, so a `didCloseTab` here
+  /// would also be phantom; the bridge cache is still cleared so a
+  /// future cross-private-boundary reattach (currently blocked, but
+  /// belt-and-braces) can't reuse a dangling identity.
   public func notifyTabClosed(_ pane: PaneModel) {
     guard pane.address.kind == .browser else { return }
     guard let bridge = tabBridgesByPaneID.removeValue(forKey: pane.id) else { return }
+    guard !isPanePrivate(pane) else { return }
     controller.didCloseTab(bridge, windowIsClosing: false)
   }
 
@@ -679,9 +690,20 @@ public final class ExtensionController {
   public func notifyTabPropertiesChanged(
     _ pane: PaneModel, properties: WKWebExtension.TabChangedProperties
   ) {
-    guard pane.address.kind == .browser else { return }
+    guard pane.address.kind == .browser, !isPanePrivate(pane) else { return }
     guard let bridge = tabBridgesByPaneID[pane.id] else { return }
     controller.didChangeTabProperties(properties, for: bridge)
+  }
+
+  /// Whether `pane` belongs to a private workspace. Resolved through
+  /// the `workspaceBridge`'s container reference so the check stays
+  /// in lockstep with the same source of truth `tabs(for:)` filters
+  /// against. Returns `false` when the bridge isn't yet bound — the
+  /// pane is "in flight" and the safe default is to suppress
+  /// notifications until it lands somewhere with a known privacy
+  /// scope.
+  private func isPanePrivate(_ pane: PaneModel) -> Bool {
+    workspaceBridge.container?.workspaceContaining(pane: pane)?.isPrivate ?? true
   }
 
   /// Root directory scanned at launch. Each immediate child (either an

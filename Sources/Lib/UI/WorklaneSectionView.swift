@@ -141,7 +141,8 @@ final class WorklaneSectionView: NSView {
         title: "Workspace \(wsIdx + 1)",
         accentColor: wsColor,
         isCurrent: isCurrentWs,
-        isCollapsed: isCollapsed
+        isCollapsed: isCollapsed,
+        isPrivate: ws.isPrivate
       )
       header.onClick = { [onClick = input.onWorkspaceClick] in onClick(wsIdx) }
       header.onClose = { [onClose = input.onWorkspaceClose] in onClose(wsIdx) }
@@ -174,7 +175,8 @@ final class WorklaneSectionView: NSView {
             icon: input.paneIcon(pane),
             accentColor: wsColor,
             isCurrent: isCurrentPane,
-            isOwnWorkspaceFocus: isOwnFocus
+            isOwnWorkspaceFocus: isOwnFocus,
+            isPrivate: ws.isPrivate
           )
           let capturedId = pane.id
           row.onClick = { [onClick = input.onPaneClick] in onClick(capturedId) }

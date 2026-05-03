@@ -20,7 +20,7 @@ final class WorkspaceHeaderRow: NSView {
   var onClose: (() -> Void)?
   var onToggleCollapse: (() -> Void)?
 
-  private let indicator = NSView()
+  private let indicator = WorkspaceAccentIndicator()
   private let label = NSTextField(labelWithString: "")
   private let chevronButton: HoverIconButton = {
     let b = HoverIconButton()
@@ -49,14 +49,19 @@ final class WorkspaceHeaderRow: NSView {
   private var isCollapsed = false
   private var accentColor: NSColor = .labelColor
 
-  init(index: Int, title: String, accentColor: NSColor, isCurrent: Bool, isCollapsed: Bool) {
+  init(
+    index: Int, title: String, accentColor: NSColor,
+    isCurrent: Bool, isCollapsed: Bool, isPrivate: Bool
+  ) {
     self.workspaceIndex = index
     self.isCollapsed = isCollapsed
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
     setupLayout()
-    configure(title: title, accentColor: accentColor, isCurrent: isCurrent)
+    configure(
+      title: title, accentColor: accentColor, isCurrent: isCurrent,
+      isPrivate: isPrivate)
   }
 
   @available(*, unavailable)
@@ -64,7 +69,6 @@ final class WorkspaceHeaderRow: NSView {
 
   private func setupLayout() {
     indicator.translatesAutoresizingMaskIntoConstraints = false
-    indicator.wantsLayer = true
     label.translatesAutoresizingMaskIntoConstraints = false
     label.lineBreakMode = .byTruncatingTail
     label.maximumNumberOfLines = 1
@@ -105,16 +109,16 @@ final class WorkspaceHeaderRow: NSView {
     ])
   }
 
-  private func configure(title: String, accentColor: NSColor, isCurrent: Bool) {
+  private func configure(
+    title: String, accentColor: NSColor, isCurrent: Bool, isPrivate: Bool
+  ) {
     self.accentColor = accentColor
     label.stringValue = title
     label.font = isCurrent ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
     label.alphaValue = isCurrent ? 1.0 : 0.6
-    indicator.layer?.backgroundColor =
-      isCurrent
-      ? accentColor.cgColor
-      : accentColor.withAlphaComponent(0.6).cgColor
-    indicator.layer?.cornerRadius = 1.5
+    indicator.color =
+      isCurrent ? accentColor : accentColor.withAlphaComponent(0.6)
+    indicator.isPrivate = isPrivate
     updateChevronIcon()
   }
 

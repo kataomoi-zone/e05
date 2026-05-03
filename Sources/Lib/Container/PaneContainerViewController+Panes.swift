@@ -179,8 +179,15 @@ extension PaneContainerViewController {
         // title pipeline the terminal path uses; without this the
         // sidebar worklane only refreshed on the next `setFocus`.
         self.handleTitleChange(pane: pane, title: title)
-        // Update history title for the current URL.
-        self.browsingHistory.updateTitle(url: pane.address.url.absoluteString, title: title)
+        // Update history title for the current URL. Private
+        // workspaces don't write to the history store at all, so the
+        // matching `recordVisit` skip in `onURLChange` and this skip
+        // are paired.
+        if let workspace = self.workspaceContaining(pane: pane), !workspace.isPrivate {
+          self.browsingHistory.updateTitle(
+            url: pane.address.url.absoluteString, title: title
+          )
+        }
         ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .title)
       }
       bv.onURLChange = { [weak self, weak pane] url in
@@ -188,9 +195,16 @@ extension PaneContainerViewController {
         let urlString = url.absoluteString
         pane?.address = PaneAddress(url)
         pane?.urlBar.setDisplayURL(urlString)
-        // Record visit (skips internal pages and duplicates)
-        if url.scheme == "https" || url.scheme == "http" {
-          self?.browsingHistory.recordVisit(url: urlString, title: pane?.title ?? "")
+        // Record visit (skips internal pages and duplicates). Private
+        // workspaces never feed the persistent history store — that's
+        // the whole point of the mode, mirroring how Safari /
+        // Firefox / Brave handle their private windows.
+        if url.scheme == "https" || url.scheme == "http",
+          let self, let pane,
+          let workspace = self.workspaceContaining(pane: pane),
+          !workspace.isPrivate
+        {
+          self.browsingHistory.recordVisit(url: urlString, title: pane.title)
         }
         if let pane {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .URL)
@@ -227,14 +241,23 @@ extension PaneContainerViewController {
         // in Pane" lands as a fresh column in the current workspace.
         self?.addColumn(address: PaneAddress(url))
       }
-      bv.onOpenInNewWorkspace = { [weak self] url in
+      bv.onOpenInNewWorkspace = { [weak self, weak pane] url in
         // Mirrors bookmark / history "open in new workspace": the
         // newly created workspace seeds a terminal column, and the
         // browser column requested by the link lands alongside it.
         // Replacing the auto-terminal is deferred until the
         // ergonomics demand it.
+        //
+        // Private inheritance: a Shift-click from inside a private
+        // workspace lands the new workspace as private too, so a
+        // user navigating outward never crosses back into the
+        // persistent profile silently. Matches Safari / Firefox /
+        // Brave: their Private Window's "Open Link in New Window"
+        // also stays private.
         guard let self else { return }
-        self.createWorkspace()
+        let inheritsPrivate =
+          pane.flatMap { self.workspaceContaining(pane: $0) }?.isPrivate ?? false
+        self.createWorkspace(isPrivate: inheritsPrivate)
         self.addColumn(address: PaneAddress(url))
       }
     } else if let fv = pane.finderView {
@@ -719,9 +742,14 @@ extension PaneContainerViewController {
 
     // Queue the undo stash right away rather than waiting for the
     // close animation to finish — users can undo during the 0.2s
-    // slide without the entry being missed.
+    // slide without the entry being missed. Pass the owning
+    // workspace explicitly: the pane has already been detached from
+    // its column above, so a `workspaceContaining(pane:)` walk
+    // inside the stash helper would come back nil and the private
+    // gate would silently fall through.
     stashClosedPane(
-      pane, columnIndex: columnIndex, paneIndex: paneIndex,
+      pane, in: currentWorkspace,
+      columnIndex: columnIndex, paneIndex: paneIndex,
       columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
   }
 
@@ -787,10 +815,39 @@ extension PaneContainerViewController {
 
   private static let maxRecentlyClosed = 10
 
+  /// Look up the workspace owning `pane`. The walk is O(workspaces ×
+  /// columns × panes) but in practice handful-per-handful, and pane
+  /// callbacks fire often enough that an `id → workspace` index would
+  /// add lifecycle bookkeeping for negligible savings. Used by
+  /// browser callbacks so private workspaces can suppress history
+  /// writes and closed-pane stashing.
+  func workspaceContaining(pane: PaneModel) -> WorkspaceModel? {
+    for workspace in workspaces {
+      for column in workspace.columns
+      where column.panes.contains(where: { $0.id == pane.id }) {
+        return workspace
+      }
+    }
+    return nil
+  }
+
   private func stashClosedPane(
-    _ pane: PaneModel, columnIndex: Int, paneIndex: Int,
+    _ pane: PaneModel, in workspace: WorkspaceModel,
+    columnIndex: Int, paneIndex: Int,
     columnWidth: CGFloat?, wasOnlyPaneInColumn: Bool
   ) {
+    // Private workspaces never feed the closed-pane undo stash —
+    // restoring a closed private tab from another workspace would
+    // leak the URL the user was deliberately browsing privately. The
+    // pane's surface still gets released through the regular detach
+    // path, just without the 10-second undo window. The workspace
+    // arrives by parameter because the caller has already detached
+    // the pane from its column, leaving `workspaceContaining(pane:)`
+    // unable to recover the owner.
+    if workspace.isPrivate {
+      pane.terminalView?.releaseDetachedSurface()
+      return
+    }
     // Evict oldest if at capacity — must explicitly release detached surfaces
     while recentlyClosed.count >= Self.maxRecentlyClosed {
       let evicted = recentlyClosed.removeFirst()
@@ -813,7 +870,7 @@ extension PaneContainerViewController {
       }
     }
     let closed = ClosedPane(
-      pane: pane, workspaceId: currentWorkspace.id,
+      pane: pane, workspaceId: workspace.id,
       columnIndex: columnIndex, paneIndex: paneIndex,
       columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPaneInColumn, timer: timer
     )

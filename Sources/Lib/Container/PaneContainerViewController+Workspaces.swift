@@ -206,16 +206,22 @@ extension PaneContainerViewController {
   // MARK: - Creation
 
   /// Create a new workspace with an auto-assigned accent color and an
-  /// initial terminal column, then slide it up into view.
-  public func createWorkspace() {
-    NSLog("[e05/ws] createWorkspace entry: focused=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
+  /// initial terminal column, then slide it up into view. `isPrivate`
+  /// propagates to the new workspace's panes: browser panes use an
+  /// ephemeral `WKWebsiteDataStore`, history recording is skipped,
+  /// closed-pane undo is disabled, and the focus border renders as
+  /// a dotted line so the workspace reads as set apart at a glance.
+  public func createWorkspace(isPrivate: Bool = false) {
+    NSLog(
+      "[e05/ws] createWorkspace entry: focused=%d, wsCount=%d, private=%@",
+      focusedWorkspaceIndex, workspaces.count, isPrivate ? "yes" : "no")
 
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     preserveSurfaces(in: outgoing)
     clearAllFocusBorders(in: outgoing)
 
-    let newWorkspace = WorkspaceModel()
+    let newWorkspace = WorkspaceModel(isPrivate: isPrivate)
     let newVC = WorkspaceViewController(workspace: newWorkspace)
     addChild(newVC)
     installWorkspaceView(newVC, makeCurrent: false)
@@ -343,6 +349,25 @@ extension PaneContainerViewController {
       let pane = column.focusedPane
     else {
       NSLog("[e05/ws] movePane guard failed")
+      return
+    }
+    // Block cross-private-boundary moves: a `WKWebView`'s
+    // `WKWebsiteDataStore` is bound at construction time, so
+    // moving a pane across the boundary would either leak the
+    // public profile's cookies into a private workspace's UI
+    // (public → private) or strand a still-ephemeral webView
+    // inside a public workspace (private → public). Both shapes
+    // mean the dotted/solid focus border stops mirroring the
+    // actual storage scope. Surfacing as a no-op + log is safer
+    // than reconstructing the webView mid-move (which loses back/
+    // forward and any in-flight state). Reopen the URL with
+    // ⌘N / ⌘⇧N in the desired workspace instead.
+    let sourceIsPrivate = workspaces[focusedWorkspaceIndex].isPrivate
+    if sourceIsPrivate != workspaces[target].isPrivate {
+      NSLog(
+        "[e05/ws] movePane blocked: cross-private-boundary move (source=%@, target=%@)",
+        sourceIsPrivate ? "private" : "public",
+        workspaces[target].isPrivate ? "private" : "public")
       return
     }
     let paneIndex = column.focusedPaneIndex

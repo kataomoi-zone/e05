@@ -336,6 +336,13 @@ extension PaneContainerViewController {
         separatorBefore: true
       ),
       Action(
+        id: "workspace_new_private",
+        title: "New Private Workspace",
+        keyEquivalent: "n",
+        modifierMask: [.command, .shift],
+        handler: { [weak self] in self?.createWorkspace(isPrivate: true) }
+      ),
+      Action(
         id: "workspace_close",
         title: "Close Current Workspace",
         keyEquivalent: "w",
