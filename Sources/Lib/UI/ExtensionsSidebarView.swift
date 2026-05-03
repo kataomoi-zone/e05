@@ -16,10 +16,11 @@ private let extensionsCellLogger = Logger(
 /// Downloads): transparent background, 48pt rows showing the
 /// extension's action icon plus a two-line label (display name and
 /// version), with a trailing `NSSwitch` for enable/disable and a
-/// hover-revealed ellipsis menu (`Reload`, `View Errors`, `Move to
-/// Trash`). `Open Options Page` is deferred until
-/// `WKWebExtensionTab` / `WKWebExtensionWindow` adoption gives us a
-/// `webView` that can host `webkit-extension://` URLs.
+/// hover-revealed ellipsis menu (`Reload`, `View Errors`,
+/// `Open Options Page`, `Move to Trash`). The options page opens as
+/// a regular browser column whose `WKWebView` is built from the
+/// extension context's own `webViewConfiguration` — see
+/// `PaneModel.init` for the `webkit-extension://` routing.
 @MainActor
 final class ExtensionsSidebarView: NSView {
   private let scrollView = NSScrollView()
@@ -30,6 +31,12 @@ final class ExtensionsSidebarView: NSView {
   private var rows: [LoadedExtension] = []
   nonisolated(unsafe) private var changeObserver: NSObjectProtocol?
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
+
+  /// Fired when the user picks `Open Options Page`. The sidebar VC
+  /// wires this to `PaneContainerViewController.addColumn(address:)`
+  /// so the options page lands as a fresh browser column in the
+  /// current workspace, mirroring Bookmarks / History `onOpen` UX.
+  var onOpenURL: ((URL) -> Void)?
 
   init() {
     super.init(frame: .zero)
@@ -433,6 +440,10 @@ extension ExtensionsSidebarView: NSTableViewDelegate {
 enum ExtensionRowAction {
   case reload
   case viewErrors
+  /// Open the extension's options page (`options_page` /
+  /// `options_ui.page` from the manifest) as a fresh browser column.
+  /// Gated on `LoadedExtension.hasOptionsPage` at menu-build time.
+  case openOptionsPage
   /// Move the extension's source archive to the Trash and clear all
   /// caches. `.archive` rows only.
   case remove
@@ -467,6 +478,17 @@ extension ExtensionsSidebarView {
       presentRowAlert(
         title: "Extension errors", text: body, style: .informational
       )
+    case .openOptionsPage:
+      // The cell already greys out this menu item unless the manifest
+      // declares an options page **and** the extension is enabled, so
+      // a nil URL here means a TOCTOU (the user disabled the extension
+      // through some other path between menu render and click).
+      // Quietly drop the action — the row's switch is the actionable
+      // signal in that race.
+      guard let url = ExtensionController.shared.optionsPageURL(for: sourceURL) else {
+        return
+      }
+      onOpenURL?(url)
     case .remove:
       ExtensionController.shared.removeExtension(for: sourceURL)
     case .forget:
@@ -511,6 +533,18 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   private let menuButton = HoverIconButton()
   private var currentSourceURL: URL?
   private var currentSourceKind: SourceKind = .archive
+  /// Mirrored from the latest `configure(with:)` so menu construction
+  /// can gate `Open Options Page` on the manifest declaration without
+  /// re-reading the snapshot.
+  private var currentHasOptionsPage = false
+  /// Mirrors `LoadedExtension.isEnabled`; combined with
+  /// `currentHasOptionsPage` to gate the `Open Options Page` menu
+  /// item. Disabled extensions can't host their options page (the
+  /// underlying `WKWebExtensionContext` is unloaded), so the row's
+  /// enable/disable switch is the user-facing fix and the menu
+  /// item should reflect that by greying out rather than firing an
+  /// alert when clicked.
+  private var currentIsEnabled = true
 
   /// Fired when the user flips the trailing switch. The parent list
   /// view forwards the request to `ExtensionController.setEnabled`,
@@ -643,6 +677,22 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         enabled: hasErrors
       )
     )
+    // Manifests without an options page declaration get a disabled
+    // entry rather than a missing one, so the menu shape stays
+    // identical across rows — Safari and Chrome do the same with
+    // their per-extension management menus. Disabled extensions
+    // also grey the item out: the underlying
+    // `WKWebExtensionContext` is unloaded so the page can't be
+    // hosted; the row's enable switch is the user-facing fix.
+    menu.addItem(
+      buildMenuItem(
+        title: "Open Options Page",
+        symbol: "gearshape",
+        action: #selector(menuOpenOptionsPage(_:)),
+        sourceURL: sourceURL,
+        enabled: currentHasOptionsPage && currentIsEnabled
+      )
+    )
     menu.addItem(.separator())
     if isFileBacked {
       menu.addItem(
@@ -698,6 +748,11 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     onRowAction?(sourceURL, .viewErrors)
   }
 
+  @objc private func menuOpenOptionsPage(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, .openOptionsPage)
+  }
+
   @objc private func menuRemove(_ sender: NSMenuItem) {
     guard let sourceURL = sourceURL(from: sender) else { return }
     onRowAction?(sourceURL, .remove)
@@ -728,6 +783,8 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   func configure(with entry: LoadedExtension) {
     currentSourceURL = entry.sourceURL
     currentSourceKind = entry.sourceKind
+    currentHasOptionsPage = entry.hasOptionsPage
+    currentIsEnabled = entry.isEnabled
     titleLabel.stringValue = entry.displayName
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"

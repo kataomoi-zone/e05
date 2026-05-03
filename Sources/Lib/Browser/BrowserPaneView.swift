@@ -81,39 +81,80 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var isLoadingObservation: NSKeyValueObservation?
   private var adblockerObserverTask: Task<Void, Never>?
 
-  public override init(frame: NSRect) {
-    let config = WKWebViewConfiguration()
-    // Enable Web Inspector — required for _inspector to work.
-    config.preferences.setValue(true, forKey: "developerExtrasEnabled")
-    // Attach the shared WKWebExtensionController before the web view is
-    // created — WKWebView snapshots its configuration at init time, so
-    // setting the controller afterwards is silently ignored.
-    config.webExtensionController = ExtensionController.shared.controller
-    // Attach the built-in content rule list. Same init-time snapshot
-    // constraint applies: the user content controller must already
-    // hold its rule lists before WKWebView is initialized.
-    AdBlocker.shared.attach(to: config)
-    // Install the cosmetic content script and its reply-handler
-    // IPC alongside the declarative rule list. The user script +
-    // WKScriptMessageHandlerWithReply registrations share the same
-    // init-time snapshot constraint as AdBlocker.
-    CosmeticFilterEngine.shared.attach(to: config)
-    // Hover-link preview: register the content script and fire-and-
-    // forget message handler before the web view is constructed so
-    // the init-time configuration snapshot picks them up. The handler
-    // and the user script must share a content world — otherwise the
-    // `webkit.messageHandlers.<name>` lookup in the script returns
-    // undefined and every post is silently dropped.
+  /// Whether this pane was constructed for a `WKWebExtensionContext`
+  /// (e.g. an extension's options page). The flag gates services that
+  /// only make sense for general web content — adblocker rule-list
+  /// late-attach, hover-link preview — so an extension-owned pane
+  /// keeps the configuration WebKit handed it untouched.
+  private let isExtensionHosted: Bool
+
+  public override convenience init(frame: NSRect) {
+    self.init(frame: frame, extensionContext: nil)
+  }
+
+  /// Construct a browser pane. When `extensionContext` is non-nil
+  /// **and** the context vends a `webViewConfiguration`, the pane
+  /// hosts that extension's resources (options page, etc.) using
+  /// the context's own configuration — Apple's documented requirement
+  /// for any web view that navigates to a `webkit-extension://` URL.
+  /// e05's adblocker / cosmetic filter / hover-link content scripts
+  /// are intentionally **not** attached in that case: the
+  /// configuration is owned by WebKit's extension machinery and
+  /// mutating it could disturb scheme handlers or content worlds the
+  /// controller relies on.
+  ///
+  /// `WKWebExtensionContext.webViewConfiguration` is typed
+  /// `Optional` and returns nil when the context isn't yet associated
+  /// with a controller. The caller treats that as "fall back to a
+  /// regular browser pane"; the resulting `webkit-extension://` load
+  /// will surface as a navigation failure rather than crashing.
+  public init(frame: NSRect, extensionContext: WKWebExtensionContext?) {
+    let config: WKWebViewConfiguration
     let hoverHandler = HoverLinkMessageHandler()
-    config.userContentController.addUserScript(Self.hoverLinkUserScript)
-    config.userContentController.add(
-      hoverHandler,
-      contentWorld: Self.hoverLinkContentWorld,
-      name: Self.hoverLinkHandlerName
-    )
+    let extensionConfig = extensionContext?.webViewConfiguration
+    if let extensionConfig {
+      config = extensionConfig
+      // Web Inspector is the primary debugging surface for an
+      // extension's options page; the context-owned configuration
+      // doesn't enable it by default. Setting the preference key
+      // doesn't touch the user content controller or scheme
+      // handlers, so it stays compatible with the Apple constraint
+      // that the extension configuration is otherwise used as-is.
+      config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+    } else {
+      config = WKWebViewConfiguration()
+      // Enable Web Inspector — required for _inspector to work.
+      config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+      // Attach the shared WKWebExtensionController before the web view is
+      // created — WKWebView snapshots its configuration at init time, so
+      // setting the controller afterwards is silently ignored.
+      config.webExtensionController = ExtensionController.shared.controller
+      // Attach the built-in content rule list. Same init-time snapshot
+      // constraint applies: the user content controller must already
+      // hold its rule lists before WKWebView is initialized.
+      AdBlocker.shared.attach(to: config)
+      // Install the cosmetic content script and its reply-handler
+      // IPC alongside the declarative rule list. The user script +
+      // WKScriptMessageHandlerWithReply registrations share the same
+      // init-time snapshot constraint as AdBlocker.
+      CosmeticFilterEngine.shared.attach(to: config)
+      // Hover-link preview: register the content script and fire-and-
+      // forget message handler before the web view is constructed so
+      // the init-time configuration snapshot picks them up. The handler
+      // and the user script must share a content world — otherwise the
+      // `webkit.messageHandlers.<name>` lookup in the script returns
+      // undefined and every post is silently dropped.
+      config.userContentController.addUserScript(Self.hoverLinkUserScript)
+      config.userContentController.add(
+        hoverHandler,
+        contentWorld: Self.hoverLinkContentWorld,
+        name: Self.hoverLinkHandlerName
+      )
+    }
     hoverLinkMessageHandler = hoverHandler
     let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
     webView = focusReportingWebView
+    isExtensionHosted = (extensionConfig != nil)
 
     super.init(frame: frame)
 
@@ -145,7 +186,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// exactly once. ``WKUserContentController`` accepts post-init
   /// ``add(_:)`` calls for rule lists (unlike the configuration, which
   /// is snapshotted at web view init).
+  ///
+  /// Skipped for extension-hosted panes: the extension context owns
+  /// its `WKUserContentController` and post-init mutation could trip
+  /// `webkit-extension://` resource resolution.
   private func observeAdBlockerReady() {
+    if isExtensionHosted { return }
     if !AdBlocker.shared.ruleLists.isEmpty { return }
     let ucc = webView.configuration.userContentController
     adblockerObserverTask = Task { @MainActor [weak self] in
@@ -284,7 +330,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     guard let url = URL(string: normalized),
       let scheme = url.scheme,
-      ["https", "http", "about"].contains(scheme)
+      ["https", "http", "about", PaneAddress.extensionScheme].contains(scheme)
     else { return }
     webView.load(URLRequest(url: url))
   }

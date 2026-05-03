@@ -186,11 +186,17 @@ final class SidebarViewController: NSViewController {
 
     // Extensions mode reads from the process-lifetime
     // `ExtensionController` singleton directly, so it doesn't need a
-    // container reference. The view subscribes to
+    // container reference for state. The view subscribes to
     // `ExtensionController.didChangeNotification` internally, which
     // means async loads completing after the sidebar appears still
-    // populate the list.
+    // populate the list. The `Open Options Page` row action does
+    // need the container — same UX policy as Bookmarks `onOpen`,
+    // landing the page as a fresh browser column in the current
+    // workspace.
     let extensionsView = ExtensionsSidebarView()
+    extensionsView.onOpenURL = { [weak container] url in
+      container?.addColumn(address: PaneAddress(url))
+    }
     overlay.setExtensionsView(extensionsView)
 
     // Re-apply the current mode so the newly installed mode views'

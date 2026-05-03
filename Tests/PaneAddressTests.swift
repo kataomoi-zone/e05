@@ -156,6 +156,52 @@ struct PaneAddressTests {
     #expect(addr.kind == .browser)
   }
 
+  @Test("webkit-extension URLs resolve to browser kind")
+  func extensionSchemeKind() {
+    // Extension-owned resources (options pages, popup.html, etc.)
+    // need to land in a browser pane so the existing URL-bar / find /
+    // close machinery applies. PaneModel.init resolves the matching
+    // WKWebExtensionContext to seed the pane with the right
+    // webViewConfiguration; PaneAddress only commits to "this is a
+    // browser-shaped address".
+    let addr = PaneAddress("webkit-extension://abc123/options.html")!
+    #expect(addr.kind == .browser)
+  }
+
+  @Test("fromUserInput accepts webkit-extension scheme")
+  func fromUserInputExtensionScheme() {
+    let addr = PaneAddress.fromUserInput("webkit-extension://abc123/options.html")
+    #expect(addr?.kind == .browser)
+  }
+
+  @Test("requiresContentSwitch is true crossing the extension boundary")
+  func extensionBoundarySwitch() {
+    // Both addresses classify as `.browser`, but the extension URL
+    // is bound to a context-owned WKWebViewConfiguration. Reusing
+    // the same WKWebView for an external URL would mix extension
+    // content world / scheme handlers into non-extension origins,
+    // so the URL bar must trigger a pane rebuild in either
+    // direction.
+    let extPage = PaneAddress("webkit-extension://abc123/options.html")!
+    let httpsPage = PaneAddress("https://example.com")!
+    #expect(extPage.requiresContentSwitch(to: httpsPage))
+    #expect(httpsPage.requiresContentSwitch(to: extPage))
+  }
+
+  @Test("requiresContentSwitch is false between two extension URLs")
+  func extensionToExtensionNoSwitch() {
+    // Two URLs inside the same extension share the configuration
+    // (the in-pane webView already owns the right context), so
+    // navigating between them should stay in place. Different
+    // extensions live behind different uniqueIdentifiers and so
+    // also share the boundary bit, but they would hit a navigation
+    // failure rather than a rebuild — same fallback shape as a
+    // disabled extension.
+    let a = PaneAddress("webkit-extension://abc/options.html")!
+    let b = PaneAddress("webkit-extension://abc/popup.html")!
+    #expect(!a.requiresContentSwitch(to: b))
+  }
+
   @Test("unknown e05 host resolves to unknown kind")
   func unknownInternalKind() {
     let addr = PaneAddress("e05://nonexistent")!

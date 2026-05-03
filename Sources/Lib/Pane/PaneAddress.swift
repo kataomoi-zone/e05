@@ -32,7 +32,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
       case "settings": return .settings
       default: return .unknown
       }
-    case "https", "http", "about":
+    case "https", "http", "about", Self.extensionScheme:
       return .browser
     default:
       return .unknown
@@ -71,6 +71,14 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   // MARK: - Well-known addresses
 
   public static let internalScheme = "e05"
+
+  /// Scheme WebKit uses for extension-owned resources, e.g.
+  /// `webkit-extension://<uuid>/options.html`. Routed to `.browser`
+  /// kind so an `Open Options Page` action can open the page as a
+  /// regular browser column; the pane's WKWebView is initialized
+  /// from the matching `WKWebExtensionContext.webViewConfiguration`,
+  /// which `PaneModel.init` resolves through `ExtensionController`.
+  public static let extensionScheme = "webkit-extension"
 
   public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
   public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
@@ -128,7 +136,9 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     return url.absoluteString
   }
 
-  private static let allowedSchemes: Set<String> = [internalScheme, "https", "http", "about"]
+  private static let allowedSchemes: Set<String> = [
+    internalScheme, "https", "http", "about", extensionScheme,
+  ]
 
   /// Parse user input from the URL bar. Adds `https://` if no scheme is present.
   /// Only allows known schemes (e05, https, http). Unknown schemes return nil.
@@ -158,8 +168,28 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   }
 
   /// Whether navigating from one address to another requires content type change.
+  ///
+  /// The kind comparison covers terminal/browser/finder rebuilds.
+  /// The extension-resource bit covers a subtler case both sides
+  /// classify as `.browser`: a `webkit-extension://` URL and a
+  /// regular `https://` URL share the kind but are bound to
+  /// incompatible `WKWebViewConfiguration`s — extension-hosted panes
+  /// are constructed from the context's own configuration, and
+  /// loading external content into that webView would mix the
+  /// extension's content world / scheme handlers / API into
+  /// non-extension origins. Forcing a pane rebuild whenever the
+  /// extension boundary is crossed (in either direction) keeps the
+  /// configuration distinction load-bearing.
   public func requiresContentSwitch(to other: PaneAddress) -> Bool {
-    kind != other.kind
+    if kind != other.kind { return true }
+    return isExtensionResource != other.isExtensionResource
+  }
+
+  /// Whether this address points at extension-owned resources
+  /// (`webkit-extension://<uuid>/...`). Drives the
+  /// `requiresContentSwitch` extension-boundary check.
+  public var isExtensionResource: Bool {
+    url.scheme == Self.extensionScheme
   }
 
   /// Parse user input as a direct-navigable address.

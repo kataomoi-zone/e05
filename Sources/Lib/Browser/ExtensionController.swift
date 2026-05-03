@@ -1165,7 +1165,8 @@ public final class ExtensionController {
       manifestVersion: ext.manifestVersion,
       icon: Self.bestIcon(for: ext),
       isEnabled: isEnabled,
-      sourceKind: sourceKind
+      sourceKind: sourceKind,
+      hasOptionsPage: ext.hasOptionsPage
     )
     loadedExtensions.append(entry)
     // Stable display order across launches: filesystem enumeration
@@ -1263,6 +1264,35 @@ public final class ExtensionController {
     let filename = sourceURL.lastPathComponent
     guard let ctx = contextsByFilename[filename] else { return [] }
     return ctx.errors as [NSError]
+  }
+
+  /// Resolve an extension URL (`webkit-extension://<uuid>/...`) back
+  /// to the owning `WKWebExtensionContext`. Required by `PaneModel.init`
+  /// to seed an extension-hosted browser pane with the context's own
+  /// `webViewConfiguration`, which Apple documents as the only
+  /// supported way to load a `webkit-extension://` URL.
+  public func extensionContext(forExtensionURL url: URL) -> WKWebExtensionContext? {
+    controller.extensionContext(for: url)
+  }
+
+  /// Options page URL for the extension installed at `sourceURL`, or
+  /// nil when the manifest declares no options page, the extension
+  /// has been disabled, or no entry is loaded for the source. The URL
+  /// is `webkit-extension://<uuid>/...` — pass straight to
+  /// `addColumn(address:)` after wrapping in a `PaneAddress` to open
+  /// the page as a regular browser column.
+  ///
+  /// Disabled entries are gated explicitly: `setEnabled(false)` calls
+  /// `controller.unload` but keeps `contextsByFilename` intact, so
+  /// `ctx.optionsPageURL` still resolves. Returning the URL anyway
+  /// would route the click into a fallback browser pane (the
+  /// controller's `extensionContext(for:)` won't resolve the
+  /// unloaded ctx) and silently render a navigation failure instead
+  /// of the documented "extension is disabled" alert.
+  public func optionsPageURL(for sourceURL: URL) -> URL? {
+    let filename = sourceURL.lastPathComponent
+    guard !disabledFilenames.contains(filename) else { return nil }
+    return contextsByFilename[filename]?.optionsPageURL
   }
 
   /// Re-parse and reactivate the extension. Equivalent to a remove +
@@ -1388,7 +1418,8 @@ public final class ExtensionController {
       manifestVersion: oldExt.manifestVersion,
       icon: Self.bestIcon(for: oldExt),
       isEnabled: wasEnabled,
-      sourceKind: sourceKind
+      sourceKind: sourceKind,
+      hasOptionsPage: oldExt.hasOptionsPage
     )
     loadedExtensions.append(entry)
     loadedExtensions.sort {
@@ -2056,6 +2087,11 @@ public struct LoadedExtension {
   /// menu (Reload / Move to Trash), `.appBundle` rows hide actions
   /// that would touch a code-signed app the controller doesn't own.
   public let sourceKind: SourceKind
+  /// Mirrors `WKWebExtension.hasOptionsPage` at activation time.
+  /// Captured into the snapshot so the sidebar's row menu can gate
+  /// the `Open Options Page` item without a per-render lookup
+  /// through the context cache.
+  public let hasOptionsPage: Bool
 }
 
 /// How an extension reached `ExtensionController`. The value is

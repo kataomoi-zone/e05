@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PaneModel")
@@ -154,7 +155,21 @@ public final class PaneModel {
       tv.translatesAutoresizingMaskIntoConstraints = false
       self.content = .terminal(tv)
     case .browser:
-      let bv = Self.makeBrowserView()
+      // Extension-owned URLs (`webkit-extension://<uuid>/...`) need
+      // the context's own `webViewConfiguration` — Apple's docs are
+      // explicit that a generic config + `webExtensionController`
+      // pointer is not enough to load extension resources. Resolve
+      // the context up front; if the extension was unloaded between
+      // session capture and restore (or the URL was hand-typed for
+      // an extension that no longer exists), fall through to a
+      // standard browser view, where `webView.load` of an
+      // unresolvable extension URL surfaces as a navigation
+      // failure rather than a crash.
+      let extensionContext: WKWebExtensionContext? =
+        address.url.scheme == PaneAddress.extensionScheme
+        ? ExtensionController.shared.extensionContext(forExtensionURL: address.url)
+        : nil
+      let bv = Self.makeBrowserView(extensionContext: extensionContext)
       self.content = .browser(bv)
     case .finder:
       // Empty path means the bare `e05://finder` URL — substitute the
@@ -210,8 +225,10 @@ public final class PaneModel {
     }
   }
 
-  private static func makeBrowserView() -> BrowserPaneView {
-    let bv = BrowserPaneView()
+  private static func makeBrowserView(
+    extensionContext: WKWebExtensionContext? = nil
+  ) -> BrowserPaneView {
+    let bv = BrowserPaneView(frame: .zero, extensionContext: extensionContext)
     bv.translatesAutoresizingMaskIntoConstraints = false
     return bv
   }
