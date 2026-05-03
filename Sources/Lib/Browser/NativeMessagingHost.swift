@@ -91,13 +91,17 @@ final class NativeMessagingPort {
   /// possible class of "fd closed prematurely" failures.
   private let stdinPipe: Pipe
   private let stdoutPipe: Pipe
+  private let stderrPipe: Pipe
   private let stdin: FileHandle
   private let stdout: FileHandle
+  private let stderr: FileHandle
   private var readTask: Task<Void, Never>?
+  private var stderrTask: Task<Void, Never>?
   /// Invoked when the host process or read loop terminates so the
   /// owning controller can drop its retain on this port.
   var onClosed: (@MainActor () -> Void)?
   private(set) var isClosed = false
+  private let manifestPath: String
 
   init(
     port: WKWebExtension.MessagePort,
@@ -105,6 +109,11 @@ final class NativeMessagingPort {
     callerOrigin: String?
   ) throws {
     self.port = port
+    self.manifestPath = manifest.path
+    NSLog(
+      "[e05/nm] Spawning host name=%@ path=%@ origin=%@",
+      manifest.name, manifest.path, callerOrigin ?? "(none)"
+    )
     let process = Process()
     process.executableURL = URL(fileURLWithPath: manifest.path)
     if let origin = callerOrigin {
@@ -112,17 +121,32 @@ final class NativeMessagingPort {
     }
     let stdinPipe = Pipe()
     let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
     process.standardInput = stdinPipe
     process.standardOutput = stdoutPipe
-    // Inherit stderr so the host's diagnostic output flows into the
-    // same console stream as the rest of the app — useful when a host
-    // crashes during the encryption handshake.
-    process.standardError = FileHandle.standardError
+    // Use a pipe (not inherited stderr) so the host's diagnostic
+    // output is line-buffered into NSLog with a clear `[e05/nm/stderr]`
+    // prefix. Inheriting standardError sent the bytes to e05's stderr
+    // raw, which interleaved unpredictably with NSLog and made it
+    // hard to correlate proxy crashes with the surrounding bridge
+    // events.
+    process.standardError = stderrPipe
     self.process = process
     self.stdinPipe = stdinPipe
     self.stdoutPipe = stdoutPipe
+    self.stderrPipe = stderrPipe
     self.stdin = stdinPipe.fileHandleForWriting
     self.stdout = stdoutPipe.fileHandleForReading
+    self.stderr = stderrPipe.fileHandleForReading
+    // Wire termination logging *before* spawning so Process can
+    // never deliver the callback before our handler is set.
+    process.terminationHandler = { proc in
+      NSLog(
+        "[e05/nm] host process terminated pid=%d status=%d reason=%@",
+        proc.processIdentifier, proc.terminationStatus,
+        proc.terminationReason == .exit ? "exit" : "uncaughtSignal"
+      )
+    }
     try process.run()
     NSLog(
       "[e05/nm] Launched host pid=%d path=%@ origin=%@",
@@ -133,6 +157,57 @@ final class NativeMessagingPort {
     )
     configureBridges()
     startReadLoop()
+    startStderrLoop()
+    scheduleEarlyExitCheck()
+  }
+
+  /// Detect a host that exits within the first 500ms after spawn.
+  /// Bitwarden's `desktop_proxy` does this when its IPC link to the
+  /// Electron main process can't be established (Bitwarden Desktop
+  /// not running, browser-integration toggle off, IPC socket
+  /// missing), and the proxy's stderr alone doesn't make the failure
+  /// obvious. Logging an explicit "exited within Nms" line gives the
+  /// reader a single anchor to scan for.
+  private func scheduleEarlyExitCheck() {
+    let pid = process.processIdentifier
+    let path = manifestPath
+    Task.detached { [weak self] in
+      try? await Task.sleep(nanoseconds: 500_000_000)
+      guard let self else { return }
+      await MainActor.run {
+        // Suppress the WARN when *we* tore the host down inside the
+        // 500ms window (extension disable, popup close, app quit).
+        // Without this guard a clean self-shutdown looks identical
+        // to a launch crash and clutters the log with false leads.
+        guard !self.isClosed else { return }
+        if !self.process.isRunning {
+          NSLog(
+            "[e05/nm] WARN host exited within 500ms pid=%d status=%d path=%@",
+            pid, self.process.terminationStatus, path
+          )
+        } else {
+          NSLog("[e05/nm] host still alive after 500ms pid=%d", pid)
+        }
+      }
+    }
+  }
+
+  /// Drain the host's stderr line-by-line into NSLog. Uses
+  /// readabilityHandler so partial lines coming from a panicking host
+  /// still flush before the process dies.
+  private func startStderrLoop() {
+    let handle = stderr
+    stderrTask = Task.detached {
+      while !Task.isCancelled {
+        guard let chunk = try? handle.read(upToCount: 8192), !chunk.isEmpty else {
+          return
+        }
+        let text = String(data: chunk, encoding: .utf8) ?? "(binary \(chunk.count) bytes)"
+        for line in text.split(whereSeparator: \.isNewline) where !line.isEmpty {
+          NSLog("[e05/nm/stderr] %@", String(line))
+        }
+      }
+    }
   }
 
   private func configureBridges() {
@@ -300,10 +375,30 @@ final class NativeMessagingPort {
     NSLog("[e05/nm] shutdown reason=%@", reason)
     readTask?.cancel()
     readTask = nil
+    stderrTask?.cancel()
+    stderrTask = nil
     try? stdin.close()
     try? stdout.close()
+    try? stderr.close()
     if process.isRunning {
       process.terminate()
+      // Most well-behaved hosts (Bitwarden's desktop_proxy included)
+      // exit on SIGTERM within milliseconds, but a host that ignores
+      // the signal (or one stuck inside an uninterruptible syscall)
+      // would otherwise stay around as a zombie until the user logs
+      // out. Schedule a SIGKILL fallback so teardown is bounded.
+      let pidToKill = process.processIdentifier
+      let proc = process
+      Task.detached {
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        if proc.isRunning {
+          NSLog(
+            "[e05/nm] host did not exit on SIGTERM, sending SIGKILL pid=%d",
+            pidToKill
+          )
+          kill(pidToKill, SIGKILL)
+        }
+      }
     }
     if !port.isDisconnected {
       port.disconnect()
