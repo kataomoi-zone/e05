@@ -81,6 +81,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var isLoadingObservation: NSKeyValueObservation?
   private var adblockerObserverTask: Task<Void, Never>?
 
+  /// URL of the most recent navigation accepted by `decidePolicyFor`.
+  /// Captured up-front so `handleNavigationFailure` can keep the
+  /// error page anchored to the attempted URL even when WebKit's
+  /// `NSError.userInfo` doesn't carry the failing URL key (it's not
+  /// populated for every code path) and `webView.url` has already
+  /// been cleared after a provisional failure.
+  private var lastAttemptedURL: URL?
+
   /// Whether this pane was constructed for a `WKWebExtensionContext`
   /// (e.g. an extension's options page). The flag gates services that
   /// only make sense for general web content — adblocker rule-list
@@ -335,6 +343,260 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     webView.load(URLRequest(url: url))
   }
 
+  /// Render an in-pane error page for a `webkit-extension://` URL
+  /// that has no resolvable `WKWebExtensionContext` — extension was
+  /// removed, disabled, or the URL refers to a UUID e05 has never
+  /// loaded. WebKit's default for this is a silent navigation failure
+  /// that paints as a blank pane, which is hostile when the user just
+  /// clicked a stale options-page link or pasted a URL. Routes through
+  /// the same `loadHTMLErrorPage` machinery as `didFailProvisionalNavigation`
+  /// so all error surfaces share one visual language.
+  public func loadExtensionUnavailableError(for url: URL) {
+    let identifier = url.host ?? "(unknown)"
+    let escaped = Self.htmlEscape(identifier)
+    loadHTMLErrorPage(
+      iconDataURI: Self.puzzleIconDataURI,
+      title: "\(identifier) is not available",
+      descriptionHTML:
+        "<strong>\(escaped)</strong> is not loaded in e05. "
+        + "It may have been removed, disabled, or never installed.",
+      errorCode: "ERR_EXTENSION_NOT_FOUND",
+      attemptedURL: url
+    )
+  }
+
+  /// Render an in-pane error page for a generic navigation failure
+  /// (DNS lookup failed, connection refused, TLS error, etc.). Mirrors
+  /// Brave / Chromium's net error pages — short title, host-aware
+  /// description with the failing host in bold, and an
+  /// `ERR_*` code identifier the user can paste into a search engine.
+  private func loadNavigationErrorPage(error: NSError, attemptedURL: URL?) {
+    let info = Self.navigationErrorInfo(forCode: error.code, host: attemptedURL?.host)
+    loadHTMLErrorPage(
+      iconDataURI: Self.triangleIconDataURI,
+      title: info.title,
+      descriptionHTML: info.descriptionHTML,
+      errorCode: info.errorCode,
+      attemptedURL: attemptedURL
+    )
+  }
+
+  /// Shared HTML renderer for both the extension and navigation error
+  /// surfaces. `iconDataURI` is the pre-rendered SF Symbol PNG (one
+  /// per error family); `descriptionHTML` is the caller's
+  /// pre-escaped fragment so a `<strong>` host emphasis can render
+  /// without round-tripping through plain-text. `attemptedURL` lets
+  /// the URL bar keep the original target visible and lets `reload`
+  /// re-attempt the network request — a server-not-yet-running
+  /// workflow ("start the dev server, hit ⌘R") would otherwise
+  /// require re-typing the URL because the page is loaded as
+  /// `about:blank` when no `attemptedURL` is available.
+  private func loadHTMLErrorPage(
+    iconDataURI: String,
+    title: String,
+    descriptionHTML: String,
+    errorCode: String,
+    attemptedURL: URL?
+  ) {
+    let escapedTitle = Self.htmlEscape(title)
+    let escapedCode = Self.htmlEscape(errorCode)
+    let iconTag =
+      iconDataURI.isEmpty
+      ? ""
+      : """
+        <img class="icon" src="\(iconDataURI)" alt="" aria-hidden="true">
+        """
+    let html = """
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+      <meta charset="utf-8">
+      <title>\(escapedTitle)</title>
+      <style>
+        :root { color-scheme: dark; }
+        html, body { margin: 0; padding: 0; background: #1d1d1d; color: #e8e8e8;
+          font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; }
+        body { display: flex; align-items: flex-start; justify-content: center;
+          min-height: 100vh; padding: 64px 32px; box-sizing: border-box; }
+        main { max-width: 640px; width: 100%; }
+        .icon { width: 56px; height: 56px; display: block; margin-bottom: 24px; }
+        h1 { font-size: 22px; font-weight: 600; margin: 0 0 16px; line-height: 1.3;
+          color: #e8e8e8; }
+        p { font-size: 14px; color: #a8a8a8; margin: 0 0 12px; line-height: 1.5; }
+        p strong { color: #e8e8e8; font-weight: 600; }
+        .code { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+          color: #6e6e6e; font-size: 12px; margin-top: 28px; letter-spacing: 0.02em; }
+      </style>
+      </head>
+      <body>
+      <main>
+        \(iconTag)
+        <h1>\(escapedTitle)</h1>
+        <p>\(descriptionHTML)</p>
+        <p class="code">\(escapedCode)</p>
+      </main>
+      </body>
+      </html>
+      """
+    loadAlternateHTMLOrFallback(html: html, attemptedURL: attemptedURL)
+  }
+
+  /// Try Safari's private `_loadAlternateHTMLString:baseURL:forUnreachableURL:`
+  /// SPI so the URL bar keeps the attempted URL and `webView.reload()`
+  /// re-attempts the original network request. The SPI is invoked
+  /// through the Objective-C runtime (`method(for:)` + `unsafeBitCast`
+  /// to a `@convention(c)` function pointer): a Swift `@objc protocol`
+  /// cast would have required formal conformance, which `WKWebView`
+  /// doesn't declare for our protocol type, so the cast silently
+  /// returned nil and the fallback path painted `about:blank`. Falls
+  /// back to `loadHTMLString` (which sets `webView.url` to
+  /// about:blank, losing the attempted URL) when no URL was tracked
+  /// or the selector ever disappears from a future WebKit drop.
+  private func loadAlternateHTMLOrFallback(html: String, attemptedURL: URL?) {
+    let selector = NSSelectorFromString(
+      "_loadAlternateHTMLString:baseURL:forUnreachableURL:"
+    )
+    if let attemptedURL, webView.responds(to: selector),
+      let imp = webView.method(for: selector)
+    {
+      typealias Fn = @convention(c) (
+        AnyObject, Selector, NSString, NSURL?, NSURL
+      ) -> Void
+      let fn = unsafeBitCast(imp, to: Fn.self)
+      fn(webView, selector, html as NSString, nil, attemptedURL as NSURL)
+      return
+    }
+    webView.loadHTMLString(html, baseURL: nil)
+  }
+
+  /// HTML-escape `<>&"'` so an attacker-controlled host segment
+  /// can't inject markup into the error page. The page is loaded
+  /// with `baseURL: nil` so any injected script would be sandboxed
+  /// to about:blank, but escaping is still cheap insurance.
+  private static func htmlEscape(_ input: String) -> String {
+    input
+      .replacingOccurrences(of: "&", with: "&amp;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+      .replacingOccurrences(of: ">", with: "&gt;")
+      .replacingOccurrences(of: "\"", with: "&quot;")
+      .replacingOccurrences(of: "'", with: "&#39;")
+  }
+
+  /// Map a single `NSURLError` code to the title / description HTML /
+  /// error code triple used by the generic error page. Mirrors the
+  /// most common Chromium net-error surfaces; codes outside the
+  /// switch list fall through to a generic `ERR_FAILED` page so the
+  /// user sees *something* instead of the WebKit default of a blank
+  /// pane plus a bounce back to the previous URL.
+  private struct NavigationErrorInfo {
+    let title: String
+    let descriptionHTML: String
+    let errorCode: String
+  }
+
+  private static func navigationErrorInfo(
+    forCode code: Int, host rawHost: String?
+  ) -> NavigationErrorInfo {
+    let displayHost: String =
+      rawHost.map { "<strong>\(htmlEscape($0))</strong>" } ?? "the page"
+    switch code {
+    case NSURLErrorCannotFindHost:
+      return NavigationErrorInfo(
+        title: "This site can't be reached",
+        descriptionHTML: "\(displayHost)'s server IP address could not be found.",
+        errorCode: "ERR_NAME_NOT_RESOLVED"
+      )
+    case NSURLErrorCannotConnectToHost:
+      return NavigationErrorInfo(
+        title: "This site can't be reached",
+        descriptionHTML: "\(displayHost) refused to connect.",
+        errorCode: "ERR_CONNECTION_REFUSED"
+      )
+    case NSURLErrorTimedOut:
+      return NavigationErrorInfo(
+        title: "This site can't be reached",
+        descriptionHTML: "\(displayHost) took too long to respond.",
+        errorCode: "ERR_CONNECTION_TIMED_OUT"
+      )
+    case NSURLErrorDNSLookupFailed:
+      return NavigationErrorInfo(
+        title: "This site can't be reached",
+        descriptionHTML: "DNS lookup for \(displayHost) failed.",
+        errorCode: "ERR_NAME_NOT_RESOLVED"
+      )
+    case NSURLErrorNotConnectedToInternet:
+      return NavigationErrorInfo(
+        title: "No internet",
+        descriptionHTML: "Check your network connection and try again.",
+        errorCode: "ERR_INTERNET_DISCONNECTED"
+      )
+    case NSURLErrorNetworkConnectionLost:
+      return NavigationErrorInfo(
+        title: "Network changed",
+        descriptionHTML: "The network connection was lost while loading \(displayHost).",
+        errorCode: "ERR_NETWORK_CHANGED"
+      )
+    case NSURLErrorSecureConnectionFailed,
+      NSURLErrorServerCertificateUntrusted,
+      NSURLErrorServerCertificateHasBadDate,
+      NSURLErrorServerCertificateHasUnknownRoot,
+      NSURLErrorServerCertificateNotYetValid,
+      NSURLErrorClientCertificateRejected,
+      NSURLErrorClientCertificateRequired:
+      return NavigationErrorInfo(
+        title: "Your connection is not private",
+        descriptionHTML: "\(displayHost)'s certificate could not be verified.",
+        errorCode: "ERR_CERT_AUTHORITY_INVALID"
+      )
+    case NSURLErrorUnsupportedURL, NSURLErrorBadURL:
+      return NavigationErrorInfo(
+        title: "This page can't be displayed",
+        descriptionHTML: "The URL is invalid or uses an unsupported scheme.",
+        errorCode: "ERR_UNSUPPORTED_URL"
+      )
+    default:
+      return NavigationErrorInfo(
+        title: "This page can't be displayed",
+        descriptionHTML: "Something went wrong loading \(displayHost).",
+        errorCode: "ERR_FAILED"
+      )
+    }
+  }
+
+  /// SF Symbol rendered to a PNG once at module init and embedded as
+  /// a data URI in the error page. The palette configuration tints
+  /// the symbol explicitly to a light gray so it stays visible
+  /// against the dark page background — a plain template image
+  /// PNG-encodes as black and renders invisible. Returns an empty
+  /// string when SF Symbol resolution fails on the host; the caller
+  /// drops the `<img>` tag and the page degrades to text-only.
+  private static func makeErrorIconDataURI(symbolName: String) -> String {
+    let pointSize: CGFloat = 56
+    let palette = NSImage.SymbolConfiguration(
+      paletteColors: [NSColor(white: 0.66, alpha: 1.0)]
+    )
+    let base = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+    guard
+      let symbol = NSImage(
+        systemSymbolName: symbolName, accessibilityDescription: nil
+      )?.withSymbolConfiguration(base.applying(palette)),
+      let tiff = symbol.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiff),
+      let png = bitmap.representation(using: .png, properties: [:])
+    else { return "" }
+    return "data:image/png;base64,\(png.base64EncodedString())"
+  }
+
+  /// Generic navigation-failure icon (`exclamationmark.triangle`).
+  private static let triangleIconDataURI: String = makeErrorIconDataURI(
+    symbolName: "exclamationmark.triangle"
+  )
+
+  /// Extension-not-available icon (`puzzlepiece.extension`).
+  private static let puzzleIconDataURI: String = makeErrorIconDataURI(
+    symbolName: "puzzlepiece.extension"
+  )
+
   // MARK: - Web Inspector
 
   /// Private API selectors on _WKInspector.
@@ -399,6 +661,15 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
+    // Track every accepted main-frame navigation so the error page
+    // keeps the attempted URL even when `NSError.userInfo` arrives
+    // without `NSURLErrorFailingURLErrorKey` (Apple doesn't promise
+    // the key on every failure path).
+    if navigationAction.targetFrame?.isMainFrame ?? true,
+      let candidate = navigationAction.request.url
+    {
+      lastAttemptedURL = candidate
+    }
     guard navigationAction.navigationType == .linkActivated,
       let url = navigationAction.request.url
     else {
@@ -477,6 +748,69 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // declare the icon via <link> instead) and SPAs whose link tags
     // are injected after the initial HTML ships.
     scanPageFavicon()
+  }
+
+  public func webView(
+    _: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: any Error
+  ) {
+    handleNavigationFailure(error: error)
+  }
+
+  public func webView(
+    _: WKWebView, didFail _: WKNavigation!, withError error: any Error
+  ) {
+    handleNavigationFailure(error: error)
+  }
+
+  /// Filter benign cancellations (the user clicked another link,
+  /// WebKit handed off to a download, an extension URL load aborted
+  /// because the context resolved to nil) and route real failures
+  /// through `loadNavigationErrorPage` so the pane shows an error
+  /// page instead of bouncing back to the previous URL or painting
+  /// blank. The `webView.url` fallback covers errors that don't carry
+  /// `NSURLErrorFailingURLErrorKey` — `webView.url` is still the
+  /// last-attempted URL during a provisional failure.
+  private func handleNavigationFailure(error: any Error) {
+    let nsError = error as NSError
+    if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+      return
+    }
+    // WebKit's "frame load interrupted" (102 / WebKitErrorDomain) fires
+    // when navigation is taken over by another path — typically the
+    // download decision flow. Not a real error to surface.
+    if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
+      return
+    }
+    // Resolution order: NSError userInfo (most precise when set) →
+    // tracker captured in `decidePolicyFor` (covers errors that don't
+    // populate userInfo) → live `webView.url` (cleared on some
+    // provisional failures, so it's the weakest signal).
+    let attemptedURL: URL? =
+      (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+      ?? (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
+        .flatMap(URL.init(string:))
+      ?? lastAttemptedURL
+      ?? webView.url
+    // Reload after an unresolvable `webkit-extension://` URL stays on
+    // the extension-specific page (puzzle icon, "is not available"
+    // copy) instead of falling through to the generic
+    // ERR_UNSUPPORTED_URL surface — the extension framing is the
+    // user-actionable signal here.
+    if let attemptedURL, attemptedURL.scheme == PaneAddress.extensionScheme {
+      loadExtensionUnavailableError(for: attemptedURL)
+    } else {
+      loadNavigationErrorPage(error: nsError, attemptedURL: attemptedURL)
+    }
+    // Force a `loading == false` notification so the URL bar's ⌘L
+    // peek collapses around the error page exactly like it would
+    // around a successfully loaded one. The SPI-driven alternate
+    // HTML load does not consistently fire the natural KVO
+    // `isLoading: true → false` transition (WebKit treats the
+    // alternate as a transient continuation of the failed
+    // navigation, not a fresh top-level load), so the peek-release
+    // path that hangs off `onLoadingStateChange(false)` would
+    // otherwise never run.
+    onLoadingStateChange?(false)
   }
 
   private func scanPageFavicon() {

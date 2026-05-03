@@ -160,17 +160,22 @@ public final class PaneModel {
       // explicit that a generic config + `webExtensionController`
       // pointer is not enough to load extension resources. Resolve
       // the context up front; if the extension was unloaded between
-      // session capture and restore (or the URL was hand-typed for
-      // an extension that no longer exists), fall through to a
-      // standard browser view, where `webView.load` of an
-      // unresolvable extension URL surfaces as a navigation
-      // failure rather than a crash.
+      // session capture and restore, was hand-typed for an
+      // extension that no longer exists, or has been disabled, fall
+      // through to a standard browser view that renders an
+      // in-pane error page instead of letting `webView.load`
+      // surface the failure as a blank pane.
+      let isExtensionURL = address.url.scheme == PaneAddress.extensionScheme
       let extensionContext: WKWebExtensionContext? =
-        address.url.scheme == PaneAddress.extensionScheme
+        isExtensionURL
         ? ExtensionController.shared.extensionContext(forExtensionURL: address.url)
         : nil
       let bv = Self.makeBrowserView(extensionContext: extensionContext)
       self.content = .browser(bv)
+      // Track the resolution failure so the post-`setupContainerView`
+      // navigation block can render an error page instead of
+      // attempting to load an unresolvable extension URL.
+      isUnresolvedExtensionURL = isExtensionURL && extensionContext == nil
     case .finder:
       // Empty path means the bare `e05://finder` URL — substitute the
       // user's home directory and rebuild the address so the URL bar
@@ -221,9 +226,20 @@ public final class PaneModel {
     if case .browser(let bv) = content, address.kind == .browser,
       !isBlankBrowser
     {
-      bv.navigate(to: address.url.absoluteString)
+      if isUnresolvedExtensionURL {
+        bv.loadExtensionUnavailableError(for: address.url)
+      } else {
+        bv.navigate(to: address.url.absoluteString)
+      }
     }
   }
+
+  /// True when the address points at a `webkit-extension://` URL whose
+  /// owning context could not be resolved at init time. The init
+  /// branches set this so the post-setup navigation block knows to
+  /// render an error page instead of letting WebKit paint a blank
+  /// failure. Reset to false for every other pane kind.
+  private var isUnresolvedExtensionURL: Bool = false
 
   private static func makeBrowserView(
     extensionContext: WKWebExtensionContext? = nil
