@@ -145,8 +145,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       // the OS-level app switcher and any future option-tab keymap
       // intact.
       guard mods == .control || mods == [.control, .shift] else { return event }
-      let shifted = mods.contains(.shift)
       guard let pc = self.paneContainer else { return event }
+      // Don't hijack ⌃⇥ while text input owns first responder
+      // (command palette field, URL bar, web form). NSTextField
+      // delegates key handling to an NSTextView field editor, both
+      // of which inherit from NSText.
+      if let responder = pc.view.window?.firstResponder, responder is NSText {
+        return event
+      }
+      // Also bail while the command palette is showing — its field
+      // editor may not have first responder yet, and switching pane
+      // out from under the palette leaves it stranded.
+      if pc.commandPalette.isVisible {
+        return event
+      }
+      let shifted = mods.contains(.shift)
       if shifted {
         pc.focusPreviousPane()
       } else {
