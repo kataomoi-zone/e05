@@ -86,6 +86,7 @@ extension PaneContainerViewController {
     let resolvedSlidingUp = slidingUp ?? (index > focusedWorkspaceIndex)
     focusedWorkspaceIndex = index
     restoreScroll(in: currentWorkspace)
+    showToast("Workspace \(index + 1)")
     animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp) { [weak self] in
       self?.restoreFocusInCurrentWorkspace()
       completion?()
@@ -235,6 +236,7 @@ extension PaneContainerViewController {
     // workspace's stackView via the computed accessors.
     focusedWorkspaceIndex = newIndex
     addColumn(address: .terminal)
+    showToast(isPrivate ? "New Private Workspace" : "New Workspace")
 
     animateSlide(fromVC: fromVC, toVC: newVC, slidingUp: true) { [weak self] in
       self?.restoreFocusInCurrentWorkspace()
@@ -286,6 +288,9 @@ extension PaneContainerViewController {
     // higher index slides down, revealing what was above it.
     let slidingUp = closingIndex == 0
     restoreScroll(in: currentWorkspace)
+    // The last-workspace branch above already returned, so this
+    // toast only fires when there's a remaining workspace to land on.
+    showToast("Close Workspace")
 
     animateSlide(fromVC: closingVC, toVC: toVC, slidingUp: slidingUp) { [weak self] in
       closingVC.view.removeFromSuperview()
@@ -368,6 +373,7 @@ extension PaneContainerViewController {
         "[e05/ws] movePane blocked: cross-private-boundary move (source=%@, target=%@)",
         sourceIsPrivate ? "private" : "public",
         workspaces[target].isPrivate ? "private" : "public")
+      showToast("Can't move pane across the private boundary", style: .error)
       return
     }
     let paneIndex = column.focusedPaneIndex
@@ -438,6 +444,7 @@ extension PaneContainerViewController {
 
     focusedWorkspaceIndex = adjustedTarget
     restoreScroll(in: currentWorkspace)
+    showToast("Move Pane to Workspace \(adjustedTarget + 1)")
 
     // Direction uses pre-adjustment target vs. sourceIndex — stable even
     // when source was destroyed (its removal doesn't change this comparison).

@@ -521,6 +521,7 @@ extension PaneContainerViewController {
     }
 
     setFocus(columnIndex: focusedColumnIndex, paneIndex: insertPaneIndex)
+    showToast("Split Vertical")
   }
 
   // MARK: - Pane Removal
@@ -751,6 +752,7 @@ extension PaneContainerViewController {
       pane, in: currentWorkspace,
       columnIndex: columnIndex, paneIndex: paneIndex,
       columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
+    showToast("Close Pane")
   }
 
   /// Remove the column immediately but tween the remaining columns
@@ -889,9 +891,22 @@ extension PaneContainerViewController {
   /// belong to other workspaces.
   public func undoClosePane() {
     guard let idx = recentlyClosed.lastIndex(where: { $0.workspaceId == currentWorkspace.id })
-    else { return }
+    else {
+      // Private workspaces never feed the stash, so a request from a
+      // private workspace always lands here. Surfacing the reason
+      // separates "nothing to reopen" (stash empty) from "private
+      // workspaces don't keep history" — both are user-visible no-ops
+      // but the second one needs the explanation to feel intentional.
+      if currentWorkspace.isPrivate {
+        showToast("Can't reopen closed pane in a private workspace", style: .error)
+      } else {
+        showToast("Nothing to reopen", style: .error)
+      }
+      return
+    }
     let closed = recentlyClosed.remove(at: idx)
     closed.timer.invalidate()
+    showToast("Reopen Closed Pane")
 
     let pane = closed.pane
     // Re-enable normal surface lifecycle now that the view is re-entering the hierarchy

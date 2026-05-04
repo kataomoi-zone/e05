@@ -132,6 +132,7 @@ extension PaneContainerViewController {
     let newColIndex = focusedColumnIndex - 1
     let paneIndex = columns[newColIndex].focusedPaneIndex
     setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
+    showToast("Focus Left")
   }
 
   public func focusRight() {
@@ -139,6 +140,7 @@ extension PaneContainerViewController {
     let newColIndex = focusedColumnIndex + 1
     let paneIndex = columns[newColIndex].focusedPaneIndex
     setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
+    showToast("Focus Right")
   }
 
   public func focusUp() {
@@ -146,6 +148,7 @@ extension PaneContainerViewController {
       column.focusedPaneIndex > 0
     else { return }
     setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
+    showToast("Focus Up")
   }
 
   public func focusDown() {
@@ -153,6 +156,7 @@ extension PaneContainerViewController {
       column.focusedPaneIndex < column.panes.count - 1
     else { return }
     setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
+    showToast("Focus Down")
   }
 
   /// Advance focus across every pane in the current workspace, treating
@@ -164,10 +168,12 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex] else { return }
     if column.focusedPaneIndex < column.panes.count - 1 {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
+      showToast("Next Pane")
     } else if let nextColumnIndex = nextNonEmptyColumnIndex(
       from: focusedColumnIndex, step: 1
     ) {
       setFocus(columnIndex: nextColumnIndex, paneIndex: 0)
+      showToast("Next Pane")
     }
   }
 
@@ -178,11 +184,13 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex] else { return }
     if column.focusedPaneIndex > 0 {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
+      showToast("Previous Pane")
     } else if let prevColumnIndex = nextNonEmptyColumnIndex(
       from: focusedColumnIndex, step: -1
     ) {
       let lastPaneIndex = columns[prevColumnIndex].panes.count - 1
       setFocus(columnIndex: prevColumnIndex, paneIndex: lastPaneIndex)
+      showToast("Previous Pane")
     }
   }
 
@@ -224,6 +232,7 @@ extension PaneContainerViewController {
     applyPreset(preset, to: column)
     view.layoutSubtreeIfNeeded()
     scrollToColumn(at: focusedColumnIndex)
+    showToast("Cycle Width")
   }
 
   private func applyPreset(_ preset: PaneWidthPreset, to column: ColumnModel) {
@@ -272,6 +281,7 @@ extension PaneContainerViewController {
     animateLayerSwap(
       moved.containerView, oldFrameA: oldMovedFrame,
       displaced.containerView, oldFrameB: oldDisplacedFrame)
+    showToast("Move Column Left")
   }
 
   public func moveColumnRight() {
@@ -293,6 +303,7 @@ extension PaneContainerViewController {
     animateLayerSwap(
       moved.containerView, oldFrameA: oldMovedFrame,
       displaced.containerView, oldFrameB: oldDisplacedFrame)
+    showToast("Move Column Right")
   }
 
   // MARK: - Pane Reorder within Column
@@ -319,6 +330,7 @@ extension PaneContainerViewController {
     animateLayerSwap(
       moved.containerView, oldFrameA: oldMovedFrame,
       displaced.containerView, oldFrameB: oldDisplacedFrame)
+    showToast("Move Pane Up")
   }
 
   public func movePaneDown() {
@@ -343,6 +355,7 @@ extension PaneContainerViewController {
     animateLayerSwap(
       moved.containerView, oldFrameA: oldMovedFrame,
       displaced.containerView, oldFrameB: oldDisplacedFrame)
+    showToast("Move Pane Down")
   }
 
   // MARK: - Stack View Rebuild

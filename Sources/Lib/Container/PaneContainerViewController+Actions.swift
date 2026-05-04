@@ -16,15 +16,21 @@ extension PaneContainerViewController {
         // because the browser column is the more common new-tab
         // gesture. Terminal columns are still creatable from the
         // palette and can be re-bound during the customisation phase.
-        handler: { [weak self] in self?.addColumn() }
+        handler: { [weak self] in
+          self?.addColumn()
+          self?.showToast("New Terminal Column")
+        }
       ),
       Action(
         id: "undo_close",
         title: "Reopen Closed Pane",
         keyEquivalent: "t",
         modifierMask: [.command, .shift],
-        handler: { [weak self] in self?.undoClosePane() },
-        validate: { [weak self] in (self?.canUndoClosePane ?? false, nil) }
+        // Stay always-enabled so the handler is reachable from ⌘⇧T
+        // even when the stash is empty or the workspace is private —
+        // the toast in `undoClosePane` explains the no-op so the user
+        // gets a reason instead of silent absorption of the keystroke.
+        handler: { [weak self] in self?.undoClosePane() }
       ),
       Action(
         id: "close_pane",
@@ -124,7 +130,12 @@ extension PaneContainerViewController {
         title: "Toggle URL Bar",
         keyEquivalent: "l",
         modifierMask: [.command, .shift],
-        handler: { [weak self] in self?.toggleURLBarVisibility() }
+        handler: { [weak self] in
+          self?.toggleURLBarVisibility()
+          // Read post-state so the user gets the *new* mode rather
+          // than the action's static label.
+          self?.showToast(self?.urlBarVisible == true ? "URL Bar Shown" : "URL Bar Hidden")
+        }
       ),
       Action(
         id: "focus_url_bar",
@@ -137,13 +148,25 @@ extension PaneContainerViewController {
         title: "Toggle Fold",
         keyEquivalent: "f",
         modifierMask: [.option, .control],
-        handler: { [weak self] in self?.toggleFold() }
+        handler: { [weak self] in
+          guard let self,
+            let column = self.columns[safe: self.focusedColumnIndex]
+          else { return }
+          self.toggleFold()
+          // Post-state: `toggleFold` flips `isFolded` synchronously,
+          // so reading after the call gives the user-visible state.
+          self.showToast(column.isFolded ? "Fold Column" : "Unfold Column")
+        }
       ),
       Action(
         id: "toggle_bookmark",
         title: "Toggle Bookmark",
         keyEquivalent: "d",
-        handler: { [weak self] in _ = self?.toggleBookmark() },
+        handler: { [weak self] in
+          if let added = self?.toggleBookmark() {
+            self?.showToast(added ? "Bookmark Added" : "Bookmark Removed")
+          }
+        },
         validate: { [weak self] in
           let isBookmarked = self?.isFocusedPaneBookmarked ?? false
           let title = isBookmarked ? "Remove Bookmark" : "Add Bookmark"
@@ -155,7 +178,11 @@ extension PaneContainerViewController {
         title: "Toggle Web Inspector",
         keyEquivalent: "i",
         modifierMask: [.option, .command],
-        handler: { [weak self] in self?.toggleInspector() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.toggleInspector()
+          self.showToast(self.isFocusedInspectorOpen ? "Web Inspector Shown" : "Web Inspector Hidden")
+        },
         validate: { [weak self] in
           let isOpen = self?.isFocusedInspectorOpen ?? false
           let title = isOpen ? "Hide Web Inspector" : "Show Web Inspector"
@@ -166,7 +193,11 @@ extension PaneContainerViewController {
         id: "browser_reload",
         title: "Reload Page",
         keyEquivalent: "r",
-        handler: { [weak self] in self?.reloadFocusedBrowser() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.reloadFocusedBrowser()
+          self.showToast("Reload Page")
+        },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
         separatorBefore: true
       ),
@@ -175,14 +206,26 @@ extension PaneContainerViewController {
         title: "Reload Page (Bypass Cache)",
         keyEquivalent: "r",
         modifierMask: [.command, .shift],
-        handler: { [weak self] in self?.reloadFocusedBrowserFromOrigin() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.reloadFocusedBrowserFromOrigin()
+          self.showToast("Reload (Bypass Cache)")
+        },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
       Action(
         id: "browser_back",
         title: "Back",
         keyEquivalent: "[",
-        handler: { [weak self] in self?.goBackFocusedBrowser() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          if self.canFocusedBrowserGoBack {
+            self.goBackFocusedBrowser()
+            self.showToast("Back")
+          } else {
+            self.showToast("No more history", style: .error)
+          }
+        },
         validate: { [weak self] in
           let enabled =
             (self?.isFocusedPaneBrowser ?? false)
@@ -194,7 +237,15 @@ extension PaneContainerViewController {
         id: "browser_forward",
         title: "Forward",
         keyEquivalent: "]",
-        handler: { [weak self] in self?.goForwardFocusedBrowser() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          if self.canFocusedBrowserGoForward {
+            self.goForwardFocusedBrowser()
+            self.showToast("Forward")
+          } else {
+            self.showToast("No more history", style: .error)
+          }
+        },
         validate: { [weak self] in
           let enabled =
             (self?.isFocusedPaneBrowser ?? false)
@@ -206,7 +257,11 @@ extension PaneContainerViewController {
         id: "browser_zoom_in",
         title: "Zoom In",
         keyEquivalent: "+",
-        handler: { [weak self] in self?.zoomInFocusedBrowser() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.zoomInFocusedBrowser()
+          self.showZoomToast()
+        },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) },
         separatorBefore: true
       ),
@@ -214,14 +269,22 @@ extension PaneContainerViewController {
         id: "browser_zoom_out",
         title: "Zoom Out",
         keyEquivalent: "-",
-        handler: { [weak self] in self?.zoomOutFocusedBrowser() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.zoomOutFocusedBrowser()
+          self.showZoomToast()
+        },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
       Action(
         id: "browser_zoom_reset",
         title: "Actual Size",
         keyEquivalent: "0",
-        handler: { [weak self] in self?.resetFocusedBrowserZoom() },
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          self.resetFocusedBrowserZoom()
+          self.showToast("Zoom 100%")
+        },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
       Action(
@@ -251,7 +314,10 @@ extension PaneContainerViewController {
         id: "new_browser",
         title: "New Browser Column",
         keyEquivalent: "t",
-        handler: { [weak self] in self?.addColumn(address: .blankBrowser) }
+        handler: { [weak self] in
+          self?.addColumn(address: .blankBrowser)
+          self?.showToast("New Browser Column")
+        }
       ),
       Action(
         id: "new_finder",
@@ -260,7 +326,10 @@ extension PaneContainerViewController {
         // Find in Page. The palette is the discovery surface for now;
         // a binding can be added once the customisation phase exposes
         // a way for users to claim a free chord.
-        handler: { [weak self] in self?.addColumn(address: PaneAddress.finder(path: "")) }
+        handler: { [weak self] in
+          self?.addColumn(address: PaneAddress.finder(path: ""))
+          self?.showToast("New Finder Column")
+        }
       ),
       Action(
         id: "toggle_hidden_files",
@@ -270,14 +339,21 @@ extension PaneContainerViewController {
         // read the action by intent ("Toggle Fold", "Toggle URL
         // Bar") rather than by post-flip state; the effect is
         // visible in the finder pane itself immediately on trigger.
-        handler: { FinderSettings.toggleShowHiddenFiles() }
+        handler: { [weak self] in
+          FinderSettings.toggleShowHiddenFiles()
+          self?.showToast(FinderSettings.showHiddenFiles ? "Show Hidden Files" : "Hide Hidden Files")
+        }
       ),
       Action(
         id: "new_folder",
         title: "New Folder",
         keyEquivalent: "n",
         modifierMask: [.command, .shift],
-        handler: { [weak self] in self?.focusedPane?.finderView?.createNewFolder() },
+        handler: { [weak self] in
+          guard let finderView = self?.focusedPane?.finderView else { return }
+          finderView.createNewFolder()
+          self?.showToast("New Folder")
+        },
         validate: { [weak self] in (self?.focusedPane?.finderView != nil, nil) }
       ),
       Action(
@@ -291,7 +367,13 @@ extension PaneContainerViewController {
         // binds forward-delete, which isn't what users expect.
         keyEquivalent: "\u{8}",
         modifierMask: [.command],
-        handler: { [weak self] in self?.focusedPane?.finderView?.trashSelection() },
+        handler: { [weak self] in
+          guard let finderView = self?.focusedPane?.finderView,
+            finderView.hasSelection
+          else { return }
+          finderView.trashSelection()
+          self?.showToast("Moved to Trash")
+        },
         validate: { [weak self] in
           ((self?.focusedPane?.finderView?.hasSelection) ?? false, nil)
         }
@@ -307,7 +389,11 @@ extension PaneContainerViewController {
         id: "toggle_sidebar_pin",
         title: "Toggle Sidebar Pin",
         keyEquivalent: "b",
-        handler: { [weak self] in self?.sidebarVC?.togglePin() },
+        handler: { [weak self] in
+          self?.sidebarVC?.togglePin()
+          let pinned = self?.sidebarVC?.currentState == .pinnedOpen
+          self?.showToast(pinned ? "Sidebar Pinned" : "Sidebar Unpinned")
+        },
         validate: { [weak self] in
           let pinned = self?.sidebarVC?.currentState == .pinnedOpen
           return (true, pinned ? "Unpin Sidebar" : "Pin Sidebar")

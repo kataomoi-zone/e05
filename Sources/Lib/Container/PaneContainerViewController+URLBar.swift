@@ -359,6 +359,18 @@ extension PaneContainerViewController {
     pane.urlBar.setZoomPercent(1.0)
   }
 
+  /// Read the focused pane's current page zoom and surface it as a
+  /// toast like "Zoom 110%". Called from the zoom-in / zoom-out
+  /// action handlers so the post-step value is shown rather than the
+  /// generic action label.
+  func showZoomToast() {
+    guard let pane = focusedPane,
+      let webView = pane.browserView?.webView
+    else { return }
+    let percent = Int((webView.pageZoom * 100).rounded())
+    showToast("Zoom \(percent)%")
+  }
+
   // MARK: - Web Inspector
 
   /// Toggle Web Inspector inline in the focused browser pane.
