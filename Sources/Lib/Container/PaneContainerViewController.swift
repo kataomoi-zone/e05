@@ -112,6 +112,15 @@ public final class PaneContainerViewController: NSViewController {
     Self.accentColor(forWorkspaceAt: focusedWorkspaceIndex)
   }
 
+  /// Bottom-center action-feedback hub. Pills are tinted with the
+  /// focused workspace's accent at *post-action* time, so an action
+  /// that lands the user on a different workspace (close current,
+  /// move pane to N, switch) shows the destination's color — the
+  /// place the user's focus actually ends up. Created in
+  /// `viewDidLoad`.
+  public let toasts = ToastCenter()
+  weak var toastOverlay: ToastOverlayView?
+
   nonisolated(unsafe) var scrollEventMonitor: Any?
 
   // MARK: - Undo Close
@@ -235,6 +244,30 @@ public final class PaneContainerViewController: NSViewController {
     // `sidebarWidth`) or parked off-screen (hidden, workspace
     // flush against the leading edge).
     installSidebar(initiallyPinned: initiallyPinned)
+    installToastOverlay()
+  }
+
+  /// Pin a bottom-center toast overlay above every other subview so
+  /// pills sit on top of pane content (and the sidebar's glass) but
+  /// pass clicks through to whichever pane is underneath. Auto-sized
+  /// to fit its current pill stack.
+  private func installToastOverlay() {
+    let overlay = ToastOverlayView()
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(overlay)
+    NSLayoutConstraint.activate([
+      overlay.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -32),
+    ])
+    toastOverlay = overlay
+    toasts.attach(overlay: overlay)
+  }
+
+  /// Convenience: post a toast in the current workspace's accent.
+  /// Routes through `ToastCenter.post` so call sites don't have to
+  /// look up the accent themselves.
+  public func showToast(_ message: String, style: ToastStyle = .info) {
+    toasts.post(message, style: style, accent: focusBorderColor)
   }
 
   /// Seed the container with a `WorkspaceViewController` for the default
