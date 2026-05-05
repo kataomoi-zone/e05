@@ -77,7 +77,89 @@ extension PaneContainerViewController {
       results = Array(results.prefix(Self.maxSuggestionRows))
     }
 
+    // For any suggestion whose URL is also open in another pane,
+    // append a sibling "Switch to Pane" row right after the
+    // navigate row. The user can pick whichever they want with
+    // arrow keys / mouse — the navigate row stays unchanged so a
+    // duplicate-on-purpose tab open is still one Enter press away.
+    // The currently focused pane is excluded so typing the active
+    // page's URL doesn't add a confusing "switch to self" entry.
+    let openByURL = openPanesByURL(excluding: focusedPane?.id)
+    if !openByURL.isEmpty {
+      var augmented: [Suggestion] = []
+      augmented.reserveCapacity(results.count)
+      for suggestion in results {
+        augmented.append(suggestion)
+        if let paneID = openByURL[suggestion.url] {
+          augmented.append(
+            Suggestion(
+              url: suggestion.url,
+              title: suggestion.title,
+              isBookmark: suggestion.isBookmark,
+              openPaneID: paneID
+            )
+          )
+        }
+      }
+      results = augmented
+      // Inserting siblings can push the list past the dropdown's
+      // visible cap; trim again so we never overflow.
+      if results.count > Self.maxSuggestionRows {
+        results = Array(results.prefix(Self.maxSuggestionRows))
+      }
+    }
+
     return results
+  }
+
+  /// Map every pane's current URL to its pane id. Cross-workspace
+  /// because the URL bar suggestion list spans every browser pane in
+  /// the window, not just the current workspace's. The optional
+  /// `excluding` filter drops a single pane (typically the focused
+  /// one) so the URL bar doesn't offer to "switch" to itself when
+  /// the user types their own address.
+  private func openPanesByURL(excluding excludedID: ULID?) -> [String: ULID] {
+    var byURL: [String: ULID] = [:]
+    for workspace in workspaces {
+      for column in workspace.columns {
+        for pane in column.panes {
+          if pane.id == excludedID { continue }
+          let url = pane.address.url.absoluteString
+          guard !url.isEmpty else { continue }
+          // First write wins. Multiple panes on the same URL is
+          // rare but possible; arbitrary tie-breaking is fine here
+          // since the user gets focused at one of them either way.
+          if byURL[url] == nil {
+            byURL[url] = pane.id
+          }
+        }
+      }
+    }
+    return byURL
+  }
+
+  /// Focus the pane with `id`, switching workspaces if the pane
+  /// lives outside the current one. No-op when the id doesn't
+  /// resolve (the pane was closed between suggestion build and
+  /// click). Cross-workspace focus is deferred until the slide
+  /// animation completes so the focus indicator lands on a column
+  /// whose layout has already settled into place.
+  public func switchToPane(id: ULID) {
+    for (wsIndex, workspace) in workspaces.enumerated() {
+      for (colIndex, column) in workspace.columns.enumerated() {
+        guard let paneIndex = column.panes.firstIndex(where: { $0.id == id }) else {
+          continue
+        }
+        if wsIndex == focusedWorkspaceIndex {
+          setFocus(columnIndex: colIndex, paneIndex: paneIndex)
+        } else {
+          switchWorkspace(to: wsIndex) { [weak self] in
+            self?.setFocus(columnIndex: colIndex, paneIndex: paneIndex)
+          }
+        }
+        return
+      }
+    }
   }
 
   /// Upper bound on the number of rows shown in the URL bar dropdown.

@@ -379,6 +379,14 @@ extension PaneContainerViewController {
       self?.addColumn(address: PaneAddress(url))
     }
 
+    // URL bar: a suggestion tagged with `openPaneID` switches focus
+    // to that pane (across workspaces if needed) instead of
+    // navigating in place. Host owns the cross-WS dispatch so the
+    // URL bar stays unaware of workspace structure.
+    pane.urlBar.onSwitchToPane = { [weak self] paneID in
+      self?.switchToPane(id: paneID)
+    }
+
     // URL bar: clicking moves focus to this pane
     pane.urlBar.onClicked = { [weak self, weak pane] in
       guard let self, let pane else { return }

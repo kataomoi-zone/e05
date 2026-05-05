@@ -6,11 +6,17 @@ public struct Suggestion: Equatable {
   public let url: String
   public let title: String
   public let isBookmark: Bool
+  /// When non-nil, the URL is currently open in this pane somewhere
+  /// in the workspace. Selecting the suggestion focuses that pane
+  /// (across workspaces if needed) instead of triggering a fresh
+  /// navigation in the active pane.
+  public let openPaneID: ULID?
 
-  public init(url: String, title: String, isBookmark: Bool) {
+  public init(url: String, title: String, isBookmark: Bool, openPaneID: ULID? = nil) {
     self.url = url
     self.title = title
     self.isBookmark = isBookmark
+    self.openPaneID = openPaneID
   }
 
   public var displayTitle: String {

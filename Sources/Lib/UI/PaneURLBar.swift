@@ -109,6 +109,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// which would replace the current pane's content) so the host
   /// can lift it into a fresh column the way the sidebar does.
   public var onOpenURLInNewColumn: ((URL) -> Void)?
+  /// Called when the user accepts a suggestion whose URL is already
+  /// open in another pane. The host focuses that pane (cross-WS if
+  /// needed) instead of triggering a duplicate navigation.
+  public var onSwitchToPane: ((ULID) -> Void)?
 
   /// Cursor entered the URL bar's bounds. The hover scheduler in
   /// `PaneContainerViewController` uses this to keep a peek alive
@@ -846,7 +850,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   private func acceptSuggestion(_ suggestion: Suggestion) {
     writeURLFieldText(suggestion.url)
     suggestionList.dismiss()
-    onNavigate?(suggestion.url)
+    if let paneID = suggestion.openPaneID {
+      onSwitchToPane?(paneID)
+    } else {
+      onNavigate?(suggestion.url)
+    }
   }
 
   /// Push `text` into the URL field while keeping the cell value and
@@ -909,10 +917,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
       primaryHighlights = nsRanges(from: shifted, in: displayTitle)
       secondaryHighlights = nsRanges(from: match.urlRanges, in: suggestion.url)
     }
+    // Suggestions whose URL is already open elsewhere render with a
+    // trailing "Switch to Pane" hint so the user knows Enter (or a
+    // click) lifts the existing pane into focus rather than queueing
+    // a fresh navigation.
+    let accessory: String? = suggestion.openPaneID != nil ? "Switch to Pane" : nil
     return SuggestionCellModel(
       primary: displayTitle,
       secondary: suggestion.url,
-      accessory: nil,
+      accessory: accessory,
       leadingImage: faviconImage(for: suggestion.url),
       primaryHighlights: primaryHighlights,
       secondaryHighlights: secondaryHighlights
