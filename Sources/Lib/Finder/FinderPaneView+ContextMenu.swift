@@ -1,9 +1,9 @@
 import AppKit
 
 /// Right-click / control-click context menu for finder panes.
-/// Surfaces row-level actions (Open / Move to Trash / Rename /
-/// Duplicate / Make Alias / Quick Look / Copy / Share) and
-/// directory-level actions (New Folder).
+/// Surfaces row-level actions (Open / Open With / Move to Trash /
+/// Rename / Duplicate / Make Alias / Quick Look / Copy / Share)
+/// and directory-level actions (New Folder).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -42,6 +42,10 @@ extension FinderPaneView {
         title: "Open",
         symbolName: "arrow.up.forward.square",
         action: #selector(contextMenuOpen(_:))))
+      menu.addItem(makeContextMenuItem(
+        title: "Open With...",
+        symbolName: "arrow.up.forward.app",
+        action: #selector(contextMenuOpenWith(_:))))
       menu.addItem(.separator())
       menu.addItem(makeContextMenuItem(
         title: "Move to Trash",
@@ -74,8 +78,17 @@ extension FinderPaneView {
         symbolName: "square.and.arrow.up",
         action: #selector(contextMenuShare(_:))))
     } else {
-      // Multi-select: omit "Open" (mass-open across mixed folders/files
-      // is unintuitive) and "Rename" (single-target only).
+      // Multi-select: omit "Open" (mass-open via the default app
+      // across mixed folders/files is unintuitive) and "Rename"
+      // (single-target only). "Open With..." is kept — picking one
+      // app for several files is a real workflow (five images in
+      // Pixelmator, three logs in BBEdit) and Launch Services
+      // batches them into a single launch.
+      menu.addItem(makeContextMenuItem(
+        title: "Open With...",
+        symbolName: "arrow.up.forward.app",
+        action: #selector(contextMenuOpenWith(_:))))
+      menu.addItem(.separator())
       menu.addItem(makeContextMenuItem(
         title: "Move to Trash",
         symbolName: "trash",
@@ -114,6 +127,7 @@ extension FinderPaneView {
   }
 
   @objc func contextMenuOpen(_ sender: Any?) { openSelectedRow() }
+  @objc func contextMenuOpenWith(_ sender: Any?) { openSelectionWithChosenApplication() }
   @objc func contextMenuTrash(_ sender: Any?) { trashSelection() }
   @objc func contextMenuRename(_ sender: Any?) { beginRename() }
   @objc func contextMenuDuplicate(_ sender: Any?) { duplicateSelection() }
