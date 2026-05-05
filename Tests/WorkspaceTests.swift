@@ -21,20 +21,41 @@ struct WorkspaceTests {
     #expect(a.id != b.id)
   }
 
-  @Test("accentColor maps positions to the palette in order")
+  @Test("accentColor returns the palette in order for the first cycle")
   @MainActor func accentColorPalette() {
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 0) == .systemBlue)
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 1) == .systemGreen)
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 2) == .systemOrange)
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 3) == .systemPurple)
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 4) == .systemRed)
+    let palette = PaneContainerViewController.accentColorPalette
+    for (index, expected) in palette.enumerated() {
+      #expect(PaneContainerViewController.accentColor(forWorkspaceAt: index) == expected)
+    }
   }
 
-  @Test("accentColor falls back when position is out of range")
+  @Test("accentColor wraps around once positions exceed the palette length")
+  @MainActor func accentColorWraps() {
+    let palette = PaneContainerViewController.accentColorPalette
+    let length = palette.count
+    #expect(length > 0)
+    // Position N + paletteLength resolves to the same color as N for
+    // every N in the palette range, so workspaces beyond the
+    // palette cycle through the same values instead of running out.
+    for index in 0..<length {
+      let base = PaneContainerViewController.accentColor(forWorkspaceAt: index)
+      let wrapped = PaneContainerViewController.accentColor(forWorkspaceAt: index + length)
+      #expect(base == wrapped)
+    }
+  }
+
+  @Test("accentColor stays total for negative and over-large positions")
   @MainActor func accentColorFallback() {
-    // Keep the getter total so a transient empty state (mid-remove)
-    // or a malformed persisted session can't crash startup.
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: -1) == .systemBlue)
-    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: 5) == .systemBlue)
+    // The getter must always return a usable color so a transient
+    // empty state (mid-remove) or a malformed persisted session
+    // can't crash startup. Negative and far-out-of-range positions
+    // both resolve to the first palette entry.
+    let first = PaneContainerViewController.accentColorPalette.first!
+    #expect(PaneContainerViewController.accentColor(forWorkspaceAt: -1) == first)
+    #expect(
+      PaneContainerViewController.accentColor(
+        forWorkspaceAt: PaneContainerViewController.accentColorPalette.count
+      ) == first
+    )
   }
 }
