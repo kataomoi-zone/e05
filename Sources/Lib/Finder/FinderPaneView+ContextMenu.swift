@@ -2,8 +2,8 @@ import AppKit
 
 /// Right-click / control-click context menu for finder panes.
 /// Surfaces row-level actions (Open / Move to Trash / Rename /
-/// Duplicate / Make Alias / Quick Look / Copy) and directory-level
-/// actions (New Folder).
+/// Duplicate / Make Alias / Quick Look / Copy / Share) and
+/// directory-level actions (New Folder).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -69,6 +69,10 @@ extension FinderPaneView {
         title: "Copy \"\(name)\"",
         symbolName: "doc.on.doc",
         action: #selector(contextMenuCopy(_:))))
+      menu.addItem(makeContextMenuItem(
+        title: "Share...",
+        symbolName: "square.and.arrow.up",
+        action: #selector(contextMenuShare(_:))))
     } else {
       // Multi-select: omit "Open" (mass-open across mixed folders/files
       // is unintuitive) and "Rename" (single-target only).
@@ -94,6 +98,10 @@ extension FinderPaneView {
         title: "Copy \(count) Items",
         symbolName: "doc.on.doc",
         action: #selector(contextMenuCopy(_:))))
+      menu.addItem(makeContextMenuItem(
+        title: "Share...",
+        symbolName: "square.and.arrow.up",
+        action: #selector(contextMenuShare(_:))))
     }
     return menu
   }
@@ -113,5 +121,6 @@ extension FinderPaneView {
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
   @objc func contextMenuCopy(_ sender: Any?) { copySelectionToPasteboard() }
   @objc func contextMenuPaste(_ sender: Any?) { pasteFromPasteboard() }
+  @objc func contextMenuShare(_ sender: Any?) { shareSelection() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
 }
