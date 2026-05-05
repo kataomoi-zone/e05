@@ -16,8 +16,24 @@ extension FinderPaneView {
   /// Navigate to `url`. Non-directories are dispatched to
   /// `NSWorkspace.shared.open(_:)` so clicking a file in the list opens
   /// it in the system-default application, matching Finder.
+  ///
+  /// Finder aliases (bookmark files written via `writeBookmarkData`
+  /// with `.suitableForBookmarkFile`) are resolved before the
+  /// directory check: `resolvingSymlinksInPath` leaves them alone
+  /// because they're not symlinks, and `NSWorkspace.open` would
+  /// otherwise hand directory aliases to the system Finder instead
+  /// of jumping inside the pane. `URLResourceKey.isAliasFileKey` is
+  /// the modern way to detect them; `URL(resolvingAliasFileAt:options:)`
+  /// follows the bookmark to the live target.
   public func navigate(to url: URL) {
-    let resolved = url.resolvingSymlinksInPath()
+    var target = url
+    if let values = try? url.resourceValues(forKeys: [.isAliasFileKey]),
+      values.isAliasFile == true,
+      let aliasTarget = try? URL(resolvingAliasFileAt: url, options: [])
+    {
+      target = aliasTarget
+    }
+    let resolved = target.resolvingSymlinksInPath()
     var isDir: ObjCBool = false
     guard FileManager.default.fileExists(atPath: resolved.path(percentEncoded: false), isDirectory: &isDir) else {
       logger.warning("navigate(to:) target does not exist: \(resolved.path, privacy: .public)")
@@ -103,6 +119,17 @@ extension FinderPaneView {
   }
 
   func reloadItems(preservingSelection: Bool) {
+    // Evict alias entries from the icon cache: a Finder alias is
+    // designed to track its source through renames and moves, so
+    // the source's icon may have changed since we last resolved it.
+    // Non-alias rows keep their cached icons — Launch Services
+    // resolves the same icon from the same path until the row is
+    // replaced wholesale.
+    iconCache = iconCache.filter { url, _ in
+      let isAlias = (try? url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile) == true
+      return !isAlias
+    }
+
     let previouslySelectedURLs: [URL] =
       preservingSelection
       ? tableView.selectedRowIndexes.compactMap { idx in
@@ -209,22 +236,69 @@ extension FinderPaneView {
   // MARK: - Icon cache
 
   /// Resolve the icon for `item`, consulting the visible-row cache
-  /// first. `URLResourceKey.effectiveIcon` returns whatever Finder
-  /// would draw for the file (package icons, alias glyphs, custom
-  /// icons set via Get Info); `NSWorkspace.icon(forFile:)` is the
-  /// fallback when the resource-values read fails (broken symlinks,
-  /// permission errors). Both return shared `NSImage` instances that
-  /// must not have their `size` mutated — the image view handles
-  /// display sizing via `.scaleProportionallyDown` plus a 16pt frame
-  /// constraint.
+  /// first. `NSWorkspace.shared.icon(forFile:)` goes through Launch
+  /// Services — the same resolution path Finder uses for package
+  /// icons and custom icons set via Get Info.
+  ///
+  /// Finder aliases need a manual hop: on macOS 26 both
+  /// `effectiveIcon` and `NSWorkspace.icon(forFile:)` return the
+  /// generic alias-file document icon for the bookmark file itself,
+  /// rather than the source's icon. Resolving the alias and asking
+  /// Launch Services about the source path puts the right icon back
+  /// on the row (folder alias → folder icon, markdown alias →
+  /// markdown icon). On top of the resolved icon we composite a
+  /// small SF Symbol arrow badge in the bottom-left quadrant — Finder
+  /// uses a private system resource for its alias overlay that
+  /// AppKit doesn't expose, so a SF Symbol approximation is the
+  /// closest public-API match. Without it, an alias and its source
+  /// would render with byte-identical icons. The cached `NSImage`
+  /// is a fresh composite for aliases (a bare Launch Services icon
+  /// for everything else); never mutate its `.size`, the image view
+  /// handles sizing via `.scaleProportionallyDown` and a 16pt frame.
   func iconForRow(_ item: FileItem) -> NSImage {
     if let cached = iconCache[item.url] { return cached }
-    let values = try? item.url.resourceValues(forKeys: [.effectiveIconKey])
-    let image =
-      (values?.effectiveIcon as? NSImage)
-      ?? NSWorkspace.shared.icon(forFile: item.url.path(percentEncoded: false))
+    let isAlias = (try? item.url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile) == true
+    let iconSource: URL
+    if isAlias,
+      let resolved = try? URL(
+        resolvingAliasFileAt: item.url,
+        options: [.withoutMounting, .withoutUI])
+    {
+      iconSource = resolved
+    } else {
+      iconSource = item.url
+    }
+    let base = NSWorkspace.shared.icon(forFile: iconSource.path(percentEncoded: false))
+    let image = isAlias ? Self.aliasBadgedIcon(base: base) : base
     iconCache[item.url] = image
     return image
+  }
+
+  /// Draw a Finder-style alias arrow in the bottom-left quadrant of
+  /// `base`. The badge is an `arrow.up.right.circle.fill` SF Symbol
+  /// rendered with a palette image style — white circle behind a
+  /// dark arrow — so it stays legible against folder, document, and
+  /// app icons alike. The composite is sized to match `base` so the
+  /// table-cell image view can `.scaleProportionallyDown` it without
+  /// recomputing geometry per row.
+  private static func aliasBadgedIcon(base: NSImage) -> NSImage {
+    let size = base.size
+    guard size.width > 0, size.height > 0 else { return base }
+    let composite = NSImage(size: size)
+    composite.lockFocus()
+    base.draw(
+      at: .zero, from: NSRect(origin: .zero, size: size),
+      operation: .copy, fraction: 1.0)
+    let badge = NSImage(
+      systemSymbolName: "arrow.up.right.circle.fill",
+      accessibilityDescription: "Alias"
+    )?.withSymbolConfiguration(
+      NSImage.SymbolConfiguration(paletteColors: [.black, .white]))
+    badge?.draw(
+      in: NSRect(x: 0, y: 0, width: size.width * 0.5, height: size.height * 0.5),
+      from: .zero, operation: .sourceOver, fraction: 1.0)
+    composite.unlockFocus()
+    return composite
   }
 
   // MARK: - Status bar

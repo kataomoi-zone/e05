@@ -5,7 +5,7 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 
 /// Filesystem operations triggered from the right-click context
 /// menu and the command palette beyond rename / new-folder / trash:
-/// Duplicate (this file) and forthcoming Make Alias / Compress /
+/// Duplicate, Make Alias (this file) and forthcoming Compress /
 /// New Folder with Selection. Each operation logs per-item failures
 /// and continues so a permission error on one entry doesn't abort
 /// the rest of the batch — same convention as `trashSelection`.
@@ -39,6 +39,76 @@ extension FinderPaneView {
       in: source.deletingLastPathComponent(),
       stem: source.deletingPathExtension().lastPathComponent,
       ext: source.pathExtension)
+  }
+
+  // MARK: - Make Alias
+
+  /// Create a Finder alias next to each selected entry, naming each
+  /// `<source> alias` (escalating to `<source> alias 2`, … on
+  /// collision). Aliases are bookmark files written via
+  /// `URL.writeBookmarkData(_:to:options: [.suitableForBookmarkFile])`
+  /// — they survive moves of the source within a volume where a
+  /// plain symlink would break, and that's what makes a system
+  /// double-click resolve them through Launch Services to the right
+  /// app even after the source has been renamed.
+  ///
+  /// Bookmark generation runs synchronously on the main actor: it's
+  /// a metadata-only read on the source URL plus a small file write
+  /// (~1 KB), nothing like the multi-GB blob copies that `runCopyBatch`
+  /// shields. Failures log and continue per-item.
+  public func makeAliasForSelection() {
+    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
+      idx < items.count ? items[idx].url : nil
+    }
+    guard !urls.isEmpty else { return }
+    var created: [URL] = []
+    for source in urls {
+      let target = aliasTargetURL(for: source)
+      do {
+        let bookmark = try source.bookmarkData(
+          options: .suitableForBookmarkFile,
+          includingResourceValuesForKeys: nil,
+          relativeTo: nil)
+        try URL.writeBookmarkData(bookmark, to: target)
+        created.append(target)
+      } catch {
+        logger.error(
+          "Make Alias failed \(source.path, privacy: .public) → \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+    guard !created.isEmpty else { return }
+    // Notify Finder / Spotlight / other Icon Services clients that
+    // the parent directory changed: their alias-icon caches
+    // otherwise linger on the generic document proxy until poked.
+    // e05's own iconCache is independent — `reloadItems` evicts
+    // alias entries on every refresh.
+    NSWorkspace.shared.noteFileSystemChanged(currentURL.path(percentEncoded: false))
+    finishCopyBatch(targets: created)
+  }
+
+  /// Resolve the next free `<source> alias` slot in `source`'s parent
+  /// directory. Finder appends `" alias"` to the *full* filename
+  /// (extension included) — `report.pdf` becomes `report.pdf alias`,
+  /// not `report alias.pdf` — because the alias file is a bookmark
+  /// blob, not the same file type as the source, and renaming it to
+  /// keep the source's extension would mislead Launch Services.
+  private func aliasTargetURL(for source: URL) -> URL {
+    let dir = source.deletingLastPathComponent()
+    let baseName = source.lastPathComponent
+    let fm = FileManager.default
+    var candidate = dir.appendingPathComponent("\(baseName) alias")
+    if !fm.fileExists(atPath: candidate.path(percentEncoded: false)) {
+      return candidate
+    }
+    var n = 2
+    while true {
+      candidate = dir.appendingPathComponent("\(baseName) alias \(n)")
+      if !fm.fileExists(atPath: candidate.path(percentEncoded: false)) {
+        return candidate
+      }
+      n += 1
+    }
   }
 
   // MARK: - Shared helpers
@@ -87,8 +157,14 @@ extension FinderPaneView {
   /// copy plan composed via `appendingPathComponent` — `Rename.swift`
   /// ducks the same drift the same way after `createNewFolder`.
   /// A directory's immediate children have unique names, so
-  /// last-component matching is unambiguous.
-  private func finishCopyBatch(targets: [URL]) {
+  /// last-component matching is unambiguous. Used by `runCopyBatch`
+  /// (off-main) and `makeAliasForSelection` (on-main) alike.
+  ///
+  /// The directory monitor's debounced reload follows shortly after
+  /// with `preservingSelection: true` and re-resolves the same
+  /// last-components, so the selection stays put — no extra
+  /// coordination needed.
+  func finishCopyBatch(targets: [URL]) {
     reloadItems(preservingSelection: false)
     var rows = IndexSet()
     for url in targets {
