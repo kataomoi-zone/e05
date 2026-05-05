@@ -5,20 +5,20 @@ extension PaneContainerViewController {
 
   /// Search history and bookmarks for URL bar suggestions.
   ///
-  /// Collects all bookmarks plus the last 500 history entries, deduplicates
-  /// by URL (bookmark wins), and runs the combined pool through
-  /// `Suggestion.rank` which uses `FuzzyMatcher` + a bookmark score bonus.
-  /// Fuzzy matching replaces the old SQLite `LIKE '%q%'` scan — now
-  /// queries like `gite05` can find `github.com/kawarimidoll/e05`.
+  /// Collects all bookmarks plus the last 500 history entries
+  /// (deduplicated by URL with the per-URL visit count and most
+  /// recent visit time joined in), and runs the combined pool
+  /// through `Suggestion.rank` which uses `URLMatcher` (substring
+  /// + word-boundary) plus bookmark and frecency bonuses.
   ///
-  /// Cost: O(B + H × |query| × avg(|url| + |title|)) where B = bookmarks,
-  /// H ≤ 500. Runs synchronously on the main thread, acceptable under
-  /// `PaneURLBar`'s ~150ms debounce. If the history cap ever grows
-  /// meaningfully past 500, hoist this onto a background Task to avoid
-  /// main-thread blocking while typing.
+  /// Cost: O(B + H × |query| × avg(|url| + |title|)) where B =
+  /// bookmarks, H ≤ 500. Runs synchronously on the main thread,
+  /// acceptable under `PaneURLBar`'s ~150ms debounce. If the
+  /// history cap ever grows meaningfully past 500, hoist this onto
+  /// a background Task to avoid main-thread blocking while typing.
   func searchSuggestions(query: String) -> [Suggestion] {
     let bookmarkEntries = bookmarks.all()
-    let historyEntries = browsingHistory.mostRecent(limit: 500)
+    let historyEntries = browsingHistory.mostRecentAggregated(limit: 500)
     let bookmarkURLs = Set(bookmarkEntries.map(\.url))
 
     var candidates: [Suggestion] = bookmarkEntries.map {
@@ -31,7 +31,17 @@ extension PaneContainerViewController {
           : Suggestion(url: entry.url, title: entry.title, isBookmark: false)
       })
 
-    var results = Suggestion.rank(query: query, candidates: candidates)
+    let now = Date()
+    let frecencyByURL = Dictionary(
+      uniqueKeysWithValues: historyEntries.map { entry in
+        (entry.url, frecencyScore(visits: entry.visits, lastVisit: entry.lastVisit, now: now))
+      }
+    )
+    var results = Suggestion.rank(
+      query: query,
+      candidates: candidates,
+      frecencyByURL: frecencyByURL
+    )
 
     // Brave-style: when the input itself is a direct-navigable URL
     // (explicit scheme https/http/e05/about, or a bare host/IP
@@ -74,6 +84,26 @@ extension PaneContainerViewController {
   /// Kept in sync with `SuggestionListView.maxVisibleRows` so the list
   /// never scrolls.
   static let maxSuggestionRows = 8
+
+  /// Frecency bonus for a single history URL. Combines the visit
+  /// count with a recency-decay factor so the URL bar surfaces
+  /// frequently-visited recent pages at the top of similarly-
+  /// matched candidates. The bucketed decay (rather than a smooth
+  /// half-life) keeps the score reproducible without depending on
+  /// floating-point precision. The caller caps the result at 200
+  /// inside `Suggestion.rank` so a runaway visit count can't
+  /// outvote an exact host-start match.
+  func frecencyScore(visits: Int, lastVisit: Date, now: Date) -> Int {
+    let age = now.timeIntervalSince(lastVisit)
+    let factor: Double
+    switch age {
+    case ..<86_400: factor = 1.0  // < 1 day
+    case ..<604_800: factor = 0.7  // < 1 week
+    case ..<2_592_000: factor = 0.4  // < 1 month
+    default: factor = 0.15
+    }
+    return Int(Double(visits) * factor * 30)
+  }
 
   /// Build the optional "Open URL" suggestion shown at the top of the
   /// dropdown when the user typed a direct-navigable URL.

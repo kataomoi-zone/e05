@@ -35,6 +35,16 @@ public final class BrowsingHistory {
     public let visitedAt: Date
   }
 
+  /// Per-URL aggregated row used by URL-bar suggestion ranking.
+  /// `mostRecent` returns one row per visit-deduplicated URL; this
+  /// adds the visit count so callers can compute frecency on top.
+  public struct AggregatedEntry: Equatable {
+    public let url: String
+    public let title: String
+    public let visits: Int
+    public let lastVisit: Date
+  }
+
   // MARK: - Lifecycle
 
   /// Create a history instance. Pass `inMemory: true` for testing.
@@ -157,6 +167,44 @@ public final class BrowsingHistory {
   }
 
   // MARK: - Read
+
+  /// Get the most recent history entries deduplicated by URL,
+  /// joined with the URL's total visit count and last-visit
+  /// timestamp. The URL bar feeds these into a frecency bonus on
+  /// top of the substring-match score.
+  public func mostRecentAggregated(limit: Int = 500) -> [AggregatedEntry] {
+    guard let db else { return [] }
+    let sql = """
+      SELECT h.url, h.title, agg.visits, agg.last_visit
+      FROM history h
+      INNER JOIN (
+          SELECT url, COUNT(*) AS visits, MAX(visited_at) AS last_visit
+          FROM history GROUP BY url
+      ) agg ON h.url = agg.url AND h.visited_at = agg.last_visit
+      ORDER BY agg.last_visit DESC LIMIT ?
+      """
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+      let stmt
+    else { return [] }
+    defer { sqlite3_finalize(stmt) }
+    sqlite3_bind_int(stmt, 1, Int32(limit))
+
+    var entries: [AggregatedEntry] = []
+    while sqlite3_step(stmt) == SQLITE_ROW {
+      guard let urlPtr = sqlite3_column_text(stmt, 0),
+        let titlePtr = sqlite3_column_text(stmt, 1)
+      else { continue }
+      let url = String(cString: urlPtr)
+      let title = String(cString: titlePtr)
+      let visits = Int(sqlite3_column_int(stmt, 2))
+      let lastVisit = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+      entries.append(
+        AggregatedEntry(url: url, title: title, visits: visits, lastVisit: lastVisit)
+      )
+    }
+    return entries
+  }
 
   /// Get the most recent history entries, deduplicated by URL (keeps latest visit).
   /// Note: `id` corresponds to the row with the latest `visited_at` per URL.

@@ -18,54 +18,74 @@ public struct Suggestion: Equatable {
     return title.isEmpty ? "\(prefix)\(url)" : "\(prefix)\(title)"
   }
 
-  /// Rank a pool of suggestion candidates against a fuzzy query.
+  /// Rank a pool of suggestion candidates against an URL-bar query.
   ///
-  /// Candidates are ranked by `FuzzyMatcher` across their title and URL;
-  /// items with no subsequence match are dropped. Bookmarks receive a
-  /// constant score bonus so they outrank equal-fuzzy-score history —
-  /// matching the previous SQLite-based behavior where bookmarks always
-  /// sorted above history in the URL-bar dropdown. The bonus is small
-  /// enough that a strong fuzzy match on a history item (e.g. prefix
-  /// match on a long URL) still wins over a weaker bookmark match.
+  /// Candidates are filtered through `URLMatcher`: query tokens must
+  /// appear as contiguous substrings in title or URL, scored higher
+  /// when they land at word boundaries (host start, path segment
+  /// start, title word start) and dropped entirely when no token
+  /// matches. Bookmark / frecency bonuses are layered on top of the
+  /// matcher score so highly-visited and starred sites surface
+  /// without burying weak-but-relevant new entries.
   ///
-  /// Caller responsibility: build `candidates` with dedup already applied
-  /// (e.g. URL appearing in both bookmarks and history should be present
-  /// only once, marked `isBookmark: true`). This keeps the ranker free of
-  /// dedup policy decisions.
+  /// Caller responsibility: build `candidates` with dedup already
+  /// applied (e.g. URL appearing in both bookmarks and history
+  /// should be present only once, marked `isBookmark: true`). This
+  /// keeps the ranker free of dedup policy decisions.
   ///
   /// - Parameters:
-  ///   - query: search query. Empty query ranks by bookmark bonus only
-  ///     (bookmarks first, then input order within each group), limited
-  ///     to `maxResults`.
+  ///   - query: search query. Empty query ranks by bookmark bonus
+  ///     and frecency only (recency-decayed visit count).
   ///   - candidates: pre-built suggestion pool.
-  ///   - bookmarkBonus: score added to `isBookmark == true` items. Default
-  ///     50 ≈ one consecutive-match bonus (`scoreConsecutive = 35`) plus
-  ///     a small margin.
+  ///   - bookmarkBonus: score added to `isBookmark == true` items.
+  ///     Default 100 sits between a word-start match (100) and a
+  ///     host-start match (200), so a starred page leads similarly-
+  ///     scored history without overpowering a strong host match.
+  ///   - frecencyByURL: optional per-URL bonus (typically derived
+  ///     from history visit count + recency). Capped internally so
+  ///     a runaway visit count can't dominate exact-name matches.
   ///   - maxResults: cap on returned suggestions.
   public static func rank(
     query: String,
     candidates: [Suggestion],
-    bookmarkBonus: Int = 50,
+    bookmarkBonus: Int = 100,
+    frecencyByURL: [String: Int] = [:],
     maxResults: Int = 8  // keep in sync with SuggestionListView.maxVisibleRows
   ) -> [Suggestion] {
-    let ranked = FuzzyMatcher.rank(
+    if query.isEmpty {
+      // No query → no matcher score. Pure ordering by bookmark
+      // status and frecency, capped at `maxResults`.
+      let scored = candidates.enumerated().map { index, item -> (Suggestion, Int, Int) in
+        let total =
+          (item.isBookmark ? bookmarkBonus : 0)
+          + min(frecencyByURL[item.url] ?? 0, 200)
+        return (item, total, index)
+      }
+      return
+        scored
+        .sorted { lhs, rhs in
+          lhs.1 != rhs.1 ? lhs.1 > rhs.1 : lhs.2 < rhs.2
+        }
+        .prefix(maxResults)
+        .map { $0.0 }
+    }
+
+    let ranked = URLMatcher.rank(
       query: query,
       items: candidates,
-      keys: { [$0.title, $0.url] }
+      title: { $0.title },
+      url: { $0.url }
     )
-    // Tag with enumeration index before sorting so that ties are broken
-    // by the order produced by FuzzyMatcher.rank (itself stable by input
-    // order). Swift's Array.sorted(by:) is documented as unstable, so
-    // relying on sorted() alone would leave same-score results in an
-    // undefined order across stdlib versions.
     struct Scored {
       let item: Suggestion
       let score: Int
       let order: Int
     }
     let scored: [Scored] = ranked.enumerated().map { index, pair in
-      let boosted = pair.match.score + (pair.item.isBookmark ? bookmarkBonus : 0)
-      return Scored(item: pair.item, score: boosted, order: index)
+      var total = pair.match.score
+      if pair.item.isBookmark { total += bookmarkBonus }
+      total += min(frecencyByURL[pair.item.url] ?? 0, 200)
+      return Scored(item: pair.item, score: total, order: index)
     }
     return
       scored

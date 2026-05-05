@@ -17,35 +17,37 @@ struct SuggestionTests {
 
   // MARK: - Basic matching
 
-  @Test("drops candidates with no fuzzy match")
+  @Test("drops candidates whose title and URL contain none of the query tokens")
   func dropsNonMatches() {
     let candidates = [
       history("https://apple.com"),
       history("https://banana.com"),
       history("https://grape.com"),
     ]
-    let result = Suggestion.rank(query: "an", candidates: candidates)
+    let result = Suggestion.rank(query: "ban", candidates: candidates)
     let urls = result.map(\.url)
-    // "apple" and "grape" have no "an" subsequence; "banana" does.
     #expect(!urls.contains("https://apple.com"))
     #expect(!urls.contains("https://grape.com"))
     #expect(urls.contains("https://banana.com"))
   }
 
-  @Test("motivating example: gite05 finds github.com/kawarimidoll/e05")
-  func motivatingExample() {
+  @Test("multi-token query: tokens may match different fields with partial credit")
+  func multiTokenPartial() {
+    // Query "git e05" → tokens ["git", "e05"]. Both must contribute
+    // somewhere; a candidate matching both ranks above one matching
+    // only one.
     let candidates = [
-      history("https://google.com"),
-      history("https://gist.github.com/example"),
-      history("https://github.com/kawarimidoll/e05"),
+      history("https://google.com", "Google"),
+      history("https://gist.github.com/example", "Gist · example"),
+      history("https://github.com/kawarimidoll/e05", "kawarimidoll/e05"),
       history("https://example.com"),
-      history("https://github.com/someone-else/other-repo"),
+      history("https://github.com/someone-else/other-repo", "someone-else/other-repo"),
     ]
-    let result = Suggestion.rank(query: "gite05", candidates: candidates)
+    let result = Suggestion.rank(query: "git e05", candidates: candidates)
     #expect(result.first?.url == "https://github.com/kawarimidoll/e05")
   }
 
-  @Test("ranks by fuzzy score across title and url")
+  @Test("ranks across title and url")
   func rankAcrossTitleAndUrl() {
     // Title contains the query, URL does not — should still match.
     let candidates = [
@@ -56,47 +58,68 @@ struct SuggestionTests {
     #expect(result.first?.url == "https://a.com")
   }
 
+  @Test("host-start match outranks mid-path match")
+  func hostStartBeatsMidPath() {
+    let candidates = [
+      history("https://example.com/notes/connpass", "Notes"),
+      history("https://connpass.com", "connpass"),
+    ]
+    let result = Suggestion.rank(query: "connpass", candidates: candidates)
+    #expect(result.first?.url == "https://connpass.com")
+  }
+
   // MARK: - Bookmark bonus
 
-  @Test("bookmark outranks history at equal fuzzy score")
+  @Test("bookmark outranks history at equal match score")
   func bookmarkBeatsHistoryAtTie() {
     let candidates = [
       history("https://example.com/a", "Example A"),
       bookmark("https://example.com/a-book", "Example A"),
     ]
-    // Both match "Example A" equivalently on title; bookmark bonus tips it.
     let result = Suggestion.rank(query: "Example", candidates: candidates)
     #expect(result.first?.isBookmark == true)
   }
 
-  @Test("strong history fuzzy match beats weak bookmark")
+  @Test("strong host match beats weak bookmark mid-word match")
   func strongHistoryBeatsWeakBookmark() {
-    // Bookmark: query letters separated by non-boundary filler (x's).
-    // Large gaps hit the -20 penalty cap on each step — no boundary
-    // bonuses either — so even with the +50 bonus the bookmark scores
-    // well below a clean prefix match.
-    // (An underscore-separated URL like g_i_t_h_u_b would NOT work here:
-    // '_' is a boundary char, giving +30 per step, which easily tops
-    // the history score even across long gaps.)
     let candidates = [
-      bookmark("https://gxxxxxxxxxxixxxxxxxxxxt.com", "weak"),
+      // Bookmark, but the query "git" only appears mid-word inside
+      // a long random hostname.
+      bookmark("https://digitalstuff.example.com", "weak"),
+      // History entry with the query at host start.
       history("https://git.example.com", "git"),
     ]
     let result = Suggestion.rank(query: "git", candidates: candidates)
     #expect(result.first?.url == "https://git.example.com")
   }
 
-  @Test("bookmarkBonus=0 disables priority — pure fuzzy order")
+  @Test("bookmarkBonus=0 disables priority — pure match-score order")
   func bookmarkBonusZero() {
-    // With bonus=0, identical-fuzzy-score bookmark and history are
-    // ordered only by FuzzyMatcher's stable tiebreaker (input order).
     let candidates = [
       history("https://a.com", "same"),
       bookmark("https://b.com", "same"),
     ]
     let result = Suggestion.rank(query: "same", candidates: candidates, bookmarkBonus: 0)
-    // History came first in input, so it stays first.
+    // Both score identically; ranker stable-sorts by input order.
     #expect(result.first?.url == "https://a.com")
+  }
+
+  // MARK: - Frecency
+
+  @Test("frecency bonus surfaces frequently-visited matches")
+  func frecencyTipsTie() {
+    let candidates = [
+      history("https://a.example.com", "alpha example"),
+      history("https://b.example.com", "alpha example"),
+    ]
+    // Both candidates score equally on the matcher. The frecency
+    // bonus on `b` (visited more recently) tips the ordering.
+    let result = Suggestion.rank(
+      query: "alpha example",
+      candidates: candidates,
+      frecencyByURL: ["https://b.example.com": 150]
+    )
+    #expect(result.first?.url == "https://b.example.com")
   }
 
   // MARK: - Result cap
@@ -113,8 +136,8 @@ struct SuggestionTests {
   @Test("returns all matches when fewer than maxResults")
   func maxResultsNotExceeded() {
     let candidates = [
-      history("https://a.com", "apple"),
-      history("https://b.com", "banana"),
+      history("https://apple.com", "apple"),
+      history("https://avocado.com", "avocado"),
     ]
     let result = Suggestion.rank(query: "a", candidates: candidates, maxResults: 15)
     #expect(result.count == 2)
@@ -122,7 +145,7 @@ struct SuggestionTests {
 
   // MARK: - Edge cases
 
-  @Test("empty query returns candidates in input order up to maxResults")
+  @Test("empty query orders bookmarks above history, then by frecency")
   func emptyQueryPassthrough() {
     let candidates = [
       history("https://a.com"),
@@ -130,8 +153,7 @@ struct SuggestionTests {
       history("https://c.com"),
     ]
     let result = Suggestion.rank(query: "", candidates: candidates, maxResults: 10)
-    // Bookmark bonus (default 50) pushes b.com to top even with empty
-    // query (all candidates get score 0 from FuzzyMatcher before bonus).
+    // Bookmark bonus (default 100) wins under an empty query.
     #expect(result.first?.url == "https://b.com")
     #expect(result.count == 3)
   }
