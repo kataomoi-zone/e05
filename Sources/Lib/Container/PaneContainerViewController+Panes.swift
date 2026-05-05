@@ -219,14 +219,6 @@ extension PaneContainerViewController {
       }
       bv.onLoadingStateChange = { [weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
-        // A ⌘L peek keeps the URL bar visible until the navigation
-        // it kicked off actually lands, so the user sees the address
-        // / page transition to confirmation before the bar collapses.
-        // `.peek` is a no-op for `.pinned` panes, so the global
-        // toggle stays unaffected.
-        if !isLoading {
-          pane?.setURLBarPeek(false)
-        }
         if let pane {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .loading)
         }
@@ -307,19 +299,15 @@ extension PaneContainerViewController {
       pane.urlBar.setReloadEnabled(false)
     }
 
-    // URL bar: navigate callback. Don't release a `.peek` reveal
-    // here — the bar should stay open until the navigation it
-    // kicked off lands. Browser panes collapse the peek through
-    // `onLoadingStateChange(false)` (didFinish), finder panes
-    // through `onPathChange` (sync), and terminal panes return to
-    // `.hidden` immediately because they don't navigate at all.
+    // URL bar: navigate callback. Closes the peek on the commit
+    // event itself. Routing the close through `WKWebView.isLoading`
+    // false-edge KVO loses same-URL reloads, immediate redirects,
+    // and other arcs where the load completes too fast for the
+    // observer to sample — leaving the bar visibly stuck open.
     pane.urlBar.onNavigate = { [weak self, weak pane] input in
       guard let self, let pane else { return }
-      let isTerminal = pane.terminalView != nil
       self.handleURLBarNavigate(pane: pane, input: input)
-      if isTerminal {
-        pane.setURLBarPeek(false)
-      }
+      pane.setURLBarPeek(false)
     }
 
     // URL bar: ESC returns focus to pane content. Cancelling is
