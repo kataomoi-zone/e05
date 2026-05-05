@@ -1743,11 +1743,12 @@ public final class ExtensionController {
   }
 
   /// Default `WKWebExtensionAction` for `sourceURL`'s extension —
-  /// the toolbar/badge surface a UI built on top of. Returns `nil`
+  /// the toolbar/badge surface a UI builds on top of. Returns `nil`
   /// when the extension isn't loaded or the action is suppressed
-  /// (e.g. because `manifest.json` has no `action` key). Tab-scoped
-  /// actions are still TODO; we hand `nil` to `action(for:)` because
-  /// the WKWebExtensionTab protocol on PaneModel ships in a follow-up.
+  /// (e.g. because `manifest.json` has no `action` key). `nil` is
+  /// passed for the tab argument because PaneModel does not yet
+  /// conform to `WKWebExtensionTab`; once it does, per-tab badge
+  /// state can be threaded through here.
   public func defaultAction(for sourceURL: URL) -> WKWebExtension.Action? {
     let filename = sourceURL.lastPathComponent
     guard let ctx = contextsByFilename[filename] else { return nil }

@@ -118,9 +118,10 @@ extension PaneContainerViewController {
     }
 
     if pane.address.requiresContentSwitch(to: newAddress) {
-      // Cross-type: replace pane content (Step 4-3)
-      // For now, create a new column and remove the old pane
-      // TODO: in-place content replacement in Step 4-3
+      // Cross-type: build a fresh PaneModel for the new kind and
+      // splice it into the column at the same index. The position,
+      // surrounding panes, and column geometry stay put; only the
+      // pane's content view changes.
       guard let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) }) else { return }
       let column = columns[colIdx]
       guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
@@ -132,7 +133,6 @@ extension PaneContainerViewController {
       newPane.setURLBarVisible(urlBarVisible)
       setupPaneCallbacks(pane: newPane, column: column)
 
-      // Replace in column
       column.panes[paneIdx] = newPane
       rebuildColumnView(column: column)
       view.layoutSubtreeIfNeeded()

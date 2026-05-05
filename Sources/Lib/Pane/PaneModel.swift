@@ -55,11 +55,10 @@ public final class PaneModel {
   /// because `EdgeHoverHitZoneView` itself is not public.
   let urlBarTopEdgeHitZone = EdgeHoverHitZoneView()
 
-  /// Per-pane URL bar visibility state. The hover-reveal machinery
-  /// in `PaneContainerViewController` mutates this directly through
-  /// `setURLBarVisible(_:)` (legacy callsites) or — once the hit
-  /// zones land — through scheduled state transitions on hover and
-  /// a ⌘⇧L pin toggle.
+  /// Per-pane URL bar visibility state. Mutated through
+  /// `setURLBarVisible(_:)` for the window-global ⌘⇧L pin toggle
+  /// and `setURLBarPeek(_:)` for the hover-reveal scheduler in
+  /// `PaneContainerViewController`.
   public var urlBarHoverState: URLBarHoverState = .hidden
 
   /// Whether the URL bar is currently shown. Computed from the
@@ -72,7 +71,7 @@ public final class PaneModel {
   /// flips, leaving width/height/anchor constraints permanent.
   public private(set) var isFindBarVisible = false
 
-  // TODO: used for vertical drag resize (Step 5)
+  // TODO: wire this into vertical drag resize.
   public var heightConstraint: NSLayoutConstraint?
 
   /// Container view holding URL bar + content. This is what gets added to the layout.

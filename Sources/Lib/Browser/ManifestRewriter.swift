@@ -5,21 +5,18 @@ import os
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "ManifestRewriter")
 
 /// In-place MV3 → MV2 manifest rewriter for unpacked extension trees.
-/// Apple WKWebExtension does not wake MV3 service-worker backgrounds
-/// (observed empirically: Develop menu shows "Service Worker: なし"
-/// for Bitwarden CRX). Without a running background, popups that talk
-/// to bg via `runtime.sendMessage` hang. The minimal fixture
-/// `z-ai/extension-fixtures/min-mv2/` confirmed that MV2 +
-/// `background.page` + `persistent: false` (event-page) does wake
-/// reliably under WKWebExtension. Rewriting MV3 SW extensions into
-/// the MV2 event-page shape lets a large class of CRX run unmodified.
+/// Apple WKWebExtension does not wake MV3 service-worker backgrounds,
+/// so popups that talk to bg via `runtime.sendMessage` hang. Rewriting
+/// the manifest into MV2 + `background.page` + `persistent: false`
+/// (event-page) lets a large class of CRX run unmodified — WebKit
+/// wakes event pages reliably.
 ///
 /// Idempotent: re-running on a tree that has already been rewritten
 /// is a no-op. The original `manifest.json` is preserved at
 /// `manifest.json.e05-original` so the rewrite can be diffed and
 /// reverted by hand without re-installing.
 ///
-/// Limitations the rewriter does NOT solve (those are R3 territory):
+/// Limitations the rewriter does NOT solve:
 /// - bg code that calls `importScripts(...)` (SW-only global)
 /// - bg code that touches `self.clients` / `ServiceWorkerRegistration`
 /// - declarative_net_request rules (MV2 has webRequest blocking only)
