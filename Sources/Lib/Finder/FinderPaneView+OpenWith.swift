@@ -13,14 +13,22 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 /// the submenu also avoids re-enumerating the recommendation list
 /// (and the icon resolution that goes with it) for every right-click.
 ///
-/// The accessory bar above the panel's footer mirrors Finder: an
-/// "Enable" popup toggling between "Recommended Applications" (the
-/// Launch Services list for the first selected file) and "All
-/// Applications" (no filter). The recommended set is computed once
-/// at sheet open and held by `OpenWithFilterCoordinator` for the
-/// `panel(_:shouldEnable:)` callback to consult. Multi-select uses
-/// the first selection as the basis for "recommended" — same as
-/// Finder.
+/// The accessory bar above the panel's footer mirrors Finder:
+///
+/// - An "Enable" popup toggles between "Recommended Applications"
+///   (the Launch Services list for the first selected file) and
+///   "All Applications" (no filter). The recommended set is
+///   computed once at sheet open and held by
+///   `OpenWithFilterCoordinator` for `panel(_:shouldEnable:)` to
+///   consult. Multi-select uses the first selection as the
+///   recommendation basis — same as Finder.
+/// - An "Always Open With" checkbox persists the chosen app as the
+///   per-URL default via
+///   `NSWorkspace.setDefaultApplication(at:toOpenFileAt:)`
+///   (macOS 12+). The binding lives in the file's metadata, not
+///   the global UTI handler list, so it only affects the selected
+///   file and leaves other entries of the same kind untouched.
+///   Disabled in multi-select to mirror Finder's UI.
 extension FinderPaneView {
   public func openSelectionWithChosenApplication() {
     let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
@@ -38,7 +46,10 @@ extension FinderPaneView {
     panel.canChooseFiles = true
     panel.directoryURL = URL(fileURLWithPath: "/Applications")
 
-    let coordinator = OpenWithFilterCoordinator(panel: panel, recommendedFor: urls[0])
+    let coordinator = OpenWithFilterCoordinator(
+      panel: panel,
+      recommendedFor: urls[0],
+      allowsAlwaysBinding: urls.count == 1)
     panel.delegate = coordinator
     panel.accessoryView = coordinator.accessoryView
     // Older AppKit hides the accessory view by default behind a
@@ -52,6 +63,29 @@ extension FinderPaneView {
       // is what keeps it from deallocating mid-validation.
       _ = coordinator
       guard response == .OK, let appURL = panel.url else { return }
+      // Persist the per-URL binding before the launch fires so
+      // even if the open call fails (signature blocked / quarantined
+      // app), the user's "always" intent is recorded for next time.
+      // Single-select only — the checkbox is disabled in multi-select.
+      //
+      // The binding attaches to the URL the user actually clicked,
+      // not its resolved target: a Finder alias / symlink keeps its
+      // own routing, the underlying file's binding is left alone.
+      // That matches Finder's "Always Open With" semantics — and is
+      // what the user would expect, since the right-click menu was
+      // raised from the alias row, not the source. Failures are
+      // logged at error level only; e05 has no inline notification
+      // surface yet, and a modal alert would interrupt the launch
+      // flow that's about to follow.
+      if coordinator.alwaysBindingChecked, let target = urls.first {
+        NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenFileAt: target) { error in
+          if let error {
+            logger.error(
+              "Set default \(appURL.lastPathComponent, privacy: .public) for \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+      }
       // One `open(_:withApplicationAt:…)` call per batch, not per
       // file — opening, say, five images in Pixelmator from a
       // single Finder selection is a single window with five tabs,
@@ -86,6 +120,7 @@ private final class OpenWithFilterCoordinator: NSObject, NSOpenSavePanelDelegate
   let accessoryView: NSView
   private weak var panel: NSOpenPanel?
   private let recommendedAppPaths: Set<String>
+  private let alwaysCheckbox: NSButton
   private var filterMode: FilterMode = .recommended
 
   enum FilterMode {
@@ -93,7 +128,14 @@ private final class OpenWithFilterCoordinator: NSObject, NSOpenSavePanelDelegate
     case all
   }
 
-  init(panel: NSOpenPanel, recommendedFor sourceURL: URL) {
+  /// `true` when the "Always Open With" checkbox is on. Read by the
+  /// open-panel completion handler to decide whether to persist the
+  /// per-URL binding via `setDefaultApplication`.
+  var alwaysBindingChecked: Bool {
+    alwaysCheckbox.isEnabled && alwaysCheckbox.state == .on
+  }
+
+  init(panel: NSOpenPanel, recommendedFor sourceURL: URL, allowsAlwaysBinding: Bool) {
     self.panel = panel
     // `urlsForApplications(toOpen:)` returns the same Launch Services
     // candidates Finder lists in its Open With submenu. Path-set
@@ -118,14 +160,33 @@ private final class OpenWithFilterCoordinator: NSObject, NSOpenSavePanelDelegate
     let label = NSTextField(labelWithString: "Enable:")
     label.translatesAutoresizingMaskIntoConstraints = false
 
-    let stack = NSStackView(views: [label, popup])
+    let popupRow = NSStackView(views: [label, popup])
+    popupRow.translatesAutoresizingMaskIntoConstraints = false
+    popupRow.orientation = .horizontal
+    popupRow.spacing = 8
+    popupRow.alignment = .firstBaseline
+
+    let checkbox = NSButton(
+      checkboxWithTitle: "Always Open With", target: nil, action: nil)
+    checkbox.translatesAutoresizingMaskIntoConstraints = false
+    // `isEnabled = false` greys out the checkbox the same way Finder
+    // does in multi-select: the per-URL binding API works one URL
+    // at a time, so applying "always" to a heterogeneous batch
+    // would either need looping (unintuitive — the user expects a
+    // single binding choice) or skipping (silently misleading).
+    // Locking the multi-select case out of the UI is the cleanest
+    // signal.
+    checkbox.isEnabled = allowsAlwaysBinding
+
+    let stack = NSStackView(views: [popupRow, checkbox])
     stack.translatesAutoresizingMaskIntoConstraints = false
-    stack.orientation = .horizontal
-    stack.spacing = 8
-    stack.alignment = .firstBaseline
+    stack.orientation = .vertical
+    stack.spacing = 6
+    stack.alignment = .leading
     stack.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
 
     self.accessoryView = stack
+    self.alwaysCheckbox = checkbox
 
     super.init()
 
