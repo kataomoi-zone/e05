@@ -1,11 +1,11 @@
 import AppKit
 
-/// Right-click / control-click context menu for finder panes. Surfaces
-/// existing actions (Open / Move to Trash / Rename / Quick Look /
-/// New Folder) — no new action lives here. The selection-adjustment
-/// logic that decides which menu state to render lives in
-/// `FinderTableView.menu(for:)`, which forwards the resolved
-/// `clickedRow` to `buildContextMenu(clickedRow:)`.
+/// Right-click / control-click context menu for finder panes.
+/// Surfaces row-level actions (Open / Move to Trash / Rename /
+/// Quick Look / Copy) and directory-level actions (New Folder).
+/// The selection-adjustment logic that decides which menu state to
+/// render lives in `FinderTableView.menu(for:)`, which forwards the
+/// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
 ///
 /// Each item carries an SF Symbol leading icon to echo Finder's
 /// list-view context menu. Key-equivalent glyphs are intentionally
@@ -28,6 +28,9 @@ extension FinderPaneView {
 
     let count = tableView.selectedRowIndexes.count
     if count == 1 {
+      let name = tableView.selectedRowIndexes.first.flatMap { idx in
+        idx < items.count ? items[idx].name : nil
+      } ?? ""
       menu.addItem(makeContextMenuItem(
         title: "Open",
         symbolName: "arrow.up.forward.square",
@@ -46,6 +49,11 @@ extension FinderPaneView {
         title: "Quick Look",
         symbolName: "eye",
         action: #selector(contextMenuQuickLook(_:))))
+      menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
+        title: "Copy \"\(name)\"",
+        symbolName: "doc.on.doc",
+        action: #selector(contextMenuCopy(_:))))
     } else {
       // Multi-select: omit "Open" (mass-open across mixed folders/files
       // is unintuitive) and "Rename" (single-target only).
@@ -58,6 +66,11 @@ extension FinderPaneView {
         title: "Quick Look",
         symbolName: "eye",
         action: #selector(contextMenuQuickLook(_:))))
+      menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
+        title: "Copy \(count) Items",
+        symbolName: "doc.on.doc",
+        action: #selector(contextMenuCopy(_:))))
     }
     return menu
   }
@@ -73,5 +86,6 @@ extension FinderPaneView {
   @objc func contextMenuTrash(_ sender: Any?) { trashSelection() }
   @objc func contextMenuRename(_ sender: Any?) { beginRename() }
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
+  @objc func contextMenuCopy(_ sender: Any?) { copySelectionToPasteboard() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
 }
