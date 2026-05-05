@@ -371,6 +371,14 @@ extension PaneContainerViewController {
     pane.urlBar.onZoomOut = { [weak self] in self?.zoomOutFocusedBrowser() }
     pane.urlBar.onZoomReset = { [weak self] in self?.resetFocusedBrowserZoom() }
 
+    // URL bar: per-extension `Open Options Page` lands as a fresh
+    // browser column, mirroring the sidebar `Open Options Page`
+    // policy. The host owns column creation, so the URL bar just
+    // surfaces the URL without trying to walk the workspace.
+    pane.urlBar.onOpenURLInNewColumn = { [weak self] url in
+      self?.addColumn(address: PaneAddress(url))
+    }
+
     // URL bar: clicking moves focus to this pane
     pane.urlBar.onClicked = { [weak self, weak pane] in
       guard let self, let pane else { return }

@@ -53,6 +53,13 @@ public final class ExtensionController {
   /// extensions directory by hand doesn't accumulate stale entries.
   private var disabledFilenames: Set<String> = []
 
+  /// Filenames the user has pinned to the URL-bar action row. New
+  /// extensions default to unpinned (Chrome convention), so installing
+  /// one drops it into the puzzle popover instead of cluttering the
+  /// URL bar without consent. Persisted alongside `disabledFilenames`
+  /// in `extensions-state.json`; pruned the same way at scan time.
+  private var pinnedFilenames: Set<String> = []
+
   /// External `.appex` paths the user added through `From App Bundle…`.
   /// Persisted as JSON at `appBundlesStateFileURL` so the bundle
   /// auto-reloads on next launch. Pruned at scan time when the
@@ -740,6 +747,11 @@ public final class ExtensionController {
   /// keys when decoding via the default initializer.
   private struct PersistedState: Codable {
     var disabledFilenames: [String] = []
+    /// URL-bar pinning state. Codable's synthesized init treats this
+    /// as the empty default when the file predates the field, so a
+    /// state.json written before the URL-bar pinning feature shipped
+    /// decodes to "all unpinned" without a migration step.
+    var pinnedFilenames: [String] = []
   }
 
   /// On-disk shape of `appBundlesStateFileURL`. Stores absolute file
@@ -867,13 +879,16 @@ public final class ExtensionController {
 
     // Re-write the state file restricted to filenames currently on
     // disk so removed extensions stop accumulating in the disabled
-    // set. Unknown filenames still resolve to "enabled" on the next
-    // launch, but trimming on every scan keeps the file small and
-    // surfaces the live convention to anyone hand-editing it.
+    // / pinned sets. Unknown filenames still resolve to defaults
+    // (enabled, unpinned) on the next launch, but trimming on every
+    // scan keeps the file small and surfaces the live convention to
+    // anyone hand-editing it.
     let presentFilenames = Set(contextsByFilename.keys)
-    let stale = disabledFilenames.subtracting(presentFilenames)
-    if !stale.isEmpty {
+    let staleDisabled = disabledFilenames.subtracting(presentFilenames)
+    let stalePinned = pinnedFilenames.subtracting(presentFilenames)
+    if !staleDisabled.isEmpty || !stalePinned.isEmpty {
       disabledFilenames.formIntersection(presentFilenames)
+      pinnedFilenames.formIntersection(presentFilenames)
       savePersistedState()
     }
 
@@ -1187,6 +1202,7 @@ public final class ExtensionController {
       manifestVersion: ext.manifestVersion,
       icon: Self.bestIcon(for: ext),
       isEnabled: isEnabled,
+      isPinned: pinnedFilenames.contains(filename),
       sourceKind: sourceKind,
       hasOptionsPage: ext.hasOptionsPage
     )
@@ -1433,6 +1449,7 @@ public final class ExtensionController {
       }
     }
     let oldExt = oldCtx.webExtension
+    let filename = sourceURL.lastPathComponent
     let entry = LoadedExtension(
       sourceURL: sourceURL,
       displayName: displayName,
@@ -1440,6 +1457,7 @@ public final class ExtensionController {
       manifestVersion: oldExt.manifestVersion,
       icon: Self.bestIcon(for: oldExt),
       isEnabled: wasEnabled,
+      isPinned: pinnedFilenames.contains(filename),
       sourceKind: sourceKind,
       hasOptionsPage: oldExt.hasOptionsPage
     )
@@ -1806,6 +1824,7 @@ public final class ExtensionController {
 
     contextsByFilename.removeValue(forKey: filename)
     disabledFilenames.remove(filename)
+    pinnedFilenames.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
     persistedAppBundlePaths.removeAll { $0.path == sourceURL.path }
     savePersistedState()
@@ -1912,6 +1931,7 @@ public final class ExtensionController {
 
     contextsByFilename.removeValue(forKey: filename)
     disabledFilenames.remove(filename)
+    pinnedFilenames.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
     savePersistedState()
     NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
@@ -1986,6 +2006,28 @@ public final class ExtensionController {
     NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
   }
 
+  /// Toggle the URL-bar pinning state for `sourceURL`'s extension.
+  /// Idempotent on the requested side. Pure persistence + snapshot
+  /// update — no `WKWebExtensionContext` activity is involved, since
+  /// pinning is a host-side display concern WebKit knows nothing
+  /// about. The post lets the URL bar and the sidebar re-render
+  /// against the new flag.
+  public func setPinned(_ pinned: Bool, for sourceURL: URL) {
+    let filename = sourceURL.lastPathComponent
+    let wasPinned = pinnedFilenames.contains(filename)
+    guard pinned != wasPinned else { return }
+    if pinned {
+      pinnedFilenames.insert(filename)
+    } else {
+      pinnedFilenames.remove(filename)
+    }
+    if let i = loadedExtensions.firstIndex(where: { $0.sourceURL == sourceURL }) {
+      loadedExtensions[i].isPinned = pinned
+    }
+    savePersistedState()
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+  }
+
   private func loadPersistedState() {
     let url = Self.extensionsStateFileURL
     guard let data = try? Data(contentsOf: url) else {
@@ -1997,6 +2039,7 @@ public final class ExtensionController {
     do {
       let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
       disabledFilenames = Set(decoded.disabledFilenames)
+      pinnedFilenames = Set(decoded.pinnedFilenames)
     } catch {
       logger.error(
         """
@@ -2010,7 +2053,10 @@ public final class ExtensionController {
 
   private func savePersistedState() {
     let url = Self.extensionsStateFileURL
-    let payload = PersistedState(disabledFilenames: disabledFilenames.sorted())
+    let payload = PersistedState(
+      disabledFilenames: disabledFilenames.sorted(),
+      pinnedFilenames: pinnedFilenames.sorted()
+    )
     do {
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -2104,6 +2150,12 @@ public struct LoadedExtension {
   /// snapshot in place; external callers should treat the value as
   /// read-only and route changes through `ExtensionController`.
   public internal(set) var isEnabled: Bool
+  /// Whether the user has pinned the extension to the URL-bar
+  /// action row. Unpinned extensions reach their popup through the
+  /// URL bar's puzzle-piece menu instead of taking a permanent
+  /// slot. Mutated through `ExtensionController.setPinned`; the
+  /// snapshot field exists so cell renders skip a controller hop.
+  public internal(set) var isPinned: Bool
   /// Where the extension was loaded from. Drives the sidebar's
   /// per-row UI gating: `.archive` rows expose the full ellipsis
   /// menu (Reload / Move to Trash), `.appBundle` rows hide actions

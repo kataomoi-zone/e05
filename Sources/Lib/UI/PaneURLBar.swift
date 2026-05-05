@@ -103,6 +103,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   public var onZoomIn: (() -> Void)?
   /// Called when the inline zoom indicator's "Reset" link is clicked.
   public var onZoomReset: (() -> Void)?
+  /// Called when the user picks `Open Options Page` from a pinned
+  /// extension's right-click menu or the puzzle popover. Routed
+  /// through a separate callback (rather than reusing `onNavigate`,
+  /// which would replace the current pane's content) so the host
+  /// can lift it into a fresh column the way the sidebar does.
+  public var onOpenURLInNewColumn: ((URL) -> Void)?
 
   /// Cursor entered the URL bar's bounds. The hover scheduler in
   /// `PaneContainerViewController` uses this to keep a peek alive
@@ -252,12 +258,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   }
 
   /// Rebuild the toolbar's extension button row from the controller's
-  /// snapshot. Disabled extensions stay out of the row entirely
-  /// (matching Chrome / Safari, which surface only currently active
-  /// actions in the toolbar). Buttons are rebuilt rather than
-  /// diff-applied because the row is bounded by the user's installed
-  /// extension count and rebuilding is simpler than tracking stable
-  /// identity across NSStackView arranged subviews.
+  /// snapshot. Pinned extensions take a permanent button slot;
+  /// every other enabled extension lives behind a puzzle-piece menu
+  /// at the trailing edge of the row, matching Chrome's split. The
+  /// puzzle button only appears when at least one unpinned enabled
+  /// extension exists, so a fully pinned setup keeps the row clean.
+  /// Buttons are rebuilt rather than diff-applied because the row is
+  /// bounded by the user's installed extension count and rebuilding
+  /// is simpler than tracking stable identity across NSStackView
+  /// arranged subviews.
   private func reloadExtensions() {
     for view in extensionsContainer.arrangedSubviews {
       view.removeFromSuperview()
@@ -268,44 +277,212 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     // space the row would otherwise occupy.
     guard showsExtensionsRow else { return }
 
-    let buttonSize: CGFloat = 22
-    let iconSize = NSSize(width: 16, height: 16)
-    for entry in ExtensionController.shared.loadedExtensions where entry.isEnabled {
-      let button = HoverIconButton()
-      // Prefer the action icon (toolbar/badge surface) and fall
-      // back to the extension's manifest icon — same precedence
-      // the sidebar list uses, just at a smaller size.
-      let actionIcon = ExtensionController.shared.defaultAction(for: entry.sourceURL)?
-        .icon(for: iconSize)
-      button.image = actionIcon ?? entry.icon
-      button.imagePosition = .imageOnly
-      button.bezelStyle = .inline
-      button.isBordered = false
-      button.font = .systemFont(ofSize: 10)
-      button.translatesAutoresizingMaskIntoConstraints = false
-      button.toolTip = entry.displayName
-      button.target = self
-      button.action = #selector(extensionAction(_:))
-      NSLayoutConstraint.activate([
-        button.widthAnchor.constraint(equalToConstant: buttonSize),
-        button.heightAnchor.constraint(equalToConstant: buttonSize),
-      ])
+    let enabledEntries = ExtensionController.shared.loadedExtensions.filter { $0.isEnabled }
+    for entry in enabledEntries where entry.isPinned {
+      let button = makeExtensionActionButton(for: entry)
       extensionsContainer.addArrangedSubview(button)
       extensionButtons[entry.sourceURL] = button
     }
+    let hasUnpinned = enabledEntries.contains { !$0.isPinned }
+    if hasUnpinned {
+      extensionsContainer.addArrangedSubview(makePuzzleMenuButton())
+    }
   }
+
+  /// Action-row button for a single pinned extension. Click triggers
+  /// `performAction` (popup popover), right-click surfaces a per-row
+  /// context menu so the user can unpin or open the options page
+  /// without opening the sidebar.
+  private func makeExtensionActionButton(for entry: LoadedExtension) -> HoverIconButton {
+    let button = HoverIconButton()
+    let iconSize = NSSize(width: 16, height: 16)
+    // Prefer the action icon (toolbar/badge surface) and fall back
+    // to the extension's manifest icon — same precedence the
+    // sidebar list uses, just at a smaller size.
+    let actionIcon = ExtensionController.shared.defaultAction(for: entry.sourceURL)?
+      .icon(for: iconSize)
+    button.image = actionIcon ?? entry.icon
+    button.imagePosition = .imageOnly
+    button.bezelStyle = .inline
+    button.isBordered = false
+    button.font = .systemFont(ofSize: 10)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.toolTip = entry.displayName
+    button.target = self
+    button.action = #selector(extensionAction(_:))
+    button.menu = makePinnedContextMenu(for: entry)
+    NSLayoutConstraint.activate([
+      button.widthAnchor.constraint(equalToConstant: Self.extensionButtonSize),
+      button.heightAnchor.constraint(equalToConstant: Self.extensionButtonSize),
+    ])
+    return button
+  }
+
+  /// Persistent puzzle-piece glyph that gathers every unpinned
+  /// enabled extension into a popped-up menu. `Extensions` toolTip
+  /// matches Safari / Chrome wording so the icon is recognisable
+  /// even at the small inline size.
+  private func makePuzzleMenuButton() -> HoverIconButton {
+    let button = HoverIconButton()
+    button.image = NSImage(
+      systemSymbolName: "puzzlepiece.extension",
+      accessibilityDescription: "Extensions"
+    )
+    button.imagePosition = .imageOnly
+    button.bezelStyle = .inline
+    button.isBordered = false
+    button.font = .systemFont(ofSize: 10)
+    button.translatesAutoresizingMaskIntoConstraints = false
+    button.toolTip = "Extensions"
+    button.target = self
+    button.action = #selector(showPuzzleMenu(_:))
+    NSLayoutConstraint.activate([
+      button.widthAnchor.constraint(equalToConstant: Self.extensionButtonSize),
+      button.heightAnchor.constraint(equalToConstant: Self.extensionButtonSize),
+    ])
+    return button
+  }
+
+  /// Per-button context menu for pinned extensions. Built fresh on
+  /// each rebuild so the captured `sourceURL` always tracks the
+  /// snapshot row.
+  private func makePinnedContextMenu(for entry: LoadedExtension) -> NSMenu {
+    let menu = NSMenu()
+    let unpin = NSMenuItem(
+      title: "Unpin from URL Bar",
+      action: #selector(menuUnpin(_:)),
+      keyEquivalent: ""
+    )
+    unpin.target = self
+    unpin.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: nil)
+    unpin.representedObject = entry.sourceURL
+    menu.addItem(unpin)
+    let optionsURL = ExtensionController.shared.optionsPageURL(for: entry.sourceURL)
+    let options = NSMenuItem(
+      title: "Open Options Page",
+      action: #selector(menuOpenOptions(_:)),
+      keyEquivalent: ""
+    )
+    options.target = self
+    options.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+    options.representedObject = entry.sourceURL
+    options.isEnabled = optionsURL != nil
+    menu.addItem(options)
+    return menu
+  }
+
+  /// Diameter of the pinned-action / puzzle buttons. Matches the
+  /// existing zoom-indicator buttons so the row reads as a single
+  /// rhythm of 22pt squares.
+  private static let extensionButtonSize: CGFloat = 22
 
   @objc private func extensionAction(_ sender: NSButton) {
     // Reverse-lookup keeps the URL out of the button's identifier
     // (which doesn't round-trip arbitrary URLs cleanly) at the cost
-    // of an O(n) walk; n is bounded by enabled-extension count, so
-    // the constant is small and the code reads as a straight match.
+    // of an O(n) walk; n is bounded by pinned-extension count.
     guard let entry = extensionButtons.first(where: { $0.value === sender })
     else { return }
     let sourceURL = entry.key
     ExtensionController.shared.performAction(
       for: sourceURL, anchorView: sender, anchorRect: sender.bounds
     )
+  }
+
+  @objc private func showPuzzleMenu(_ sender: NSButton) {
+    let menu = NSMenu()
+    let unpinned = ExtensionController.shared.loadedExtensions
+      .filter { $0.isEnabled && !$0.isPinned }
+    if unpinned.isEmpty {
+      // Defensive: the puzzle button only renders when this list is
+      // non-empty, but a `didChangeNotification` arriving between
+      // build and click could leave the button referencing a now-
+      // empty set. Show a disabled placeholder so the menu still
+      // pops (instead of swallowing the click silently).
+      let item = NSMenuItem(title: "No extensions to show", action: nil, keyEquivalent: "")
+      item.isEnabled = false
+      menu.addItem(item)
+    } else {
+      let iconSize = NSSize(width: 16, height: 16)
+      for entry in unpinned {
+        let actionIcon = ExtensionController.shared.defaultAction(for: entry.sourceURL)?
+          .icon(for: iconSize)
+        let item = NSMenuItem(
+          title: entry.displayName,
+          action: #selector(puzzleMenuPick(_:)),
+          keyEquivalent: ""
+        )
+        item.target = self
+        item.image = actionIcon ?? entry.icon
+        item.representedObject = entry.sourceURL
+        // Sub-menu carries pin / options actions; the main click
+        // still fires the extension popup so the menu reads as a
+        // shortcut for the pinned-row click.
+        item.submenu = makeUnpinnedSubmenu(for: entry)
+        menu.addItem(item)
+      }
+    }
+    let origin = NSPoint(x: 0, y: sender.bounds.height)
+    menu.popUp(positioning: nil, at: origin, in: sender)
+  }
+
+  private func makeUnpinnedSubmenu(for entry: LoadedExtension) -> NSMenu {
+    let submenu = NSMenu()
+    let pin = NSMenuItem(
+      title: "Pin to URL Bar",
+      action: #selector(menuPin(_:)),
+      keyEquivalent: ""
+    )
+    pin.target = self
+    pin.image = NSImage(systemSymbolName: "pin", accessibilityDescription: nil)
+    pin.representedObject = entry.sourceURL
+    submenu.addItem(pin)
+    let optionsURL = ExtensionController.shared.optionsPageURL(for: entry.sourceURL)
+    let options = NSMenuItem(
+      title: "Open Options Page",
+      action: #selector(menuOpenOptions(_:)),
+      keyEquivalent: ""
+    )
+    options.target = self
+    options.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+    options.representedObject = entry.sourceURL
+    options.isEnabled = optionsURL != nil
+    submenu.addItem(options)
+    return submenu
+  }
+
+  @objc private func puzzleMenuPick(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    // Anchor the popup against the puzzle button itself: the menu's
+    // host view is the URL bar, but the visible glyph for unpinned
+    // extensions is the puzzle button so the popup arrow lands on
+    // a recognisable target. The puzzle button is always the trailing
+    // arranged subview when this menu is reachable — `reloadExtensions`
+    // appends it after every pinned button and only when at least one
+    // unpinned extension exists, so `.last` is the puzzle whenever
+    // `puzzleMenuPick` can possibly fire.
+    let puzzle = extensionsContainer.arrangedSubviews.last
+    ExtensionController.shared.performAction(
+      for: url,
+      anchorView: puzzle ?? self,
+      anchorRect: puzzle?.bounds ?? .zero
+    )
+  }
+
+  @objc private func menuPin(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    ExtensionController.shared.setPinned(true, for: url)
+  }
+
+  @objc private func menuUnpin(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    ExtensionController.shared.setPinned(false, for: url)
+  }
+
+  @objc private func menuOpenOptions(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL,
+      let optionsURL = ExtensionController.shared.optionsPageURL(for: url)
+    else { return }
+    onOpenURLInNewColumn?(optionsURL)
   }
 
   private func setupZoomIndicator() {

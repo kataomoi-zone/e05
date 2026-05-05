@@ -444,6 +444,12 @@ enum ExtensionRowAction {
   /// `options_ui.page` from the manifest) as a fresh browser column.
   /// Gated on `LoadedExtension.hasOptionsPage` at menu-build time.
   case openOptionsPage
+  /// Surface the extension as a permanent button in the URL bar's
+  /// action row. Toggles to `.unpinFromURLBar` on next click.
+  case pinToURLBar
+  /// Drop the URL-bar permanent slot. The extension is still
+  /// reachable via the puzzle-piece menu.
+  case unpinFromURLBar
   /// Move the extension's source archive to the Trash and clear all
   /// caches. `.archive` rows only.
   case remove
@@ -489,6 +495,10 @@ extension ExtensionsSidebarView {
         return
       }
       onOpenURL?(url)
+    case .pinToURLBar:
+      ExtensionController.shared.setPinned(true, for: sourceURL)
+    case .unpinFromURLBar:
+      ExtensionController.shared.setPinned(false, for: sourceURL)
     case .remove:
       ExtensionController.shared.removeExtension(for: sourceURL)
     case .forget:
@@ -545,6 +555,10 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   /// item should reflect that by greying out rather than firing an
   /// alert when clicked.
   private var currentIsEnabled = true
+  /// Mirrors `LoadedExtension.isPinned` so menu construction can pick
+  /// between `Pin to URL Bar` and `Unpin from URL Bar` without
+  /// re-querying the controller during pop-up runloop.
+  private var currentIsPinned = false
 
   /// Fired when the user flips the trailing switch. The parent list
   /// view forwards the request to `ExtensionController.setEnabled`,
@@ -693,6 +707,20 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         enabled: currentHasOptionsPage && currentIsEnabled
       )
     )
+    // Pin/unpin reads from the snapshot so the label flips instantly
+    // when the controller posts a change. Greyed out for disabled
+    // rows: an inactive extension shouldn't take a permanent URL-bar
+    // slot, and the URL-bar buttons would render as dead clicks
+    // anyway.
+    menu.addItem(
+      buildMenuItem(
+        title: currentIsPinned ? "Unpin from URL Bar" : "Pin to URL Bar",
+        symbol: currentIsPinned ? "pin.slash" : "pin",
+        action: #selector(menuTogglePin(_:)),
+        sourceURL: sourceURL,
+        enabled: currentIsEnabled
+      )
+    )
     menu.addItem(.separator())
     if isFileBacked {
       menu.addItem(
@@ -753,6 +781,15 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     onRowAction?(sourceURL, .openOptionsPage)
   }
 
+  @objc private func menuTogglePin(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    // `currentIsPinned` is the snapshot captured by `configure`; if a
+    // reload during the menu's nested runloop updated it, this read
+    // sees the fresh value. `setPinned` is idempotent on the
+    // requested side, so even a stale read just dispatches a no-op.
+    onRowAction?(sourceURL, currentIsPinned ? .unpinFromURLBar : .pinToURLBar)
+  }
+
   @objc private func menuRemove(_ sender: NSMenuItem) {
     guard let sourceURL = sourceURL(from: sender) else { return }
     onRowAction?(sourceURL, .remove)
@@ -785,6 +822,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     currentSourceKind = entry.sourceKind
     currentHasOptionsPage = entry.hasOptionsPage
     currentIsEnabled = entry.isEnabled
+    currentIsPinned = entry.isPinned
     titleLabel.stringValue = entry.displayName
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"
