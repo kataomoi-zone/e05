@@ -80,4 +80,42 @@ extension FinderPaneView {
       stem: source.deletingPathExtension().lastPathComponent,
       ext: source.pathExtension)
   }
+
+  // MARK: - NSResponder actions
+
+  /// `copy:` / `paste:` arrive at the finder pane through the standard
+  /// responder chain whenever the menu-bar Edit > Copy / Paste items
+  /// (`AppDelegate.setupMainMenu`) fire — AppKit walks first responder
+  /// → super → window → app delegate looking for a matching selector,
+  /// and a finder pane sits on that walk. Implementing them here is
+  /// what makes ⌘C / ⌘V work without a per-pane keyDown hook, and it
+  /// also keeps the menu-bar items enabled (AppKit greys them out
+  /// when no responder advertises the selector).
+  @objc public func copy(_ sender: Any?) {
+    copySelectionToPasteboard()
+  }
+
+  @objc public func paste(_ sender: Any?) {
+    pasteFromPasteboard()
+  }
+}
+
+extension FinderPaneView: NSMenuItemValidation {
+  /// AppKit asks every responder on the chain whether their menu
+  /// items are eligible. Without this, menu-bar Edit > Copy / Paste
+  /// stay enabled whenever a finder pane has focus — pressing them
+  /// then no-ops silently. Returning false greys them out so the
+  /// menu-bar state matches the right-click context menu, which
+  /// already greys out "Paste Item" via `action: nil` when the
+  /// pasteboard is empty.
+  public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    switch menuItem.action {
+    case #selector(copy(_:)):
+      return !tableView.selectedRowIndexes.isEmpty
+    case #selector(paste(_:)):
+      return pasteableFileURLCount() > 0
+    default:
+      return true
+    }
+  }
 }
