@@ -201,7 +201,7 @@ struct CosmeticIndexTests {
     #expect(parents == ["foo.example.com", "example.com"])
   }
 
-  @Test("queryHostname surfaces procedural bodies for M2")
+  @Test("queryHostname surfaces procedural selector bodies")
   func queryHostnameProceduralPassthrough() {
     var idx = CosmeticIndex()
     idx.add(parse("example.com#?#div:has-text(PR)"))
@@ -260,13 +260,14 @@ struct CosmeticIndexTests {
 
   // MARK: - Behavior lock-in
 
-  @Test("generic #@# exception is a noop (deferred implementation)")
+  @Test("generic #@# exception is a noop")
   func genericUnhideIsNoop() {
-    // `#@#.selector` without a hostname list means "unhide on every
-    // domain except the ones in `excludedDomains`". M1 skips the
-    // generic unhide path (see `CosmeticIndex.add`). This test
-    // pins that behavior so a future change that implements it
-    // surfaces as an intentional diff rather than a silent flip.
+    // `#@#.selector` (no positive domain) means "unhide everywhere
+    // except the listed domains". `CosmeticIndex.add` drops these
+    // silently because materialising the difference at index-build
+    // time, or running a second lookup at query time, isn't
+    // justified by the observed filter traffic. The test pins the
+    // drop so re-introducing the path lands as an intentional diff.
     var idx = CosmeticIndex()
     idx.add(parse("#@#.tricky"))
     #expect(idx.hostnameUnhide.isEmpty)
@@ -276,10 +277,11 @@ struct CosmeticIndexTests {
 
   @Test("procedural #@?# exception is dropped before indexing")
   func proceduralUnhideDropped() {
-    // Procedural rules take the unhide side only once the M2
-    // runtime ships; until then `add` silently drops procedural
-    // unhides so they do not accidentally fire through the
-    // non-procedural buckets.
+    // Procedural unhides are rare; without a matching procedural
+    // hide they have nothing to cancel, and with one the worst
+    // case is leaving a rare exception un-applied. The current
+    // index drops them so they don't leak through the non-
+    // procedural buckets — the test pins that contract.
     var idx = CosmeticIndex()
     idx.add(parse("example.com#@?#div:has-text(x)"))
     #expect(idx.hostnameProcedural.isEmpty)

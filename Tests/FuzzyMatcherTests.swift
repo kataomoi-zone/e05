@@ -93,19 +93,25 @@ struct FuzzyMatcherTests {
     #expect(near.score > far.score)
   }
 
-  // MARK: - The motivating example from the plan
+  // MARK: - Concatenated subsequence ranking
 
-  @Test("gite05 ranks github.com/kawarimidoll/e05 above unrelated candidates")
-  func motivatingExample() {
+  @Test("concatenated multi-token subsequence ranks the densest match first")
+  func concatenatedSubsequence() {
+    // Subsequence matching's signature use case: a query that
+    // glues several real tokens together (here `git` + `e05`)
+    // surfaces the candidate where those characters land most
+    // densely. The URL bar uses `URLMatcher` for navigation, but
+    // the command palette still uses `FuzzyMatcher` for action ID
+    // lookup and benefits from this density-aware ranking.
     let candidates = [
-      "https://google.com",
-      "https://gist.github.com/example",
-      "https://github.com/kawarimidoll/e05",
-      "https://example.com",
-      "https://github.com/someone-else/other-repo",
+      "google.com",
+      "gist.github.com/example",
+      "github.com/kawarimidoll/e05",
+      "example.com",
+      "github.com/someone-else/other-repo",
     ]
     let ranked = FuzzyMatcher.rank(query: "gite05", items: candidates, keys: { [$0] })
-    #expect(ranked.first?.item == "https://github.com/kawarimidoll/e05")
+    #expect(ranked.first?.item == "github.com/kawarimidoll/e05")
   }
 
   // MARK: - rank

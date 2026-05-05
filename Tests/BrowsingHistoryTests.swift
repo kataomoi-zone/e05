@@ -68,6 +68,30 @@ struct BrowsingHistoryTests {
     #expect(entries[0].title == "Updated Title")
   }
 
+  @Test("mostRecentAggregated reports per-URL visit count and last visit")
+  func mostRecentAggregatedReports() {
+    let history = BrowsingHistory(inMemory: true)
+    history.deleteAll()
+
+    // The dedup guard collapses consecutive same-URL records, so
+    // interleave the visits to keep three rows for `a.com`.
+    history.recordVisit(url: "https://a.com", title: "A1")
+    history.recordVisit(url: "https://b.com", title: "B")
+    history.recordVisit(url: "https://a.com", title: "A2")
+    history.recordVisit(url: "https://b.com", title: "B")
+    history.recordVisit(url: "https://a.com", title: "A3")
+
+    let aggregated = history.mostRecentAggregated(limit: 10)
+    #expect(aggregated.count == 2)
+
+    let aRow = try? #require(aggregated.first { $0.url == "https://a.com" })
+    let bRow = try? #require(aggregated.first { $0.url == "https://b.com" })
+    #expect(aRow?.visits == 3)
+    #expect(bRow?.visits == 2)
+    // Title should be the latest captured value, not the first.
+    #expect(aRow?.title == "A3")
+  }
+
   @Test("delete removes single entry")
   func deleteSingle() {
     let history = BrowsingHistory(inMemory: true)
