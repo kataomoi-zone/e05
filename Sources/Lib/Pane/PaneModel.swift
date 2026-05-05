@@ -232,6 +232,12 @@ public final class PaneModel {
       self.content = .browser(bv)
     }
     setupContainerView()
+    // Extension actions only make sense on browser panes; terminal /
+    // finder panes get the URL field unimpeded by puzzle-piece icons.
+    // The fallback browser views built for `.settings` / `.unknown`
+    // intentionally stay out of this allowlist — they are transient
+    // placeholders, not a stable surface for extensions.
+    urlBar.showsExtensionsRow = address.kind == .browser
     if case .browser(let bv) = content, address.kind == .browser,
       !isBlankBrowser
     {

@@ -47,6 +47,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// handlers can recover the model identity without parsing the
   /// button's identifier or rebuilding the lookup on every event.
   private var extensionButtons: [URL: HoverIconButton] = [:]
+  /// Whether the extension action row should rebuild on
+  /// `didChangeNotification`. Browser panes display extension
+  /// actions; terminal / finder / settings panes never run
+  /// extensions, so showing the row there only adds visual noise
+  /// and steals horizontal space from the URL field. The host
+  /// flips this once per pane right after init.
+  public var showsExtensionsRow: Bool = true {
+    didSet {
+      guard oldValue != showsExtensionsRow else { return }
+      reloadExtensions()
+    }
+  }
   /// Subscription to `ExtensionController.didChangeNotification`.
   /// `nonisolated(unsafe)` mirrors the existing `Bookmarks` /
   /// `History` sidebar observer pattern — block-based observers
@@ -251,6 +263,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
       view.removeFromSuperview()
     }
     extensionButtons.removeAll()
+    // Non-browser panes never trigger extension actions, so the
+    // row stays empty and the URL field reclaims the horizontal
+    // space the row would otherwise occupy.
+    guard showsExtensionsRow else { return }
 
     let buttonSize: CGFloat = 22
     let iconSize = NSSize(width: 16, height: 16)
