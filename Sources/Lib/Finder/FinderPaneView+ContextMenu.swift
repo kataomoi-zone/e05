@@ -2,7 +2,8 @@ import AppKit
 
 /// Right-click / control-click context menu for finder panes.
 /// Surfaces row-level actions (Open / Move to Trash / Rename /
-/// Quick Look / Copy) and directory-level actions (New Folder).
+/// Duplicate / Quick Look / Copy) and directory-level actions
+/// (New Folder).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -46,6 +47,10 @@ extension FinderPaneView {
         symbolName: "pencil",
         action: #selector(contextMenuRename(_:))))
       menu.addItem(makeContextMenuItem(
+        title: "Duplicate",
+        symbolName: "plus.square.on.square",
+        action: #selector(contextMenuDuplicate(_:))))
+      menu.addItem(makeContextMenuItem(
         title: "Quick Look",
         symbolName: "eye",
         action: #selector(contextMenuQuickLook(_:))))
@@ -62,6 +67,10 @@ extension FinderPaneView {
         symbolName: "trash",
         action: #selector(contextMenuTrash(_:))))
       menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
+        title: "Duplicate",
+        symbolName: "plus.square.on.square",
+        action: #selector(contextMenuDuplicate(_:))))
       menu.addItem(makeContextMenuItem(
         title: "Quick Look",
         symbolName: "eye",
@@ -85,6 +94,7 @@ extension FinderPaneView {
   @objc func contextMenuOpen(_ sender: Any?) { openSelectedRow() }
   @objc func contextMenuTrash(_ sender: Any?) { trashSelection() }
   @objc func contextMenuRename(_ sender: Any?) { beginRename() }
+  @objc func contextMenuDuplicate(_ sender: Any?) { duplicateSelection() }
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
   @objc func contextMenuCopy(_ sender: Any?) { copySelectionToPasteboard() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
