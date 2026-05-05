@@ -112,21 +112,62 @@ public struct Suggestion: Equatable {
 /// - `leadingImage`: 16pt icon rendered before the text stack (favicon
 ///   for URL rows, SF Symbol for actions). `nil` collapses the icon
 ///   slot so action rows that opt out don't leave dead whitespace.
+/// - `primaryHighlights` / `secondaryHighlights`: NSRange (UTF-16)
+///   regions to render in bold. Empty arrays render as plain
+///   strings, so non-URL-bar consumers (command palette) don't have
+///   to construct ranges.
 public struct SuggestionCellModel {
   public let primary: String
   public let secondary: String
   public let accessory: String?
   public let leadingImage: NSImage?
+  public let primaryHighlights: [NSRange]
+  public let secondaryHighlights: [NSRange]
 
   public init(
     primary: String,
     secondary: String,
     accessory: String? = nil,
-    leadingImage: NSImage? = nil
+    leadingImage: NSImage? = nil,
+    primaryHighlights: [NSRange] = [],
+    secondaryHighlights: [NSRange] = []
   ) {
     self.primary = primary
     self.secondary = secondary
     self.accessory = accessory
     self.leadingImage = leadingImage
+    self.primaryHighlights = primaryHighlights
+    self.secondaryHighlights = secondaryHighlights
   }
+}
+
+/// Convert a list of character (Swift `String.Index`-equivalent) ranges
+/// into the UTF-16 ranges that `NSAttributedString` operates on. URL bar
+/// content commonly contains percent-escaped non-ASCII bytes (Japanese
+/// path components, emoji in titles); using character ranges directly
+/// as `NSRange.location` desynchronises every highlight beyond a
+/// surrogate pair or composing sequence.
+///
+/// Out-of-range entries are silently dropped — they would crash
+/// `addAttribute(_:value:range:)` and the matcher would never produce
+/// them in practice anyway, so accepting the input as-is would only
+/// risk a crash if a future caller built ranges from a different
+/// haystack than the displayed text.
+public func nsRanges(from characterRanges: [Range<Int>], in text: String) -> [NSRange] {
+  guard !characterRanges.isEmpty else { return [] }
+  let chars = Array(text)
+  var result: [NSRange] = []
+  result.reserveCapacity(characterRanges.count)
+  for range in characterRanges {
+    guard range.lowerBound >= 0,
+      range.upperBound <= chars.count,
+      range.lowerBound < range.upperBound
+    else { continue }
+    let prefix = String(chars[0..<range.lowerBound])
+    let slice = String(chars[range.lowerBound..<range.upperBound])
+    let location = prefix.utf16.count
+    let length = slice.utf16.count
+    result.append(NSRange(location: location, length: length))
+  }
+  return result
 }

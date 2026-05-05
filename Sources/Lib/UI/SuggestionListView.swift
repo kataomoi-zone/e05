@@ -321,12 +321,65 @@ private final class SuggestionCellView: NSView {
 
   static let primaryFont: NSFont = .systemFont(ofSize: 12)
 
+  /// Drive `label.stringValue` for empty-highlight cases and
+  /// `attributedStringValue` when at least one bold range is
+  /// requested. Branching here (rather than always going through
+  /// attributed) keeps the command-palette path on the cheaper code
+  /// path and lets each label's intrinsic content size logic work
+  /// against a plain string.
+  private static func applyText(
+    to label: NSTextField,
+    text: String,
+    font: NSFont,
+    color: NSColor,
+    highlights: [NSRange]
+  ) {
+    if highlights.isEmpty {
+      label.font = font
+      label.textColor = color
+      label.stringValue = text
+      return
+    }
+    let attributed = NSMutableAttributedString(
+      string: text,
+      attributes: [
+        .font: font,
+        .foregroundColor: color,
+      ]
+    )
+    let bold = NSFont.boldSystemFont(ofSize: font.pointSize)
+    let nsLength = (text as NSString).length
+    for range in highlights {
+      // Defensive clamp: an upstream caller could feed a stale range
+      // computed against a different haystack than the one rendered.
+      // Skip rather than crash inside `addAttribute`.
+      guard range.location >= 0,
+        range.length > 0,
+        range.location + range.length <= nsLength
+      else { continue }
+      attributed.addAttribute(.font, value: bold, range: range)
+    }
+    label.attributedStringValue = attributed
+  }
+
   @available(*, unavailable)
   required init?(coder _: NSCoder) { fatalError() }
 
   func apply(_ model: SuggestionCellModel) {
-    primaryLabel.stringValue = model.primary
-    secondaryLabel.stringValue = model.secondary
+    Self.applyText(
+      to: primaryLabel,
+      text: model.primary,
+      font: Self.primaryFont,
+      color: .white,
+      highlights: model.primaryHighlights
+    )
+    Self.applyText(
+      to: secondaryLabel,
+      text: model.secondary,
+      font: .systemFont(ofSize: 11),
+      color: NSColor(white: 0.75, alpha: 1.0),
+      highlights: model.secondaryHighlights
+    )
     secondaryLabel.isHidden = model.secondary.isEmpty
     if let accessory = model.accessory {
       accessoryLabel.stringValue = accessory

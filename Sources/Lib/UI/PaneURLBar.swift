@@ -880,13 +880,42 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// reserved for the command-palette action keyboard shortcuts. The
   /// leading image is the host's cached favicon when available, or a
   /// generic `globe` SF Symbol as a placeholder while the fetch warms.
+  /// `query` drives substring highlighting so the user sees which
+  /// part of the title / URL the matcher anchored on.
   @MainActor
-  private static func cellModel(from suggestion: Suggestion) -> SuggestionCellModel {
-    SuggestionCellModel(
-      primary: suggestion.displayTitle,
+  private static func cellModel(
+    from suggestion: Suggestion, query: String
+  ) -> SuggestionCellModel {
+    let displayTitle = suggestion.displayTitle
+    var primaryHighlights: [NSRange] = []
+    var secondaryHighlights: [NSRange] = []
+    if !query.isEmpty,
+      let match = URLMatcher.match(
+        query: query,
+        title: suggestion.title,
+        url: suggestion.url
+      )
+    {
+      // `displayTitle` carries a `★ ` (2-character) prefix only on
+      // bookmark rows; everything else renders the title verbatim.
+      // Computing the offset from the rendered prefix policy keeps
+      // the highlight aligned without depending on the matcher's
+      // haystack length, which would mis-align if the matcher ever
+      // produced a non-empty title-range against an empty title.
+      let prefixOffset = suggestion.isBookmark ? 2 : 0
+      let shifted = match.titleRanges.map { range in
+        (range.lowerBound + prefixOffset)..<(range.upperBound + prefixOffset)
+      }
+      primaryHighlights = nsRanges(from: shifted, in: displayTitle)
+      secondaryHighlights = nsRanges(from: match.urlRanges, in: suggestion.url)
+    }
+    return SuggestionCellModel(
+      primary: displayTitle,
       secondary: suggestion.url,
       accessory: nil,
-      leadingImage: faviconImage(for: suggestion.url)
+      leadingImage: faviconImage(for: suggestion.url),
+      primaryHighlights: primaryHighlights,
+      secondaryHighlights: secondaryHighlights
     )
   }
 
@@ -976,7 +1005,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
         guard let self else { return }
         let suggestions = self.onTextChanged?(text) ?? []
         self.currentSuggestions = suggestions
-        self.suggestionList.update(items: suggestions.map(Self.cellModel(from:)))
+        self.suggestionList.update(
+          items: suggestions.map { Self.cellModel(from: $0, query: text) }
+        )
         self.positionSuggestionList()
       }
     }
