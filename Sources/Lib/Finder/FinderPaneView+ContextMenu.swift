@@ -20,6 +20,12 @@ extension FinderPaneView {
     if clickedRow < 0 {
       // Empty-area click: keep the current selection untouched (Finder
       // behaviour) and surface only directory-level actions.
+      let pasteCount = pasteableFileURLCount()
+      let pasteTitle = pasteCount > 1 ? "Paste \(pasteCount) Items" : "Paste Item"
+      menu.addItem(makeContextMenuItem(
+        title: pasteTitle,
+        symbolName: "doc.on.clipboard",
+        action: pasteCount > 0 ? #selector(contextMenuPaste(_:)) : nil))
       menu.addItem(makeContextMenuItem(
         title: "New Folder",
         symbolName: "folder.badge.plus",
@@ -84,7 +90,7 @@ extension FinderPaneView {
     return menu
   }
 
-  private func makeContextMenuItem(title: String, symbolName: String, action: Selector) -> NSMenuItem {
+  private func makeContextMenuItem(title: String, symbolName: String, action: Selector?) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
     item.target = self
     item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
@@ -97,5 +103,6 @@ extension FinderPaneView {
   @objc func contextMenuDuplicate(_ sender: Any?) { duplicateSelection() }
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
   @objc func contextMenuCopy(_ sender: Any?) { copySelectionToPasteboard() }
+  @objc func contextMenuPaste(_ sender: Any?) { pasteFromPasteboard() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
 }
