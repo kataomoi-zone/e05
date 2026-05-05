@@ -21,14 +21,14 @@ extension PaneContainerViewController {
     let historyEntries = browsingHistory.mostRecentAggregated(limit: 500)
     let bookmarkURLs = Set(bookmarkEntries.map(\.url))
 
-    var candidates: [Suggestion] = bookmarkEntries.map {
-      Suggestion(url: $0.url, title: $0.title, isBookmark: true)
-    }
+    var candidates: [Suggestion] = bookmarkEntries
+      .filter { !Self.isErrorTitle($0.title) }
+      .map { Suggestion(url: $0.url, title: $0.title, isBookmark: true) }
     candidates.append(
       contentsOf: historyEntries.compactMap { entry in
-        bookmarkURLs.contains(entry.url)
-          ? nil
-          : Suggestion(url: entry.url, title: entry.title, isBookmark: false)
+        if bookmarkURLs.contains(entry.url) { return nil }
+        if Self.isErrorTitle(entry.title) { return nil }
+        return Suggestion(url: entry.url, title: entry.title, isBookmark: false)
       })
 
     let now = Date()
@@ -42,6 +42,20 @@ extension PaneContainerViewController {
       candidates: candidates,
       frecencyByURL: frecencyByURL
     )
+
+    // Collapse search-engine results that point at the same query
+    // through different peripheral parameters (`&ia=web`, ad
+    // tracking tokens, …) to a single row. Without this, history
+    // entries for `duckduckgo.com/?q=foo` and
+    // `duckduckgo.com/?q=foo&ia=web` both surface and crowd out
+    // genuinely distinct candidates.
+    var seenSearchKeys: Set<String> = []
+    results = results.filter { suggestion in
+      guard let key = Self.searchEngineQueryKey(for: suggestion.url) else {
+        return true
+      }
+      return seenSearchKeys.insert(key).inserted
+    }
 
     // Brave-style: when the input itself is a direct-navigable URL
     // (explicit scheme https/http/e05/about, or a bare host/IP
@@ -166,6 +180,69 @@ extension PaneContainerViewController {
   /// Kept in sync with `SuggestionListView.maxVisibleRows` so the list
   /// never scrolls.
   static let maxSuggestionRows = 8
+
+  /// Hosts whose `?q=` parameter is the canonical identity of the
+  /// page. Two visits to such a host with different peripheral
+  /// query params (`&ia=web`, `&prevq=…`) are visits to the same
+  /// search and should collapse to a single suggestion. Non-search
+  /// hosts return nil so their suggestions are never collapsed.
+  static let searchEngineHosts: Set<String> = [
+    "duckduckgo.com", "www.duckduckgo.com",
+    "google.com", "www.google.com",
+    "bing.com", "www.bing.com",
+    "search.brave.com",
+  ]
+
+  /// Canonical "this is the same search" key for `urlString`, or
+  /// nil when the URL doesn't belong to a recognised search engine.
+  /// Matched on host (lowercased) plus the `q` parameter only,
+  /// which is the user-visible query string for every engine in
+  /// the allowlist.
+  static func searchEngineQueryKey(for urlString: String) -> String? {
+    guard let url = URL(string: urlString),
+      let host = url.host(percentEncoded: false)?.lowercased(),
+      Self.searchEngineHosts.contains(host)
+    else {
+      return nil
+    }
+    let q =
+      URLComponents(url: url, resolvingAgainstBaseURL: false)?
+      .queryItems?
+      .first(where: { $0.name == "q" })?
+      .value ?? ""
+    return "\(host)|\(q)"
+  }
+
+  /// Whether `title` looks like an HTTP error page that the user
+  /// should never see in URL-bar suggestions ("Error 400 (Bad
+  /// Request)!", "404 Not Found", …). Both shapes require the
+  /// status code to be in the 4xx / 5xx range — bare 3-digit
+  /// prefixes outside that range (`100% guide`, `1234 ways`,
+  /// `300 Multiple Choices`) belong to legitimate page titles and
+  /// stay in the suggestion pool. The bare-prefix form also
+  /// requires a trailing whitespace so a host-like literal
+  /// (`404Found.com`) isn't filtered.
+  static func isErrorTitle(_ title: String) -> Bool {
+    let trimmed = title.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !trimmed.isEmpty else { return false }
+    if trimmed.hasPrefix("error ") {
+      let codePart = trimmed.dropFirst("error ".count).prefix(3)
+      return Self.isHTTPErrorCodePrefix(codePart)
+    }
+    let leading = trimmed.prefix(3)
+    guard Self.isHTTPErrorCodePrefix(leading) else { return false }
+    let afterDigits = trimmed.dropFirst(3)
+    return afterDigits.first?.isWhitespace == true
+  }
+
+  /// `s` is a 3-character HTTP status code in the error range
+  /// (400–599). The first digit alone is enough to gate on, since
+  /// the matcher only cares whether to filter the row.
+  private static func isHTTPErrorCodePrefix(_ s: Substring) -> Bool {
+    guard s.count == 3, s.allSatisfy(\.isNumber) else { return false }
+    let first = s.first!
+    return first == "4" || first == "5"
+  }
 
   /// Frecency bonus for a single history URL. Combines the visit
   /// count with a recency-decay factor so the URL bar surfaces
