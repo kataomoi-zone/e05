@@ -139,6 +139,70 @@ extension FinderPaneView {
     }
   }
 
+  // MARK: - New Folder with Selection
+
+  /// Create `untitled folder` (or `untitled folder N` on collision)
+  /// in the current cwd, move every selected entry into it, then
+  /// drop straight into rename mode on the new folder — matching
+  /// Finder's "New Folder with Selection (N Items)". Per-item move
+  /// failures log and continue; the user gets back a partially
+  /// populated folder rather than nothing.
+  ///
+  /// Move is `FileManager.moveItem(at:to:)`, which preserves inode
+  /// and metadata when source and destination share the same
+  /// volume. The selected entries' parent is `currentURL`, so the
+  /// new folder is on the same filesystem and the move is the
+  /// same instant rename it would be inside Finder.
+  public func newFolderWithSelection() {
+    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
+      idx < items.count ? items[idx].url : nil
+    }
+    guard !urls.isEmpty else { return }
+    let fm = FileManager.default
+    let base = "untitled folder"
+    var name = base
+    var suffix = 2
+    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false)) {
+      name = "\(base) \(suffix)"
+      suffix += 1
+    }
+    let target = currentURL.appendingPathComponent(name)
+    do {
+      // `withIntermediateDirectories: false` makes a TOCTOU collision
+      // (some other writer raced us to `name` between the walk and
+      // here) throw rather than silently merge into an existing
+      // directory; the collision walk above almost always avoids it.
+      try fm.createDirectory(at: target, withIntermediateDirectories: false)
+    } catch {
+      logger.error(
+        "Failed to create new folder at \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+      return
+    }
+    for source in urls {
+      let dest = target.appendingPathComponent(source.lastPathComponent)
+      do {
+        try fm.moveItem(at: source, to: dest)
+      } catch {
+        logger.error(
+          "Move into new folder \(source.path, privacy: .public) → \(dest.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+    reloadItems(preservingSelection: false)
+    // Same `lastPathComponent` match as `createNewFolder`; the
+    // composed URL and the URL that `FileManager.enumerator` hands
+    // back can differ on trailing slash / percent-encoding.
+    guard let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
+    tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    tableView.scrollRowToVisible(row)
+    // Same menu-close vs field-editor race as `createNewFolder` —
+    // see its comment for the full reasoning.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+      MainActor.assumeIsolated { self?.beginRename() }
+    }
+  }
+
   // MARK: - Move to Trash
 
   /// Send every selected row to the Trash via

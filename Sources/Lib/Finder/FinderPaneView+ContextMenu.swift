@@ -3,7 +3,8 @@ import AppKit
 /// Right-click / control-click context menu for finder panes.
 /// Surfaces row-level actions (Open / Open With / Move to Trash /
 /// Rename / Compress / Duplicate / Make Alias / Quick Look / Copy /
-/// Share) and directory-level actions (New Folder).
+/// Share) and directory-level actions (New Folder /
+/// New Folder with Selection on multi-select).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -89,6 +90,11 @@ extension FinderPaneView {
       // Pixelmator, three logs in BBEdit) and Launch Services
       // batches them into a single launch.
       menu.addItem(makeContextMenuItem(
+        title: "New Folder with Selection (\(count) Items)",
+        symbolName: "folder.badge.plus",
+        action: #selector(contextMenuNewFolderWithSelection(_:))))
+      menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
         title: "Open With...",
         symbolName: "arrow.up.forward.app",
         action: #selector(contextMenuOpenWith(_:))))
@@ -146,4 +152,5 @@ extension FinderPaneView {
   @objc func contextMenuPaste(_ sender: Any?) { pasteFromPasteboard() }
   @objc func contextMenuShare(_ sender: Any?) { shareSelection() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
+  @objc func contextMenuNewFolderWithSelection(_ sender: Any?) { newFolderWithSelection() }
 }
