@@ -95,6 +95,12 @@ extension FinderPaneView {
     let op = Self.dropOperation(sources: sources, destination: destURL)
     let fm = FileManager.default
     var anyAccepted = false
+    // Track only `.move` successes — cross-volume `copyItem` results
+    // are deliberately not registered with the undo manager. System
+    // Finder treats those copies the same way (no undo entry) since
+    // the source is still on disk; ⌘⌫ on the copy is the obvious
+    // recovery path.
+    var movePairs: [(origin: URL, destination: URL)] = []
     for src in sources {
       let target = destURL.appendingPathComponent(src.lastPathComponent)
       if op == .copy {
@@ -111,10 +117,15 @@ extension FinderPaneView {
       do {
         try fm.moveItem(at: src, to: target)
         anyAccepted = true
+        movePairs.append((src, target))
       } catch let error as NSError where Self.isCrossVolumeError(error) {
         // Validate said `.move`, but the source's volume disappeared
         // (or was reclassified) between validate and accept. Fall
         // back to copy so the drop completes instead of evaporating.
+        // The fallback isn't appended to `movePairs` either —
+        // cross-volume copies are intentionally not registered with
+        // the undo manager, same as the explicit `.copy` branch
+        // above.
         do {
           try fm.copyItem(at: src, to: target)
           anyAccepted = true
@@ -128,6 +139,9 @@ extension FinderPaneView {
           "Drop move failed \(src.path, privacy: .public) → \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
       }
+    }
+    if !movePairs.isEmpty {
+      FinderUndoCenter.registerMove(pairs: movePairs, in: self)
     }
     return anyAccepted
   }

@@ -42,6 +42,7 @@ public enum FinderUndoActionName {
   public static let duplicate = "Duplicate"
   public static let paste = "Paste"
   public static let newFolderWithSelection = "New Folder with Selection"
+  public static let move = "Move"
 }
 
 @MainActor
@@ -245,6 +246,76 @@ public enum FinderUndoCenter {
       }
     }
     manager.setActionName(actionName)
+  }
+
+  // MARK: - Move (drag-and-drop)
+
+  /// Register a batch of `(origin → destination)` moves so ⌘Z reverses
+  /// each `moveItem` and ⌘⇧Z replays it. Used by drag-and-drop drops
+  /// that resolve to `.move` (same-volume drags). Cross-volume
+  /// fallbacks that ended up as `copyItem` are intentionally not
+  /// registered here — system Finder leaves cross-volume copies out of
+  /// its undo stack since the source is still on disk and ⌘⌫ removes
+  /// the copy.
+  ///
+  /// The pane parameter is the drop *destination*. A drag-source pane
+  /// would also benefit from a reload, but its directory monitor
+  /// catches the move event and debounces a reload anyway, so no
+  /// extra coordination is needed here.
+  public static func registerMove(
+    pairs: [(origin: URL, destination: URL)],
+    in pane: FinderPaneView
+  ) {
+    guard !pairs.isEmpty else { return }
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        var restored: [(origin: URL, destination: URL)] = []
+        for pair in pairs {
+          do {
+            try FileManager.default.moveItem(at: pair.destination, to: pair.origin)
+            restored.append(pair)
+          } catch {
+            logger.error(
+              "Undo move \(pair.destination.path, privacy: .public) → \(pair.origin.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        if !restored.isEmpty {
+          registerMoveRedo(pairs: restored, in: target)
+        }
+        // The entries left this pane on undo, so there's nothing to
+        // re-select here. The directory monitor on the drag-source
+        // pane will pick up the restoration and reload there.
+        target.reloadItemsAndSelect(at: [])
+      }
+    }
+    manager.setActionName(FinderUndoActionName.move)
+  }
+
+  private static func registerMoveRedo(
+    pairs: [(origin: URL, destination: URL)],
+    in pane: FinderPaneView
+  ) {
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        var moved: [(origin: URL, destination: URL)] = []
+        for pair in pairs {
+          do {
+            try FileManager.default.moveItem(at: pair.origin, to: pair.destination)
+            moved.append(pair)
+          } catch {
+            logger.error(
+              "Redo move \(pair.origin.path, privacy: .public) → \(pair.destination.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        if !moved.isEmpty {
+          registerMove(pairs: moved, in: target)
+        }
+        target.reloadItemsAndSelect(at: moved.map { $0.destination })
+      }
+    }
+    manager.setActionName(FinderUndoActionName.move)
   }
 
   // MARK: - New Folder with Selection
