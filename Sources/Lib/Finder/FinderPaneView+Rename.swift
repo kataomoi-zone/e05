@@ -115,6 +115,7 @@ extension FinderPaneView {
       )
       return
     }
+    FinderUndoCenter.registerNewFolder(at: target, in: self)
     reloadItems(preservingSelection: false)
     // Match by `lastPathComponent` rather than by `URL` equality:
     // `appendingPathComponent(name)` and the URL that
@@ -216,14 +217,22 @@ extension FinderPaneView {
       idx < items.count ? items[idx].url : nil
     }
     guard !urls.isEmpty else { return }
+    var pairs: [(origin: URL, trashed: URL)] = []
     for url in urls {
+      var resulting: NSURL?
       do {
-        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        if let resulting = resulting as URL? {
+          pairs.append((url, resulting))
+        }
       } catch {
         logger.error(
           "Failed to trash \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
       }
+    }
+    if !pairs.isEmpty {
+      FinderUndoCenter.registerTrash(pairs: pairs, in: self)
     }
     // The directory monitor event that follows will schedule a
     // debounced reload. An explicit reload here would race the
