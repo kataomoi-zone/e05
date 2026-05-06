@@ -41,6 +41,7 @@ public enum FinderUndoActionName {
   public static let newFolder = "New Folder"
   public static let duplicate = "Duplicate"
   public static let paste = "Paste"
+  public static let newFolderWithSelection = "New Folder with Selection"
 }
 
 @MainActor
@@ -244,6 +245,98 @@ public enum FinderUndoCenter {
       }
     }
     manager.setActionName(actionName)
+  }
+
+  // MARK: - New Folder with Selection
+
+  /// Composite undo for "New Folder with Selection": move every
+  /// entry back out to its original cwd path, then remove the
+  /// (now-empty) folder. The redo replays both halves — recreate
+  /// the folder, then move every entry back into it. The pair list
+  /// captures the actual `(source, destination)` paths the forward
+  /// operation used, so partial-success batches survive: only the
+  /// successfully-moved entries get walked back, and only those
+  /// re-roundtripped pairs are eligible for the next redo.
+  public static func registerNewFolderWithSelection(
+    folder: URL,
+    moves: [(origin: URL, destination: URL)],
+    in pane: FinderPaneView
+  ) {
+    guard !moves.isEmpty else { return }
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        let fm = FileManager.default
+        var restored: [(origin: URL, destination: URL)] = []
+        for move in moves {
+          do {
+            try fm.moveItem(at: move.destination, to: move.origin)
+            restored.append(move)
+          } catch {
+            logger.error(
+              "Undo new folder with selection \(move.destination.path, privacy: .public) → \(move.origin.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        // Only remove the folder when every move succeeded. A
+        // partial-restore leaves orphaned entries inside, and
+        // `removeItem` would nuke them — same protection
+        // `registerNewFolder` applies for paste/drop content
+        // dropped into the folder after creation.
+        if restored.count == moves.count {
+          if let entries = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil),
+            entries.isEmpty
+          {
+            do {
+              try fm.removeItem(at: folder)
+            } catch {
+              logger.error(
+                "Undo new folder with selection remove \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+              )
+            }
+          }
+        }
+        registerNewFolderWithSelectionRedo(
+          folder: folder, moves: restored, in: target)
+        target.reloadItemsAndSelect(at: restored.map { $0.origin })
+      }
+    }
+    manager.setActionName(FinderUndoActionName.newFolderWithSelection)
+  }
+
+  private static func registerNewFolderWithSelectionRedo(
+    folder: URL,
+    moves: [(origin: URL, destination: URL)],
+    in pane: FinderPaneView
+  ) {
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        let fm = FileManager.default
+        do {
+          try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+        } catch {
+          logger.error(
+            "Redo new folder with selection createDirectory \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+          )
+          return
+        }
+        var moved: [(origin: URL, destination: URL)] = []
+        for move in moves {
+          do {
+            try fm.moveItem(at: move.origin, to: move.destination)
+            moved.append(move)
+          } catch {
+            logger.error(
+              "Redo new folder with selection \(move.origin.path, privacy: .public) → \(move.destination.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        if !moved.isEmpty {
+          registerNewFolderWithSelection(folder: folder, moves: moved, in: target)
+        }
+        target.reloadItemsAndSelect(at: [folder])
+      }
+    }
+    manager.setActionName(FinderUndoActionName.newFolderWithSelection)
   }
 
   // MARK: - New Folder

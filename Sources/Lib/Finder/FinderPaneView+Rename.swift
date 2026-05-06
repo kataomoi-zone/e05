@@ -180,16 +180,20 @@ extension FinderPaneView {
       )
       return
     }
+    var moves: [(origin: URL, destination: URL)] = []
     for source in urls {
       let dest = target.appendingPathComponent(source.lastPathComponent)
       do {
         try fm.moveItem(at: source, to: dest)
+        moves.append((source, dest))
       } catch {
         logger.error(
           "Move into new folder \(source.path, privacy: .public) → \(dest.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
       }
     }
+    FinderUndoCenter.registerNewFolderWithSelection(
+      folder: target, moves: moves, in: self)
     reloadItems(preservingSelection: false)
     // Same `lastPathComponent` match as `createNewFolder`; the
     // composed URL and the URL that `FileManager.enumerator` hands

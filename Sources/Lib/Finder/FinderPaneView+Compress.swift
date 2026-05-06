@@ -90,6 +90,12 @@ extension FinderPaneView {
         atPath: archiveURL.path(percentEncoded: false))
       guard archiveExists else { return }
       await MainActor.run { [weak self] in
+        // No `FinderUndoCenter` registration here — system Finder
+        // also leaves Compress out of its undo stack, since the
+        // archive is a brand-new file alongside the originals
+        // (nothing was destroyed) and ⌘⌫ trashes it just as
+        // easily. Registering would only crowd the stack with an
+        // entry users don't expect to walk back through.
         self?.finishCopyBatch(targets: [archiveURL])
       }
     }
