@@ -213,7 +213,7 @@ extension PaneContainerViewController {
         handler: { [weak self] in
           guard let self, self.isFocusedPaneBrowser else { return }
           self.reloadFocusedBrowserFromOrigin()
-          self.showToast("Reload (Bypass Cache)")
+          self.showToast("Reload Page (Bypass Cache)")
         },
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
