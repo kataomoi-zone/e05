@@ -132,9 +132,13 @@ extension PaneContainerViewController {
         modifierMask: [.command, .shift],
         handler: { [weak self] in
           self?.toggleURLBarVisibility()
-          // Read post-state so the user gets the *new* mode rather
-          // than the action's static label.
-          self?.showToast(self?.urlBarVisible == true ? "URL Bar Shown" : "URL Bar Hidden")
+          // Read post-state and surface the verb-phrase that
+          // *produced* it: the URL bar being visible after the
+          // toggle means the user just performed "Show URL Bar".
+          // The menu title (`validate` further down) shows the
+          // *next* action instead, which is why the strings flip
+          // between toast and menu.
+          self?.showToast(self?.urlBarVisible == true ? "Show URL Bar" : "Hide URL Bar")
         }
       ),
       Action(
@@ -164,7 +168,7 @@ extension PaneContainerViewController {
         keyEquivalent: "d",
         handler: { [weak self] in
           if let added = self?.toggleBookmark() {
-            self?.showToast(added ? "Bookmark Added" : "Bookmark Removed")
+            self?.showToast(added ? "Add Bookmark" : "Remove Bookmark")
           }
         },
         validate: { [weak self] in
@@ -181,7 +185,7 @@ extension PaneContainerViewController {
         handler: { [weak self] in
           guard let self, self.isFocusedPaneBrowser else { return }
           self.toggleInspector()
-          self.showToast(self.isFocusedInspectorOpen ? "Web Inspector Shown" : "Web Inspector Hidden")
+          self.showToast(self.isFocusedInspectorOpen ? "Show Web Inspector" : "Hide Web Inspector")
         },
         validate: { [weak self] in
           let isOpen = self?.isFocusedInspectorOpen ?? false
@@ -372,7 +376,7 @@ extension PaneContainerViewController {
             finderView.hasSelection
           else { return }
           finderView.trashSelection()
-          self?.showToast("Moved to Trash")
+          self?.showToast("Move to Trash")
         },
         validate: { [weak self] in
           ((self?.focusedPane?.finderView?.hasSelection) ?? false, nil)
@@ -392,7 +396,7 @@ extension PaneContainerViewController {
         handler: { [weak self] in
           self?.sidebarVC?.togglePin()
           let pinned = self?.sidebarVC?.currentState == .pinnedOpen
-          self?.showToast(pinned ? "Sidebar Pinned" : "Sidebar Unpinned")
+          self?.showToast(pinned ? "Pin Sidebar" : "Unpin Sidebar")
         },
         validate: { [weak self] in
           let pinned = self?.sidebarVC?.currentState == .pinnedOpen
