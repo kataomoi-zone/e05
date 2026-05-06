@@ -136,11 +136,41 @@ extension FinderPaneView: NSMenuItemValidation {
   /// — overriding `var undoManager` alone is not enough; AppKit
   /// runs `respondsToSelector(undo:)` against the responder, and a
   /// pure `undoManager` provider would fail that test.
+  ///
+  /// Captures the action name *before* invoking the manager: the
+  /// action that's about to run lives on `undoActionName` while
+  /// it's still on the undo stack, but as soon as the closure
+  /// finishes the entry has moved to the redo stack and
+  /// `undoActionName` would point at whatever is now next on the
+  /// undo stack instead. Same logic in mirror for `redo:`.
+  ///
+  /// The action name is a verb baseform ("Rename", "Move to Trash")
+  /// so the menu-bar Edit > Undo X / Redo X reads naturally. The
+  /// toast appends a suffix ("Rename undone" / "Move to Trash
+  /// redone") instead of prefixing a past tense — past-tense
+  /// prefixes ("Undid Move to Trash") read awkwardly when the
+  /// action name itself is already a noun phrase.
   @objc public func undo(_ sender: Any?) {
+    let action = FinderUndoCenter.manager.undoActionName
     FinderUndoCenter.manager.undo()
+    postUndoToast(action: action, suffix: "undone")
   }
 
   @objc public func redo(_ sender: Any?) {
+    let action = FinderUndoCenter.manager.redoActionName
     FinderUndoCenter.manager.redo()
+    postUndoToast(action: action, suffix: "redone")
+  }
+
+  /// Surface a brief confirmation toast for a finder-pane undo/redo.
+  /// Drops silently when the action name is empty (manager couldn't
+  /// resolve one) or when no `PaneContainerViewController` is
+  /// reachable up the responder chain — the latter happens during
+  /// teardown but never in the normal click path.
+  private func postUndoToast(action: String, suffix: String) {
+    guard !action.isEmpty,
+      let container = window?.contentViewController as? PaneContainerViewController
+    else { return }
+    container.showToast("\(action) \(suffix)")
   }
 }
