@@ -60,6 +60,13 @@ public final class FinderPaneView: NSView {
   /// view stealing first responder.
   public var keyboardFocusTarget: NSView { tableView }
 
+  /// Hand AppKit's `undo:` / `redo:` selectors the app-global finder
+  /// undo manager when this pane sits on the responder chain. Without
+  /// this override, `NSResponder.undoManager` walks up to the window
+  /// and lands on `nil`, leaving the menu-bar Edit > Undo entry
+  /// disabled even after a finder-pane operation has been registered.
+  public override var undoManager: UndoManager? { FinderUndoCenter.manager }
+
   /// Whether the table has at least one selected row. Exposed so the
   /// Move-to-Trash action can disable its menu item and palette entry
   /// when nothing is selected.

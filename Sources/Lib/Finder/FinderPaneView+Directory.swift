@@ -72,6 +72,19 @@ extension FinderPaneView {
     onNavigationStateChange?(canGoBack, canGoForward)
   }
 
+  /// Reload and select the row at `targetURL` if present. Used by
+  /// undo/redo handlers: after the inverse `moveItem` lands the
+  /// file back at its original path, we want the row visible and
+  /// highlighted so the user can see what changed.
+  public func reloadItemsAndSelect(at targetURL: URL) {
+    reloadItems(preservingSelection: false)
+    let name = targetURL.lastPathComponent
+    if let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) {
+      tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+      tableView.scrollRowToVisible(row)
+    }
+  }
+
   // MARK: - Directory load + reload
 
   func loadDirectory(url: URL, pushHistory: Bool, announce: Bool) {

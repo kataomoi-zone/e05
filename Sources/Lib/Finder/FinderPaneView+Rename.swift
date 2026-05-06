@@ -311,15 +311,17 @@ extension FinderPaneView: NSTextFieldDelegate {
       return
     }
     let target = currentURL.appendingPathComponent(newName)
+    let oldURL = oldItem.url
     do {
-      try FileManager.default.moveItem(at: oldItem.url, to: target)
+      try FileManager.default.moveItem(at: oldURL, to: target)
     } catch {
       logger.error(
-        "Rename failed \(oldItem.url.path, privacy: .public) → \(newName, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        "Rename failed \(oldURL.path, privacy: .public) → \(newName, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
       reloadItems(preservingSelection: true)
       return
     }
+    FinderUndoCenter.registerRename(from: oldURL, to: target, in: self)
     reloadItems(preservingSelection: false)
     if let newRow = items.firstIndex(where: { $0.url == target }) {
       tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)

@@ -114,8 +114,33 @@ extension FinderPaneView: NSMenuItemValidation {
       return !tableView.selectedRowIndexes.isEmpty
     case #selector(paste(_:)):
       return pasteableFileURLCount() > 0
+    case #selector(undo(_:)):
+      // Push the action name into the menu item's title so Edit >
+      // Undo shows "Undo Rename" / "Redo Rename" mid-edit. AppKit's
+      // built-in NSTextField undo wires this for free; our
+      // self-dispatched path doesn't, so the validation pass — the
+      // last hook before the menu draws — is where we sync it.
+      menuItem.title = FinderUndoCenter.manager.undoMenuItemTitle
+      return FinderUndoCenter.manager.canUndo
+    case #selector(redo(_:)):
+      menuItem.title = FinderUndoCenter.manager.redoMenuItemTitle
+      return FinderUndoCenter.manager.canRedo
     default:
       return true
     }
+  }
+
+  /// Routes the menu-bar `undo:` / `redo:` selectors (wired in
+  /// `AppDelegate.setupMainMenu`) into `FinderUndoCenter`. AppKit's
+  /// responder-chain dispatch needs an actual method on a responder
+  /// — overriding `var undoManager` alone is not enough; AppKit
+  /// runs `respondsToSelector(undo:)` against the responder, and a
+  /// pure `undoManager` provider would fail that test.
+  @objc public func undo(_ sender: Any?) {
+    FinderUndoCenter.manager.undo()
+  }
+
+  @objc public func redo(_ sender: Any?) {
+    FinderUndoCenter.manager.redo()
   }
 }
