@@ -28,6 +28,21 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 /// `beginUndoGrouping` / `endUndoGrouping` blocks, revisit this —
 /// `setActionName` then applies to the whole group, not a single
 /// registration.
+/// Action-name constants for the undo / redo manager. These propagate
+/// into the menu-bar Edit > Undo X / Redo X title via
+/// `manager.setActionName`, and a few of them are referenced from the
+/// pane's call sites (`runCopyBatch`'s `label`, `makeAliasForSelection`).
+/// Centralising them here keeps the strings in lockstep — bare string
+/// literals at the call site would drift the moment one user-visible
+/// label is reworded.
+public enum FinderUndoActionName {
+  public static let rename = "Rename"
+  public static let moveToTrash = "Move to Trash"
+  public static let newFolder = "New Folder"
+  public static let duplicate = "Duplicate"
+  public static let paste = "Paste"
+}
+
 @MainActor
 public enum FinderUndoCenter {
   public static let manager: UndoManager = {
@@ -63,7 +78,7 @@ public enum FinderUndoCenter {
           // other direction. `NSUndoManager` routes this onto the
           // redo stack while `isUndoing == true`.
           registerRename(from: newURL, to: oldURL, in: target)
-          target.reloadItemsAndSelect(at: oldURL)
+          target.reloadItemsAndSelect(at: [oldURL])
         } catch {
           logger.error(
             "Undo rename \(newURL.path, privacy: .public) → \(oldURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -71,7 +86,7 @@ public enum FinderUndoCenter {
         }
       }
     }
-    manager.setActionName("Rename")
+    manager.setActionName(FinderUndoActionName.rename)
   }
 
   // MARK: - Move to Trash
@@ -115,12 +130,10 @@ public enum FinderUndoCenter {
         if !restored.isEmpty {
           registerTrashRedo(originals: restored.map { $0.origin }, in: target)
         }
-        if let first = restored.first?.origin {
-          target.reloadItemsAndSelect(at: first)
-        }
+        target.reloadItemsAndSelect(at: restored.map { $0.origin })
       }
     }
-    manager.setActionName("Move to Trash")
+    manager.setActionName(FinderUndoActionName.moveToTrash)
   }
 
   /// Re-trash a previously undone batch, then re-register the undo
@@ -150,7 +163,87 @@ public enum FinderUndoCenter {
         }
       }
     }
-    manager.setActionName("Move to Trash")
+    manager.setActionName(FinderUndoActionName.moveToTrash)
+  }
+
+  // MARK: - Created entries (Duplicate / Paste / Make Alias)
+
+  /// Register a batch of newly-created entries so ⌘Z sends them to
+  /// the Trash and ⌘⇧Z brings them back to the original paths. Used
+  /// by Duplicate, Paste, and Make Alias — all three produce new
+  /// rows under the cwd and want the undo to delete those rows
+  /// safely (Trash, not unlink, so a misclick stays recoverable).
+  ///
+  /// `actionName` propagates into the menu-bar Edit > Undo X /
+  /// Redo X title via `setActionName`. `runCopyBatch`'s `label`
+  /// argument feeds straight into this for Duplicate / Paste;
+  /// Make Alias uses the literal "Make Alias".
+  public static func registerCreated(
+    at urls: [URL],
+    actionName: String,
+    in pane: FinderPaneView
+  ) {
+    guard !urls.isEmpty else { return }
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        var pairs: [(origin: URL, trashed: URL)] = []
+        for origin in urls {
+          var resulting: NSURL?
+          do {
+            try FileManager.default.trashItem(at: origin, resultingItemURL: &resulting)
+            if let resulting = resulting as URL? {
+              pairs.append((origin, resulting))
+            }
+          } catch {
+            logger.error(
+              "Undo \(actionName, privacy: .public) \(origin.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        if !pairs.isEmpty {
+          registerCreatedRedo(pairs: pairs, actionName: actionName, in: target)
+        }
+        // The originals are gone (they're in Trash now), so a
+        // last-component match against `items` would miss anyway.
+        // Pass an empty target list so the table just reloads
+        // without trying to highlight a row that doesn't exist.
+        target.reloadItemsAndSelect(at: [])
+      }
+    }
+    manager.setActionName(actionName)
+  }
+
+  /// Redo path: move every (origin, trashed) pair back to its
+  /// original cwd path, then re-register the undo so the cycle
+  /// continues. The closure body shares its trashed → origin
+  /// move with `registerTrash`'s undo body — the difference is
+  /// only that this lives on the redo stack instead of the undo
+  /// stack.
+  private static func registerCreatedRedo(
+    pairs: [(origin: URL, trashed: URL)],
+    actionName: String,
+    in pane: FinderPaneView
+  ) {
+    manager.registerUndo(withTarget: pane) { target in
+      MainActor.assumeIsolated {
+        var restored: [URL] = []
+        for pair in pairs {
+          do {
+            try FileManager.default.moveItem(at: pair.trashed, to: pair.origin)
+            restored.append(pair.origin)
+          } catch {
+            logger.error(
+              "Redo \(actionName, privacy: .public) \(pair.origin.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+        }
+        if !restored.isEmpty {
+          registerCreated(at: restored, actionName: actionName, in: target)
+        }
+        target.reloadItemsAndSelect(at: restored)
+      }
+    }
+    manager.setActionName(actionName)
   }
 
   // MARK: - New Folder
@@ -192,7 +285,8 @@ public enum FinderUndoCenter {
         do {
           try fm.removeItem(at: url)
           registerNewFolderRedo(at: url, in: target)
-          target.reloadItemsAndSelect(at: url.deletingLastPathComponent())
+          // The folder itself is gone; reload without re-selecting.
+          target.reloadItemsAndSelect(at: [])
         } catch {
           logger.error(
             "Undo new folder \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -200,7 +294,7 @@ public enum FinderUndoCenter {
         }
       }
     }
-    manager.setActionName("New Folder")
+    manager.setActionName(FinderUndoActionName.newFolder)
   }
 
   private static func registerNewFolderRedo(at url: URL, in pane: FinderPaneView) {
@@ -210,7 +304,7 @@ public enum FinderUndoCenter {
           try FileManager.default.createDirectory(
             at: url, withIntermediateDirectories: false)
           registerNewFolder(at: url, in: target)
-          target.reloadItemsAndSelect(at: url)
+          target.reloadItemsAndSelect(at: [url])
         } catch {
           logger.error(
             "Redo new folder \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -218,6 +312,6 @@ public enum FinderUndoCenter {
         }
       }
     }
-    manager.setActionName("New Folder")
+    manager.setActionName(FinderUndoActionName.newFolder)
   }
 }

@@ -63,7 +63,7 @@ extension FinderPaneView {
     let plans: [(source: URL, target: URL)] = sources.map { source in
       (source, pasteTargetURL(for: source))
     }
-    runCopyBatch(plans: plans, label: "Paste")
+    runCopyBatch(plans: plans, label: FinderUndoActionName.paste)
   }
 
   /// Try `currentURL/<source-name>` first; on collision escalate

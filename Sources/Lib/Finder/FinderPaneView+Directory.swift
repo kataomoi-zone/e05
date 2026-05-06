@@ -72,16 +72,25 @@ extension FinderPaneView {
     onNavigationStateChange?(canGoBack, canGoForward)
   }
 
-  /// Reload and select the row at `targetURL` if present. Used by
-  /// undo/redo handlers: after the inverse `moveItem` lands the
-  /// file back at its original path, we want the row visible and
-  /// highlighted so the user can see what changed.
-  public func reloadItemsAndSelect(at targetURL: URL) {
+  /// Reload and select every row whose `lastPathComponent` matches
+  /// one of `targetURLs`. Used by undo/redo handlers so a multi-
+  /// select restoration (5 trashed entries brought back) lights
+  /// up all 5 rows the same way the forward action did. An empty
+  /// array reloads without any selection — useful when the undo
+  /// action's targets aren't in the cwd (e.g. trashing dropped
+  /// them outside the visible tree).
+  public func reloadItemsAndSelect(at targetURLs: [URL]) {
     reloadItems(preservingSelection: false)
-    let name = targetURL.lastPathComponent
-    if let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) {
-      tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-      tableView.scrollRowToVisible(row)
+    guard !targetURLs.isEmpty else { return }
+    let names = Set(targetURLs.map { $0.lastPathComponent })
+    var rows = IndexSet()
+    for (idx, item) in items.enumerated()
+    where names.contains(item.url.lastPathComponent) {
+      rows.insert(idx)
+    }
+    if let first = rows.first {
+      tableView.selectRowIndexes(rows, byExtendingSelection: false)
+      tableView.scrollRowToVisible(first)
     }
   }
 

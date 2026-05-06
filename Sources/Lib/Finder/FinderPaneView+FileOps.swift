@@ -27,7 +27,7 @@ extension FinderPaneView {
     let plans: [(source: URL, target: URL)] = urls.map { source in
       (source, duplicateTargetURL(for: source))
     }
-    runCopyBatch(plans: plans, label: "Duplicate")
+    runCopyBatch(plans: plans, label: FinderUndoActionName.duplicate)
   }
 
   /// Resolve the next available `<name> copy[.ext]` slot in `source`'s
@@ -85,6 +85,12 @@ extension FinderPaneView {
     // alias entries on every refresh.
     NSWorkspace.shared.noteFileSystemChanged(currentURL.path(percentEncoded: false))
     finishCopyBatch(targets: created)
+    // No `FinderUndoCenter` registration — system Finder also
+    // leaves Make Alias out of its undo stack since the alias is
+    // a fresh bookmark file (nothing was destroyed) and ⌘⌫ trashes
+    // it the same as any other entry. Registering would only
+    // crowd the stack with an entry the user doesn't expect to
+    // walk back through.
   }
 
   /// Resolve the next free `<source> alias` slot in `source`'s parent
@@ -144,7 +150,9 @@ extension FinderPaneView {
       }
       guard !done.isEmpty else { return }
       await MainActor.run { [weak self] in
-        self?.finishCopyBatch(targets: done)
+        guard let self else { return }
+        self.finishCopyBatch(targets: done)
+        FinderUndoCenter.registerCreated(at: done, actionName: label, in: self)
       }
     }
   }
