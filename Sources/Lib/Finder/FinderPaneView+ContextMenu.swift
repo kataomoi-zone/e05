@@ -2,8 +2,8 @@ import AppKit
 
 /// Right-click / control-click context menu for finder panes.
 /// Surfaces row-level actions (Open / Open With / Move to Trash /
-/// Rename / Duplicate / Make Alias / Quick Look / Copy / Share)
-/// and directory-level actions (New Folder).
+/// Rename / Compress / Duplicate / Make Alias / Quick Look / Copy /
+/// Share) and directory-level actions (New Folder).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -57,6 +57,10 @@ extension FinderPaneView {
         symbolName: "pencil",
         action: #selector(contextMenuRename(_:))))
       menu.addItem(makeContextMenuItem(
+        title: "Compress \"\(name)\"",
+        symbolName: "archivebox",
+        action: #selector(contextMenuCompress(_:))))
+      menu.addItem(makeContextMenuItem(
         title: "Duplicate",
         symbolName: "plus.square.on.square",
         action: #selector(contextMenuDuplicate(_:))))
@@ -95,6 +99,10 @@ extension FinderPaneView {
         action: #selector(contextMenuTrash(_:))))
       menu.addItem(.separator())
       menu.addItem(makeContextMenuItem(
+        title: "Compress \(count) Items",
+        symbolName: "archivebox",
+        action: #selector(contextMenuCompress(_:))))
+      menu.addItem(makeContextMenuItem(
         title: "Duplicate",
         symbolName: "plus.square.on.square",
         action: #selector(contextMenuDuplicate(_:))))
@@ -130,6 +138,7 @@ extension FinderPaneView {
   @objc func contextMenuOpenWith(_ sender: Any?) { openSelectionWithChosenApplication() }
   @objc func contextMenuTrash(_ sender: Any?) { trashSelection() }
   @objc func contextMenuRename(_ sender: Any?) { beginRename() }
+  @objc func contextMenuCompress(_ sender: Any?) { compressSelection() }
   @objc func contextMenuDuplicate(_ sender: Any?) { duplicateSelection() }
   @objc func contextMenuMakeAlias(_ sender: Any?) { makeAliasForSelection() }
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
