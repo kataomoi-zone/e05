@@ -2,9 +2,9 @@ import AppKit
 
 /// Right-click / control-click context menu for finder panes.
 /// Surfaces row-level actions (Open / Open With / Move to Trash /
-/// Rename / Compress / Duplicate / Make Alias / Quick Look / Copy /
-/// Share) and directory-level actions (New Folder /
-/// New Folder with Selection on multi-select).
+/// Get Info / Rename / Compress / Duplicate / Make Alias /
+/// Quick Look / Copy / Share) and directory-level actions
+/// (New Folder / New Folder with Selection on multi-select).
 /// The selection-adjustment logic that decides which menu state to
 /// render lives in `FinderTableView.menu(for:)`, which forwards the
 /// resolved `clickedRow` to `buildContextMenu(clickedRow:)`.
@@ -53,6 +53,10 @@ extension FinderPaneView {
         symbolName: "trash",
         action: #selector(contextMenuTrash(_:))))
       menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
+        title: "Get Info",
+        symbolName: "info.circle",
+        action: #selector(contextMenuGetInfo(_:))))
       menu.addItem(makeContextMenuItem(
         title: "Rename",
         symbolName: "pencil",
@@ -143,6 +147,7 @@ extension FinderPaneView {
   @objc func contextMenuOpen(_ sender: Any?) { openSelectedRow() }
   @objc func contextMenuOpenWith(_ sender: Any?) { openSelectionWithChosenApplication() }
   @objc func contextMenuTrash(_ sender: Any?) { trashSelection() }
+  @objc func contextMenuGetInfo(_ sender: Any?) { showInfoForSelection() }
   @objc func contextMenuRename(_ sender: Any?) { beginRename() }
   @objc func contextMenuCompress(_ sender: Any?) { compressSelection() }
   @objc func contextMenuDuplicate(_ sender: Any?) { duplicateSelection() }
