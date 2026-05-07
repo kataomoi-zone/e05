@@ -20,6 +20,19 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
 
   private let url: URL
 
+  /// Captured at content-build time so the async size walk can
+  /// patch both the header summary line and the "Size:" row when
+  /// it completes (or is cancelled). `nil` for non-directory entries
+  /// where the size is resolved synchronously.
+  private var summaryLabel: NSTextField?
+  private var sizeValueLabel: NSTextField?
+
+  /// Off-main directory walk for aggregated size. Cancelled in
+  /// `windowWillClose` so closing the panel mid-walk on a multi-GB
+  /// tree (`~/Library`, `node_modules`) stops the enumeration
+  /// instead of churning until completion.
+  private var sizeTask: Task<Void, Never>?
+
   public init(url: URL) {
     self.url = url
     super.init(
@@ -109,8 +122,12 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
   /// without this, `isReleasedWhenClosed = false` keeps the closed
   /// panel alive in the autorelease pool and `Self.shared` would
   /// still point at it, breaking the next invocation's
-  /// "always fresh metadata" guarantee.
+  /// "always fresh metadata" guarantee. Also cancels the directory
+  /// size walk so closing the panel during a multi-GB enumeration
+  /// stops the walk at the next iteration boundary.
   public func windowWillClose(_ notification: Notification) {
+    sizeTask?.cancel()
+    sizeTask = nil
     if Self.shared === self {
       Self.shared = nil
     }
@@ -119,6 +136,15 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
   // MARK: - Content
 
   private func makeContent() -> NSView {
+    let isDirectory =
+      (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+    let kind = (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey])
+      .localizedTypeDescription) ?? "—"
+    let fileBytes: Int64? =
+      isDirectory
+      ? nil
+      : (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) }
+
     let root = NSStackView()
     root.orientation = .vertical
     root.alignment = .leading
@@ -148,10 +174,12 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
     nameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     nameLabel.lineBreakMode = .byTruncatingMiddle
     nameLabel.maximumNumberOfLines = 2
-    let summary = headerSummary()
-    let summaryLabel = NSTextField(labelWithString: summary)
+
+    let summaryLabel = NSTextField(
+      labelWithString: summaryString(kind: kind, isDirectory: isDirectory, bytes: fileBytes))
     summaryLabel.font = .systemFont(ofSize: 11)
     summaryLabel.textColor = .secondaryLabelColor
+    self.summaryLabel = summaryLabel
 
     let titleStack = NSStackView(views: [nameLabel, summaryLabel])
     titleStack.orientation = .vertical
@@ -168,22 +196,56 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
     // would also work, but the existing finder-pane stack-of-rows
     // pattern keeps the styling consistent with FinderStatusBar
     // and the rest of the pane.
-    for (label, value) in detailRows() {
-      root.addArrangedSubview(detailRow(label: label, value: value))
+    let dateValues = try? url.resourceValues(forKeys: [
+      .creationDateKey, .contentModificationDateKey,
+    ])
+
+    root.addArrangedSubview(
+      detailRow(
+        label: "Where:",
+        value: url.deletingLastPathComponent().path(percentEncoded: false)))
+
+    if isDirectory {
+      let field = makeValueField(initial: "Calculating…")
+      self.sizeValueLabel = field
+      root.addArrangedSubview(detailRow(label: "Size:", valueField: field))
+    } else if let bytes = fileBytes {
+      root.addArrangedSubview(
+        detailRow(label: "Size:", value: Self.byteFormatter.string(fromByteCount: bytes)))
+    }
+
+    if let created = dateValues?.creationDate {
+      root.addArrangedSubview(
+        detailRow(label: "Created:", value: Self.dateFormatter.string(from: created)))
+    }
+    if let modified = dateValues?.contentModificationDate {
+      root.addArrangedSubview(
+        detailRow(label: "Modified:", value: Self.dateFormatter.string(from: modified)))
+    }
+    if let perms = posixPermissions() {
+      root.addArrangedSubview(detailRow(label: "Permissions:", value: perms))
+    }
+    root.addArrangedSubview(
+      detailRow(label: "Full Path:", value: url.path(percentEncoded: false)))
+
+    if isDirectory {
+      startDirectorySizeTask(kind: kind)
     }
 
     return root
   }
 
-  private func detailRow(label: String, value: String) -> NSView {
-    let labelField = NSTextField(labelWithString: label)
-    labelField.font = .systemFont(ofSize: 11, weight: .semibold)
-    labelField.textColor = .secondaryLabelColor
-    labelField.alignment = .right
-    labelField.translatesAutoresizingMaskIntoConstraints = false
-    labelField.widthAnchor.constraint(equalToConstant: 84).isActive = true
-    labelField.setContentHuggingPriority(.required, for: .horizontal)
+  private func summaryString(kind: String, isDirectory: Bool, bytes: Int64?) -> String {
+    if isDirectory {
+      return "\(kind) — Calculating…"
+    }
+    if let bytes {
+      return "\(kind) — \(Self.byteFormatter.string(fromByteCount: bytes))"
+    }
+    return kind
+  }
 
+  private func makeValueField(initial: String) -> NSTextField {
     // `cell?.wraps = true` is the AppKit incantation that gets a
     // label-style NSTextField to actually word-wrap multi-line
     // content instead of single-line truncating; setting
@@ -191,11 +253,26 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
     // enough on macOS 26. Long paths (`/Users/.../deep/nested/file`)
     // therefore lay out across as many lines as needed instead of
     // ellipsing past the panel edge.
-    let valueField = NSTextField(wrappingLabelWithString: value)
-    valueField.font = .systemFont(ofSize: 11)
-    valueField.isSelectable = true
-    valueField.translatesAutoresizingMaskIntoConstraints = false
-    valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let field = NSTextField(wrappingLabelWithString: initial)
+    field.font = .systemFont(ofSize: 11)
+    field.isSelectable = true
+    field.translatesAutoresizingMaskIntoConstraints = false
+    field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    return field
+  }
+
+  private func detailRow(label: String, value: String) -> NSView {
+    detailRow(label: label, valueField: makeValueField(initial: value))
+  }
+
+  private func detailRow(label: String, valueField: NSTextField) -> NSView {
+    let labelField = NSTextField(labelWithString: label)
+    labelField.font = .systemFont(ofSize: 11, weight: .semibold)
+    labelField.textColor = .secondaryLabelColor
+    labelField.alignment = .right
+    labelField.translatesAutoresizingMaskIntoConstraints = false
+    labelField.widthAnchor.constraint(equalToConstant: 84).isActive = true
+    labelField.setContentHuggingPriority(.required, for: .horizontal)
 
     let row = NSStackView(views: [labelField, valueField])
     row.orientation = .horizontal
@@ -206,77 +283,53 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
     return row
   }
 
-  // MARK: - Metadata
+  // MARK: - Async size walk
 
-  private func headerSummary() -> String {
-    let kind = (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey])
-      .localizedTypeDescription) ?? "—"
-    if let bytes = totalSizeBytes() {
-      return "\(kind) — \(Self.byteFormatter.string(fromByteCount: bytes))"
-    }
-    return kind
-  }
-
-  private func detailRows() -> [(String, String)] {
-    var rows: [(String, String)] = []
-    let keys: [URLResourceKey] = [
-      .creationDateKey,
-      .contentModificationDateKey,
-      .fileSizeKey,
-      .isDirectoryKey,
-    ]
-    let values = try? url.resourceValues(forKeys: Set(keys))
-
-    rows.append(("Where:", url.deletingLastPathComponent().path(percentEncoded: false)))
-
-    if let bytes = totalSizeBytes() {
-      rows.append(("Size:", Self.byteFormatter.string(fromByteCount: bytes)))
-    }
-
-    if let created = values?.creationDate {
-      rows.append(("Created:", Self.dateFormatter.string(from: created)))
-    }
-    if let modified = values?.contentModificationDate {
-      rows.append(("Modified:", Self.dateFormatter.string(from: modified)))
-    }
-
-    if let perms = posixPermissions() {
-      rows.append(("Permissions:", perms))
-    }
-    rows.append(("Full Path:", url.path(percentEncoded: false)))
-    return rows
-  }
-
-  /// Total bytes the entry occupies on disk. For a regular file
-  /// `fileSize` is enough; for a directory we walk recursively
-  /// (single-shot, on the main actor) because Finder's Get Info
-  /// shows aggregated size. Recursive enumeration on a multi-GB
-  /// tree could stall the panel open — acceptable trade-off for a
-  /// one-shot inspector window.
-  ///
-  /// TODO: cap or async-refresh once the user hits a tree where
-  /// this freezes meaningfully (`~/Library`, monorepo `node_modules`).
-  /// Likely shape: enumerate off-main with `Task.detached`, render
-  /// "Calculating…" first, then populate the row when the walk
-  /// completes; cancel the task on panel close.
-  private func totalSizeBytes() -> Int64? {
-    let isDirectory =
-      (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    if !isDirectory {
-      if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-        return Int64(size)
+  /// Kick off the off-main directory walk. The captured `kind`
+  /// string is reused when patching the header summary so the
+  /// resource-key lookup runs once on MainActor instead of being
+  /// repeated on completion (which would also pull MainActor work
+  /// back through the URL's bridged Cocoa value type).
+  private func startDirectorySizeTask(kind: String) {
+    let capturedURL = url
+    sizeTask = Task.detached { [weak self] in
+      let bytes = Self.directorySize(at: capturedURL)
+      if Task.isCancelled { return }
+      await MainActor.run {
+        self?.applyDirectorySize(bytes, kind: kind)
       }
-      return nil
     }
+  }
+
+  private func applyDirectorySize(_ bytes: Int64?, kind: String) {
+    if let bytes {
+      let formatted = Self.byteFormatter.string(fromByteCount: bytes)
+      sizeValueLabel?.stringValue = formatted
+      summaryLabel?.stringValue = "\(kind) — \(formatted)"
+    } else {
+      sizeValueLabel?.stringValue = "—"
+      summaryLabel?.stringValue = kind
+    }
+  }
+
+  /// Recursive byte total for a directory. Runs off the main actor
+  /// so a multi-GB tree (`~/Library`, monorepo `node_modules`)
+  /// doesn't stall the panel open. The `Task.isCancelled` check
+  /// inside the loop is what lets `windowWillClose` short-circuit
+  /// an in-flight walk on close — note that each underlying
+  /// `readdir` is uninterruptible, so on slow filesystems
+  /// (NFS / SMB) the cancel only takes effect between entries.
+  nonisolated private static func directorySize(at url: URL) -> Int64? {
+    guard
+      let enumerator = FileManager.default.enumerator(
+        at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
+    else { return nil }
     var total: Int64 = 0
-    if let enumerator = FileManager.default.enumerator(
-      at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey])
-    {
-      for case let entry as URL in enumerator {
-        let values = try? entry.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        if values?.isRegularFile == true, let size = values?.fileSize {
-          total += Int64(size)
-        }
+    for case let entry as URL in enumerator {
+      if Task.isCancelled { return nil }
+      let values = try? entry.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+      if values?.isRegularFile == true, let size = values?.fileSize {
+        total += Int64(size)
       }
     }
     return total
