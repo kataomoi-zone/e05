@@ -165,14 +165,29 @@ extension FinderPaneView {
   /// `appendingPathComponent` — `Rename.swift` ducks the same drift
   /// the same way after `createNewFolder`. A directory's immediate
   /// children have unique names, so last-component matching is
-  /// unambiguous. Used by `runCopyBatch` (off-main) and
-  /// `makeAliasForSelection` (on-main) alike.
+  /// unambiguous. Used by `runCopyBatch` (off-main), `compressSelection`
+  /// (off-main), and `makeAliasForSelection` (on-main) alike.
   ///
   /// The directory monitor's debounced reload follows shortly after
   /// with `preservingSelection: true` and re-resolves the same
   /// last-components, so the selection stays put — no extra
   /// coordination needed.
+  ///
+  /// Skip when the user has navigated away from the cwd the batch
+  /// op was targeting: a multi-GB Compress or cross-volume Paste can
+  /// take seconds, and during that wait the user may have moved the
+  /// pane to an unrelated dir. Reloading that dir here would clobber
+  /// its selection and re-enumerate it for no reason — the targets
+  /// landed in the original cwd and `selectAfterLoad` against the
+  /// new cwd would either match nothing or, worse, light up
+  /// coincidentally-named entries. Detect by comparing the targets'
+  /// parent (which is the captured source cwd) against the live
+  /// `currentURL`. The directory monitor on the original pane (if
+  /// the user later navigates back) still picks the new entries up.
   func finishCopyBatch(targets: [URL]) {
+    guard let parent = targets.first?.deletingLastPathComponent(),
+      parent == currentURL
+    else { return }
     reloadItems(preservingSelection: false, selectAfterLoad: targets)
   }
 
