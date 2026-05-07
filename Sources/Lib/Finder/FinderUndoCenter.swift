@@ -258,16 +258,32 @@ public enum FinderUndoCenter {
   /// its undo stack since the source is still on disk and ⌘⌫ removes
   /// the copy.
   ///
-  /// The pane parameter is the drop *destination*. A drag-source pane
-  /// would also benefit from a reload, but its directory monitor
-  /// catches the move event and debounces a reload anyway, so no
-  /// extra coordination is needed here.
+  /// The pane parameter is the drop *destination*; `sourcePane` is
+  /// the pane the drag originated from, when one is identifiable
+  /// (in-app drag from a finder pane) — `nil` for drags that came
+  /// from outside the app (system Finder, an editor, etc.). On undo,
+  /// entries are restored to their original parent directory. The
+  /// drag-source pane's directory monitor catches the restoration
+  /// and debounces a reload, but row selection / scroll position
+  /// don't follow from a monitor reload — `reloadItemsAndSelect`
+  /// against the restored origins makes the source pane immediately
+  /// jump to the freshly-back rows the same way the destination
+  /// pane jumped to the destinations on the forward path.
+  ///
+  /// When `sourcePane` is the same instance as `pane` (drag inside
+  /// one pane onto a visible subfolder row), the same-pane branch
+  /// applies the source select directly to `target` — calling both
+  /// `target.reloadItemsAndSelect(at: [])` and
+  /// `sourcePane.reloadItemsAndSelect(at: origins)` against the same
+  /// pane would race the second call's selection over the first's
+  /// empty select.
   public static func registerMove(
     pairs: [(origin: URL, destination: URL)],
+    sourcePane: FinderPaneView?,
     in pane: FinderPaneView
   ) {
     guard !pairs.isEmpty else { return }
-    manager.registerUndo(withTarget: pane) { target in
+    manager.registerUndo(withTarget: pane) { [weak sourcePane] target in
       MainActor.assumeIsolated {
         var restored: [(origin: URL, destination: URL)] = []
         for pair in pairs {
@@ -281,12 +297,23 @@ public enum FinderUndoCenter {
           }
         }
         if !restored.isEmpty {
-          registerMoveRedo(pairs: restored, in: target)
+          registerMoveRedo(pairs: restored, sourcePane: sourcePane, in: target)
         }
-        // The entries left this pane on undo, so there's nothing to
-        // re-select here. The directory monitor on the drag-source
-        // pane will pick up the restoration and reload there.
-        target.reloadItemsAndSelect(at: [])
+        let origins = restored.map { $0.origin }
+        if let sourcePane, sourcePane === target {
+          target.reloadItemsAndSelect(at: origins)
+        } else {
+          target.reloadItemsAndSelect(at: [])
+          // The explicit reload races the source pane's directory
+          // monitor: the restoring `moveItem` writes fire a debounced
+          // reload (~100ms later) that calls `reloadItems(preservingSelection: true)`
+          // and would cancel an in-flight `selectAfterLoad` walk if
+          // the source cwd is huge enough to take longer. Typical
+          // directories complete inside the debounce window so the
+          // selection sticks; pathologically large source cwds may
+          // surface as "entries restored, selection lost".
+          sourcePane?.reloadItemsAndSelect(at: origins)
+        }
       }
     }
     manager.setActionName(FinderUndoActionName.move)
@@ -294,9 +321,10 @@ public enum FinderUndoCenter {
 
   private static func registerMoveRedo(
     pairs: [(origin: URL, destination: URL)],
+    sourcePane: FinderPaneView?,
     in pane: FinderPaneView
   ) {
-    manager.registerUndo(withTarget: pane) { target in
+    manager.registerUndo(withTarget: pane) { [weak sourcePane] target in
       MainActor.assumeIsolated {
         var moved: [(origin: URL, destination: URL)] = []
         for pair in pairs {
@@ -310,9 +338,19 @@ public enum FinderUndoCenter {
           }
         }
         if !moved.isEmpty {
-          registerMove(pairs: moved, in: target)
+          registerMove(pairs: moved, sourcePane: sourcePane, in: target)
         }
+        // The destination-side select is the same in both same-pane
+        // and cross-pane redo paths (target gained the entries), so
+        // the symmetric branching the undo path uses would just
+        // duplicate it. Skip the source-side empty reload when the
+        // source equals target — calling it would race the empty
+        // select over the meaningful destination select on the same
+        // pane.
         target.reloadItemsAndSelect(at: moved.map { $0.destination })
+        if let sourcePane, sourcePane !== target {
+          sourcePane.reloadItemsAndSelect(at: [])
+        }
       }
     }
     manager.setActionName(FinderUndoActionName.move)

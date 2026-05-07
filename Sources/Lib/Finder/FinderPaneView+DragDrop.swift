@@ -141,7 +141,16 @@ extension FinderPaneView {
       }
     }
     if !movePairs.isEmpty {
-      FinderUndoCenter.registerMove(pairs: movePairs, in: self)
+      // Resolve the drag-source pane via the originating table view.
+      // `info.draggingSource` is the `NSTableView` that started the
+      // drag (AppKit sets it implicitly for table-driven drags).
+      // External drags (system Finder, editors, browsers) leave the
+      // source as something else or `nil`; pass `nil` and the undo
+      // closure restores entries without an in-app source pane to
+      // refresh.
+      let sourcePane = (info.draggingSource as? FinderTableView)?.enclosingFinderPane
+      FinderUndoCenter.registerMove(
+        pairs: movePairs, sourcePane: sourcePane, in: self)
     }
     return anyAccepted
   }

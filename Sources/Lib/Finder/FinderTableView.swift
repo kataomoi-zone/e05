@@ -133,7 +133,12 @@ final class FinderTableView: NSTableView {
     super.keyDown(with: event)
   }
 
-  private var enclosingFinderPane: FinderPaneView? {
+  /// View-ancestor walk back to the `FinderPaneView` that hosts this
+  /// table. Internal rather than `private` so drop handlers can map a
+  /// drag's `info.draggingSource` (the originating table) back to its
+  /// owning pane — needed to restore the source pane's selection
+  /// when an undo walks a drag-and-drop move backwards.
+  var enclosingFinderPane: FinderPaneView? {
     var view: NSView? = self
     while let v = view {
       if let pane = v as? FinderPaneView { return pane }
