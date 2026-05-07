@@ -108,18 +108,17 @@ public final class PaneModel {
     return nil
   }
 
-  /// The pane's find-in-page driver. Both `BrowserPaneView` and
-  /// `GhosttyTerminalView` conform to `FindHelper`, so the shared
-  /// find-bar controller can treat the two pane kinds uniformly
-  /// instead of branching on content. Finder panes return nil because
-  /// their search affordance is row-filtering, not in-page glyph
-  /// highlighting; the shared find bar's open guard treats nil as
-  /// "no find UI" so ⌘F is silently ignored on finder panes.
+  /// The pane's find-in-page driver. All three content kinds
+  /// conform to `FindHelper`, so the shared find-bar controller
+  /// treats them uniformly instead of branching on content. Browser
+  /// / terminal panes highlight glyphs in place and step next/prev;
+  /// finder panes narrow the visible row list (filter mode), local
+  /// to the current cwd (no system-wide Spotlight).
   public var findHelper: FindHelper? {
     switch content {
     case .browser(let v): return v
     case .terminal(let v): return v
-    case .finder: return nil
+    case .finder(let v): return v
     }
   }
 

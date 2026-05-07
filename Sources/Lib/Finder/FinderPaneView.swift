@@ -115,6 +115,14 @@ public final class FinderPaneView: NSView {
   /// hidden-files dim path.
   var inFlightURLs: Set<URL> = []
 
+  /// Active row-filter needle from the find bar. `nil` means the
+  /// pane shows every entry; non-nil narrows `items` to the rows
+  /// whose names match (`localizedStandardContains`). Reload paths
+  /// (`applyLoadedItems`, `refreshInFlightOverlay`) check this
+  /// after the merge so a filesystem event in the middle of a
+  /// filter session doesn't tear the filter back to the full list.
+  var filterNeedle: String?
+
   /// Block-based observer for `FinderOperationTracker.didChangeNotification`.
   /// Same `nonisolated(unsafe)` rationale as `settingsObserver` —
   /// Swift 6's nonisolated `deinit` needs to hand the token back to

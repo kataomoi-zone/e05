@@ -105,6 +105,15 @@ extension FinderPaneView {
     items = []
     lastLoadedItems = []
     inFlightURLs = []
+    // Filter is bound to the cwd it was opened in — carrying the
+    // needle across navigate would silently filter the new dir and
+    // surprise the user with an empty pane. The find bar itself
+    // stays open so a follow-up needle in the new cwd starts
+    // immediately, but its session is reset by the
+    // `findHelper?.endFind()` that the container's reload path
+    // already routes through. Clearing here covers the cases where
+    // navigate isn't invoked through that path.
+    filterNeedle = nil
     tableView.reloadData()
     updateStatusBar()
     reloadItems(preservingSelection: false)
@@ -225,7 +234,7 @@ extension FinderPaneView {
     }
 
     lastLoadedItems = loaded
-    items = mergeWithInFlightOverlay(loaded)
+    items = applyFilterIfActive(mergeWithInFlightOverlay(loaded))
     tableView.reloadData()
     updateStatusBar()
 
@@ -295,10 +304,24 @@ extension FinderPaneView {
   /// its placeholder the same way.
   func refreshInFlightOverlay() {
     let previouslySelectedURLs = currentlySelectedURLs()
-    items = mergeWithInFlightOverlay(lastLoadedItems)
+    items = applyFilterIfActive(mergeWithInFlightOverlay(lastLoadedItems))
     tableView.reloadData()
     updateStatusBar()
     restoreSelection(byURLs: previouslySelectedURLs)
+  }
+
+  /// Narrow `merged` to the entries whose names match the active
+  /// filter needle (`localizedStandardContains`, locale-aware
+  /// case/diacritic-insensitive). Returns `merged` unchanged when
+  /// no filter is active so the no-op fast path stays free of
+  /// allocations. The filter applies on top of the in-flight
+  /// merge, so a synthetic placeholder row whose name matches the
+  /// needle stays visible during a filter session — that's the
+  /// "I'm filtering and a paste lands" case where seeing the
+  /// in-flight target is what the user expected.
+  func applyFilterIfActive(_ merged: [FileItem]) -> [FileItem] {
+    guard let needle = filterNeedle, !needle.isEmpty else { return merged }
+    return merged.filter { $0.name.localizedStandardContains(needle) }
   }
 
   /// Snapshot the currently-selected rows as URLs so a subsequent

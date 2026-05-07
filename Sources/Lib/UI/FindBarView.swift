@@ -37,6 +37,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// explicit hide.
   private var lastKnownCurrent: Int?
 
+  /// Whether the bar exposes ↑ / ↓ stepping. `true` for browser /
+  /// terminal find (the user walks through matches), `false` for
+  /// finder-pane filter (the visible rows *are* the result, no
+  /// stepping is meaningful). When false the position label shows
+  /// `"N items"` instead of `"current / total"`.
+  private var stepping: Bool = true
+
   /// Called whenever the search field's text changes. Empty strings are
   /// forwarded so the helper can end the current session.
   public var onSearch: ((String) -> Void)?
@@ -118,7 +125,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   // MARK: - Setup
 
   private func setupField() {
-    searchField.placeholderString = "Find in page..."
+    searchField.placeholderString = "Find in page…"
     searchField.font = Self.searchFont
     searchField.delegate = self
     searchField.translatesAutoresizingMaskIntoConstraints = false
@@ -224,6 +231,20 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     searchField.selectText(nil)
   }
 
+  /// Toggle the ↑ / ↓ stepping affordance and the position label's
+  /// formatting. Set to `false` for finder-pane filter mode where
+  /// stepping has no meaning — the visible rows *are* the result —
+  /// and the `"N items"` label communicates the hit count without
+  /// implying navigable matches.
+  public func setSteppingEnabled(_ enabled: Bool) {
+    stepping = enabled
+    prevButton.isHidden = !enabled
+    nextButton.isHidden = !enabled
+    // The placeholder text doubles as a hint for what the bar does;
+    // "Find in page" reads odd when the bar drives a row filter.
+    searchField.placeholderString = enabled ? "Find in page…" : "Filter…"
+  }
+
   /// Update the match-position indicator displayed to the right of
   /// the search field. Passing `nil` for either side hides the label
   /// and restores the default tint. Passing `(current: 0, total: 0)`
@@ -242,6 +263,15 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       matchCountLabel.isHidden = true
       searchField.textColor = .labelColor
       lastKnownCurrent = nil
+      return
+    }
+    if !stepping {
+      // Filter mode — render a plain count instead of the
+      // `current / total` form that implies stepping. `current` is
+      // ignored: every row in the filtered list is "active".
+      matchCountLabel.stringValue = total == 1 ? "1 item" : "\(total) items"
+      matchCountLabel.isHidden = false
+      searchField.textColor = total > 0 ? .labelColor : .systemRed
       return
     }
     let displayCurrent: Int
@@ -341,6 +371,19 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }
     if selector == #selector(cancelOperation(_:)) {
       onClose?()
+      return true
+    }
+    // Eat Tab / Shift+Tab so AppKit's default `insertTab:` →
+    // `nextKeyView` walk doesn't jump first responder out of the
+    // search field and into the pane content (in a multi-pane
+    // window, that lands focus on the neighbouring pane and the
+    // user reads it as "Tab moved to the next pane"). Ctrl+Tab is
+    // separately bound at the menu-key-equivalent layer to
+    // `focusNextPane` and reaches the action handler before this
+    // delegate sees it, so explicit pane navigation still works.
+    if selector == #selector(insertTab(_:))
+      || selector == #selector(insertBacktab(_:))
+    {
       return true
     }
     return false

@@ -10,7 +10,7 @@ extension PaneContainerViewController {
   /// the shared callback set to the new target so ⌘G / ⌘⇧G always
   /// refer to the pane whose bar is currently revealed.
   public func openFindBar() {
-    guard let pane = focusedPane, pane.findHelper != nil else { return }
+    guard let pane = focusedPane, let helper = pane.findHelper else { return }
     // If a previous session still has its bar revealed on another
     // pane, dismiss it end-to-end first — each pane has its own bar
     // and we want only the newly-targeted one visible, with the
@@ -21,6 +21,12 @@ extension PaneContainerViewController {
     }
     wireFindBarCallbacks(on: pane)
     findBarTargetPane = pane
+    // Configure the bar's stepping affordance per pane kind: browser
+    // / terminal step through matches, finder filters the row list.
+    // Re-applied on every open so a pane swap (browser → finder)
+    // refreshes the buttons even though the same pane's bar instance
+    // is reused.
+    pane.findBar.setSteppingEnabled(helper.supportsStepping)
     pane.setFindBarVisible(true)
     pane.findBar.focusField()
     // Re-run find against whatever needle the field still carries

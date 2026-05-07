@@ -23,4 +23,17 @@ public protocol FindHelper: AnyObject {
 
   /// End the current find session and clear any transient state.
   func endFind()
+
+  /// Whether `performFind`'s `forward` axis carries meaning. Browser
+  /// / terminal find walks next/previous matches and the find bar's
+  /// ↑ / ↓ buttons step through them; finder-pane filter narrows
+  /// the visible row list with no notion of "next match" — the
+  /// result *is* the visible list. The find bar reads this on open
+  /// to hide the stepping arrows and switch the position label to
+  /// a plain count for non-stepping helpers.
+  var supportsStepping: Bool { get }
+}
+
+extension FindHelper {
+  public var supportsStepping: Bool { true }
 }
