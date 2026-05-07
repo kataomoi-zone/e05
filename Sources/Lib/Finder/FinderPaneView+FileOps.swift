@@ -20,9 +20,7 @@ extension FinderPaneView {
   /// Rename / Trash / duplicate-again without hunting through the
   /// table. Directories duplicate recursively via `copyItem(at:to:)`.
   public func duplicateSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     let plans: [(source: URL, target: URL)] = urls.map { source in
       (source, duplicateTargetURL(for: source))
@@ -57,9 +55,7 @@ extension FinderPaneView {
   /// (~1 KB), nothing like the multi-GB blob copies that `runCopyBatch`
   /// shields. Failures log and continue per-item.
   public func makeAliasForSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     var created: [URL] = []
     for source in urls {

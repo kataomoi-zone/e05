@@ -34,11 +34,10 @@ extension FinderPaneView {
       return menu
     }
 
-    let count = tableView.selectedRowIndexes.count
+    let urls = selectedURLs
+    let count = urls.count
     if count == 1 {
-      let name = tableView.selectedRowIndexes.first.flatMap { idx in
-        idx < items.count ? items[idx].name : nil
-      } ?? ""
+      let name = urls[0].lastPathComponent
       menu.addItem(makeContextMenuItem(
         title: "Open",
         symbolName: "arrow.up.forward.square",

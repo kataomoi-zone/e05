@@ -114,7 +114,7 @@ extension FinderPaneView {
     // already routes through. Clearing here covers the cases where
     // navigate isn't invoked through that path.
     filterNeedle = nil
-    tableView.reloadData()
+    reloadAllRows()
     updateStatusBar()
     reloadItems(preservingSelection: false)
     directoryMonitor.start(at: url)
@@ -179,11 +179,7 @@ extension FinderPaneView {
     let ascending = sortAscending
 
     let preserved: [URL] =
-      (preservingSelection && selectAfterLoad == nil)
-      ? tableView.selectedRowIndexes.compactMap { idx in
-        idx < items.count ? items[idx].url : nil
-      }
-      : []
+      (preservingSelection && selectAfterLoad == nil) ? selectedURLs : []
 
     // Honour the global hidden-files toggle every reload: the setting
     // can flip between a cwd's first load and a directory-monitor
@@ -235,30 +231,23 @@ extension FinderPaneView {
 
     lastLoadedItems = loaded
     items = applyFilterIfActive(mergeWithInFlightOverlay(loaded))
-    tableView.reloadData()
+    reloadAllRows()
     updateStatusBar()
 
     if let selectAfterLoad, !selectAfterLoad.isEmpty {
+      // `selectAfterLoad` URLs are composed via `appendingPathComponent`
+      // at the call site; the URLs the enumerator hands back may
+      // differ on trailing slash / percent-encoding. Match by
+      // `lastPathComponent` instead — directory children are
+      // unique by name.
       let names = Set(selectAfterLoad.map { $0.lastPathComponent })
-      var rows = IndexSet()
-      for (idx, item) in items.enumerated()
-      where names.contains(item.url.lastPathComponent) {
-        rows.insert(idx)
-      }
-      if let first = rows.first {
-        tableView.selectRowIndexes(rows, byExtendingSelection: false)
-        tableView.scrollRowToVisible(first)
+      let matched = items.filter { names.contains($0.url.lastPathComponent) }.map { $0.url }
+      if let first = matched.first {
+        selectRows(byURLs: matched)
+        scrollIntoView(url: first)
       }
     } else if !preservedSelection.isEmpty {
-      var restored = IndexSet()
-      for url in preservedSelection {
-        if let idx = items.firstIndex(where: { $0.url == url }) {
-          restored.insert(idx)
-        }
-      }
-      if !restored.isEmpty {
-        tableView.selectRowIndexes(restored, byExtendingSelection: false)
-      }
+      selectRows(byURLs: preservedSelection)
     }
   }
 
@@ -303,11 +292,11 @@ extension FinderPaneView {
   /// re-walking the directory, and a freshly-unregistered op clears
   /// its placeholder the same way.
   func refreshInFlightOverlay() {
-    let previouslySelectedURLs = currentlySelectedURLs()
+    let previouslySelectedURLs = selectedURLs
     items = applyFilterIfActive(mergeWithInFlightOverlay(lastLoadedItems))
-    tableView.reloadData()
+    reloadAllRows()
     updateStatusBar()
-    restoreSelection(byURLs: previouslySelectedURLs)
+    selectRows(byURLs: previouslySelectedURLs)
   }
 
   /// Narrow `merged` to the entries whose names match the active
@@ -322,33 +311,6 @@ extension FinderPaneView {
   func applyFilterIfActive(_ merged: [FileItem]) -> [FileItem] {
     guard let needle = filterNeedle, !needle.isEmpty else { return merged }
     return merged.filter { $0.name.localizedStandardContains(needle) }
-  }
-
-  /// Snapshot the currently-selected rows as URLs so a subsequent
-  /// `reloadData` can restore the selection by content rather than
-  /// by index — sorts and synthetic injection shuffle row indexes
-  /// without changing the underlying entries.
-  func currentlySelectedURLs() -> [URL] {
-    tableView.selectedRowIndexes.compactMap { idx in
-      idx < items.count ? items[idx].url : nil
-    }
-  }
-
-  /// Re-select the rows whose URLs match `urls` after a reload.
-  /// Silent on empty input or all-misses; the latter happens when a
-  /// rename moved the file out of the cwd or an undo cleared the
-  /// targets entirely.
-  func restoreSelection(byURLs urls: [URL]) {
-    guard !urls.isEmpty else { return }
-    var restored = IndexSet()
-    for url in urls {
-      if let idx = items.firstIndex(where: { $0.url == url }) {
-        restored.insert(idx)
-      }
-    }
-    if !restored.isEmpty {
-      tableView.selectRowIndexes(restored, byExtendingSelection: false)
-    }
   }
 
   /// Walk `url` synchronously and return the resulting items. Runs
@@ -514,13 +476,14 @@ extension FinderPaneView {
   // MARK: - Status bar
 
   func updateStatusBar() {
-    let selected = tableView.selectedRowIndexes
     var available: Int64?
     if let values = try? currentURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
       let bytes = values.volumeAvailableCapacityForImportantUsage
     {
       available = bytes
     }
-    statusBar.update(totalCount: items.count, selectedCount: selected.count, availableBytes: available)
+    statusBar.update(
+      totalCount: items.count, selectedCount: selectedURLs.count,
+      availableBytes: available)
   }
 }

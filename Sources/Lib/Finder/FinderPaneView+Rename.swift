@@ -152,9 +152,7 @@ extension FinderPaneView {
   /// new folder is on the same filesystem and the move is the
   /// same instant rename it would be inside Finder.
   public func newFolderWithSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     let fm = FileManager.default
     let base = "untitled folder"
@@ -210,9 +208,7 @@ extension FinderPaneView {
   /// recovery path. Failures log and continue so a permission error
   /// on one file doesn't block the rest of the batch.
   public func trashSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     var pairs: [(origin: URL, trashed: URL)] = []
     for url in urls {

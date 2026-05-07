@@ -17,9 +17,7 @@ extension FinderPaneView {
   // MARK: - Copy
 
   public func copySelectionToPasteboard() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     let pasteboard = NSPasteboard.general
     pasteboard.clearContents()
@@ -111,7 +109,7 @@ extension FinderPaneView: NSMenuItemValidation {
   public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     switch menuItem.action {
     case #selector(copy(_:)):
-      return !tableView.selectedRowIndexes.isEmpty
+      return hasSelection
     case #selector(paste(_:)):
       return pasteableFileURLCount() > 0
     case #selector(undo(_:)):

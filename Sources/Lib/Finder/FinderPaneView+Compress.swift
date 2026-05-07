@@ -18,9 +18,7 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 /// - Collisions escalate to `<stem> 2.zip`, `<stem> 3.zip`, …
 extension FinderPaneView {
   public func compressSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     let archiveURL = compressTargetURL(for: urls)
     let cwd = currentURL

@@ -28,7 +28,7 @@ extension FinderPaneView: NSTableViewDataSource {
       let key = descriptor.key,
       let sortKey = SortKey(rawValue: key)
     else { return }
-    let previouslySelectedURLs = currentlySelectedURLs()
+    let previouslySelectedURLs = selectedURLs
     currentSortKey = sortKey
     sortAscending = descriptor.ascending
     items = Self.sortItems(items, key: sortKey, ascending: descriptor.ascending)
@@ -38,8 +38,8 @@ extension FinderPaneView: NSTableViewDataSource {
     // current order rather than the pre-click one.
     lastLoadedItems = Self.sortItems(
       lastLoadedItems, key: sortKey, ascending: descriptor.ascending)
-    tableView.reloadData()
-    restoreSelection(byURLs: previouslySelectedURLs)
+    reloadAllRows()
+    selectRows(byURLs: previouslySelectedURLs)
     updateStatusBar()
   }
 }

@@ -48,14 +48,12 @@ extension FinderPaneView {
 // to bridge.
 extension FinderPaneView: @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
   public func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-    tableView.selectedRowIndexes.count
+    selectedURLs.count
   }
 
   public func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
-    let selected = Array(tableView.selectedRowIndexes)
-    guard index >= 0, index < selected.count else { return nil }
-    let row = selected[index]
-    guard row < items.count else { return nil }
-    return items[row].url as NSURL
+    let urls = selectedURLs
+    guard index >= 0, index < urls.count else { return nil }
+    return urls[index] as NSURL
   }
 }

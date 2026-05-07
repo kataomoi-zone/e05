@@ -31,9 +31,7 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 ///   Disabled in multi-select to mirror Finder's UI.
 extension FinderPaneView {
   public func openSelectionWithChosenApplication() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty, let window = tableView.window else { return }
 
     let panel = NSOpenPanel()

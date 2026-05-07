@@ -13,9 +13,7 @@ extension FinderPaneView {
   /// in one draft) or treat them per-item (Notes creates separate
   /// cards) — the same dispatch Finder shows.
   public func shareSelection() {
-    let urls = tableView.selectedRowIndexes.compactMap { idx -> URL? in
-      idx < items.count ? items[idx].url : nil
-    }
+    let urls = selectedURLs
     guard !urls.isEmpty else { return }
     // The picker is intentionally a local: `show(relativeTo:…)`
     // installs it inside the popover's retain graph, so the popover

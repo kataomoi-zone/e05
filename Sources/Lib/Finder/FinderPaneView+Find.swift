@@ -23,14 +23,13 @@ extension FinderPaneView: FindHelper {
     }
     filterNeedle = needle
     items = applyFilterIfActive(mergeWithInFlightOverlay(lastLoadedItems))
-    tableView.reloadData()
+    reloadAllRows()
     updateStatusBar()
     // Highlight the first match so arrow-key navigation continues
     // from the visible result set, mirroring how Finder's filter
     // mode lands focus on the first hit.
-    if !items.isEmpty {
-      tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-      tableView.scrollRowToVisible(0)
+    if let first = items.first {
+      selectAndScroll(toURL: first.url)
     }
     // The find bar's `forward` axis carries no meaning for a row
     // filter — there's no "next match" to step through, the result
@@ -47,7 +46,7 @@ extension FinderPaneView: FindHelper {
     guard filterNeedle != nil else { return }
     filterNeedle = nil
     items = applyFilterIfActive(mergeWithInFlightOverlay(lastLoadedItems))
-    tableView.reloadData()
+    reloadAllRows()
     updateStatusBar()
   }
 }

@@ -8,10 +8,7 @@ import AppKit
 /// the entry from the context menu instead of disabling it.
 extension FinderPaneView {
   public func showInfoForSelection() {
-    guard
-      let row = tableView.selectedRowIndexes.first,
-      row < items.count
-    else { return }
-    GetInfoPanel.present(for: items[row].url, near: window)
+    guard let url = firstSelectedURL else { return }
+    GetInfoPanel.present(for: url, near: window)
   }
 }
