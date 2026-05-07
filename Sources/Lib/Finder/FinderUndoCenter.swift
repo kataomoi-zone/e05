@@ -91,6 +91,48 @@ public enum FinderUndoCenter {
     manager.setActionName(FinderUndoActionName.rename)
   }
 
+  // MARK: - Partial-failure feedback
+
+  /// Surface an error toast describing a partial-failure batch
+  /// undo/redo: silent on full success, factual sentence on a
+  /// partial recovery. The verb phrase reflects the closure's
+  /// direction so each call site reads naturally:
+  /// - `"restored"` for Trash → origin (entries returning from an
+  ///   external Trash "sink" — the implication is recovery)
+  /// - `"moved to Trash"` for origin → Trash
+  /// - `"moved back"` for drag-undo (within-app reversal of a move,
+  ///   no Trash semantics so factual "moved back" beats "restored")
+  /// - `"moved"` for drag-redo
+  /// - `"moved into folder"` for the New-Folder-with-Selection redo
+  ///
+  /// The success toast (`<action> undone` / `<action> redone`)
+  /// still posts from `+Clipboard.swift`'s `postUndoToast` after
+  /// the manager closure returns, so the user sees both: the
+  /// action on top, the partial-failure caveat just below.
+  /// `total == 0` is unreachable: every call site guards against
+  /// empty pair lists before invoking the closure that ends up
+  /// here.
+  static func reportPartialBatchFailure(
+    target: FinderPaneView,
+    succeeded: Int,
+    total: Int,
+    verbPhrase: String
+  ) {
+    guard succeeded < total else { return }
+    let failed = total - succeeded
+    let itemPhrase = total == 1 ? "1 item" : "\(failed) of \(total) items"
+    let message = "\(itemPhrase) couldn't be \(verbPhrase)"
+    guard let container = target.window?.contentViewController as? PaneContainerViewController else {
+      // Diagnostic: the per-item moveItem already logged its own
+      // failure, but the user never saw the toast. Without this
+      // line a teardown / detached-window state surfaces as
+      // "the partial failure is invisible" with no clue why.
+      logger.error("Partial-failure toast dropped: container unresolved (\(message, privacy: .public))")
+      return
+    }
+    container.showToast(message, style: .error)
+  }
+
   // MARK: - Move to Trash
 
   /// Pair every successfully trashed entry with the URL the system
@@ -133,6 +175,9 @@ public enum FinderUndoCenter {
           registerTrashRedo(originals: restored.map { $0.origin }, in: target)
         }
         target.reloadItemsAndSelect(at: restored.map { $0.origin })
+        reportPartialBatchFailure(
+          target: target, succeeded: restored.count, total: pairs.count,
+          verbPhrase: "restored")
       }
     }
     manager.setActionName(FinderUndoActionName.moveToTrash)
@@ -163,6 +208,9 @@ public enum FinderUndoCenter {
         if !pairs.isEmpty {
           registerTrash(pairs: pairs, in: target)
         }
+        reportPartialBatchFailure(
+          target: target, succeeded: pairs.count, total: originals.count,
+          verbPhrase: "moved to Trash")
       }
     }
     manager.setActionName(FinderUndoActionName.moveToTrash)
@@ -210,6 +258,9 @@ public enum FinderUndoCenter {
         // Pass an empty target list so the table just reloads
         // without trying to highlight a row that doesn't exist.
         target.reloadItemsAndSelect(at: [])
+        reportPartialBatchFailure(
+          target: target, succeeded: pairs.count, total: urls.count,
+          verbPhrase: "moved to Trash")
       }
     }
     manager.setActionName(actionName)
@@ -243,6 +294,9 @@ public enum FinderUndoCenter {
           registerCreated(at: restored, actionName: actionName, in: target)
         }
         target.reloadItemsAndSelect(at: restored)
+        reportPartialBatchFailure(
+          target: target, succeeded: restored.count, total: pairs.count,
+          verbPhrase: "restored")
       }
     }
     manager.setActionName(actionName)
@@ -314,6 +368,9 @@ public enum FinderUndoCenter {
           // surface as "entries restored, selection lost".
           sourcePane?.reloadItemsAndSelect(at: origins)
         }
+        reportPartialBatchFailure(
+          target: target, succeeded: restored.count, total: pairs.count,
+          verbPhrase: "moved back")
       }
     }
     manager.setActionName(FinderUndoActionName.move)
@@ -351,6 +408,9 @@ public enum FinderUndoCenter {
         if let sourcePane, sourcePane !== target {
           sourcePane.reloadItemsAndSelect(at: [])
         }
+        reportPartialBatchFailure(
+          target: target, succeeded: moved.count, total: pairs.count,
+          verbPhrase: "moved")
       }
     }
     manager.setActionName(FinderUndoActionName.move)
@@ -407,6 +467,9 @@ public enum FinderUndoCenter {
         registerNewFolderWithSelectionRedo(
           folder: folder, moves: restored, in: target)
         target.reloadItemsAndSelect(at: restored.map { $0.origin })
+        reportPartialBatchFailure(
+          target: target, succeeded: restored.count, total: moves.count,
+          verbPhrase: "moved back")
       }
     }
     manager.setActionName(FinderUndoActionName.newFolderWithSelection)
@@ -443,6 +506,9 @@ public enum FinderUndoCenter {
           registerNewFolderWithSelection(folder: folder, moves: moved, in: target)
         }
         target.reloadItemsAndSelect(at: [folder])
+        reportPartialBatchFailure(
+          target: target, succeeded: moved.count, total: moves.count,
+          verbPhrase: "moved into folder")
       }
     }
     manager.setActionName(FinderUndoActionName.newFolderWithSelection)
