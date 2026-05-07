@@ -275,4 +275,29 @@ extension FinderPaneView {
       n += 1
     }
   }
+
+  /// Resolve the next free `<stem> N.ext` slot inside `dir`,
+  /// starting at `N = 2` and escalating. Used by the drop-conflict
+  /// "Keep Both" path so a same-name drop renames to `README 2.md`,
+  /// matching Finder. The `copy` suffix from `availableCopyURL` is
+  /// reserved for ⌘D Duplicate, where the verb makes the suffix
+  /// natural; cross-directory drops have no such verb context and
+  /// the numeric form is what Finder uses there.
+  func availableNumberedURL(in dir: URL, stem: String, ext: String) -> URL {
+    let fm = FileManager.default
+
+    func candidate(_ index: Int) -> URL {
+      let suffixed = "\(stem) \(index)"
+      return ext.isEmpty
+        ? dir.appendingPathComponent(suffixed)
+        : dir.appendingPathComponent("\(suffixed).\(ext)")
+    }
+
+    var n = 2
+    while true {
+      let url = candidate(n)
+      if !fm.fileExists(atPath: url.path(percentEncoded: false)) { return url }
+      n += 1
+    }
+  }
 }

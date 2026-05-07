@@ -94,6 +94,30 @@ extension FinderPaneView {
 
     let op = Self.dropOperation(sources: sources, destination: destURL)
     let fm = FileManager.default
+
+    // Resolve every source's conflict (target path occupied) up front
+    // so the user is asked exactly once per drop. The chosen
+    // resolution applies batch-wide — Finder's per-conflict prompt
+    // chain is more flexible but requires N round-trips through the
+    // alert sheet, which interrupts a drag flow. A single batch
+    // decision matches what most users want for "I dropped a folder
+    // and a few file names happen to collide".
+    let plans = sources.map { src in
+      (source: src, target: destURL.appendingPathComponent(src.lastPathComponent))
+    }
+    let conflicts = plans.filter {
+      fm.fileExists(atPath: $0.target.path(percentEncoded: false))
+    }
+    let resolution: ConflictResolution
+    if conflicts.isEmpty {
+      resolution = .proceed
+    } else {
+      resolution = presentConflictAlert(
+        conflictCount: conflicts.count,
+        firstName: conflicts[0].target.lastPathComponent)
+    }
+    guard resolution != .stop else { return false }
+
     var anyAccepted = false
     // Track only `.move` successes — cross-volume `copyItem` results
     // are deliberately not registered with the undo manager. System
@@ -101,23 +125,57 @@ extension FinderPaneView {
     // the source is still on disk; ⌘⌫ on the copy is the obvious
     // recovery path.
     var movePairs: [(origin: URL, destination: URL)] = []
-    for src in sources {
-      let target = destURL.appendingPathComponent(src.lastPathComponent)
+    for plan in plans {
+      let hasConflict =
+        fm.fileExists(atPath: plan.target.path(percentEncoded: false))
+      var actualTarget = plan.target
+      if hasConflict {
+        switch resolution {
+        case .replace:
+          // Send the existing target to Trash so the user can still
+          // recover it from `~/.Trash`. The trashed file is
+          // intentionally not registered with the undo manager — ⌘Z
+          // reverses the move only, leaving the trashed original in
+          // Trash for the user to inspect or restore manually. Same
+          // semantics as system Finder's Replace. The `resultingItemURL`
+          // out-param is required by the signature but the actual
+          // trash URL isn't needed downstream.
+          do {
+            try fm.trashItem(at: plan.target, resultingItemURL: nil)
+          } catch {
+            logger.error(
+              "Drop replace: trash existing target \(plan.target.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+            )
+            continue
+          }
+        case .keepBoth:
+          // Number-suffix the new target (`README 2.md`) — Finder's
+          // Keep Both convention for cross-directory drops. The
+          // ` copy` suffix that `availableCopyURL` produces is
+          // reserved for ⌘D Duplicate where the verb makes that
+          // suffix natural.
+          let stem = plan.target.deletingPathExtension().lastPathComponent
+          let ext = plan.target.pathExtension
+          actualTarget = availableNumberedURL(in: destURL, stem: stem, ext: ext)
+        case .proceed, .stop:
+          break
+        }
+      }
       if op == .copy {
         do {
-          try fm.copyItem(at: src, to: target)
+          try fm.copyItem(at: plan.source, to: actualTarget)
           anyAccepted = true
         } catch {
           logger.error(
-            "Drop copy failed \(src.path, privacy: .public) → \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            "Drop copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
         }
         continue
       }
       do {
-        try fm.moveItem(at: src, to: target)
+        try fm.moveItem(at: plan.source, to: actualTarget)
         anyAccepted = true
-        movePairs.append((src, target))
+        movePairs.append((plan.source, actualTarget))
       } catch let error as NSError where Self.isCrossVolumeError(error) {
         // Validate said `.move`, but the source's volume disappeared
         // (or was reclassified) between validate and accept. Fall
@@ -127,16 +185,16 @@ extension FinderPaneView {
         // the undo manager, same as the explicit `.copy` branch
         // above.
         do {
-          try fm.copyItem(at: src, to: target)
+          try fm.copyItem(at: plan.source, to: actualTarget)
           anyAccepted = true
         } catch {
           logger.error(
-            "Cross-volume copy failed \(src.path, privacy: .public) → \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
         }
       } catch {
         logger.error(
-          "Drop move failed \(src.path, privacy: .public) → \(target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+          "Drop move failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
       }
     }
@@ -153,6 +211,57 @@ extension FinderPaneView {
         pairs: movePairs, sourcePane: sourcePane, in: self)
     }
     return anyAccepted
+  }
+
+  /// Three-way batch decision a drop's conflicting targets resolve
+  /// to. `.proceed` is the no-conflicts fast path — kept in the
+  /// enum so the per-source loop has a single value to switch on
+  /// regardless of whether any conflicts were detected.
+  private enum ConflictResolution {
+    case proceed
+    case replace
+    case keepBoth
+    case stop
+  }
+
+  /// Modal alert that asks the user which conflict resolution the
+  /// drop should use. Sync `runModal` is intentional — the drop is
+  /// already in flight on the main run loop, and a sheet would
+  /// require restructuring `acceptDrop` to a deferred completion
+  /// shape that AppKit's drag machinery doesn't naturally hand
+  /// back. The text mirrors Finder's wording so users transferring
+  /// from system Finder don't have to re-learn the dialog.
+  /// `firstName` is consumed only on the single-conflict path; the
+  /// multi-conflict path uses the count alone, matching Finder.
+  private func presentConflictAlert(
+    conflictCount: Int, firstName: String
+  ) -> ConflictResolution {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    if conflictCount == 1 {
+      alert.messageText =
+        "An item named “\(firstName)” already exists in this location."
+      alert.informativeText =
+        "Do you want to replace it with the one you're moving?"
+    } else {
+      alert.messageText =
+        "\(conflictCount) items with the same names already exist in this location."
+      alert.informativeText =
+        "Do you want to replace them with the ones you're moving? The choice applies to all \(conflictCount) conflicts; non-conflicting entries proceed as usual."
+    }
+    alert.addButton(withTitle: "Replace")
+    alert.addButton(withTitle: "Keep Both")
+    let stopButton = alert.addButton(withTitle: "Stop")
+    // Wire ESC to Stop so the keyboard cancel matches the
+    // system-default destructive-alert dismissal.
+    stopButton.keyEquivalent = "\u{1b}"
+    let response = alert.runModal()
+    switch response {
+    case .alertFirstButtonReturn: return .replace
+    case .alertSecondButtonReturn: return .keepBoth
+    case .alertThirdButtonReturn: return .stop
+    default: return .stop
+    }
   }
 
   // MARK: - Drop helpers
