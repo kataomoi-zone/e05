@@ -32,32 +32,68 @@ extension FinderPaneView {
     let relativeNames = urls.map { $0.lastPathComponent }
     let archiveName = archiveURL.lastPathComponent
 
-    // Once dispatched, the zip subprocess runs to completion even if
-    // the pane closes mid-archive: there is no `Task.cancel` path
-    // wired here. Killing zip(1) mid-stream would leave a partial
-    // archive on disk for the user to clean up, which is worse than
-    // letting it finish — Finder's cancel button is paired with a
-    // progress sheet that's outside this commit's scope.
+    // Build the Process up front on MainActor so the cancel closure
+    // and the detached task share the same instance: cancel calls
+    // `terminate()` from MainActor, the task calls `run()` /
+    // `waitUntilExit()` off-main. `Process` and `Pipe` are
+    // `Sendable` on macOS 26+ so the cross-actor sharing is checked
+    // by the compiler. `terminate()` is safe to call from any actor
+    // while `run()` is in flight on another — `Process` runs its
+    // child-process bookkeeping on an internal dispatch queue.
+    let process = Process()
+    let stderrPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+    process.currentDirectoryURL = cwd
+    // Prefix every positional with `./` so Info-ZIP's option
+    // scanner never sees a leading `-`: a single-source compress
+    // of `-foo.txt` produces archive `-foo.txt.zip`, and either
+    // arg fed bare would land in zip's flag pass as e.g. `-tt`.
+    // The `--` end-of-options marker doesn't help here — Info-ZIP
+    // explicitly rejects `--` before the archive name. `./`
+    // prefixes are normalised out of the resulting entry names,
+    // so the archive's directory layout is unchanged.
+    let archiveArg = "./" + archiveName
+    let sourceArgs = relativeNames.map { "./" + $0 }
+    // `-b <dir>` redirects Info-ZIP's `ziXXXXXX` temp file out of
+    // the cwd. Without it, zip(1) creates the temp archive next to
+    // the final destination and the user sees a stray random-name
+    // file in the finder pane until the rename at the end. Using
+    // the per-user temp dir keeps the temp invisible; the final
+    // archive still lands in cwd via zip's own rename. If the rename
+    // crosses APFS containers (cwd on an external volume, temp on
+    // the system disk) zip falls back to copy+delete — slower than
+    // an in-place rename, but still correct.
+    process.arguments = [
+      "-b", NSTemporaryDirectory(), "-r", "-q", archiveArg,
+    ] + sourceArgs
+    // Capture stderr so partial-failure messages don't drop into
+    // /dev/null with `-q` set — they go to the unified log instead
+    // when zip exits non-zero.
+    process.standardError = stderrPipe
+
+    let opID = FinderOperationTracker.OperationID()
+    let displayLabel = "Compressing “\(archiveName)”"
+    FinderOperationTracker.shared.register(
+      .init(
+        id: opID,
+        label: displayLabel,
+        targetURLs: [archiveURL],
+        cancel: { process.terminate() }))
+    OperationsProgressPanel.scheduleShowIfNeeded(near: window)
+
     Task.detached(priority: .userInitiated) {
-      let process = Process()
-      let stderrPipe = Pipe()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-      process.currentDirectoryURL = cwd
-      // Prefix every positional with `./` so Info-ZIP's option
-      // scanner never sees a leading `-`: a single-source compress
-      // of `-foo.txt` produces archive `-foo.txt.zip`, and either
-      // arg fed bare would land in zip's flag pass as e.g. `-tt`.
-      // The `--` end-of-options marker doesn't help here — Info-ZIP
-      // explicitly rejects `--` before the archive name. `./`
-      // prefixes are normalised out of the resulting entry names,
-      // so the archive's directory layout is unchanged.
-      let archiveArg = "./" + archiveName
-      let sourceArgs = relativeNames.map { "./" + $0 }
-      process.arguments = ["-r", "-q", archiveArg] + sourceArgs
-      // Capture stderr so partial-failure messages don't drop into
-      // /dev/null with `-q` set — they go to the unified log instead
-      // when zip exits non-zero.
-      process.standardError = stderrPipe
+      defer {
+        // `defer` runs synchronously off-main; the unregister must
+        // hit the tracker on MainActor, so spawn a child Task that
+        // hops over. Multiple ops finishing in the same turn each
+        // enqueue their own hop — the order can differ from start
+        // order, but `dismissIfEmpty`'s `Self.shared = nil` guard
+        // tolerates the duplicate close-attempt path.
+        Task { @MainActor in
+          FinderOperationTracker.shared.unregister(opID)
+          OperationsProgressPanel.dismissIfEmpty()
+        }
+      }
       do {
         try process.run()
       } catch {
@@ -85,7 +121,10 @@ extension FinderPaneView {
       // archive (status 12 = nothing to do, 18 = some files
       // unreadable). Surface the file in the table when it actually
       // exists so the user can inspect or delete it, instead of
-      // silently strand the partial.
+      // silently strand the partial. A user-driven cancel via the
+      // progress panel calls `terminate()` mid-stream, which leaves
+      // a partial archive on disk; we still surface it so the user
+      // can inspect / delete rather than wonder where the file went.
       let archiveExists = FileManager.default.fileExists(
         atPath: archiveURL.path(percentEncoded: false))
       guard archiveExists else { return }

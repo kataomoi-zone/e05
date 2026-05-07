@@ -134,11 +134,40 @@ extension FinderPaneView {
   /// the same window. A per-`Task` `FileManager()` keeps Sendable
   /// strictness happy and avoids sharing the global default's
   /// delegate slot across tasks.
+  ///
+  /// The op is registered with `FinderOperationTracker` so the
+  /// progress panel surfaces "Pasting …" / "Duplicating …" while
+  /// the copy runs, and so the panel's ✕ button can ask the task
+  /// to stop. Cancel is best-effort: `Task.cancel()` only takes
+  /// effect between plans, so a cancel mid-`copyItem(at:to:)` lets
+  /// the current file finish and skips the rest. `FileManager`
+  /// doesn't surface a per-file cancel hook, and writing a chunked
+  /// manual copy purely for the cancel path is out of scope here.
   func runCopyBatch(plans: [(source: URL, target: URL)], label: String) {
-    Task.detached(priority: .userInitiated) {
+    let opID = FinderOperationTracker.OperationID()
+    let targets = plans.map { $0.target }
+
+    // The detached task is created before `register` so the cancel
+    // closure can capture it. A pathologically-fast batch could in
+    // principle complete before `register` runs and enqueue an
+    // unregister via `defer` that lands ahead of any panel — but
+    // `scheduleShowIfNeeded` waits `panelShowDelay` (500ms) before
+    // touching the panel, and same-MainActor synchronous code below
+    // (`register` then `scheduleShowIfNeeded`) finishes long before
+    // any child `Task { @MainActor in ... }` enqueued from the
+    // detached task can land, so the panel never flashes for an op
+    // that completes faster than the delay.
+    let task = Task.detached(priority: .userInitiated) {
+      defer {
+        Task { @MainActor in
+          FinderOperationTracker.shared.unregister(opID)
+          OperationsProgressPanel.dismissIfEmpty()
+        }
+      }
       let fm = FileManager()
       var done: [URL] = []
       for plan in plans {
+        if Task.isCancelled { break }
         do {
           try fm.copyItem(at: plan.source, to: plan.target)
           done.append(plan.target)
@@ -155,6 +184,35 @@ extension FinderPaneView {
         FinderUndoCenter.registerCreated(at: done, actionName: label, in: self)
       }
     }
+
+    FinderOperationTracker.shared.register(
+      .init(
+        id: opID,
+        label: progressLabel(for: label, count: plans.count),
+        targetURLs: targets,
+        cancel: { task.cancel() }))
+    OperationsProgressPanel.scheduleShowIfNeeded(near: window)
+  }
+
+  /// Render a human-readable progress label from the undo-action
+  /// name + plan count: a single-item `Paste` becomes "Pasting 1
+  /// item", a five-item `Duplicate` becomes "Duplicating 5 items".
+  /// The continuous tense matches Finder's progress-window phrasing
+  /// ("Copying …") and contrasts visually with the past-tense undo
+  /// labels ("Undo Paste") so the two surfaces don't look like the
+  /// same string in two places.
+  private func progressLabel(for actionName: String, count: Int) -> String {
+    let verb: String
+    switch actionName {
+    case FinderUndoActionName.paste:
+      verb = "Pasting"
+    case FinderUndoActionName.duplicate:
+      verb = "Duplicating"
+    default:
+      verb = actionName
+    }
+    let suffix = count == 1 ? "1 item" : "\(count) items"
+    return "\(verb) \(suffix)"
   }
 
   /// Reload the table and select every newly produced entry.
