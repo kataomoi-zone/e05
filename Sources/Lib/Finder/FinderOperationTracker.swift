@@ -74,6 +74,27 @@ public final class FinderOperationTracker {
     order.compactMap { byID[$0] }
   }
 
+  /// Targets for in-flight ops whose parent directory equals `dir`.
+  /// Used by `FinderPaneView` to inject synthetic placeholder rows
+  /// for archives/copies/aliases not yet on disk so the user sees a
+  /// greyed row + spinner the moment the op starts, even if the
+  /// pane navigates away and back during the op. Returns a `Set` to
+  /// dedupe across overlapping ops with the same target (rare;
+  /// happens e.g. when two Compresses race for the same archive
+  /// name and only one wins the collision-resolved slot). The
+  /// dictionary's value sequence is enough — the panel uses `order`
+  /// to render rows in start order, but a `Set` of targets has no
+  /// useful ordering anyway.
+  public func targetURLs(in dir: URL) -> Set<URL> {
+    var result: Set<URL> = []
+    for op in byID.values {
+      for target in op.targetURLs where target.deletingLastPathComponent() == dir {
+        result.insert(target)
+      }
+    }
+    return result
+  }
+
   public func register(_ op: Operation) {
     byID[op.id] = op
     if !order.contains(op.id) {

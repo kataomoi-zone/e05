@@ -55,6 +55,27 @@ public final class FileItem: Sendable {
     self.kind = values?.localizedTypeDescription ?? "—"
   }
 
+  /// Construct a synthetic placeholder for an in-flight batch-op
+  /// target that hasn't landed on disk yet (Compress / Paste /
+  /// Duplicate output). `dateModified = Date()` so the row sorts
+  /// near the top of a Date-descending list — Finder's default
+  /// orientation, where the user expects "freshly-being-created"
+  /// to surface first. `resourceValues` on a missing path returns
+  /// `nil` for every key, which would land the row at
+  /// `.distantPast` and push it out of the visible window for
+  /// large directories.
+  public init(placeholder url: URL) {
+    self.url = url
+    self.name = url.lastPathComponent
+    self.isDirectory = false
+    self.isPackage = false
+    self.isHidden = false
+    self.isSymbolicLink = false
+    self.size = 0
+    self.dateModified = Date()
+    self.kind = "—"
+  }
+
   /// Table-cell display for the Size column. Directories omit size the
   /// way Finder does — showing "--" rather than the inode's zero byte
   /// count keeps the column readable when browsing deep trees.

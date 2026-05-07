@@ -28,22 +28,18 @@ extension FinderPaneView: NSTableViewDataSource {
       let key = descriptor.key,
       let sortKey = SortKey(rawValue: key)
     else { return }
-    let previouslySelectedURLs: [URL] = tableView.selectedRowIndexes.compactMap {
-      $0 < items.count ? items[$0].url : nil
-    }
+    let previouslySelectedURLs = currentlySelectedURLs()
     currentSortKey = sortKey
     sortAscending = descriptor.ascending
     items = Self.sortItems(items, key: sortKey, ascending: descriptor.ascending)
+    // Keep `lastLoadedItems` in lockstep with the active sort so a
+    // later in-flight overlay refresh that hits the no-synthetics
+    // fast path (cwdTargets empty) returns rows in the user's
+    // current order rather than the pre-click one.
+    lastLoadedItems = Self.sortItems(
+      lastLoadedItems, key: sortKey, ascending: descriptor.ascending)
     tableView.reloadData()
-    var restored = IndexSet()
-    for url in previouslySelectedURLs {
-      if let idx = items.firstIndex(where: { $0.url == url }) {
-        restored.insert(idx)
-      }
-    }
-    if !restored.isEmpty {
-      tableView.selectRowIndexes(restored, byExtendingSelection: false)
-    }
+    restoreSelection(byURLs: previouslySelectedURLs)
     updateStatusBar()
   }
 }
@@ -64,6 +60,17 @@ extension FinderPaneView: NSTableViewDelegate {
         ?? Self.makeNameCell(identifier: identifier)
       cell.textField?.stringValue = item.name
       cell.imageView?.image = iconForRow(item)
+      // Toggle the per-row in-flight spinner. Cells are recycled, so
+      // the previous occupant's spinner state must be reset on every
+      // `viewFor` callback even when this row isn't in-flight.
+      let spinner = Self.nameCellSpinner(in: cell)
+      if inFlightURLs.contains(item.url) {
+        spinner?.isHidden = false
+        spinner?.startAnimation(nil)
+      } else {
+        spinner?.stopAnimation(nil)
+        spinner?.isHidden = true
+      }
       return cell
     }
 
@@ -106,11 +113,25 @@ extension FinderPaneView: NSTableViewDelegate {
       tableView.makeView(withIdentifier: Self.rowIdentifier, owner: nil) as? FinderRowView
       ?? FinderRowView()
     rowView.identifier = Self.rowIdentifier
-    rowView.dimmed = row >= 0 && row < items.count && items[row].isHidden
+    let item = (row >= 0 && row < items.count) ? items[row] : nil
+    // In-flight rows share the dimmed alpha with hidden rows: both
+    // signal "this row is real but not the user's primary focus". The
+    // name-cell spinner is what differentiates the in-flight case
+    // visually.
+    rowView.dimmed = item.map { $0.isHidden || inFlightURLs.contains($0.url) } ?? false
     return rowView
   }
 
   // MARK: - Cell factories
+
+  /// Identifier for the in-flight spinner subview embedded in the
+  /// name cell. Used by `viewFor` to find and toggle the spinner
+  /// without subclassing `NSTableCellView`.
+  static let nameSpinnerIdentifier = NSUserInterfaceItemIdentifier("finder.cell.spinner")
+
+  static func nameCellSpinner(in cell: NSTableCellView) -> NSProgressIndicator? {
+    cell.subviews.first { $0.identifier == nameSpinnerIdentifier } as? NSProgressIndicator
+  }
 
   static func makeNameCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
     let cell = NSTableCellView()
@@ -141,8 +162,26 @@ extension FinderPaneView: NSTableViewDelegate {
     textField.cell?.usesSingleLineMode = true
     textField.translatesAutoresizingMaskIntoConstraints = false
 
+    // Hidden spinner kept on every name cell so the data-source
+    // callback can toggle visibility without rebuilding the view
+    // hierarchy (or subclassing `NSTableCellView` just to track one
+    // extra subview). `controlSize = .small` matches Finder's
+    // in-flight glyph size; spinning style stays — Phase 2 has no
+    // real progress source, a circular pie chart with `fraction`
+    // updates lands in a follow-up commit when zip(1) stderr
+    // parsing or chunked-copy bytesWritten counters arrive.
+    let spinner = NSProgressIndicator()
+    spinner.identifier = Self.nameSpinnerIdentifier
+    spinner.style = .spinning
+    spinner.controlSize = .small
+    spinner.isIndeterminate = true
+    spinner.isDisplayedWhenStopped = false
+    spinner.isHidden = true
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+
     cell.addSubview(imageView)
     cell.addSubview(textField)
+    cell.addSubview(spinner)
     cell.imageView = imageView
     cell.textField = textField
 
@@ -152,8 +191,12 @@ extension FinderPaneView: NSTableViewDelegate {
       imageView.widthAnchor.constraint(equalToConstant: 16),
       imageView.heightAnchor.constraint(equalToConstant: 16),
       textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 4),
-      textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+      textField.trailingAnchor.constraint(lessThanOrEqualTo: spinner.leadingAnchor, constant: -4),
       textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      spinner.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+      spinner.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+      spinner.widthAnchor.constraint(equalToConstant: 12),
+      spinner.heightAnchor.constraint(equalToConstant: 12),
     ])
     return cell
   }

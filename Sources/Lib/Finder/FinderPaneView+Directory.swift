@@ -103,6 +103,8 @@ extension FinderPaneView {
     // runs. Reload paths (monitor / manual) keep items visible until
     // the new walk completes — there the cwd is unchanged.
     items = []
+    lastLoadedItems = []
+    inFlightURLs = []
     tableView.reloadData()
     updateStatusBar()
     reloadItems(preservingSelection: false)
@@ -222,7 +224,8 @@ extension FinderPaneView {
       return !isAlias
     }
 
-    items = loaded
+    lastLoadedItems = loaded
+    items = mergeWithInFlightOverlay(loaded)
     tableView.reloadData()
     updateStatusBar()
 
@@ -247,6 +250,81 @@ extension FinderPaneView {
       if !restored.isEmpty {
         tableView.selectRowIndexes(restored, byExtendingSelection: false)
       }
+    }
+  }
+
+  /// Merge `loaded` (raw enumerator output) with synthetic
+  /// placeholder `FileItem`s for in-flight `FinderOperationTracker`
+  /// targets that fall inside `currentURL`. Updates `inFlightURLs`
+  /// in lockstep so cell-view / row-view callbacks can render the
+  /// dimmed alpha + spinner against the same set used to compose
+  /// the rows. Synthetics whose target already appears in `loaded`
+  /// (the file finished landing between `register` and the next
+  /// reload) are dropped — the real row replaces the placeholder
+  /// without any flicker.
+  ///
+  /// Caller is responsible for keeping `loaded` sorted under the
+  /// current `currentSortKey` / `sortAscending` — the no-synthetics
+  /// fast path returns it unchanged. `applyLoadedItems` always
+  /// passes the off-main task's already-sorted output;
+  /// `sortDescriptorsDidChange` keeps `lastLoadedItems` re-sorted
+  /// on every header click. The synthetic-merge slow path always
+  /// re-sorts from scratch since insertion-into-sorted is O(N) per
+  /// item and the typical synthetic count (1-3) makes a full sort
+  /// equivalent in practice.
+  func mergeWithInFlightOverlay(_ loaded: [FileItem]) -> [FileItem] {
+    let cwdTargets = FinderOperationTracker.shared.targetURLs(in: currentURL)
+    inFlightURLs = cwdTargets
+    guard !cwdTargets.isEmpty else {
+      return loaded
+    }
+    let knownURLs = Set(loaded.map { $0.url })
+    let synthetics = cwdTargets.subtracting(knownURLs).map { FileItem(placeholder: $0) }
+    if synthetics.isEmpty {
+      return loaded
+    }
+    return Self.sortItems(
+      loaded + synthetics, key: currentSortKey, ascending: sortAscending)
+  }
+
+  /// Re-render the in-flight overlay against the cached
+  /// `lastLoadedItems` snapshot. Triggered by
+  /// `FinderOperationTracker.didChangeNotification` so a freshly-
+  /// registered op makes its greyed placeholder appear without
+  /// re-walking the directory, and a freshly-unregistered op clears
+  /// its placeholder the same way.
+  func refreshInFlightOverlay() {
+    let previouslySelectedURLs = currentlySelectedURLs()
+    items = mergeWithInFlightOverlay(lastLoadedItems)
+    tableView.reloadData()
+    updateStatusBar()
+    restoreSelection(byURLs: previouslySelectedURLs)
+  }
+
+  /// Snapshot the currently-selected rows as URLs so a subsequent
+  /// `reloadData` can restore the selection by content rather than
+  /// by index — sorts and synthetic injection shuffle row indexes
+  /// without changing the underlying entries.
+  func currentlySelectedURLs() -> [URL] {
+    tableView.selectedRowIndexes.compactMap { idx in
+      idx < items.count ? items[idx].url : nil
+    }
+  }
+
+  /// Re-select the rows whose URLs match `urls` after a reload.
+  /// Silent on empty input or all-misses; the latter happens when a
+  /// rename moved the file out of the cwd or an undo cleared the
+  /// targets entirely.
+  func restoreSelection(byURLs urls: [URL]) {
+    guard !urls.isEmpty else { return }
+    var restored = IndexSet()
+    for url in urls {
+      if let idx = items.firstIndex(where: { $0.url == url }) {
+        restored.insert(idx)
+      }
+    }
+    if !restored.isEmpty {
+      tableView.selectRowIndexes(restored, byExtendingSelection: false)
     }
   }
 

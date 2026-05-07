@@ -102,6 +102,25 @@ public final class FinderPaneView: NSView {
   /// cancel propagation and the MainActor hop.
   var pendingLoadTask: Task<Void, Never>?
 
+  /// Last successful enumerator result, retained so an in-flight
+  /// overlay refresh (`FinderOperationTracker.didChangeNotification`)
+  /// can re-merge synthetic rows without paying for a fresh
+  /// directory walk. Cleared on navigation so a stale parent-dir
+  /// snapshot never bleeds into the new cwd.
+  var lastLoadedItems: [FileItem] = []
+
+  /// URLs currently rendered as greyed in-flight placeholders. Read
+  /// by `tableView(viewFor:row:)` to toggle the spinner visibility,
+  /// and by `rowViewForRow` to dim the row alongside the existing
+  /// hidden-files dim path.
+  var inFlightURLs: Set<URL> = []
+
+  /// Block-based observer for `FinderOperationTracker.didChangeNotification`.
+  /// Same `nonisolated(unsafe)` rationale as `settingsObserver` —
+  /// Swift 6's nonisolated `deinit` needs to hand the token back to
+  /// `removeObserver` without an actor hop.
+  nonisolated(unsafe) var operationsObserver: NSObjectProtocol?
+
   /// On-demand icon store keyed by file URL. `URLResourceKey.effectiveIconKey`
   /// resolution is the most expensive per-file cost during directory
   /// loads, so icons are fetched lazily in `tableView(viewFor:row:)`
@@ -197,6 +216,18 @@ public final class FinderPaneView: NSView {
       MainActor.assumeIsolated { self?.reload() }
     }
 
+    // Refresh the in-flight overlay (greyed placeholder rows for
+    // archive / copy / paste targets that aren't on disk yet)
+    // whenever an operation registers or unregisters. Cheap re-merge
+    // against `lastLoadedItems` rather than a fresh enumerator walk.
+    operationsObserver = NotificationCenter.default.addObserver(
+      forName: FinderOperationTracker.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.refreshInFlightOverlay() }
+    }
+
     loadDirectory(url: initialURL, pushHistory: false, announce: false)
   }
 
@@ -214,6 +245,9 @@ public final class FinderPaneView: NSView {
     // "last reference released off-main" crash risk that touching
     // MainActor-isolated properties from deinit would carry.
     if let token = settingsObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = operationsObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
