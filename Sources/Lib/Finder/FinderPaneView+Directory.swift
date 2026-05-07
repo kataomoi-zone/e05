@@ -80,18 +80,7 @@ extension FinderPaneView {
   /// action's targets aren't in the cwd (e.g. trashing dropped
   /// them outside the visible tree).
   public func reloadItemsAndSelect(at targetURLs: [URL]) {
-    reloadItems(preservingSelection: false)
-    guard !targetURLs.isEmpty else { return }
-    let names = Set(targetURLs.map { $0.lastPathComponent })
-    var rows = IndexSet()
-    for (idx, item) in items.enumerated()
-    where names.contains(item.url.lastPathComponent) {
-      rows.insert(idx)
-    }
-    if let first = rows.first {
-      tableView.selectRowIndexes(rows, byExtendingSelection: false)
-      tableView.scrollRowToVisible(first)
-    }
+    reloadItems(preservingSelection: false, selectAfterLoad: targetURLs)
   }
 
   // MARK: - Directory load + reload
@@ -108,6 +97,14 @@ extension FinderPaneView {
     // same cwd (directory-monitor events) keep the cache: same URL =
     // same icon, no I/O needed.
     iconCache.removeAll(keepingCapacity: true)
+    // Show empty state immediately so navigating from a small dir
+    // into a 50k-entry one doesn't display the previous dir's items
+    // alongside an already-updated URL bar while the off-main walk
+    // runs. Reload paths (monitor / manual) keep items visible until
+    // the new walk completes — there the cwd is unchanged.
+    items = []
+    tableView.reloadData()
+    updateStatusBar()
     reloadItems(preservingSelection: false)
     directoryMonitor.start(at: url)
 
@@ -140,20 +137,38 @@ extension FinderPaneView {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.reloadDebounceInterval, execute: work)
   }
 
-  func reloadItems(preservingSelection: Bool) {
-    // Evict alias entries from the icon cache: a Finder alias is
-    // designed to track its source through renames and moves, so
-    // the source's icon may have changed since we last resolved it.
-    // Non-alias rows keep their cached icons — Launch Services
-    // resolves the same icon from the same path until the row is
-    // replaced wholesale.
-    iconCache = iconCache.filter { url, _ in
-      let isAlias = (try? url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile) == true
-      return !isAlias
-    }
+  /// Kick off an off-main enumeration of `currentURL` and apply the
+  /// result back on MainActor when it completes. The walk runs in a
+  /// `Task.detached` so a 50k-entry tree (`node_modules`, `~/Library`)
+  /// doesn't freeze the main thread; cancellation lands on the next
+  /// `nextObject()` boundary so abandoning a slow walk (new reload
+  /// fired before the old one finished) reclaims the worker promptly.
+  ///
+  /// `preservingSelection` keeps the current row selection across
+  /// the reload (used by manual reload + monitor-driven reloads).
+  /// `selectAfterLoad`, when non-nil, takes precedence and selects
+  /// the matching `lastPathComponent` rows after the apply (used by
+  /// `reloadItemsAndSelect` for undo/redo restoration and by callers
+  /// that need to highlight a freshly-created entry).
+  /// `completion` runs on MainActor immediately after the apply
+  /// (items / selection set), letting callers chain follow-up work
+  /// that depends on the reload — e.g. `createNewFolder` schedules
+  /// `beginRename` once the new row is selectable. The completion
+  /// does **not** fire when the task is cancelled (e.g. the user
+  /// navigates away mid-walk); callers must tolerate that path.
+  func reloadItems(
+    preservingSelection: Bool,
+    selectAfterLoad: [URL]? = nil,
+    completion: (@Sendable @MainActor () -> Void)? = nil
+  ) {
+    pendingLoadTask?.cancel()
 
-    let previouslySelectedURLs: [URL] =
-      preservingSelection
+    let snapshotURL = currentURL
+    let key = currentSortKey
+    let ascending = sortAscending
+
+    let preserved: [URL] =
+      (preservingSelection && selectAfterLoad == nil)
       ? tableView.selectedRowIndexes.compactMap { idx in
         idx < items.count ? items[idx].url : nil
       }
@@ -168,24 +183,63 @@ extension FinderPaneView {
     if !FinderSettings.showHiddenFiles {
       options.insert(.skipsHiddenFiles)
     }
-    var loaded: [FileItem] = []
-    if let enumerator = FileManager.default.enumerator(
-      at: currentURL,
-      includingPropertiesForKeys: Array(FileItem.resourceKeys),
-      options: options
-    ) {
-      for case let url as URL in enumerator {
-        loaded.append(FileItem(url: url))
+    let capturedOptions = options
+    let toSelect = selectAfterLoad
+
+    pendingLoadTask = Task.detached(priority: .userInitiated) { [weak self] in
+      let loaded = Self.enumerate(url: snapshotURL, options: capturedOptions)
+      if Task.isCancelled { return }
+      let sorted = Self.sortItems(loaded, key: key, ascending: ascending)
+      if Task.isCancelled { return }
+      await MainActor.run {
+        guard let self else { return }
+        // Stale-result guard: by the time we hop back, the user may
+        // have navigated away. Apply only when the cwd still matches
+        // the snapshot we walked, so old enumerations never overwrite
+        // newer dirs.
+        guard self.currentURL == snapshotURL else { return }
+        self.applyLoadedItems(
+          sorted, preservedSelection: preserved, selectAfterLoad: toSelect)
+        completion?()
       }
     }
+  }
 
-    items = sortItems(loaded)
+  @MainActor
+  private func applyLoadedItems(
+    _ loaded: [FileItem],
+    preservedSelection: [URL],
+    selectAfterLoad: [URL]?
+  ) {
+    // Evict alias entries from the icon cache: a Finder alias is
+    // designed to track its source through renames and moves, so
+    // the source's icon may have changed since we last resolved it.
+    // Non-alias rows keep their cached icons — Launch Services
+    // resolves the same icon from the same path until the row is
+    // replaced wholesale.
+    iconCache = iconCache.filter { url, _ in
+      let isAlias = (try? url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile) == true
+      return !isAlias
+    }
+
+    items = loaded
     tableView.reloadData()
     updateStatusBar()
 
-    if preservingSelection && !previouslySelectedURLs.isEmpty {
+    if let selectAfterLoad, !selectAfterLoad.isEmpty {
+      let names = Set(selectAfterLoad.map { $0.lastPathComponent })
+      var rows = IndexSet()
+      for (idx, item) in items.enumerated()
+      where names.contains(item.url.lastPathComponent) {
+        rows.insert(idx)
+      }
+      if let first = rows.first {
+        tableView.selectRowIndexes(rows, byExtendingSelection: false)
+        tableView.scrollRowToVisible(first)
+      }
+    } else if !preservedSelection.isEmpty {
       var restored = IndexSet()
-      for url in previouslySelectedURLs {
+      for url in preservedSelection {
         if let idx = items.firstIndex(where: { $0.url == url }) {
           restored.insert(idx)
         }
@@ -196,28 +250,61 @@ extension FinderPaneView {
     }
   }
 
+  /// Walk `url` synchronously and return the resulting items. Runs
+  /// off the main actor (called from `reloadItems`'s `Task.detached`).
+  /// The `nextObject()` manual loop is preferred over
+  /// `for case let url as URL in enumerator` so each iteration can
+  /// honour `Task.isCancelled` — `for case` would still consume the
+  /// next object before the cancel check runs.
+  nonisolated static func enumerate(
+    url: URL,
+    options: FileManager.DirectoryEnumerationOptions
+  ) -> [FileItem] {
+    guard
+      let enumerator = FileManager.default.enumerator(
+        at: url,
+        includingPropertiesForKeys: Array(FileItem.resourceKeys),
+        options: options)
+    else { return [] }
+    var loaded: [FileItem] = []
+    while let obj = enumerator.nextObject() {
+      if Task.isCancelled { return [] }
+      guard let entry = obj as? URL else { continue }
+      loaded.append(FileItem(url: entry))
+    }
+    return loaded
+  }
+
   // MARK: - Sort
 
   /// Order items for display. Finder's list view sorts purely by the
   /// active key with no directory grouping — a folder named `bin`
   /// appears between `bash` and `cat` under a Name ascending sort,
   /// not pulled to the top. Mirror that behaviour: delegate entirely
-  /// to `compareByCurrentKey`, with no separate directory tier.
-  func sortItems(_ items: [FileItem]) -> [FileItem] {
-    items.sorted(by: compareByCurrentKey)
+  /// to `compare`, with no separate directory tier.
+  ///
+  /// Nonisolated so the off-main walk in `reloadItems` can sort the
+  /// loaded items before hopping back to MainActor; the call site
+  /// passes the captured `currentSortKey` / `sortAscending` snapshot.
+  nonisolated static func sortItems(
+    _ items: [FileItem], key: SortKey, ascending: Bool
+  ) -> [FileItem] {
+    items.sorted { compare($0, $1, key: key, ascending: ascending) }
   }
 
-  /// Return `true` iff `a` should precede `b` under the active sort.
-  /// `NSSortDescriptor` itself can't drive this comparison because
-  /// `FileItem` is a plain Swift class without `@objc` keypath
-  /// bindings; the delegate callback reads the descriptor's `key`
-  /// string, maps it back to `SortKey`, and dispatches here so the
-  /// comparison logic lives fully in Swift.
-  func compareByCurrentKey(_ a: FileItem, _ b: FileItem) -> Bool {
-    switch currentSortKey {
+  /// Return `true` iff `a` should precede `b` under the given sort
+  /// key and direction. `NSSortDescriptor` itself can't drive this
+  /// comparison because `FileItem` is a plain Swift class without
+  /// `@objc` keypath bindings; the delegate callback reads the
+  /// descriptor's `key` string, maps it back to `SortKey`, and
+  /// dispatches here so the comparison logic lives fully in Swift.
+  nonisolated static func compare(
+    _ a: FileItem, _ b: FileItem, key: SortKey, ascending: Bool
+  ) -> Bool {
+    switch key {
     case .name:
       let result = a.name.localizedStandardCompare(b.name)
-      return sortAscending ? result == .orderedAscending : result == .orderedDescending
+      return ascending ? result == .orderedAscending : result == .orderedDescending
     case .dateModified:
       // `.distantPast` is the smallest representable Date, so rows
       // without a modification date (broken metadata, permission
@@ -226,7 +313,7 @@ extension FinderPaneView {
       // nil as "very old" is how Finder handles missing timestamps.
       let da = a.dateModified ?? .distantPast
       let db = b.dateModified ?? .distantPast
-      return sortAscending ? da < db : da > db
+      return ascending ? da < db : da > db
     case .size:
       // Finder's Size column groups folders together: the column
       // renders "--" for directories since their byte size isn't
@@ -246,12 +333,12 @@ extension FinderPaneView {
       let sa = aIsDir ? Int64.min : a.size
       let sb = bIsDir ? Int64.min : b.size
       if sa != sb {
-        return sortAscending ? sa < sb : sa > sb
+        return ascending ? sa < sb : sa > sb
       }
       return a.name.localizedStandardCompare(b.name) == .orderedAscending
     case .kind:
       let result = a.kind.localizedStandardCompare(b.kind)
-      return sortAscending ? result == .orderedAscending : result == .orderedDescending
+      return ascending ? result == .orderedAscending : result == .orderedDescending
     }
   }
 

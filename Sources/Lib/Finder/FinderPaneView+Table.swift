@@ -33,7 +33,7 @@ extension FinderPaneView: NSTableViewDataSource {
     }
     currentSortKey = sortKey
     sortAscending = descriptor.ascending
-    items = sortItems(items)
+    items = Self.sortItems(items, key: sortKey, ascending: descriptor.ascending)
     tableView.reloadData()
     var restored = IndexSet()
     for url in previouslySelectedURLs {

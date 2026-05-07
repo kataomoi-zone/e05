@@ -158,33 +158,22 @@ extension FinderPaneView {
   }
 
   /// Reload the table and select every newly produced entry.
-  /// Selection lookup matches by `lastPathComponent` rather than the
-  /// full URL because the directory monitor re-enumerates entries
-  /// via `FileManager.enumerator`, whose trailing-slash and
-  /// percent-encoding choices may not round-trip with the URLs the
-  /// copy plan composed via `appendingPathComponent` — `Rename.swift`
-  /// ducks the same drift the same way after `createNewFolder`.
-  /// A directory's immediate children have unique names, so
-  /// last-component matching is unambiguous. Used by `runCopyBatch`
-  /// (off-main) and `makeAliasForSelection` (on-main) alike.
+  /// `selectAfterLoad` matches by `lastPathComponent` because the
+  /// directory monitor re-enumerates entries via `FileManager.enumerator`,
+  /// whose trailing-slash and percent-encoding choices may not
+  /// round-trip with the URLs the copy plan composed via
+  /// `appendingPathComponent` — `Rename.swift` ducks the same drift
+  /// the same way after `createNewFolder`. A directory's immediate
+  /// children have unique names, so last-component matching is
+  /// unambiguous. Used by `runCopyBatch` (off-main) and
+  /// `makeAliasForSelection` (on-main) alike.
   ///
   /// The directory monitor's debounced reload follows shortly after
   /// with `preservingSelection: true` and re-resolves the same
   /// last-components, so the selection stays put — no extra
   /// coordination needed.
   func finishCopyBatch(targets: [URL]) {
-    reloadItems(preservingSelection: false)
-    var rows = IndexSet()
-    for url in targets {
-      let name = url.lastPathComponent
-      if let idx = items.firstIndex(where: { $0.url.lastPathComponent == name }) {
-        rows.insert(idx)
-      }
-    }
-    if let first = rows.first {
-      tableView.selectRowIndexes(rows, byExtendingSelection: false)
-      tableView.scrollRowToVisible(first)
-    }
+    reloadItems(preservingSelection: false, selectAfterLoad: targets)
   }
 
   /// Resolve the next free `<stem> copy[.ext]` slot inside `dir`,

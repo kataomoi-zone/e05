@@ -94,6 +94,14 @@ public final class FinderPaneView: NSView {
   var pendingReload: DispatchWorkItem?
   static let reloadDebounceInterval: TimeInterval = 0.1
 
+  /// In-flight off-main directory walk. Cancelled when a new reload
+  /// starts so a stale 50k-entry walk on `/old/cwd` doesn't apply
+  /// after the user has already navigated to `/new/cwd`. The task
+  /// also no-ops on apply when `currentURL` no longer matches the
+  /// captured snapshot, defending against the race window between
+  /// cancel propagation and the MainActor hop.
+  var pendingLoadTask: Task<Void, Never>?
+
   /// On-demand icon store keyed by file URL. `URLResourceKey.effectiveIconKey`
   /// resolution is the most expensive per-file cost during directory
   /// loads, so icons are fetched lazily in `tableView(viewFor:row:)`

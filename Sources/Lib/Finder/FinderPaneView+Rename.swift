@@ -116,27 +116,24 @@ extension FinderPaneView {
       return
     }
     FinderUndoCenter.registerNewFolder(at: target, in: self)
-    reloadItems(preservingSelection: false)
-    // Match by `lastPathComponent` rather than by `URL` equality:
-    // `appendingPathComponent(name)` and the URL that
+    // `selectAfterLoad` matches by `lastPathComponent` rather than by
+    // `URL` equality: `appendingPathComponent(name)` and the URL that
     // `FileManager.enumerator` hands back can differ on trailing
-    // slash, percent-encoding, or symlink resolution, so `==` would
-    // silently miss the row and bail out before `beginRename` ever
-    // ran. A directory's immediate children have unique names, so
-    // last-component matching is safe and resilient.
-    guard let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
-    tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    tableView.scrollRowToVisible(row)
-    // Defer `beginRename` until after the menu bar / command palette
-    // that triggered this action has finished closing. A plain
-    // `DispatchQueue.main.async` fires on the next run-loop tick
-    // which can still overlap with the closing view's final focus /
-    // layout events, and the end-of-edit notification they emit can
-    // collapse the rename session immediately after it starts. A
-    // short delay gives AppKit time to settle before the field
-    // editor attaches.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-      MainActor.assumeIsolated { self?.beginRename() }
+    // slash, percent-encoding, or symlink resolution. A directory's
+    // immediate children have unique names, so last-component
+    // matching is safe and resilient.
+    //
+    // The completion runs after the off-main reload's apply, so by
+    // the time `beginRename` fires the new row is already selected.
+    // Defer the rename itself by 50 ms so the menu bar / command
+    // palette that triggered this action has finished closing — a
+    // plain run-loop tick can still overlap with their final focus /
+    // layout events and the end-of-edit notification they emit can
+    // collapse the rename session immediately after it starts.
+    reloadItems(preservingSelection: false, selectAfterLoad: [target]) { [weak self] in
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        MainActor.assumeIsolated { self?.beginRename() }
+      }
     }
   }
 
@@ -194,17 +191,13 @@ extension FinderPaneView {
     }
     FinderUndoCenter.registerNewFolderWithSelection(
       folder: target, moves: moves, in: self)
-    reloadItems(preservingSelection: false)
-    // Same `lastPathComponent` match as `createNewFolder`; the
-    // composed URL and the URL that `FileManager.enumerator` hands
-    // back can differ on trailing slash / percent-encoding.
-    guard let row = items.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
-    tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    tableView.scrollRowToVisible(row)
-    // Same menu-close vs field-editor race as `createNewFolder` —
-    // see its comment for the full reasoning.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-      MainActor.assumeIsolated { self?.beginRename() }
+    // Same `selectAfterLoad` + delayed `beginRename` chain as
+    // `createNewFolder` — see its comment for the rationale on the
+    // last-component match and the menu-close vs field-editor race.
+    reloadItems(preservingSelection: false, selectAfterLoad: [target]) { [weak self] in
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        MainActor.assumeIsolated { self?.beginRename() }
+      }
     }
   }
 
@@ -335,10 +328,10 @@ extension FinderPaneView: NSTextFieldDelegate {
       return
     }
     FinderUndoCenter.registerRename(from: oldURL, to: target, in: self)
-    reloadItems(preservingSelection: false)
-    if let newRow = items.firstIndex(where: { $0.url == target }) {
-      tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
-      tableView.scrollRowToVisible(newRow)
-    }
+    // `selectAfterLoad` highlights the renamed row once the off-main
+    // reload's apply lands; matching by `lastPathComponent` is
+    // equivalent to URL equality here because the rename target
+    // lives in `currentURL` and has a unique name in that dir.
+    reloadItems(preservingSelection: false, selectAfterLoad: [target])
   }
 }

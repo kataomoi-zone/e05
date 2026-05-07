@@ -9,8 +9,13 @@ import AppKit
 /// with the same icon artwork the user sees when previewing the directory
 /// in Finder — including package icons, alias glyphs, and custom icons set
 /// via Get Info.
-@MainActor
-public final class FileItem {
+///
+/// `Sendable` + nonisolated so the directory walk in
+/// `FinderPaneView.enumerate(...)` can construct items off the main actor
+/// and hand the resulting `[FileItem]` back through `MainActor.run`. All
+/// stored properties are immutable value types or `Sendable` references,
+/// so the conformance is safe.
+public final class FileItem: Sendable {
   public let url: URL
   public let name: String
   public let isDirectory: Bool
@@ -77,10 +82,12 @@ public final class FileItem {
 
   public var displayKind: String { kind }
 
-  // Formatters cached on the MainActor — they're not Sendable, but
-  // FileItem itself is MainActor-isolated so every call site already
-  // holds the global actor when it reaches these statics.
-  private static let byteFormatter: ByteCountFormatter = {
+  // `ByteCountFormatter` is not `Sendable`, but
+  // `string(fromByteCount:)` is thread-safe in practice and FileItem
+  // itself is now nonisolated so callers may reach this from off
+  // the main actor. `DateFormatter` (below) gained Sendable on
+  // macOS 26 so it doesn't need the escape hatch.
+  nonisolated(unsafe) private static let byteFormatter: ByteCountFormatter = {
     let f = ByteCountFormatter()
     f.countStyle = .file
     // Finder renders 0-byte files as "0 bytes" / "0 バイト" (numeric),
