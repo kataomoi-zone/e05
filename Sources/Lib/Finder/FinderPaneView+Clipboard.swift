@@ -152,14 +152,26 @@ extension FinderPaneView: NSMenuItemValidation {
   /// action name itself is already a noun phrase.
   @objc public func undo(_ sender: Any?) {
     let action = FinderUndoCenter.manager.undoActionName
+    FinderUndoCenter.lastBatchPartial = nil
     FinderUndoCenter.manager.undo()
-    postUndoToast(action: action, suffix: "undone")
+    postUndoToast(
+      action: action, suffix: "undone",
+      partial: FinderUndoCenter.lastBatchPartial)
+    // Defensive nil after the read so callers that ever inspect
+    // `lastBatchPartial` outside an undo/redo turn never see a stale
+    // value. The next undo/redo's leading nil already covers the
+    // happy path; this trailing one closes any external read window.
+    FinderUndoCenter.lastBatchPartial = nil
   }
 
   @objc public func redo(_ sender: Any?) {
     let action = FinderUndoCenter.manager.redoActionName
+    FinderUndoCenter.lastBatchPartial = nil
     FinderUndoCenter.manager.redo()
-    postUndoToast(action: action, suffix: "redone")
+    postUndoToast(
+      action: action, suffix: "redone",
+      partial: FinderUndoCenter.lastBatchPartial)
+    FinderUndoCenter.lastBatchPartial = nil
   }
 
   /// Surface a brief confirmation toast for a finder-pane undo/redo.
@@ -167,10 +179,34 @@ extension FinderPaneView: NSMenuItemValidation {
   /// resolve one) or when no `PaneContainerViewController` is
   /// reachable up the responder chain — the latter happens during
   /// teardown but never in the normal click path.
-  private func postUndoToast(action: String, suffix: String) {
+  ///
+  /// `partial` carries any partial-failure stats the closure wrote to
+  /// `FinderUndoCenter.lastBatchPartial`. Three outcomes:
+  /// - `nil` (full success or non-batch op): plain `"<action> <suffix>"`
+  /// - `succeeded == 0` (full failure): suppress this toast entirely
+  ///   so the user only sees the `.error` toast already posted from
+  ///   `reportPartialBatchFailure`. Showing "Move to Trash undone"
+  ///   alongside "5 of 5 items couldn't be restored" reads as
+  ///   contradiction.
+  /// - `0 < succeeded < total` (partial): `"<action> — <succeeded> of
+  ///   <total> <suffix>"`. Embedding the counts directly mirrors the
+  ///   error toast's `"<failed> of <total> items couldn't be …"`, so
+  ///   the two lines add up to the full count without the user
+  ///   parsing English. Avoids the "Move to Trash partially undone"
+  ///   shape that grafts an adverb onto a verb-phrase action name.
+  private func postUndoToast(
+    action: String, suffix: String, partial: (succeeded: Int, total: Int)?
+  ) {
     guard !action.isEmpty,
       let container = window?.contentViewController as? PaneContainerViewController
     else { return }
-    container.showToast("\(action) \(suffix)")
+    if let partial, partial.succeeded == 0 { return }
+    let message: String
+    if let partial {
+      message = "\(action) — \(partial.succeeded) of \(partial.total) \(suffix)"
+    } else {
+      message = "\(action) \(suffix)"
+    }
+    container.showToast(message)
   }
 }

@@ -55,6 +55,22 @@ public enum FinderUndoCenter {
     return m
   }()
 
+  /// Side channel for partial-failure feedback that needs to reach
+  /// `+Clipboard.swift`'s `postUndoToast` after the manager closure
+  /// has already returned. `reportPartialBatchFailure` writes here
+  /// from inside an undo/redo closure; the `undo:` / `redo:` action
+  /// handlers clear it before invoking the manager and read it
+  /// after so the success toast can be suppressed (full failure)
+  /// or rephrased with succeeded/total counts. `nil` when the last
+  /// action was either fully successful or non-batch (rename /
+  /// single new folder). `internal(set)` because the only writer is
+  /// `reportPartialBatchFailure` in this same enum; readers (the
+  /// post-undo handler) need public access. Reads are scoped to the
+  /// immediate post-`manager.undo()` window — the handler nils the
+  /// flag again on exit so a stale value never bleeds into the next
+  /// undo/redo cycle.
+  public internal(set) static var lastBatchPartial: (succeeded: Int, total: Int)?
+
   // MARK: - Rename
 
   /// Register a `from → to` rename so ⌘Z reverses it via
@@ -119,6 +135,7 @@ public enum FinderUndoCenter {
     verbPhrase: String
   ) {
     guard succeeded < total else { return }
+    Self.lastBatchPartial = (succeeded: succeeded, total: total)
     let failed = total - succeeded
     let itemPhrase = total == 1 ? "1 item" : "\(failed) of \(total) items"
     let message = "\(itemPhrase) couldn't be \(verbPhrase)"
