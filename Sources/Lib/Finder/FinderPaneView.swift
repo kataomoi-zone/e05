@@ -55,10 +55,23 @@ public final class FinderPaneView: NSView {
   public var canGoForward: Bool { !forwardStack.isEmpty }
 
   /// `NSView` to receive keyboard focus when the pane is activated.
-  /// Always the inner table view so arrow / vim keys, Return, Space
-  /// (Quick Look) reach the navigation handlers without the pane root
-  /// view stealing first responder.
-  public var keyboardFocusTarget: NSView { tableView }
+  /// Routes to the active presentation so arrow keys (and the list
+  /// view's vim / Quick Look / Return overrides) reach the right
+  /// view without the pane root stealing first responder.
+  public var keyboardFocusTarget: NSView {
+    switch currentMode {
+    case .list: return tableView
+    case .icon: return iconCollectionView
+    }
+  }
+
+  /// Active presentation. Read by `keyboardFocusTarget`,
+  /// `selectedURLs` and friends, the data-source / delegate
+  /// callbacks, and the visibility helpers in
+  /// `FinderPaneView+IconView`. Mutate via `setViewMode(_:)` so the
+  /// store write, the cross-pane notification, and the visibility
+  /// flip stay in sync.
+  public internal(set) var currentMode: FinderViewMode
 
   /// Hand AppKit's `undo:` / `redo:` selectors the app-global finder
   /// undo manager when this pane sits on the responder chain. Without
@@ -67,11 +80,16 @@ public final class FinderPaneView: NSView {
   /// disabled even after a finder-pane operation has been registered.
   public override var undoManager: UndoManager? { FinderUndoCenter.manager }
 
-  /// Whether the table has at least one selected row. Exposed so the
-  /// Move-to-Trash action can disable its menu item and palette entry
-  /// when nothing is selected.
+  /// Whether the active view has at least one selected entry.
+  /// Branches on `currentMode` so menu validations (Move-to-Trash,
+  /// Copy, …) reflect icon-mode selection too — the bare
+  /// `tableView.selectedRowIndexes` would always read empty while
+  /// the user has a row highlighted in the icon grid.
   public var hasSelection: Bool {
-    !tableView.selectedRowIndexes.isEmpty
+    switch currentMode {
+    case .list: return !tableView.selectedRowIndexes.isEmpty
+    case .icon: return !iconCollectionView.selectionIndexPaths.isEmpty
+    }
   }
 
   // MARK: - Internal state (shared with extensions / subclasses)
@@ -82,6 +100,8 @@ public final class FinderPaneView: NSView {
 
   let tableView: FinderTableView
   let scrollView = NSScrollView()
+  let iconCollectionView: FinderIconCollectionView
+  let iconScrollView = NSScrollView()
   let statusBar = FinderStatusBar()
   let directoryMonitor = DirectoryMonitor()
 
@@ -128,6 +148,10 @@ public final class FinderPaneView: NSView {
   /// Swift 6's nonisolated `deinit` needs to hand the token back to
   /// `removeObserver` without an actor hop.
   nonisolated(unsafe) var operationsObserver: NSObjectProtocol?
+
+  /// Block-based observer for `FinderModeStore.didChangeNotification`.
+  /// Same `nonisolated(unsafe)` rationale as `settingsObserver`.
+  nonisolated(unsafe) var modeStoreObserver: NSObjectProtocol?
 
   /// On-demand icon store keyed by file URL. `URLResourceKey.effectiveIconKey`
   /// resolution is the most expensive per-file cost during directory
@@ -193,12 +217,16 @@ public final class FinderPaneView: NSView {
 
   public init(initialURL: URL) {
     self.currentURL = initialURL
+    self.currentMode = FinderModeStore.shared.mode(for: initialURL)
     self.tableView = FinderTableView()
+    self.iconCollectionView = FinderIconCollectionView()
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
 
     setupTableView()
+    setupIconView()
     setupLayout()
+    applyViewModeVisibility()
 
     directoryMonitor.onChange = { [weak self] in
       self?.scheduleDebouncedReload()
@@ -236,6 +264,17 @@ public final class FinderPaneView: NSView {
       MainActor.assumeIsolated { self?.refreshInFlightOverlay() }
     }
 
+    // Cross-pane mode sync: a `View as …` action on pane A surfaces
+    // through the store's notification, and any open pane on the
+    // same cwd applies the new mode through `resyncViewModeFromStore`.
+    modeStoreObserver = NotificationCenter.default.addObserver(
+      forName: FinderModeStore.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.resyncViewModeFromStore() }
+    }
+
     loadDirectory(url: initialURL, pushHistory: false, announce: false)
   }
 
@@ -256,6 +295,9 @@ public final class FinderPaneView: NSView {
       NotificationCenter.default.removeObserver(token)
     }
     if let token = operationsObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = modeStoreObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
@@ -324,7 +366,14 @@ public final class FinderPaneView: NSView {
   private func setupLayout() {
     statusBar.translatesAutoresizingMaskIntoConstraints = false
 
+    // Both scroll views share the same area above the status bar;
+    // `applyViewModeVisibility()` toggles `isHidden` so only the
+    // active one renders. Keeping both mounted (rather than swapping
+    // subviews on mode change) avoids tearing down NSCollectionView
+    // / NSTableView state on every flip and keeps selection /
+    // scroll position intact across switches.
     addSubview(scrollView)
+    addSubview(iconScrollView)
     addSubview(statusBar)
 
     NSLayoutConstraint.activate([
@@ -332,6 +381,11 @@ public final class FinderPaneView: NSView {
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
       scrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+
+      iconScrollView.topAnchor.constraint(equalTo: topAnchor),
+      iconScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      iconScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      iconScrollView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
       statusBar.leadingAnchor.constraint(equalTo: leadingAnchor),
       statusBar.trailingAnchor.constraint(equalTo: trailingAnchor),

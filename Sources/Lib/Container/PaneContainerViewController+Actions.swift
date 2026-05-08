@@ -349,6 +349,29 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "finder_view_as_icons",
+        title: "View as Icons",
+        // No keyboard shortcut: deliberately matches Finder's
+        // `View > as Icons / as List` muscle memory and stays
+        // palette-discoverable.
+        handler: { [weak self] in
+          guard let finderView = self?.focusedPane?.finderView else { return }
+          finderView.setViewMode(.icon)
+          self?.showToast("View as Icons")
+        },
+        validate: { [weak self] in (self?.focusedPane?.finderView != nil, nil) }
+      ),
+      Action(
+        id: "finder_view_as_list",
+        title: "View as List",
+        handler: { [weak self] in
+          guard let finderView = self?.focusedPane?.finderView else { return }
+          finderView.setViewMode(.list)
+          self?.showToast("View as List")
+        },
+        validate: { [weak self] in (self?.focusedPane?.finderView != nil, nil) }
+      ),
+      Action(
         id: "new_folder",
         title: "New Folder",
         keyEquivalent: "n",

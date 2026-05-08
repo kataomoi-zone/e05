@@ -3,32 +3,37 @@ import AppKit
 /// Selection / scroll / reload API exposed in URL-space rather than
 /// row-index-space. Callers across the finder pane (rename, find,
 /// undo restoration, copy-batch finish, drag-drop, …) operate on
-/// "the entry whose URL is X" semantically; the table-row index is
+/// "the entry whose URL is X" semantically; the row / item index is
 /// an implementation detail of the current presentation. Funnelling
-/// through these helpers makes the internals replaceable: when an
-/// icon-grid view lands alongside the list view, the bodies here
-/// branch on the active mode while every call site stays identical.
+/// through these helpers makes the internals replaceable: each body
+/// branches on `currentMode` so a list-view caller and an icon-view
+/// caller share the same surface.
 ///
-/// Today every body forwards to `NSTableView` — no behaviour change
-/// against the previous direct calls. Their value at this point is
-/// (1) the `URL`-keyed signature, which is what callers naturally
-/// hold, and (2) consolidating the three-step `reloadData →
-/// selectRowIndexes → scrollRowToVisible` sequence into a single
-/// `selectAndScroll(toURL:)` so future maintenance touches one
-/// surface. Vim-style row navigation (`j`/`k`/`g`/`G`) lives in
+/// Vim-style row navigation (`j`/`k`/`g`/`G`) lives in
 /// `+Actions.swift` because those handlers are bound at the table
-/// view's keyDown layer and need direct row-index access — they'll
-/// migrate once the icon-grid view introduces its own keyDown path.
+/// view's keyDown layer and need direct row-index access. The
+/// icon-grid view relies on `NSCollectionView`'s default arrow-key
+/// nav and would need its own keyDown path to reach feature parity.
 extension FinderPaneView {
   // MARK: - Selection in URL space
 
-  /// URLs of the rows the user currently has selected. Callers that
-  /// previously read `tableView.selectedRowIndexes` and mapped to
-  /// `items[idx].url` should reach for this instead — it skips the
-  /// out-of-bounds guard the legacy callsites had to repeat.
+  /// URLs of the rows the user currently has selected. Order in list
+  /// mode follows row order; in icon mode the collection view's
+  /// `selectionIndexPaths` is unordered, so the helper sorts by item
+  /// index before resolving URLs to keep a stable iteration order
+  /// for callers that batch-process (Trash, Copy, Compress, …).
   public var selectedURLs: [URL] {
-    tableView.selectedRowIndexes.compactMap { idx in
-      idx < items.count ? items[idx].url : nil
+    switch currentMode {
+    case .list:
+      return tableView.selectedRowIndexes.compactMap { idx in
+        idx < items.count ? items[idx].url : nil
+      }
+    case .icon:
+      return iconCollectionView.selectionIndexPaths
+        .sorted { $0.item < $1.item }
+        .compactMap { ip in
+          ip.item < items.count ? items[ip.item].url : nil
+        }
     }
   }
 
@@ -37,9 +42,7 @@ extension FinderPaneView {
   /// target (Rename, Get Info) without caring whether multi-select
   /// happened to be active.
   public var firstSelectedURL: URL? {
-    tableView.selectedRowIndexes.first.flatMap { idx in
-      idx < items.count ? items[idx].url : nil
-    }
+    selectedURLs.first
   }
 
   // MARK: - Selection mutation
@@ -50,20 +53,41 @@ extension FinderPaneView {
   /// surface absorbed. Empty input is a no-op rather than a clear,
   /// also matching the prior helper, so a `reloadData` reload path
   /// that would otherwise pass a possibly-empty preserved set
-  /// doesn't churn `tableViewSelectionDidChange` with empty→empty
+  /// doesn't churn the selection delegate with empty→empty
   /// transitions. Callers that want to actively clear can call
-  /// `tableView.deselectAll(nil)` directly; no current site needs
-  /// that.
+  /// `deselectAll` on the relevant view directly; no current site
+  /// needs that.
   public func selectRows(byURLs urls: [URL]) {
     guard !urls.isEmpty else { return }
-    var rows = IndexSet()
-    for url in urls {
-      if let idx = items.firstIndex(where: { $0.url == url }) {
-        rows.insert(idx)
+    switch currentMode {
+    case .list:
+      var rows = IndexSet()
+      for url in urls {
+        if let idx = items.firstIndex(where: { $0.url == url }) {
+          rows.insert(idx)
+        }
       }
-    }
-    if !rows.isEmpty {
-      tableView.selectRowIndexes(rows, byExtendingSelection: false)
+      if !rows.isEmpty {
+        tableView.selectRowIndexes(rows, byExtendingSelection: false)
+      }
+    case .icon:
+      var indexPaths: Set<IndexPath> = []
+      for url in urls {
+        if let idx = items.firstIndex(where: { $0.url == url }) {
+          indexPaths.insert(IndexPath(item: idx, section: 0))
+        }
+      }
+      if !indexPaths.isEmpty {
+        iconCollectionView.deselectAll(nil)
+        iconCollectionView.selectItems(at: indexPaths, scrollPosition: [])
+        // `selectItems(at:scrollPosition:)` doesn't fire
+        // `collectionView(_:didSelectItemsAt:)`, so the delegate
+        // path that normally refreshes the status bar / Quick Look
+        // never runs. Hand-fire the same hook to keep parity with
+        // the list view, where AppKit triggers
+        // `tableViewSelectionDidChange` for programmatic selection.
+        handleIconSelectionChange()
+      }
     }
   }
 
@@ -73,8 +97,17 @@ extension FinderPaneView {
   /// removes a row of bookkeeping per site.
   public func selectAndScroll(toURL url: URL) {
     guard let idx = items.firstIndex(where: { $0.url == url }) else { return }
-    tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
-    tableView.scrollRowToVisible(idx)
+    switch currentMode {
+    case .list:
+      tableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+      tableView.scrollRowToVisible(idx)
+    case .icon:
+      let indexPaths: Set<IndexPath> = [IndexPath(item: idx, section: 0)]
+      iconCollectionView.deselectAll(nil)
+      iconCollectionView.selectItems(at: indexPaths, scrollPosition: [])
+      iconCollectionView.scrollToItems(at: indexPaths, scrollPosition: .centeredVertically)
+      handleIconSelectionChange()
+    }
   }
 
   /// Scroll the row holding `url` into view without changing the
@@ -85,15 +118,26 @@ extension FinderPaneView {
   /// to select multiple rows but scroll to only one.
   public func scrollIntoView(url: URL) {
     guard let idx = items.firstIndex(where: { $0.url == url }) else { return }
-    tableView.scrollRowToVisible(idx)
+    switch currentMode {
+    case .list:
+      tableView.scrollRowToVisible(idx)
+    case .icon:
+      iconCollectionView.scrollToItems(
+        at: [IndexPath(item: idx, section: 0)],
+        scrollPosition: .centeredVertically)
+    }
   }
 
   // MARK: - Reload
 
-  /// Reload the entire row list. Wraps `tableView.reloadData()` so a
-  /// future split (list reload vs icon-grid invalidate) can branch
-  /// here without touching every caller.
+  /// Reload the entire row list against the active presentation.
+  /// The inactive view is left alone — its `numberOfItems` /
+  /// `viewFor` is lazy, so the next mode switch's `reloadAllRows`
+  /// picks up whatever `items` is at that moment.
   public func reloadAllRows() {
-    tableView.reloadData()
+    switch currentMode {
+    case .list: tableView.reloadData()
+    case .icon: iconCollectionView.reloadData()
+    }
   }
 }

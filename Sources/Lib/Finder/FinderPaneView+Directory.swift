@@ -92,6 +92,16 @@ extension FinderPaneView {
     }
 
     currentURL = url
+    // View mode is per-directory: navigating into a folder picks up
+    // whatever the user last left it in, falling back to `.list`
+    // for unseen entries. The visibility flip happens before the
+    // empty-state reload below so the active view is the one being
+    // populated, not the one about to be hidden.
+    let storedMode = FinderModeStore.shared.mode(for: url)
+    if storedMode != currentMode {
+      currentMode = storedMode
+      applyViewModeVisibility()
+    }
     // Drop icons from the previous directory — they'd waste memory
     // proportional to navigation depth otherwise. Reloads within the
     // same cwd (directory-monitor events) keep the cache: same URL =
