@@ -3,6 +3,23 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
 
+/// Captured state for an in-flight inline rename. The URL identifies
+/// the file under edit; `originalName` retains the on-disk name so
+/// the commit path can short-circuit a no-op rename (user types
+/// nothing or types back the original) without re-deriving the name
+/// from `items` — the latter would race a filesystem event that
+/// drops the entry between begin and end editing. `mode` records the
+/// presentation the rename was started under so the end-edit path
+/// restores the right cell even if the user flipped modes mid-edit
+/// (defensive — `setViewMode` already cancels the rename, but the
+/// extra grounding makes the appearance restore robust against
+/// future mode-change paths).
+struct RenameSession {
+  let url: URL
+  let originalName: String
+  let mode: FinderViewMode
+}
+
 /// Write-side operations on filesystem entries: inline rename, new
 /// folder creation, and Move-to-Trash. All three interact with the
 /// field editor and with the directory monitor's debounced reload
@@ -11,21 +28,61 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 extension FinderPaneView {
   // MARK: - Inline rename
 
-  /// Hand the selected row's Name column off to the field editor for
+  /// Hand the selected entry's name off to the field editor for
   /// inline rename. No-op when nothing is selected, when a rename is
   /// already in flight, or when the cell view can't be materialised
-  /// (the row scrolled off-screen and the reuse pool is empty).
+  /// (the entry scrolled off-screen and the reuse pool is empty).
   ///
-  /// Bound to Return / numpad-Enter on the table view so Finder's
-  /// `↵ = rename` convention applies while double-click, Right arrow,
-  /// and vim-`l` keep the open-entry affordances — mirroring Finder
-  /// list-view key assignments.
+  /// Bound to Return / numpad-Enter on both presentation views so
+  /// Finder's `↵ = rename` convention applies while double-click,
+  /// Right arrow, and vim-`l` keep the open-entry affordances —
+  /// mirroring Finder list-view key assignments.
   public func beginRename() {
-    guard !isRenaming,
-      let row = tableView.selectedRowIndexes.first,
-      row < items.count
+    guard !isRenaming, let url = firstSelectedURL,
+      let item = items.first(where: { $0.url == url })
     else { return }
-    guard let nameColumnIndex = tableView.tableColumns.firstIndex(where: { $0.identifier == Self.nameColumn })
+    switch currentMode {
+    case .list:
+      beginListRename(at: item)
+    case .icon:
+      beginIconRename(at: item)
+    }
+  }
+
+  /// Exit an in-flight rename session as if the user pressed ESC: the
+  /// field editor's edited value is discarded, the cell reloads from
+  /// `items`, and the originating presentation reclaims first
+  /// responder. No-op when no rename is in flight.
+  ///
+  /// Clearing `renameSession` before `reloadItems` is what makes this
+  /// safe: the cell replacement detaches the field editor and posts
+  /// `controlTextDidEndEditing`, but its commit branch bails on the
+  /// `guard isRenaming` so the edited text never reaches `moveItem`.
+  /// Mirrors the ESC path in `control(_:textView:doCommandBy:)` below;
+  /// used by `FinderTableView.menu(for:)` /
+  /// `FinderIconCollectionView.rightMouseDown` so right-clicking
+  /// during rename cancels the edit (matching Finder's behaviour)
+  /// before the context menu is built.
+  public func cancelRenameIfActive() {
+    guard let session = renameSession else { return }
+    renameSession = nil
+    if session.mode == .icon {
+      restoreIconCellAppearance(for: session.url)
+    }
+    reloadItems(preservingSelection: true)
+    if let window = window {
+      window.makeFirstResponder(keyboardFocusTarget)
+    }
+  }
+
+  // MARK: - List-mode rename
+
+  private func beginListRename(at item: FileItem) {
+    guard let row = items.firstIndex(where: { $0.url == item.url }) else { return }
+    guard
+      let nameColumnIndex = tableView.tableColumns.firstIndex(where: {
+        $0.identifier == Self.nameColumn
+      })
     else { return }
     // `editColumn` silently no-ops unless the table is first responder
     // — invocations routed via the menu bar / command palette leave
@@ -54,8 +111,7 @@ extension FinderPaneView {
       let textField = cellView.textField
     else { return }
     textField.delegate = self
-    isRenaming = true
-    renamingRow = row
+    renameSession = RenameSession(url: item.url, originalName: item.name, mode: .list)
     tableView.editColumn(nameColumnIndex, row: row, with: nil, select: true)
     // Force a synchronous redraw so the field editor renders in the
     // same run-loop tick it was attached. `editColumn` hides the
@@ -66,26 +122,66 @@ extension FinderPaneView {
     tableView.window?.displayIfNeeded()
   }
 
-  /// Exit an in-flight rename session as if the user pressed ESC: the
-  /// field editor's edited value is discarded, the cell reloads from
-  /// `items`, and the table reclaims first responder. No-op when no
-  /// rename is in flight.
-  ///
-  /// Clearing `isRenaming` before `reloadItems` is what makes this
-  /// safe: the cell replacement detaches the field editor and posts
-  /// `controlTextDidEndEditing`, but its commit branch bails on the
-  /// `guard isRenaming` so the edited text never reaches `moveItem`.
-  /// Mirrors the ESC path in `control(_:textView:doCommandBy:)` below;
-  /// used by `FinderTableView.menu(for:)` so right-clicking during
-  /// rename cancels the edit (matching Finder's list-view behaviour)
-  /// before the context menu is built.
-  public func cancelRenameIfActive() {
-    guard isRenaming else { return }
-    isRenaming = false
-    renamingRow = nil
-    reloadItems(preservingSelection: true)
-    if let window = tableView.window {
-      window.makeFirstResponder(tableView)
+  // MARK: - Icon-mode rename
+
+  /// Engage the icon-view cell's name label as the rename field.
+  /// The label was created via `NSTextField(labelWithString:)` for
+  /// display, so it starts non-editable and non-selectable; this
+  /// helper flips it into a usable single-line editor and hands
+  /// first responder over so the field editor binds to the cell.
+  private func beginIconRename(at item: FileItem) {
+    guard let idx = items.firstIndex(where: { $0.url == item.url }) else { return }
+    let path = IndexPath(item: idx, section: 0)
+    iconCollectionView.scrollToItems(at: [path], scrollPosition: .centeredVertically)
+    // Same layout-flush rationale as the list-view path: a cold
+    // recycle pool can defer the cell's first paint past the
+    // `makeFirstResponder` below, leaving the field editor binding
+    // to a not-yet-laid-out text field.
+    iconCollectionView.window?.layoutIfNeeded()
+    layoutSubtreeIfNeeded()
+    iconCollectionView.layoutSubtreeIfNeeded()
+    guard let cell = iconCollectionView.item(at: path) as? FinderIconItem,
+      let textField = cell.textField
+    else { return }
+    cell.beginRenameMode(initialName: item.name, delegate: self)
+    renameSession = RenameSession(url: item.url, originalName: item.name, mode: .icon)
+    guard let window = textField.window,
+      window.makeFirstResponder(textField)
+    else {
+      // First-responder transition refused (cell layout incomplete
+      // or another responder claimed the chain). Roll back the
+      // appearance flip and the session capture so the next
+      // `beginRename` invocation isn't blocked by a stale
+      // `renameSession` and the cell doesn't sit in editing visuals
+      // without an attached field editor.
+      cell.endRenameMode()
+      renameSession = nil
+      return
+    }
+    // Pre-select the stem (everything before the last extension)
+    // so the user can type a replacement immediately — Finder uses
+    // the same selection on rename engage.
+    if let editor = textField.currentEditor() as? NSTextView {
+      let name = item.name
+      let stemEnd = (name as NSString).range(of: ".", options: .backwards).location
+      if stemEnd == NSNotFound || stemEnd == 0 {
+        editor.selectAll(nil)
+      } else {
+        editor.selectedRange = NSRange(location: 0, length: stemEnd)
+      }
+    }
+  }
+
+  /// Tear down the icon cell's edit-mode appearance for the URL the
+  /// session was attached to. Looks the cell up via `iconCollectionView.item(at:)`
+  /// — the cell may have been recycled if the user scrolled it off-
+  /// screen during the edit, in which case the next `reloadAllRows`
+  /// in the cancel/commit path lands a fresh non-editing cell anyway.
+  func restoreIconCellAppearance(for url: URL) {
+    guard let idx = items.firstIndex(where: { $0.url == url }) else { return }
+    let path = IndexPath(item: idx, section: 0)
+    if let cell = iconCollectionView.item(at: path) as? FinderIconItem {
+      cell.endRenameMode()
     }
   }
 
@@ -240,31 +336,57 @@ extension FinderPaneView: NSTextFieldDelegate {
   /// Intercept the ESC key while the field editor is attached.
   /// AppKit's default `cancelOperation` path does **not** always
   /// fire `controlTextDidEndEditing` on macOS — the field editor
-  /// tears down directly and our `isRenaming` flag would be left
-  /// `true`, blocking the next `beginRename` via its `guard` check.
+  /// tears down directly and the rename session would be left
+  /// non-nil, blocking the next `beginRename` via its `guard` check.
   /// Handling the selector explicitly lets us reset state and
-  /// return first responder to the table so a subsequent ↵ engages
-  /// rename again. `insertNewline:` falls through to AppKit so the
-  /// normal end-editing path still posts `controlTextDidEndEditing`
-  /// for the commit branch.
+  /// return first responder to the active presentation so a
+  /// subsequent ↵ engages rename again. `insertNewline:` is also
+  /// intercepted because the icon-mode rename text field uses
+  /// `wraps = true` for multi-line display, which makes AppKit's
+  /// default `insertNewline:` insert a literal newline rather than
+  /// commit.
   public func control(
     _ control: NSControl,
     textView: NSTextView,
     doCommandBy commandSelector: Selector
   ) -> Bool {
+    if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+      // Icon mode's rename text field uses `wraps = true` /
+      // `usesSingleLineMode = false` so long filenames flow across
+      // multiple lines while editing. AppKit's default `insertNewline:`
+      // for that configuration inserts a literal newline rather than
+      // committing — move first responder onto the active
+      // presentation directly. The field editor resigns, the
+      // textField commits, `controlTextDidEndEditing` fires, and the
+      // collection / table view picks up keyboard focus in one
+      // synchronous step.
+      //
+      // Routing via `makeFirstResponder(nil)` first instead races the
+      // commit sequence: the outer `makeFirstResponder(nil)` finishes
+      // *after* `controlTextDidEndEditing`'s `defer` re-points focus
+      // at the icon view, leaving first responder pinned at `nil`
+      // and the menu-bar Edit > Undo item disabled (visible as "⌘Z
+      // does nothing right after a rename, works after clicking the
+      // empty area").
+      control.window?.makeFirstResponder(keyboardFocusTarget)
+      return true
+    }
     guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else {
       return false
     }
-    isRenaming = false
-    renamingRow = nil
+    let session = renameSession
+    renameSession = nil
     if let textField = control as? NSTextField {
       textField.delegate = nil
+    }
+    if let session, session.mode == .icon {
+      restoreIconCellAppearance(for: session.url)
     }
     // Revert the display from the field editor's working copy to
     // whatever the items array says — matches ESC cancel semantics.
     reloadItems(preservingSelection: true)
-    if let window = tableView.window {
-      window.makeFirstResponder(tableView)
+    if let window = window {
+      window.makeFirstResponder(keyboardFocusTarget)
     }
     return true
   }
@@ -274,46 +396,51 @@ extension FinderPaneView: NSTextFieldDelegate {
   /// `control(_:textView:doCommandBy:)` above and never reaches
   /// here, so this handler only needs to cover commits.
   public func controlTextDidEndEditing(_ notification: Notification) {
-    guard isRenaming, let textField = notification.object as? NSTextField else { return }
+    guard let session = renameSession,
+      let textField = notification.object as? NSTextField
+    else { return }
     let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    let row = renamingRow ?? -1
-    isRenaming = false
-    renamingRow = nil
-    // `isEditable` / `isSelectable` stay `true`: flipping them back to
-    // `false` between edits leaves the cell's field-editor bindings in
-    // an intermediate state that intermittently refuses the next
-    // `editColumn`. `delegate` is safe to clear so a spurious
-    // end-editing notification from a recycled cell's field editor
-    // doesn't re-enter this handler.
+    renameSession = nil
+    // `isEditable` / `isSelectable` stay `true` on the list cell:
+    // flipping them back to `false` between edits leaves the cell's
+    // field-editor bindings in an intermediate state that intermittently
+    // refuses the next `editColumn`. `delegate` is safe to clear so
+    // a spurious end-editing notification from a recycled cell's
+    // field editor doesn't re-enter this handler.
     textField.delegate = nil
+    if session.mode == .icon {
+      restoreIconCellAppearance(for: session.url)
+    }
 
     defer {
       // After the field editor tears down, first responder can end up
       // parked on the window itself instead of cascading back to the
-      // table — keyDown for ↵ / ⌘⌫ then never reaches
-      // `FinderTableView.keyDown`. Explicitly re-installing the table
-      // as first responder restores the keyboard navigation, matching
-      // what Finder's list-view rename flow does on ESC / ↵.
-      if let window = tableView.window {
-        window.makeFirstResponder(tableView)
+      // active presentation — keyDown for ↵ / ⌘⌫ then never reaches
+      // the keyboard handler. Explicitly re-installing the active
+      // view as first responder restores the keyboard navigation,
+      // matching what Finder's rename flow does on ESC / ↵.
+      if let window = window {
+        window.makeFirstResponder(keyboardFocusTarget)
       }
     }
 
-    guard row >= 0, row < items.count else {
-      reloadItems(preservingSelection: true)
-      return
-    }
-    let oldItem = items[row]
-    guard !newName.isEmpty, newName != oldItem.name else {
+    let oldURL = session.url
+    guard !newName.isEmpty, newName != session.originalName else {
       // No change or empty name — revert the display. The field
       // editor may have left the text field's stringValue in an
       // intermediate state, so a reload re-seeds every cell from
       // `items` and clears any lingering edit artifacts.
+      //
+      // Comparing against `session.originalName` (captured at begin)
+      // rather than the current `items` row is robust to a
+      // filesystem event that drops the entry between begin and
+      // end editing — the no-op short-circuit still fires for
+      // identical input, and a real rename hits `moveItem` which
+      // will surface a meaningful error if the source is gone.
       reloadItems(preservingSelection: true)
       return
     }
     let target = currentURL.appendingPathComponent(newName)
-    let oldURL = oldItem.url
     do {
       try FileManager.default.moveItem(at: oldURL, to: target)
     } catch {

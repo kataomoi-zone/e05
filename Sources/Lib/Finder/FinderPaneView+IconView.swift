@@ -58,9 +58,18 @@ extension FinderPaneView: NSCollectionViewDataSource {
   /// Tracker / settings notifications go through
   /// `refreshInFlightOverlay` → `reloadAllRows`, which routes back
   /// through the same data-source callback.
+  ///
+  /// Also strips a leftover rename-mode appearance from a recycled
+  /// cell whose previous occupant was the rename target. The edit
+  /// affordances (editable text field, border, background) would
+  /// otherwise leak onto the new file's render until the next
+  /// rename engagement reset them.
   func applyAppearanceState(_ item: FileItem, to cell: FinderIconItem) {
     cell.dimmed = item.isHidden
     cell.inFlight = inFlightURLs.contains(item.url)
+    if cell.editing && renameSession?.url != item.url {
+      cell.endRenameMode()
+    }
   }
 }
 
@@ -214,6 +223,11 @@ extension FinderPaneView {
   @discardableResult
   public func setViewMode(_ mode: FinderViewMode) -> Bool {
     guard mode != currentMode else { return false }
+    // Drop an in-flight rename: the field editor is bound to a cell
+    // whose presentation is about to be hidden, and AppKit doesn't
+    // post `controlTextDidEndEditing` reliably when the host view
+    // becomes hidden out from under the editor.
+    cancelRenameIfActive()
     let preserved = selectedURLs
     let wasFirstResponder = (window?.firstResponder as? NSView)
       .map { $0.isDescendant(of: self) } ?? false
@@ -254,6 +268,9 @@ extension FinderPaneView {
   func resyncViewModeFromStore() {
     let stored = FinderModeStore.shared.mode(for: currentURL)
     guard stored != currentMode else { return }
+    // Same rationale as `setViewMode`: a remote pane's view-mode
+    // change is about to hide the cell the field editor is bound to.
+    cancelRenameIfActive()
     let preserved = selectedURLs
     let leavingIconMode = (currentMode == .icon)
     currentMode = stored

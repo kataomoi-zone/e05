@@ -245,21 +245,26 @@ public final class FinderPaneView: NSView {
   /// while the property type itself is non-Sendable.
   nonisolated(unsafe) var settingsObserver: NSObjectProtocol?
 
-  /// Set while the Name column's text field is handed off to the
-  /// field editor for inline rename. Two effects hang off this:
+  /// Active inline-rename session, or `nil` when no rename is in
+  /// flight. Carries the URL of the entry being renamed and the
+  /// original on-disk name; both are URL-keyed so the commit path
+  /// resolves the right file even when a concurrent filesystem
+  /// event or sort reshuffles `items` between begin and end editing.
+  /// The mode the rename was started under is captured so the end
+  /// path can restore the right cell appearance even if the user
+  /// flipped view modes mid-edit (defensive — `setViewMode` already
+  /// cancels the rename, but the extra grounding makes the
+  /// appearance restore robust against future mode-change paths).
+  var renameSession: RenameSession?
+
+  /// Two effects gate on this flag:
   /// - `scheduleDebouncedReload` skips reloads so the in-flight
   ///   `moveItem` event we're about to emit doesn't blow the edited
-  ///   cell out of the table mid-keystroke.
+  ///   cell out of the view mid-keystroke.
   /// - `controlTextDidEndEditing` uses it to distinguish a genuine
   ///   rename commit from spurious end-editing notifications (the
   ///   field editor posts one during teardown).
-  var isRenaming: Bool = false
-
-  /// Row index the field editor is attached to during rename. Captured
-  /// alongside `isRenaming` so the commit path can resolve the original
-  /// item even if the sort or a concurrent filesystem event reshuffles
-  /// `items` between begin and end editing.
-  var renamingRow: Int?
+  var isRenaming: Bool { renameSession != nil }
 
   // MARK: - Init / Deinit
 

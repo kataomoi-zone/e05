@@ -223,7 +223,7 @@ extension FinderIconCollectionView: NSMenuItemValidation {
 /// since the collection view's inset doesn't compose cleanly with
 /// the pane's surrounding chrome.
 ///
-/// Two visual states ride on top of selection:
+/// Three visual states ride on top of selection:
 /// - `dimmed` mirrors `FinderRowView`'s alpha tweak — hidden filesystem
 ///   entries (dotfiles, anything with `isHidden` set) render at 0.5 on
 ///   rest, snapping back to full intensity while selected so the
@@ -233,6 +233,12 @@ extension FinderIconCollectionView: NSMenuItemValidation {
 ///   cell dims like a hidden entry and shows a small spinner over
 ///   the icon area until the directory monitor's reload swaps the
 ///   placeholder for the real row.
+/// - `editing` (set by the rename path) suppresses the selection
+///   fill while the field editor is attached so the cell's normal
+///   blue tint doesn't leak through the renamed text. Hooking this
+///   here keeps the rename / un-rename logic in `+Rename.swift`
+///   while the fade-suppression invariant lives next to the cell's
+///   other appearance state.
 @MainActor
 final class FinderIconItem: NSCollectionViewItem {
   static let identifier = NSUserInterfaceItemIdentifier("finder.iconItem")
@@ -248,6 +254,15 @@ final class FinderIconItem: NSCollectionViewItem {
   /// as a stored property so the data-source callback can toggle
   /// visibility without rebuilding the view tree on every recycle.
   private var spinner: NSProgressIndicator!
+
+  /// Held bottom-pin constraint for the label that activates only
+  /// during rename. The default layout uses `lessThanOrEqualTo` so a
+  /// 1-line display label sits naturally under the icon, but that
+  /// looseness leaves the field at single-line intrinsic height even
+  /// with `wraps = true` set. The rename path activates this anchor
+  /// instead so the field has the full label area to wrap into;
+  /// `endRenameMode` deactivates it again.
+  private var renameBottomConstraint: NSLayoutConstraint?
 
   override func loadView() {
     let root = NSView()
@@ -339,6 +354,13 @@ final class FinderIconItem: NSCollectionViewItem {
     }
   }
 
+  /// True while the rename field editor is attached. Suppresses the
+  /// selection fill so the renamed cell doesn't render with the
+  /// blue selection tint behind the editable text.
+  var editing: Bool = false {
+    didSet { applySelectionAppearance() }
+  }
+
   /// Apply the selection fill without the implicit ~0.25s CALayer
   /// fade. Setting `backgroundColor` on a CALayer triggers a default
   /// `kCAMediaTimingFunctionDefault` animation, which reads as a
@@ -350,8 +372,9 @@ final class FinderIconItem: NSCollectionViewItem {
   private func applySelectionAppearance() {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
+    let active = isSelected && !editing
     view.layer?.backgroundColor =
-      isSelected
+      active
       ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).cgColor
       : NSColor.clear.cgColor
     CATransaction.commit()
@@ -374,4 +397,103 @@ final class FinderIconItem: NSCollectionViewItem {
   }
 
   private static let dimmedAlpha: CGFloat = 0.5
+
+  /// Flip the cell's name label into an editable text field so the
+  /// field editor binds to it on `makeFirstResponder`. The label
+  /// factory builds a non-editable, single-line, middle-truncating
+  /// label for display; rename swaps to a multi-line wrap so the
+  /// full filename is visible during edit (the cell's two-line
+  /// label area can hold ~38 ASCII characters, enough for typical
+  /// filenames). The Return key still commits the edit because
+  /// `+Rename.swift`'s `control(_:textView:doCommandBy:)` intercepts
+  /// `insertNewline:` and routes it to the end-editing path —
+  /// otherwise Return would insert a literal newline since
+  /// `wraps = true` enables multi-line input.
+  ///
+  /// **No bezel:** `isBordered = true` (or any `bezelStyle`) makes
+  /// AppKit force the field into a single-line input regardless of
+  /// `wraps` / `usesSingleLineMode`, which is why a bezeled rename
+  /// field clips to one line. Edit mode is signalled instead via a
+  /// layer-rendered border on the text field, so wrap behaviour
+  /// stays untouched.
+  ///
+  /// Caller is responsible for actually moving first responder onto
+  /// the text field; this method only prepares the appearance.
+  func beginRenameMode(initialName: String, delegate: NSTextFieldDelegate?) {
+    editing = true
+    guard let tf = textField else { return }
+    tf.stringValue = initialName
+    tf.isEditable = true
+    tf.isSelectable = true
+    tf.isBordered = false
+    tf.drawsBackground = true
+    tf.backgroundColor = .textBackgroundColor
+    tf.maximumNumberOfLines = 0
+    tf.cell?.usesSingleLineMode = false
+    tf.cell?.wraps = true
+    tf.cell?.isScrollable = false
+    tf.lineBreakMode = .byCharWrapping
+    tf.delegate = delegate
+    tf.focusRingType = .none
+    tf.wantsLayer = true
+    tf.layer?.borderColor = NSColor.controlAccentColor.cgColor
+    tf.layer?.borderWidth = 1
+    tf.layer?.cornerRadius = 2
+    // `wraps = true` alone leaves NSTextField unable to compute its
+    // multi-line intrinsic height — the layout system needs a target
+    // width to wrap against and a bottom constraint that actually
+    // forces it to fill space. `preferredMaxLayoutWidth` provides
+    // the width; the rename-only `bottomAnchor.equalTo` constraint
+    // below provides the height. The default layout's
+    // `lessThanOrEqualTo` bottom is too loose: AppKit chooses the
+    // smallest satisfying height, which for a label with intrinsic
+    // single-line size means no wrap engages.
+    //
+    // Hardcoding the wrap width off `Self.itemSize.width` rather
+    // than `view.bounds.width` — the cell may be measured before
+    // its first layout pass when the rename engages from a fresh
+    // recycle, leaving `bounds.width` at 0 and wrap disabled.
+    let availableWidth = max(0, Self.itemSize.width - 4)
+    tf.preferredMaxLayoutWidth = availableWidth
+    tf.setContentHuggingPriority(.defaultLow, for: .vertical)
+    tf.setContentCompressionResistancePriority(.required, for: .vertical)
+    if renameBottomConstraint == nil {
+      let constraint = tf.bottomAnchor.constraint(
+        equalTo: view.bottomAnchor, constant: -2)
+      constraint.priority = .required
+      constraint.isActive = true
+      renameBottomConstraint = constraint
+    }
+    tf.invalidateIntrinsicContentSize()
+    view.needsLayout = true
+    view.layoutSubtreeIfNeeded()
+  }
+
+  /// Reverse `beginRenameMode` so the cell renders as a static label
+  /// again. Called from the commit / cancel paths in `+Rename.swift`
+  /// before the surrounding `reloadAllRows` lands a fresh cell — the
+  /// reload would otherwise leave the recycled cell's field-editor
+  /// affordances stuck on between the appearance flip and the data-
+  /// source's next pass through `applyAppearanceState`.
+  func endRenameMode() {
+    editing = false
+    guard let tf = textField else { return }
+    tf.isEditable = false
+    tf.isSelectable = false
+    tf.isBordered = false
+    tf.drawsBackground = false
+    tf.maximumNumberOfLines = 1
+    tf.cell?.usesSingleLineMode = true
+    tf.cell?.wraps = false
+    tf.lineBreakMode = .byTruncatingMiddle
+    tf.delegate = nil
+    tf.layer?.borderWidth = 0
+    tf.preferredMaxLayoutWidth = 0
+    tf.setContentHuggingPriority(.defaultHigh, for: .vertical)
+    if let constraint = renameBottomConstraint {
+      constraint.isActive = false
+      renameBottomConstraint = nil
+    }
+    tf.invalidateIntrinsicContentSize()
+  }
 }

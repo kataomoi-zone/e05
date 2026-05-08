@@ -90,6 +90,12 @@ extension FinderPaneView {
       backStack.append(currentURL)
       forwardStack.removeAll()
     }
+    // Discard any in-flight rename whose target lives in the soon-
+    // to-be-replaced cwd. The clear-only variant is preferred over
+    // `cancelRenameIfActive` here because the surrounding load is
+    // about to issue its own `reloadItems` walk; calling cancel
+    // would queue a redundant reload against the new cwd.
+    renameSession = nil
 
     currentURL = url
     // View mode is per-directory: navigating into a folder picks up
