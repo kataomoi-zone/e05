@@ -467,6 +467,15 @@ extension FinderPaneView {
   /// app icons alike. The composite is sized to match `base` so the
   /// table-cell image view can `.scaleProportionallyDown` it without
   /// recomputing geometry per row.
+  ///
+  /// Internal so the icon-view path (`FinderPaneView+IconView`) can
+  /// reuse the same composite for QuickLook-derived thumbnails of
+  /// alias files — `iconForRow` only runs for the icon-fallback
+  /// path, so a cached thumbnail would otherwise lose the badge.
+  static func aliasBadgedIconExternal(base: NSImage) -> NSImage {
+    aliasBadgedIcon(base: base)
+  }
+
   private static func aliasBadgedIcon(base: NSImage) -> NSImage {
     let size = base.size
     guard size.width > 0, size.height > 0 else { return base }

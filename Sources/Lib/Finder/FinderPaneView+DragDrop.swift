@@ -3,10 +3,17 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
 
-/// Drag source and drop destination for finder panes.
+/// Drag source and drop destination for finder panes. Both list and
+/// icon modes share the validate / accept core via the helpers
+/// `validateDropOperation(sources:destination:)` and
+/// `performDrop(sources:destination:op:sourcePane:)`; the per-mode
+/// delegate methods only resolve the destination URL from their
+/// presentation-specific row / index path argument and forward to
+/// the shared core.
 ///
-/// Source side: returning an `NSURL` from `pasteboardWriterForRow:` is
-/// the entire contract — AppKit auto-handles the multi-row case (each
+/// Source side: returning an `NSURL` from
+/// `pasteboardWriterForRow:` / `pasteboardWriterForItemAt:` is the
+/// entire contract — AppKit auto-handles the multi-row case (each
 /// selected row's writer is collected into one pasteboard), the
 /// mouse-threshold gesture that starts the drag, and the system drop
 /// animations. Recipients that accept `.fileURL` (Finder, editors,
@@ -16,22 +23,21 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Finder
 /// matches the source/destination volumes — `.move` within a volume,
 /// `.copy` across volumes — so the drag image's `+` overlay tells the
 /// user up-front when a copy will happen instead of a move (Finder's
-/// list-view convention). Self-drops and descendant drops are
-/// rejected before any move is attempted. `acceptDrop:` performs the
-/// announced operation and falls back to copy if `moveItem` still
-/// surfaces an `EXDEV` (e.g. an external volume unmounts between
-/// validate and accept). Directory monitor coalesces the resulting
-/// reload into its debounce window, so no manual reload call is
-/// needed here.
+/// convention). Self-drops and descendant drops are rejected before
+/// any move is attempted. `acceptDrop:` performs the announced
+/// operation and falls back to copy if `moveItem` still surfaces an
+/// `EXDEV` (e.g. an external volume unmounts between validate and
+/// accept). Directory monitor coalesces the resulting reload into
+/// its debounce window, so no manual reload call is needed here.
 extension FinderPaneView {
-  // MARK: - Drag source
+  // MARK: - List drag source
 
   public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
     guard row >= 0, row < items.count else { return nil }
     return items[row].url as NSURL
   }
 
-  // MARK: - Drop target
+  // MARK: - List drop target
 
   public func tableView(
     _ tableView: NSTableView,
@@ -52,21 +58,8 @@ extension FinderPaneView {
       return []
     }
 
-    let destPath = Self.normalizedPath(destURL)
-    for src in sources {
-      let srcPath = Self.normalizedPath(src)
-      if srcPath == destPath {
-        logger.debug(
-          "validateDrop reject: self-drop src=\(srcPath, privacy: .public)"
-        )
-        return []
-      }
-      if destPath.hasPrefix(srcPath + "/") {
-        logger.debug(
-          "validateDrop reject: descendant drop src=\(srcPath, privacy: .public) dest=\(destPath, privacy: .public)"
-        )
-        return []
-      }
+    guard let op = validateDropOperation(sources: sources, destination: destURL) else {
+      return []
     }
 
     // AppKit funnels both inter-row gaps and the empty area below the
@@ -77,7 +70,6 @@ extension FinderPaneView {
       tableView.setDropRow(-1, dropOperation: .above)
     }
 
-    let op = Self.dropOperation(sources: sources, destination: destURL)
     logger.debug("validateDrop accept: \(op.rawValue, privacy: .public)")
     return op
   }
@@ -93,6 +85,99 @@ extension FinderPaneView {
     guard let destURL = resolveDropDestination(row: row, dropOperation: dropOperation) else { return false }
 
     let op = Self.dropOperation(sources: sources, destination: destURL)
+    let sourcePane = Self.resolveDragSourcePane(from: info)
+    return performDrop(
+      sources: sources, destination: destURL, op: op, sourcePane: sourcePane)
+  }
+
+  // MARK: - Icon drag source
+
+  public func collectionView(
+    _ collectionView: NSCollectionView,
+    pasteboardWriterForItemAt indexPath: IndexPath
+  ) -> (any NSPasteboardWriting)? {
+    guard indexPath.item < items.count else { return nil }
+    return items[indexPath.item].url as NSURL
+  }
+
+  public func collectionView(
+    _ collectionView: NSCollectionView,
+    draggingSession session: NSDraggingSession,
+    sourceOperationMaskFor context: NSDraggingContext
+  ) -> NSDragOperation {
+    [.move, .copy]
+  }
+
+  // MARK: - Icon drop target
+
+  public func collectionView(
+    _ collectionView: NSCollectionView,
+    validateDrop draggingInfo: any NSDraggingInfo,
+    proposedIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
+    dropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>
+  ) -> NSDragOperation {
+    let sources = draggedURLs(from: draggingInfo)
+    guard !sources.isEmpty else { return [] }
+    let proposedItem = proposedIndexPath.pointee.item
+    guard
+      let destURL = resolveIconDropDestination(
+        proposedItem: proposedItem, dropOperation: dropOperation.pointee)
+    else { return [] }
+    guard let op = validateDropOperation(sources: sources, destination: destURL) else {
+      return []
+    }
+    return op
+  }
+
+  public func collectionView(
+    _ collectionView: NSCollectionView,
+    acceptDrop draggingInfo: any NSDraggingInfo,
+    indexPath: IndexPath,
+    dropOperation: NSCollectionView.DropOperation
+  ) -> Bool {
+    let sources = draggedURLs(from: draggingInfo)
+    guard !sources.isEmpty else { return false }
+    guard
+      let destURL = resolveIconDropDestination(
+        proposedItem: indexPath.item, dropOperation: dropOperation)
+    else { return false }
+    let op = Self.dropOperation(sources: sources, destination: destURL)
+    let sourcePane = Self.resolveDragSourcePane(from: draggingInfo)
+    return performDrop(
+      sources: sources, destination: destURL, op: op, sourcePane: sourcePane)
+  }
+
+  // MARK: - Shared validate / accept core
+
+  /// Reject self / descendant drops and resolve the drag operation
+  /// (move within volume, copy across volumes). Returns `nil` to mean
+  /// "reject the drop"; `validateDrop` callers translate that into
+  /// the empty `NSDragOperation`.
+  private func validateDropOperation(
+    sources: [URL], destination destURL: URL
+  ) -> NSDragOperation? {
+    let destPath = Self.normalizedPath(destURL)
+    for src in sources {
+      let srcPath = Self.normalizedPath(src)
+      if srcPath == destPath { return nil }
+      if destPath.hasPrefix(srcPath + "/") { return nil }
+    }
+    return Self.dropOperation(sources: sources, destination: destURL)
+  }
+
+  /// Execute the drop. Detects conflicts and runs the resolution
+  /// alert (single batch decision applied to every conflicting
+  /// source), performs each per-source `moveItem` / `copyItem`,
+  /// falls back to copy on cross-volume race, and registers the
+  /// successfully-moved pairs with the undo manager. Returns
+  /// `true` when at least one source landed on the destination so
+  /// AppKit dismisses the drop animation correctly. Shared between
+  /// the list and icon entry points; behaviour is identical
+  /// regardless of which presentation drove the call.
+  private func performDrop(
+    sources: [URL], destination destURL: URL, op: NSDragOperation,
+    sourcePane: FinderPaneView?
+  ) -> Bool {
     let fm = FileManager.default
 
     // Resolve every source's conflict (target path occupied) up front
@@ -199,14 +284,6 @@ extension FinderPaneView {
       }
     }
     if !movePairs.isEmpty {
-      // Resolve the drag-source pane via the originating table view.
-      // `info.draggingSource` is the `NSTableView` that started the
-      // drag (AppKit sets it implicitly for table-driven drags).
-      // External drags (system Finder, editors, browsers) leave the
-      // source as something else or `nil`; pass `nil` and the undo
-      // closure restores entries without an in-app source pane to
-      // refresh.
-      let sourcePane = (info.draggingSource as? FinderTableView)?.enclosingFinderPane
       FinderUndoCenter.registerMove(
         pairs: movePairs, sourcePane: sourcePane, in: self)
     }
@@ -282,6 +359,24 @@ extension FinderPaneView {
     return currentURL
   }
 
+  /// Icon-mode counterpart of `resolveDropDestination`. The collection
+  /// view's `.on` aimed at a directory cell drops into that cell;
+  /// `.on` aimed at a file/package cell is rejected; `.before`
+  /// (gap drop, including the empty area at the end of the grid)
+  /// drops into the pane's cwd. Out-of-range items collapse to cwd.
+  func resolveIconDropDestination(
+    proposedItem: Int, dropOperation: NSCollectionView.DropOperation
+  ) -> URL? {
+    if dropOperation == .on, proposedItem >= 0, proposedItem < items.count {
+      let item = items[proposedItem]
+      if item.isDirectory && !item.isPackage {
+        return item.url
+      }
+      return nil
+    }
+    return currentURL
+  }
+
   /// Bridge `NSURL` → `URL` element-wise; the array-level cast
   /// `[NSURL] as? [URL]` only succeeds through Foundation's
   /// conditional collection bridge and silently fails on a single
@@ -324,6 +419,22 @@ extension FinderPaneView {
       return String(raw.dropLast())
     }
     return raw
+  }
+
+  /// Map a dragging session's originating view back to the owning
+  /// finder pane, regardless of which presentation drove the drag.
+  /// External drags (system Finder, editors, Dock) leave
+  /// `draggingSource` as something we don't recognise — return `nil`
+  /// so the undo registration falls back to "no in-app source pane to
+  /// refresh".
+  static func resolveDragSourcePane(from info: any NSDraggingInfo) -> FinderPaneView? {
+    if let table = info.draggingSource as? FinderTableView {
+      return table.enclosingFinderPane
+    }
+    if let icon = info.draggingSource as? FinderIconCollectionView {
+      return icon.enclosingFinderPane
+    }
+    return nil
   }
 
   /// Cross-device link (`EXDEV` = 18) means `moveItem` tried to

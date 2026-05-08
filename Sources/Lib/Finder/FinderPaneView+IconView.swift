@@ -10,11 +10,10 @@ import QuickLookUI
 /// re-fetch, and the active view's `reloadData` picks up the current
 /// `items` lazily.
 ///
-/// Drag-and-drop, context menu, inline rename, undo/redo, Quick
-/// Look, hidden-file dim, and in-flight placeholder rendering are
-/// list-only — each needs an icon-mode-specific event path that
-/// the table-view hooks don't share, so the icon view stays
-/// read-only until those land.
+/// Hidden-file dim, alias overlay, and in-flight greyed placeholder
+/// rendering ride on `FinderIconItem`'s appearance state, written
+/// from `applyAppearanceState(_:to:)` on every cell recycle so a
+/// recycled cell starts from the correct state for its new file.
 extension FinderPaneView: NSCollectionViewDataSource {
   public func collectionView(
     _ collectionView: NSCollectionView, numberOfItemsInSection section: Int
@@ -30,9 +29,38 @@ extension FinderPaneView: NSCollectionViewDataSource {
       withIdentifier: FinderIconItem.identifier, for: indexPath)
     guard indexPath.item < items.count else { return cell }
     let fileItem = items[indexPath.item]
-    cell.imageView?.image = thumbnailForRow(fileItem)
+    cell.imageView?.image = displayImage(for: fileItem)
     cell.textField?.stringValue = fileItem.name
+    if let iconCell = cell as? FinderIconItem {
+      applyAppearanceState(fileItem, to: iconCell)
+    }
     return cell
+  }
+
+  /// Image to display in the cell's image view. Combines the QuickLook
+  /// thumbnail (when cached) with the alias overlay so a Finder alias
+  /// to an image renders the source's preview with the corner badge —
+  /// `iconForRow` already handles the badge for the icon-fallback
+  /// path, but the cached thumbnail bypasses it.
+  func displayImage(for item: FileItem) -> NSImage {
+    let base = thumbnailForRow(item)
+    if base === iconForRow(item) {
+      return base
+    }
+    let isAlias = (try? item.url.resourceValues(forKeys: [.isAliasFileKey]).isAliasFile) == true
+    return isAlias ? Self.aliasBadgedIconExternal(base: base) : base
+  }
+
+  /// Push the current hidden / in-flight state onto a cell. Called
+  /// from `itemForRepresentedObjectAt` on every recycle so a
+  /// re-purposed cell starts from the correct visual state for its
+  /// new file rather than carrying the previous occupant's flags.
+  /// Tracker / settings notifications go through
+  /// `refreshInFlightOverlay` → `reloadAllRows`, which routes back
+  /// through the same data-source callback.
+  func applyAppearanceState(_ item: FileItem, to cell: FinderIconItem) {
+    cell.dimmed = item.isHidden
+    cell.inFlight = inFlightURLs.contains(item.url)
   }
 }
 
@@ -111,6 +139,16 @@ extension FinderPaneView {
     iconCollectionView.register(
       FinderIconItem.self,
       forItemWithIdentifier: FinderIconItem.identifier)
+
+    // Drag-and-drop wiring mirrors the table view: accept file URLs
+    // from any source, advertise both move and copy on out-going
+    // drags so recipients (Finder, editors, sibling panes) can pick
+    // whichever applies — Finder uses move within a volume, copy
+    // across volumes, matching what the validate / accept core
+    // returns.
+    iconCollectionView.registerForDraggedTypes([.fileURL, .URL])
+    iconCollectionView.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
+    iconCollectionView.setDraggingSourceOperationMask([.move, .copy], forLocal: false)
 
     iconCollectionView.onFocusChanged = { [weak self] in
       self?.onFocusChanged?()
@@ -365,7 +403,11 @@ extension FinderPaneView {
     guard currentMode == .icon else { return }
     let path = IndexPath(item: idx, section: 0)
     if let cell = iconCollectionView.item(at: path) {
-      cell.imageView?.image = image
+      // Direct assignment skips the recycle round-trip but also
+      // skips `displayImage` — re-derive the alias overlay here so
+      // a freshly-fetched alias thumbnail gets the corner badge the
+      // same way the cold-path data-source callback would.
+      cell.imageView?.image = displayImage(for: items[idx])
     }
   }
 
