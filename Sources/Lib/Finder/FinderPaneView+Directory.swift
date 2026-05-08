@@ -105,8 +105,12 @@ extension FinderPaneView {
     // Drop icons from the previous directory — they'd waste memory
     // proportional to navigation depth otherwise. Reloads within the
     // same cwd (directory-monitor events) keep the cache: same URL =
-    // same icon, no I/O needed.
+    // same icon, no I/O needed. The thumbnail cache and the in-flight
+    // tracker follow the same lifecycle so a stale fetch landing
+    // mid-navigation can't pollute the new directory's cells.
     iconCache.removeAll(keepingCapacity: true)
+    thumbnailCache.removeAll(keepingCapacity: true)
+    cancelAllThumbnailFetches()
     // Show empty state immediately so navigating from a small dir
     // into a 50k-entry one doesn't display the previous dir's items
     // alongside an already-updated URL bar while the off-main walk

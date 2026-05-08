@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 
 /// Native file-browser pane backed by an `NSTableView` in Finder's
 /// standard list-view visuals: inset row style, 22pt rows with 16pt
@@ -165,6 +166,53 @@ public final class FinderPaneView: NSView {
   /// same NSImage elsewhere in the app aren't affected.
   var iconCache: [URL: NSImage] = [:]
 
+  /// QuickLook-generated thumbnails keyed by file URL. Populated
+  /// asynchronously by `scheduleThumbnailFetch(for:)` for icon-mode
+  /// cells; the list view never consults this cache because its
+  /// 16pt rows don't benefit from full content thumbnails. Cells
+  /// display the Launch Services icon until the fetch completes and
+  /// fills the cache. Cleared on `loadDirectory` alongside
+  /// `iconCache`.
+  var thumbnailCache: [URL: NSImage] = [:]
+
+  /// In-flight `QLThumbnailGenerator` work, keyed by file URL.
+  /// Bundles the request handle (so a cell leaving the viewport can
+  /// `cancel(_:)` it) with a per-fetch identity token. The token
+  /// lets a late completion from a cancelled or superseded request
+  /// recognise that its slot has been reissued and skip the cache
+  /// write — without that check, a fast scroll-off-and-back could
+  /// leave a fresh fetch's slot orphaned.
+  var thumbnailFetchInFlight: [URL: ThumbnailFetchHandle] = [:]
+
+  /// Monotonic source for the token field of `ThumbnailFetchHandle`.
+  /// Wraps via `&+=`; collision is precluded by `scheduleThumbnailFetch`
+  /// rejecting a re-issue while the URL still has an entry, so the
+  /// counter never has to be unique across all `UInt64.max` values
+  /// — only across simultaneously-orphaned in-flight fetches for
+  /// the same URL.
+  var thumbnailFetchTokenCounter: UInt64 = 0
+
+  /// True from the moment the user starts a live scroll on the
+  /// icon-mode scroll view (drag, wheel, trackpad pan) until the
+  /// final momentum frame settles. Gates `thumbnailForRow`'s
+  /// schedule path so a fast scroll-by doesn't kick off a
+  /// `QLThumbnailGenerator` request per intermediate cell — the
+  /// post-scroll debounce window picks up the final visible set
+  /// instead.
+  var isLiveScrolling: Bool = false
+
+  /// Pending debounce job that schedules thumbnail fetches for the
+  /// cells visible after a scroll has settled. Cancelled when a new
+  /// scroll begins so the fetch only fires once the user has been
+  /// quiet for the threshold.
+  var pendingThumbnailScheduling: DispatchWorkItem?
+
+  /// Block-based observers for `NSScrollView`'s live-scroll
+  /// notifications. Same `nonisolated(unsafe)` rationale as
+  /// `settingsObserver`.
+  nonisolated(unsafe) var liveScrollWillStartObserver: NSObjectProtocol?
+  nonisolated(unsafe) var liveScrollDidEndObserver: NSObjectProtocol?
+
   static let nameColumn = NSUserInterfaceItemIdentifier("finder.column.name")
   static let dateColumn = NSUserInterfaceItemIdentifier("finder.column.date")
   static let sizeColumn = NSUserInterfaceItemIdentifier("finder.column.size")
@@ -298,6 +346,12 @@ public final class FinderPaneView: NSView {
       NotificationCenter.default.removeObserver(token)
     }
     if let token = modeStoreObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = liveScrollWillStartObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = liveScrollDidEndObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
