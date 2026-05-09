@@ -135,6 +135,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// untouched.
   let isExtensionHosted: Bool
 
+  /// Session-only capability decisions for this pane. A "remember
+  /// until I close this pane" choice from the permission prompt
+  /// lands here instead of `PermissionsStore` so it evaporates with
+  /// the pane. Looked up before the persistent store on every
+  /// auto-respond, then read-only afterwards.
+  var sessionPermissions: [String: PermissionEntry] = [:]
+
   public override convenience init(frame: NSRect) {
     self.init(frame: frame, extensionContext: nil, dataStore: nil)
   }
@@ -798,6 +805,71 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       }
     }
     return nil
+  }
+
+  /// Camera / microphone permission requests originate here. WebKit
+  /// surfaces a single decision per request, so a combined
+  /// `.cameraAndMicrophone` request requires a unanimous grant
+  /// across both kinds before granting; any deny or undecided slot
+  /// resolves to deny so the safer answer wins. The undecided
+  /// branch falls back to deny in this stub — the prompt UI swaps
+  /// it for an interactive sheet in a follow-up commit.
+  public func webView(
+    _: WKWebView,
+    requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+    initiatedByFrame _: WKFrameInfo,
+    type: WKMediaCaptureType,
+    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+  ) {
+    let kinds: [PermissionKind]
+    switch type {
+    case .camera: kinds = [.camera]
+    case .microphone: kinds = [.microphone]
+    case .cameraAndMicrophone: kinds = [.camera, .microphone]
+    @unknown default: kinds = []
+    }
+    decisionHandler(resolvePermissionDecision(host: origin.host, kinds: kinds) ?? .deny)
+  }
+
+  /// Geolocation permission requests originate here. Resolution
+  /// follows the same session-then-store lookup as the media
+  /// capture path; the undecided branch falls back to deny until
+  /// the prompt UI lands.
+  public func webView(
+    _: WKWebView,
+    requestGeolocationPermissionFor origin: WKSecurityOrigin,
+    initiatedByFrame _: WKFrameInfo,
+    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+  ) {
+    decisionHandler(
+      resolvePermissionDecision(host: origin.host, kinds: [.geolocation]) ?? .deny)
+  }
+
+  /// Look up `(host, kinds)` against the per-pane session dict
+  /// first, then `PermissionsStore`. Returns `nil` when any kind is
+  /// still undecided so callers can hand the request off to the
+  /// prompt UI; any deny in the chain short-circuits to `.deny` so
+  /// a partial grant (e.g. mic granted, camera denied) never
+  /// escalates into a combined grant.
+  private func resolvePermissionDecision(
+    host: String,
+    kinds: [PermissionKind]
+  ) -> WKPermissionDecision? {
+    let normalized = host.lowercased()
+    guard !normalized.isEmpty, !kinds.isEmpty else { return .deny }
+    var states: [PermissionState] = []
+    for kind in kinds {
+      if let session = sessionPermissions[normalized]?.state(for: kind) {
+        states.append(session)
+        continue
+      }
+      if let stored = PermissionsStore.shared.state(for: normalized, kind: kind) {
+        states.append(stored)
+        continue
+      }
+      return nil
+    }
+    return states.allSatisfy({ $0 == .grant }) ? .grant : .deny
   }
 
   public func webView(
