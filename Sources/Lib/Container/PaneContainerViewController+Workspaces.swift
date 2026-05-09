@@ -260,6 +260,11 @@ extension PaneContainerViewController {
       for pane in column.panes {
         pane.terminalView?.keepSurfaceAlive = false
         clearFocusBorder(pane)
+        // Pair with the per-pane close path so a workspace-level
+        // teardown is also silent. WKWebView keeps active media
+        // playing past view detachment until its content process
+        // releases.
+        pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
         // Mirror `removePane` so extensions see `chrome.tabs.onRemoved`
         // for every browser pane that goes down with the workspace —
         // bridges left in `tabBridgesByPaneID` would otherwise leak
@@ -321,6 +326,7 @@ extension PaneContainerViewController {
       for pane in column.panes {
         pane.terminalView?.keepSurfaceAlive = false
         clearFocusBorder(pane)
+        pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
         ExtensionController.shared.notifyTabClosed(pane)
       }
     }

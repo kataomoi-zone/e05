@@ -741,6 +741,11 @@ extension PaneContainerViewController {
     // an undo / restore later will mint a fresh one.
     ExtensionController.shared.notifyTabClosed(pane)
     clearFocusBorder(pane)
+    // The closed-pane stash keeps the WKWebView alive for the undo
+    // window, and detaching the view alone does not stop the web
+    // content process's media pipeline. Pause leaves the playhead in
+    // place so an undo restore picks up where the user left off.
+    pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
 
     let wasOnlyPane = column.panes.isEmpty
     let columnWidth = column.widthConstraint?.constant
@@ -869,6 +874,12 @@ extension PaneContainerViewController {
       let evicted = recentlyClosed.removeFirst()
       evicted.timer.invalidate()
       evicted.pane.terminalView?.releaseDetachedSurface()
+      // Pause once more before the WKWebView heads for ARC release.
+      // The first pause was at `removePane` time; an autoplay SPA's
+      // own scripts can resume playback during the stash window, and
+      // ARC release runs through the web content process at its own
+      // pace.
+      evicted.pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
     }
 
     // keepSurfaceAlive is already set by removePane before removeFromSuperview.
@@ -882,6 +893,7 @@ extension PaneContainerViewController {
         if let idx = self.recentlyClosed.firstIndex(where: { $0.pane.id == paneId }) {
           let expired = self.recentlyClosed.remove(at: idx)
           expired.pane.terminalView?.releaseDetachedSurface()
+          expired.pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
         }
       }
     }
@@ -1094,6 +1106,7 @@ extension PaneContainerViewController {
     // Cross-WS close skips the undo stash, so release the surface
     // eagerly rather than detaching it.
     pane.terminalView?.keepSurfaceAlive = false
+    pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
     pane.containerView.removeFromSuperview()
 
     if column.panes.isEmpty {
