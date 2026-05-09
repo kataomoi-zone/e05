@@ -22,6 +22,10 @@ final class PaneRow: NSView {
   let paneId: ULID
   var onClick: (() -> Void)?
   var onClose: (() -> Void)?
+  /// Speaker glyph at the row's leading edge was tapped. Routes
+  /// through the host so the click is forwarded to the pane's mute
+  /// toggle no matter which workspace owns the pane.
+  var onAudioToggle: (() -> Void)?
 
   private let iconView = NSImageView()
   private let label = NSTextField(labelWithString: "")
@@ -43,9 +47,36 @@ final class PaneRow: NSView {
   private var isHovered = false
   private var isCurrentPane = false
 
+  /// Small clickable speaker glyph next to the favicon that surfaces
+  /// the pane's current audio state and toggles mute on click. Always
+  /// visible (no hover gate) when audio is active so a noisy tab is
+  /// spottable without the user first pointing at the row.
+  private let audioIndicator: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.isHidden = true
+    // The button shouldn't capture key navigation away from the
+    // worklane row — keyboard focus belongs to the row's parent
+    // surface, not the trailing-edge icon.
+    b.refusesFirstResponder = true
+    return b
+  }()
+  private static let audioIndicatorSize: CGFloat = 14
+  /// Title leading anchors to the audio indicator's trailing edge
+  /// when audio is active and falls back to the favicon when it
+  /// isn't, so the title shifts right to make room for the speaker
+  /// rather than overlapping it.
+  private var labelLeadingToIcon: NSLayoutConstraint?
+  private var labelLeadingToAudio: NSLayoutConstraint?
+
   init(
     paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor,
-    isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool
+    isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool,
+    isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool
   ) {
     self.paneId = paneId
     super.init(frame: .zero)
@@ -56,6 +87,9 @@ final class PaneRow: NSView {
       title: title, icon: icon, accentColor: accentColor,
       isCurrent: isCurrent, isOwnWorkspaceFocus: isOwnWorkspaceFocus,
       isPrivate: isPrivate)
+    applyAudioState(
+      isMuted: isMuted, isPlayingAudio: isPlayingAudio,
+      hasActiveMedia: hasActiveMedia)
   }
 
   @available(*, unavailable)
@@ -83,6 +117,19 @@ final class PaneRow: NSView {
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
 
+    audioIndicator.target = self
+    audioIndicator.action = #selector(audioTapped(_:))
+    addSubview(audioIndicator)
+
+    let labelToIcon = label.leadingAnchor.constraint(
+      equalTo: iconView.trailingAnchor, constant: 6)
+    let labelToAudio = label.leadingAnchor.constraint(
+      equalTo: audioIndicator.trailingAnchor, constant: 4)
+    labelToIcon.isActive = true
+    labelToAudio.isActive = false
+    labelLeadingToIcon = labelToIcon
+    labelLeadingToAudio = labelToAudio
+
     NSLayoutConstraint.activate([
       heightAnchor.constraint(equalToConstant: Self.height),
       // Dot marks "focus would land here" for non-current
@@ -102,7 +149,16 @@ final class PaneRow: NSView {
       iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
       iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
 
-      label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+      // Audio indicator slots between favicon and title, occupying
+      // a 14pt clickable target. Hidden when audio is neither
+      // playing nor muted; the title's leading dual-constraint
+      // collapses the slot away so quiet rows lay out unchanged.
+      audioIndicator.leadingAnchor.constraint(
+        equalTo: iconView.trailingAnchor, constant: 4),
+      audioIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+      audioIndicator.widthAnchor.constraint(equalToConstant: Self.audioIndicatorSize),
+      audioIndicator.heightAnchor.constraint(equalToConstant: Self.audioIndicatorSize),
+
       label.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
@@ -111,6 +167,36 @@ final class PaneRow: NSView {
       closeButton.widthAnchor.constraint(equalToConstant: 16),
       closeButton.heightAnchor.constraint(equalToConstant: 16),
     ])
+  }
+
+  /// Drive the leading-edge speaker glyph from the pane's audio
+  /// state. Visible when audio is actually emitting, or when the
+  /// pane is muted *and* a media element is still active — the
+  /// second branch keeps the unmute affordance on a tab whose
+  /// audible playback we just silenced. Click toggles mute through
+  /// ``onAudioToggle``; the row's own click handler is bypassed
+  /// because AppKit dispatches button hits to the button before
+  /// falling back to the enclosing view's `mouseDown(with:)`.
+  ///
+  /// Internal so the worklane can re-fire it for a single row when
+  /// a pane's audio state flips, without rebuilding the full list.
+  func applyAudioState(isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool) {
+    let active = isPlayingAudio || (isMuted && hasActiveMedia)
+    audioIndicator.isHidden = !active
+    labelLeadingToIcon?.isActive = !active
+    labelLeadingToAudio?.isActive = active
+    if active {
+      let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+      let desc = isMuted ? "Unmute tab" : "Mute tab"
+      let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+      audioIndicator.image = NSImage(
+        systemSymbolName: symbol, accessibilityDescription: desc
+      )?.withSymbolConfiguration(config)
+      audioIndicator.toolTip = desc
+    } else {
+      audioIndicator.image = nil
+      audioIndicator.toolTip = nil
+    }
   }
 
   private func configure(
@@ -219,6 +305,10 @@ final class PaneRow: NSView {
 
   @objc private func closeTapped(_: NSButton) {
     onClose?()
+  }
+
+  @objc private func audioTapped(_: NSButton) {
+    onAudioToggle?()
   }
 
   override func resetCursorRects() {

@@ -258,6 +258,10 @@ final class SidebarViewController: NSViewController {
         accentColor: { PaneContainerViewController.accentColor(forWorkspaceAt: $0) },
         paneTitle: Self.displayTitle(for:),
         paneIcon: Self.displayIcon(for:),
+        paneAudioState: { pane in
+          guard let bv = pane.browserView else { return (false, false, false) }
+          return (bv.isMuted, bv.isPlayingAudio, bv.hasActiveMedia)
+        },
         isWorkspaceCollapsed: { [weak self] id in
           self?.collapsedWorkspaceIds.contains(id) ?? false
         },
@@ -273,10 +277,26 @@ final class SidebarViewController: NSViewController {
         onPaneClose: { [weak container] id in
           container?.closePane(id: id)
         },
+        onPaneAudioToggle: { [weak container] id in
+          container?.toggleMuteForPane(id: id)
+        },
         onWorkspaceToggleCollapse: { [weak self] id in
           self?.toggleWorkspaceCollapsed(id)
         }
       ))
+  }
+
+  /// Per-pane audio state update without rebuilding the whole
+  /// worklane. Hosts call this from `onAudioStateChanged` so the
+  /// 1 Hz audio probe (which can flip state for any pane on any
+  /// tick) doesn't trigger a full row rebuild — only the targeted
+  /// row's speaker glyph reflows.
+  func updatePaneAudioState(
+    paneId: ULID, isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool
+  ) {
+    overlay.worklane.updatePaneAudioState(
+      paneId: paneId, isMuted: isMuted, isPlayingAudio: isPlayingAudio,
+      hasActiveMedia: hasActiveMedia)
   }
 
   private func toggleWorkspaceCollapsed(_ id: ULID) {

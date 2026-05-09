@@ -49,6 +49,11 @@ private final class FlippedClipView: NSClipView {
 final class WorklaneSectionView: NSView {
   private let scrollView = NSScrollView()
   private let stackView = NSStackView()
+  /// Lookup keyed by pane id so per-row state updates can target a
+  /// single `PaneRow` without rebuilding the entire worklane.
+  /// Rebuilt from scratch on every `reload(_:)` to keep stale
+  /// references from accumulating across pane add/remove.
+  private var paneRowsByPaneId: [ULID: PaneRow] = [:]
 
   init() {
     super.init(frame: .zero)
@@ -118,11 +123,14 @@ final class WorklaneSectionView: NSView {
     let accentColor: (Int) -> NSColor
     let paneTitle: (PaneModel) -> String
     let paneIcon: (PaneModel) -> NSImage?
+    let paneAudioState:
+      (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
     let isWorkspaceCollapsed: (ULID) -> Bool
     let onWorkspaceClick: (Int) -> Void
     let onPaneClick: (ULID) -> Void
     let onWorkspaceClose: (Int) -> Void
     let onPaneClose: (ULID) -> Void
+    let onPaneAudioToggle: (ULID) -> Void
     let onWorkspaceToggleCollapse: (ULID) -> Void
   }
 
@@ -131,7 +139,25 @@ final class WorklaneSectionView: NSView {
       stackView.removeArrangedSubview(v)
       v.removeFromSuperview()
     }
+    paneRowsByPaneId.removeAll(keepingCapacity: true)
 
+    rebuildRows(input)
+  }
+
+  /// Per-pane audio update without a full reload. Targets the row by
+  /// pane id and forwards to the row's own `applyAudioState`.
+  /// Silent if the pane isn't currently materialised — the next
+  /// full reload will pick up the latest state from
+  /// `ReloadInput.paneAudioState`.
+  func updatePaneAudioState(
+    paneId: ULID, isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool
+  ) {
+    paneRowsByPaneId[paneId]?.applyAudioState(
+      isMuted: isMuted, isPlayingAudio: isPlayingAudio,
+      hasActiveMedia: hasActiveMedia)
+  }
+
+  private func rebuildRows(_ input: ReloadInput) {
     for (wsIdx, ws) in input.workspaces.enumerated() {
       let isCurrentWs = wsIdx == input.focusedWorkspaceIndex
       let wsColor = input.accentColor(wsIdx)
@@ -169,6 +195,7 @@ final class WorklaneSectionView: NSView {
         for pane in column.panes {
           let isCurrentPane = pane.id == input.focusedPaneId
           let isOwnFocus = !isCurrentPane && pane.id == ownFocusPaneId
+          let audio = input.paneAudioState(pane)
           let row = PaneRow(
             paneId: pane.id,
             title: input.paneTitle(pane),
@@ -176,11 +203,16 @@ final class WorklaneSectionView: NSView {
             accentColor: wsColor,
             isCurrent: isCurrentPane,
             isOwnWorkspaceFocus: isOwnFocus,
-            isPrivate: ws.isPrivate
+            isPrivate: ws.isPrivate,
+            isMuted: audio.isMuted,
+            isPlayingAudio: audio.isPlayingAudio,
+            hasActiveMedia: audio.hasActiveMedia
           )
           let capturedId = pane.id
           row.onClick = { [onClick = input.onPaneClick] in onClick(capturedId) }
           row.onClose = { [onClose = input.onPaneClose] in onClose(capturedId) }
+          row.onAudioToggle = { [onToggle = input.onPaneAudioToggle] in onToggle(capturedId) }
+          paneRowsByPaneId[capturedId] = row
           stackView.addArrangedSubview(row)
           NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),

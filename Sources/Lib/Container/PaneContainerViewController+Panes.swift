@@ -223,12 +223,27 @@ extension PaneContainerViewController {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .loading)
         }
       }
-      bv.onAudioStateChanged = { [weak pane, weak bv] in
+      bv.onAudioStateChanged = { [weak self, weak pane, weak bv] in
         guard let pane, let bv else { return }
         pane.urlBar.setMuteState(
           isMuted: bv.isMuted,
           isPlayingAudio: bv.isPlayingAudio,
           hasActiveMedia: bv.hasActiveMedia)
+        // Targeted row update so the 1 Hz audio probe doesn't trigger
+        // a full worklane rebuild. Structural changes (pane open /
+        // close, focus shift) still go through
+        // `notifySidebarWorklaneDidChange`; only the audio glyph
+        // flips here.
+        self?.sidebarVC?.updatePaneAudioState(
+          paneId: pane.id,
+          isMuted: bv.isMuted,
+          isPlayingAudio: bv.isPlayingAudio,
+          hasActiveMedia: bv.hasActiveMedia)
+        // Surface mute / audible flips to web extensions so
+        // `chrome.tabs.onUpdated` listeners observe state changes
+        // alongside title / URL / loading.
+        ExtensionController.shared.notifyTabPropertiesChanged(
+          pane, properties: [.muted, .playingAudio])
       }
       pane.urlBar.onMuteToggle = { [weak bv] in
         bv?.toggleMute()
@@ -1064,19 +1079,54 @@ extension PaneContainerViewController {
   /// the existing recently-closed pipeline is rooted in current-WS
   /// state and per-workspace by design.
   public func closePane(id paneId: ULID) {
+    guard let loc = locatePane(id: paneId) else { return }
+    if loc.workspaceIndex == focusedWorkspaceIndex {
+      removePane(columnIndex: loc.columnIndex, paneIndex: loc.paneIndex)
+    } else {
+      removePaneInBackgroundWorkspace(
+        wsIndex: loc.workspaceIndex,
+        columnIndex: loc.columnIndex,
+        paneIndex: loc.paneIndex)
+    }
+  }
+
+  /// Flip the mute flag on a pane found by id across every workspace.
+  /// Sidebar audio indicators route here so the toggle works on rows
+  /// outside the focused workspace too — focus is intentionally not
+  /// shifted, since muting from the sidebar is a one-shot action.
+  public func toggleMuteForPane(id paneId: ULID) {
+    locatePane(id: paneId)?.pane.browserView?.toggleMute()
+  }
+
+  /// Resolved coordinate of a pane found by id. Carries the
+  /// surrounding indices alongside the model so call sites can
+  /// either operate on the pane directly or feed the indices back
+  /// into view-tree mutators (`removePane(columnIndex:paneIndex:)`,
+  /// `removePaneInBackgroundWorkspace(wsIndex:...)`).
+  public struct PaneLocation {
+    public let workspaceIndex: Int
+    public let columnIndex: Int
+    public let paneIndex: Int
+    public let pane: PaneModel
+  }
+
+  /// Locate a pane by id across every workspace. Replaces the
+  /// triple-nested search that earlier sat in `closePane(id:)` and
+  /// `toggleMuteForPane(id:)`; future cross-workspace pane
+  /// operations should funnel through the same helper.
+  public func locatePane(id paneId: ULID) -> PaneLocation? {
     for (wsIdx, ws) in workspaces.enumerated() {
       for (colIdx, col) in ws.columns.enumerated() {
-        guard let paneIdx = col.panes.firstIndex(where: { $0.id == paneId })
-        else { continue }
-        if wsIdx == focusedWorkspaceIndex {
-          removePane(columnIndex: colIdx, paneIndex: paneIdx)
-        } else {
-          removePaneInBackgroundWorkspace(
-            wsIndex: wsIdx, columnIndex: colIdx, paneIndex: paneIdx)
+        if let paneIdx = col.panes.firstIndex(where: { $0.id == paneId }) {
+          return PaneLocation(
+            workspaceIndex: wsIdx,
+            columnIndex: colIdx,
+            paneIndex: paneIdx,
+            pane: col.panes[paneIdx])
         }
-        return
       }
     }
+    return nil
   }
 
   /// Remove a pane from a non-current workspace without animating —
