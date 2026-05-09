@@ -170,6 +170,32 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   func isPlayingAudio(for _: WKWebExtensionContext) -> Bool {
     pane?.browserView?.isPlayingAudio ?? false
   }
+
+  /// `chrome.tabs.update({muted: true/false})` lands here. Routes
+  /// through the same `setMuted(_:)` path the URL bar / sidebar
+  /// speaker uses, so the JS-injected `<audio>` / `<video>` flip
+  /// and the `onAudioStateChanged` fan-out (URL bar refresh, sidebar
+  /// indicator, extension change notification) all run uniformly
+  /// regardless of whether the toggle came from a click or an
+  /// extension API call.
+  func setMuted(
+    _ muted: Bool,
+    for _: WKWebExtensionContext,
+    completionHandler: @escaping (Error?) -> Void
+  ) {
+    guard let bv = pane?.browserView else {
+      completionHandler(
+        NSError(
+          domain: "com.kawarimidoll.e05.Extensions",
+          code: 8,
+          userInfo: [NSLocalizedDescriptionKey: "Tab is no longer attached."]
+        )
+      )
+      return
+    }
+    bv.setMuted(muted)
+    completionHandler(nil)
+  }
   func isReaderModeActive(for _: WKWebExtensionContext) -> Bool { false }
   // `isSelected(for:)` is intentionally not implemented: WebKit's
   // documented default is "YES for the active tab and NO for other
