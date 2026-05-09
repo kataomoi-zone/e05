@@ -893,6 +893,46 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
   }
 
+  /// Web Notification permission requests reach the delegate
+  /// through `WKUIDelegatePrivate` SPI (no public counterpart
+  /// exists at all on the macOS 26 SDK — `WKUIDelegate.h` has zero
+  /// notification selectors). The SPI ships in `WKUIDelegatePrivate.h`
+  /// since macOS 10.13.4 and is what `UIDelegate.mm:249, 845-853`
+  /// dispatches `Notification.requestPermission()` against.
+  ///
+  /// An earlier revision attempted to opt in via
+  /// `config.preferences.setValue(true, forKey: "_notificationsEnabled")`
+  /// based on the `WKPreferencesPrivate.h` reference describing
+  /// non-Safari hosts as gated off, but that KVC write wedged
+  /// WebKit's init path: the app launched, logged
+  /// `installInitialWorkspaceVC done`, and never reached the first
+  /// paint. Removing the call leaves the prompt working — macOS 26
+  /// ships with the Notification API enabled for arbitrary hosts,
+  /// so the opt-in is both unnecessary and actively harmful.
+  ///
+  /// Display of the resulting notifications is a separate path
+  /// (`_WKWebsiteDataStoreDelegate showNotification:`) that bridges
+  /// to `UNUserNotificationCenter`, but `UNUserNotificationCenter`
+  /// asserts on a non-`.app` bundle, so that lands with the bundle
+  /// follow-up. Until then this hook records grants/denies that
+  /// will start producing visible notifications once the bundle
+  /// work and display delegate ship.
+  @objc(_webView:requestNotificationPermissionForSecurityOrigin:decisionHandler:)
+  public func _webView(
+    _: WKWebView,
+    requestNotificationPermissionForSecurityOrigin origin: WKSecurityOrigin,
+    decisionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+  ) {
+    let host = origin.host
+    if let resolved = resolvePermissionDecision(host: host, kinds: [.notification]) {
+      decisionHandler(resolved == .grant)
+      return
+    }
+    promptForPermission(host: host, kinds: [.notification]) { decision in
+      decisionHandler(decision == .grant)
+    }
+  }
+
   /// Look up `(host, kinds)` against the per-pane session dict
   /// first, then `PermissionsStore`. Returns `nil` when any kind is
   /// still undecided so callers can hand the request off to the

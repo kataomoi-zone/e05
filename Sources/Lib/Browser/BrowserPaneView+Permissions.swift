@@ -178,6 +178,17 @@ extension BrowserPaneView {
   // MARK: - Copy
 
   private static func promptMessage(host: String, kinds: [PermissionKind]) -> String {
+    // Notifications use a different verb ("send you" rather than
+    // "use your") to match Safari's wording — a notification is
+    // pushed at the user, not a device the user holds. The
+    // membership check (rather than `kinds == [.notification]`)
+    // keeps the push verb correct even if a future caller mixes
+    // `.notification` into a combined request; falling through to
+    // `capabilityNoun` would otherwise emit "wants to use your
+    // notifications", which reads wrong.
+    if kinds.contains(.notification) {
+      return "\"\(host)\" wants to send you notifications."
+    }
     let capability = capabilityNoun(for: kinds)
     return "\"\(host)\" wants to use your \(capability)."
   }
@@ -186,12 +197,16 @@ extension BrowserPaneView {
     if kinds.contains(.geolocation) {
       return "Allow this site to know your location?"
     }
+    if kinds.contains(.notification) {
+      return "Allow this site to show notifications?"
+    }
     return "Allow this site to access these devices?"
   }
 
   /// Build the noun phrase that fills the prompt's "wants to use
   /// your <X>" slot. Geolocation reads "location" instead of a
-  /// device list to match Safari's wording.
+  /// device list to match Safari's wording. Notifications take a
+  /// dedicated branch in `promptMessage` so they don't appear here.
   private static func capabilityNoun(for kinds: [PermissionKind]) -> String {
     if kinds == [.geolocation] { return "location" }
     let names = kinds.map { (k: PermissionKind) -> String in
@@ -199,6 +214,7 @@ extension BrowserPaneView {
       case .camera: return "camera"
       case .microphone: return "microphone"
       case .geolocation: return "location"
+      case .notification: return "notifications"
       }
     }
     if names.count == 1 { return names[0] }

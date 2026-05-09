@@ -3,14 +3,17 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PermissionsStore")
 
-/// What kind of capability a host is asking for. Matches the three
+/// What kind of capability a host is asking for. Matches the four
 /// `WKUIDelegate` permission hooks the browser pane wires up:
-/// camera / microphone via `requestMediaCapturePermissionFor`, and
-/// geolocation via `requestGeolocationPermissionFor`.
+/// camera / microphone via `requestMediaCapturePermissionFor` (public
+/// API), geolocation via `_webView:requestGeolocationPermissionForOrigin:`
+/// (SPI), and notification via
+/// `_webView:requestNotificationPermissionForSecurityOrigin:` (SPI).
 public enum PermissionKind: String, Codable, CaseIterable, Sendable {
   case camera
   case microphone
   case geolocation
+  case notification
 }
 
 /// Resolved decision for a `(host, kind)` pair. `nil` (= no entry)
@@ -30,15 +33,18 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
   public var camera: PermissionState?
   public var microphone: PermissionState?
   public var geolocation: PermissionState?
+  public var notification: PermissionState?
 
   public init(
     camera: PermissionState? = nil,
     microphone: PermissionState? = nil,
-    geolocation: PermissionState? = nil
+    geolocation: PermissionState? = nil,
+    notification: PermissionState? = nil
   ) {
     self.camera = camera
     self.microphone = microphone
     self.geolocation = geolocation
+    self.notification = notification
   }
 
   public func state(for kind: PermissionKind) -> PermissionState? {
@@ -46,6 +52,7 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
     case .camera: return camera
     case .microphone: return microphone
     case .geolocation: return geolocation
+    case .notification: return notification
     }
   }
 
@@ -56,11 +63,12 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
     case .camera: camera = state
     case .microphone: microphone = state
     case .geolocation: geolocation = state
+    case .notification: notification = state
     }
   }
 
   var isEmpty: Bool {
-    camera == nil && microphone == nil && geolocation == nil
+    camera == nil && microphone == nil && geolocation == nil && notification == nil
   }
 }
 
