@@ -223,6 +223,16 @@ extension PaneContainerViewController {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .loading)
         }
       }
+      bv.onAudioStateChanged = { [weak pane, weak bv] in
+        guard let pane, let bv else { return }
+        pane.urlBar.setMuteState(
+          isMuted: bv.isMuted,
+          isPlayingAudio: bv.isPlayingAudio,
+          hasActiveMedia: bv.hasActiveMedia)
+      }
+      pane.urlBar.onMuteToggle = { [weak bv] in
+        bv?.toggleMute()
+      }
       bv.onDownloadStarted = { [weak self] wkDownload in
         self?.downloadsManager.adopt(wkDownload)
       }

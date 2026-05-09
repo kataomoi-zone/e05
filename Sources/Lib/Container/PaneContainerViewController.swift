@@ -123,6 +123,15 @@ public final class PaneContainerViewController: NSViewController {
 
   nonisolated(unsafe) var scrollEventMonitor: Any?
 
+  /// Single 1 Hz tick that drives `BrowserPaneView.updateAudioStateOnce`
+  /// across every pane, replacing the per-pane Task that earlier drafts
+  /// kept. One main-actor wakeup per second covers all panes; probes
+  /// run sequentially so each pane's `await` suspends the main actor
+  /// long enough for other UI work to interleave between IPC
+  /// round-trips. See the implementation for the rationale on why a
+  /// `TaskGroup` isn't used.
+  private var mediaTickTask: Task<Void, Never>?
+
   // MARK: - Undo Close
 
   static let undoTimeout: TimeInterval = 10
@@ -245,6 +254,35 @@ public final class PaneContainerViewController: NSViewController {
     // flush against the leading edge).
     installSidebar(initiallyPinned: initiallyPinned)
     installToastOverlay()
+    startMediaAudibleTick()
+  }
+
+  /// Kick off the shared 1 Hz audio-state probe loop. Each tick walks
+  /// every browser pane in the container and asks it to refresh its
+  /// `isPlayingAudio` flag through `BrowserPaneView.updateAudioStateOnce`;
+  /// state changes fan out through `onAudioStateChanged`, which the
+  /// URL bar and sidebar already subscribe to. Probes run sequentially
+  /// — each pane's `await` suspends the main actor, so other UI work
+  /// can interleave between IPC round-trips, and we avoid the Swift 6
+  /// region-based isolation friction a `TaskGroup` would introduce.
+  private func startMediaAudibleTick() {
+    mediaTickTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        if Task.isCancelled { return }
+        guard let self else { return }
+        for ws in self.workspaces {
+          for col in ws.columns {
+            for pane in col.panes {
+              if Task.isCancelled { return }
+              if let bv = pane.browserView {
+                await bv.updateAudioStateOnce()
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   /// Pin a bottom-center toast overlay above every other subview so
@@ -541,6 +579,7 @@ public final class PaneContainerViewController: NSViewController {
     for closed in recentlyClosed {
       closed.timer.invalidate()
     }
+    mediaTickTask?.cancel()
   }
 
   // MARK: - Scroll Event Monitor

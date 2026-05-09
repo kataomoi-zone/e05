@@ -1,5 +1,9 @@
 import AppKit
 import WebKit
+import os.log
+
+private let logger = Logger(
+  subsystem: "com.kawarimidoll.e05", category: "BrowserPaneView")
 
 /// WKWebView subclass that reports focus changes via callback.
 @MainActor
@@ -73,6 +77,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// by Shift-clicks on links and the "Open in Workspace" context-
   /// menu item.
   public var onOpenInNewWorkspace: ((URL) -> Void)?
+  /// Called when either ``isMuted`` or ``isPlayingAudio`` changes.
+  public var onAudioStateChanged: (() -> Void)?
 
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
@@ -80,6 +86,38 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var canGoForwardObservation: NSKeyValueObservation?
   private var isLoadingObservation: NSKeyValueObservation?
   private var adblockerObserverTask: Task<Void, Never>?
+
+  /// Per-pane mute state. Mutated through ``setMuted(_:)`` /
+  /// ``toggleMute()``. The actual audio suppression is performed by
+  /// the injected user script (`muteUserScript`) which sets
+  /// `.muted = true` on every `<audio>` / `<video>` element and
+  /// re-applies on DOM mutations. Web Audio / WebRTC / cross-origin
+  /// iframes are out of reach of this approach; if those become a
+  /// problem in practice, swap in `_setPageMuted:` SPI.
+  public private(set) var isMuted: Bool = false
+
+  /// Whether the page is currently emitting audio (some `<audio>` /
+  /// `<video>` element is active, unmuted, with non-zero volume).
+  /// The "Playing" speaker glyph is driven by this flag.
+  public private(set) var isPlayingAudio: Bool = false
+
+  /// Whether the page has at least one active media element,
+  /// regardless of mute state. The mute glyph stays visible on a
+  /// muted-but-active tab thanks to this — without it, muting an
+  /// audible tab would zero out `isPlayingAudio` and the speaker
+  /// affordance would vanish, leaving the user no way to unmute.
+  public private(set) var hasActiveMedia: Bool = false
+
+  /// Unique BroadcastChannel name for this pane's mute synchronisation
+  /// IIFE. Without a per-pane suffix, every WKWebView on the same
+  /// origin would share a single `'e05-mute'` channel and mute flips
+  /// in one pane would propagate to every other pane on that origin —
+  /// turning the per-pane mute toggle into a global "mute everything
+  /// from this site" affordance. The UUID makes each pane's IIFE deaf
+  /// to other panes' broadcasts while still reaching its own
+  /// same-origin subframes (they get the same script with the same
+  /// channel name as the main frame they're nested in).
+  private let muteChannelId: String
 
   /// URL of the most recent navigation accepted by `decidePolicyFor`.
   /// Captured up-front so `handleNavigationFailure` can keep the
@@ -126,6 +164,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     extensionContext: WKWebExtensionContext?,
     dataStore: WKWebsiteDataStore?
   ) {
+    let channelId = "e05-mute-" + UUID().uuidString.lowercased()
+    self.muteChannelId = channelId
     let config: WKWebViewConfiguration
     let hoverHandler = HoverLinkMessageHandler()
     let extensionConfig = extensionContext?.webViewConfiguration
@@ -174,6 +214,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         contentWorld: Self.hoverLinkContentWorld,
         name: Self.hoverLinkHandlerName
       )
+      // Page-mute control: a content script that exposes
+      // `window.__e05_setMuted(bool)` and re-applies muting on DOM
+      // mutations. No companion message handler — Swift only writes
+      // into the JS state, never reads back. The script source is
+      // built per-pane so its `BroadcastChannel` name carries the
+      // pane's UUID; without that, every WKWebView on the same
+      // origin would share one channel and mute toggles in any pane
+      // would propagate to every same-origin sibling.
+      config.userContentController.addUserScript(
+        Self.makeMuteUserScript(channelId: channelId))
     }
     hoverLinkMessageHandler = hoverHandler
     let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
@@ -764,6 +814,21 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // declare the icon via <link> instead) and SPAs whose link tags
     // are injected after the initial HTML ships.
     scanPageFavicon()
+    // Re-sync mute state into the freshly loaded page. The user
+    // script's IIFE runs at document-start with `muted = false`, so
+    // a navigation while the pane is muted would leak audio on the
+    // new page until the user toggled again.
+    if isMuted, !isExtensionHosted {
+      webView.evaluateJavaScript(
+        Self.muteApplyTrueJS, in: nil, in: Self.muteContentWorld
+      ) { result in
+        if case .failure(let error) = result {
+          logger.warning(
+            "[mute/reapply] evaluateJavaScript failed: \(error.localizedDescription, privacy: .public)"
+          )
+        }
+      }
+    }
   }
 
   public func webView(
@@ -912,6 +977,266 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       hoverLinkOverlayTrailingConstraint?.isActive = false
       hoverLinkOverlayLeadingConstraint?.isActive = true
     }
+  }
+
+  // MARK: - Mute control
+
+  /// Toggle the pane's mute flag. Wraps ``setMuted(_:)`` so callers
+  /// stay state-agnostic.
+  public func toggleMute() {
+    setMuted(!isMuted)
+  }
+
+  /// Set the pane's mute flag and push it to the JS-side controller.
+  /// No-op (for the JS push) on extension-hosted panes since they
+  /// don't carry the content script — but the Swift-side flag still
+  /// flips so the URL bar / sidebar mirror stays in sync.
+  public func setMuted(_ muted: Bool) {
+    let changed = (muted != isMuted)
+    isMuted = muted
+    if !isExtensionHosted {
+      let js = muted ? Self.muteApplyTrueJS : Self.muteApplyFalseJS
+      webView.evaluateJavaScript(js, in: nil, in: Self.muteContentWorld) { result in
+        if case .failure(let error) = result {
+          logger.warning(
+            "[mute/apply] evaluateJavaScript failed: \(error.localizedDescription, privacy: .public)"
+          )
+        }
+      }
+    }
+    if changed { onAudioStateChanged?() }
+  }
+
+  /// Pre-built JS literals for the two boolean flips. Avoids string
+  /// interpolation each call and matches the literal `true` form
+  /// used by the post-navigation re-application path.
+  private static let muteApplyTrueJS =
+    "window.__e05_setMuted && window.__e05_setMuted(true)"
+  private static let muteApplyFalseJS =
+    "window.__e05_setMuted && window.__e05_setMuted(false)"
+
+  /// Probe `WKMediaPlaybackState` + the JS audible verifier once and
+  /// publish the result through ``onAudioStateChanged`` if it
+  /// differs from the cached value. Driven by the container's
+  /// shared 1 Hz tick rather than a per-pane Task — that one task
+  /// fans out across every browser pane to keep main-actor wakeups
+  /// proportional to "1 per workspace" instead of "1 per pane".
+  ///
+  /// Skips for extension-hosted panes (no content script, no probe
+  /// to run). Idempotent: callers can poll any cadence they like
+  /// without state corruption.
+  ///
+  /// Why the JS probe at all:
+  /// `WKMediaPlaybackState.playing` and `.paused` both fire for any
+  /// live media element, regardless of whether sound is actually
+  /// coming out. `<video autoplay muted>` hero videos register as
+  /// `.playing`; niconico's player stays at `.paused` through
+  /// visible playback. The injected `__e05_audioState` walks the DOM
+  /// and reports two bits — "any media active" and "audio actually
+  /// audible" — so the UI can keep the speaker glyph reachable on a
+  /// muted-but-active tab while still hiding it on quiet pages. Web
+  /// Audio / WebRTC / cross-origin iframes are still out of reach —
+  /// escalation path is `_setPageMuted:` SPI.
+  public func updateAudioStateOnce() async {
+    if isExtensionHosted { return }
+    let state = await webView.requestMediaPlaybackState()
+    var hasActive = false
+    var audible = false
+    if state != .none {
+      let webViewRef = webView
+      let world = Self.muteContentWorld
+      // The async `evaluateJavaScript` overload bridges return
+      // values to Swift `Void` when run in an isolated content
+      // world (a long-standing WebKit bug). The closure-based form
+      // delivers `id _Nullable` straight through, and pulling the
+      // numeric out inside the callback keeps the cross-actor hop
+      // Sendable for Swift 6 strict concurrency.
+      let bits: Int? = await withCheckedContinuation { cont in
+        webViewRef.evaluateJavaScript(
+          "(window.__e05_audioState && window.__e05_audioState()) || 0",
+          in: nil, in: world
+        ) { (r: Result<Any, any Error>) in
+          switch r {
+          case .success(let raw):
+            cont.resume(returning: (raw as? NSNumber)?.intValue)
+          case .failure(let error):
+            logger.warning(
+              "[mute/probe] evaluateJavaScript failed: \(error.localizedDescription, privacy: .public)"
+            )
+            cont.resume(returning: nil)
+          }
+        }
+      }
+      if let b = bits {
+        hasActive = (b & 1) != 0
+        audible = (b & 2) != 0
+      }
+    }
+    if hasActive != hasActiveMedia || audible != isPlayingAudio {
+      hasActiveMedia = hasActive
+      isPlayingAudio = audible
+      onAudioStateChanged?()
+    }
+  }
+
+  /// Content world used by the mute user script and Swift-side
+  /// `evaluateJavaScript` so the install guard
+  /// (`window.__e05MuteInstalled`) and the bridge function
+  /// (`window.__e05_setMuted`) are isolated from page scripts.
+  private static let muteContentWorld: WKContentWorld = .defaultClient
+
+  /// Build the per-pane mute control content script. Mutes every
+  /// `<audio>` / `<video>` element and re-applies on DOM additions
+  /// and `muted`-attribute write-backs. Exposes
+  /// `window.__e05_setMuted` to Swift so the pane can flip the flag
+  /// at any time. Runs in every frame (including same-origin
+  /// subframes) — Swift's `evaluateJavaScript` only reaches the main
+  /// frame, so each frame's IIFE listens on a `BroadcastChannel` to
+  /// pick up flips fired in the main frame. Cross-origin subframes
+  /// stay out of reach (same-origin BroadcastChannel only).
+  ///
+  /// The `channelId` parameter scopes the BroadcastChannel name to
+  /// this single pane. A shared name would let mute flips in one
+  /// WKWebView reach every other same-origin WKWebView in the host
+  /// app, collapsing the per-pane toggle into a global per-site one.
+  private static func makeMuteUserScript(channelId: String) -> WKUserScript {
+    let source = """
+      (function() {
+        if (window.__e05MuteInstalled) return;
+        window.__e05MuteInstalled = true;
+
+        let muted = false;
+
+        // No-op when the element is already in sync. Page script's own
+        // `el.muted = ...` writes fire the attribute MutationObserver,
+        // and our re-application would loop forever without this check.
+        function applyOne(el) {
+          if (el.muted !== muted) {
+            try {
+              el.muted = muted;
+            } catch (e) {
+              console.warn('[e05/mute] el.muted assignment failed', e, el);
+            }
+          }
+        }
+        function applyAll() {
+          for (const el of document.querySelectorAll('audio, video')) {
+            applyOne(el);
+          }
+        }
+
+        const observer = new MutationObserver((mutations) => {
+          for (const m of mutations) {
+            if (m.type === 'attributes') {
+              // Page script may write `el.muted = false` to bypass our
+              // mute (autoplay re-trigger pattern). Re-apply whenever
+              // the element's flag disagrees with our intent — both
+              // muted and unmuted directions, since unmute also wants
+              // the page's stale `true` cleared.
+              const el = m.target;
+              if (el && (el.tagName === 'AUDIO' || el.tagName === 'VIDEO')) {
+                applyOne(el);
+              }
+              continue;
+            }
+            if (!muted) continue;
+            for (const n of m.addedNodes) {
+              if (n.nodeType !== 1) continue;
+              if (n.matches && n.matches('audio, video')) applyOne(n);
+              if (n.querySelectorAll) {
+                for (const el of n.querySelectorAll('audio, video')) {
+                  applyOne(el);
+                }
+              }
+            }
+          }
+        });
+        const root = document.documentElement || document;
+        observer.observe(root, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['muted'],
+        });
+
+        let channel = null;
+        try {
+          channel = new BroadcastChannel('\(channelId)');
+        } catch (e) {
+          console.warn(
+            '[e05/mute] BroadcastChannel unavailable; cross-frame sync disabled',
+            e);
+        }
+        if (channel) {
+          channel.addEventListener('message', (e) => {
+            if (e && e.data && typeof e.data.muted === 'boolean'
+                && e.data.muted !== muted) {
+              muted = e.data.muted;
+              applyAll();
+            }
+          });
+        }
+
+        window.__e05_setMuted = (m) => {
+          const next = !!m;
+          if (next === muted) return;
+          muted = next;
+          applyAll();
+          if (channel) {
+            // Surface broadcast failures rather than swallowing them
+            // — the page's console is the only diagnostic surface
+            // when the cross-frame mute sync silently breaks. The
+            // `[e05/mute]` prefix keeps the line greppable and
+            // recognisable as e05's own log when devtools is open
+            // on a third-party page.
+            try {
+              channel.postMessage({ muted: muted });
+            } catch (e) {
+              console.warn('[e05/mute] BroadcastChannel postMessage failed', e);
+            }
+          }
+        };
+
+        // Bitfield audio state probe — tighter than
+        // `WKWebView.requestMediaPlaybackState`, which only reports a
+        // single coarse enum and counts silent hero videos
+        // (`<video autoplay muted>`) as `.playing`. Returns:
+        //   bit 0 (1) — at least one media element is actively
+        //               playing (regardless of mute / volume); the
+        //               UI uses this to keep the speaker glyph
+        //               visible on muted-but-active tabs.
+        //   bit 1 (2) — at least one element is actually emitting
+        //               audio (unmuted, volume > 0); this drives
+        //               the "playing" speaker.wave glyph.
+        //
+        // Known limitations (call sites compensate via the SPI
+        // escalation path documented at the call site):
+        //  - Web Audio API and WebRTC are out of reach (no DOM
+        //    element to walk).
+        //  - MediaSession-only PWAs (Spotify Web Player et al.) can
+        //    play sound without an `<audio>` / `<video>` element.
+        //  - Cross-origin iframes' media is invisible to
+        //    `document.querySelectorAll`; the BroadcastChannel sync
+        //    only covers same-origin frames.
+        window.__e05_audioState = () => {
+          let bits = 0;
+          for (const el of document.querySelectorAll('audio, video')) {
+            if (!el.paused && el.readyState >= 2 && !el.ended) {
+              bits |= 1;
+              if (!el.muted && el.volume > 0) {
+                bits |= 2;
+              }
+            }
+          }
+          return bits;
+        };
+      })();
+      """
+    return WKUserScript(
+      source: source,
+      injectionTime: .atDocumentStart,
+      forMainFrameOnly: false,
+      in: muteContentWorld)
   }
 
   static let hoverLinkHandlerName = "e05HoverLink"

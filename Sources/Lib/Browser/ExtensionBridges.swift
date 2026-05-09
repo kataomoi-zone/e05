@@ -164,8 +164,12 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   }
 
   func isPinned(for _: WKWebExtensionContext) -> Bool { false }
-  func isMuted(for _: WKWebExtensionContext) -> Bool { false }
-  func isPlayingAudio(for _: WKWebExtensionContext) -> Bool { false }
+  func isMuted(for _: WKWebExtensionContext) -> Bool {
+    pane?.browserView?.isMuted ?? false
+  }
+  func isPlayingAudio(for _: WKWebExtensionContext) -> Bool {
+    pane?.browserView?.isPlayingAudio ?? false
+  }
   func isReaderModeActive(for _: WKWebExtensionContext) -> Bool { false }
   // `isSelected(for:)` is intentionally not implemented: WebKit's
   // documented default is "YES for the active tab and NO for other

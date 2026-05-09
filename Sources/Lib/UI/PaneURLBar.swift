@@ -9,6 +9,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   private let backButton: HoverIconButton
   private let forwardButton: HoverIconButton
   let reloadButton: HoverIconButton
+  /// Speaker affordance shown only while the page has active media
+  /// playback or is currently muted. Click toggles the pane's mute
+  /// flag. Sized identically to the navigation buttons so the row's
+  /// vertical centering stays even.
+  private let muteButton: HoverIconButton
   private let foldButton: HoverIconButton
   private let urlField: NSTextField
   private let suggestionList = SuggestionListView()
@@ -72,6 +77,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// the image/title, which are view-layer details.
   private(set) var isReloadLoading: Bool = false
 
+  /// `urlField.leading == reloadButton.trailing + 4`. Active when
+  /// the mute button is hidden, so the URL field hugs the reload
+  /// button without leaving a gap.
+  private var urlFieldLeadingToReload: NSLayoutConstraint?
+  /// `urlField.leading == muteButton.trailing + 4`. Active when the
+  /// mute button is visible, so the URL field shifts right to make
+  /// room.
+  private var urlFieldLeadingToMute: NSLayoutConstraint?
+
   /// Threshold under which `setZoomPercent(_:)` treats the supplied
   /// value as the 1.0 default. Wider than typical double round-trip
   /// error (e.g. `1.1 * (1/1.1)` leaves ~4e-16) so repeated zoom
@@ -89,6 +103,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// Called when user clicks the stop button (the reload icon flips
   /// to an `xmark` while the page is loading).
   public var onStop: (() -> Void)?
+  /// Called when the user clicks the speaker affordance to toggle
+  /// the pane's mute flag.
+  public var onMuteToggle: (() -> Void)?
   /// Called when user presses ESC to dismiss URL field.
   public var onCancel: (() -> Void)?
   /// Called when text changes in the URL field. Return suggestions to display.
@@ -151,6 +168,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
       symbol: "arrow.clockwise",
       fallback: "\u{21BB}",
       accessibility: "Reload")
+    muteButton = Self.makeIconButton(
+      symbol: "speaker.wave.2.fill",
+      fallback: "\u{1F50A}",
+      accessibility: "Toggle mute")
     foldButton = Self.makeIconButton(
       symbol: "arrow.right.and.line.vertical.and.arrow.left",
       fallback: "\u{25C4}\u{25BA}",
@@ -217,7 +238,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   // MARK: - Setup
 
   private func setupButtons() {
-    for button in [backButton, forwardButton, reloadButton, foldButton] {
+    for button in [backButton, forwardButton, reloadButton, muteButton, foldButton] {
       button.bezelStyle = .inline
       button.isBordered = false
       button.font = .systemFont(ofSize: 10)
@@ -232,6 +253,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     reloadButton.target = self
     reloadButton.action = #selector(reloadAction)
     reloadButton.toolTip = "Reload"
+    muteButton.target = self
+    muteButton.action = #selector(muteAction)
+    muteButton.toolTip = "Mute tab"
+    muteButton.isHidden = true
     foldButton.target = self
     foldButton.action = #selector(foldAction)
     foldButton.toolTip = "Fold column"
@@ -239,6 +264,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     addSubview(backButton)
     addSubview(forwardButton)
     addSubview(reloadButton)
+    addSubview(muteButton)
     addSubview(foldButton)
   }
 
@@ -594,6 +620,22 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     extensionsTrailingToZoom = extToZoom
     extensionsTrailingToFold = extToFold
 
+    // The URL field anchors to the mute button when the speaker
+    // affordance is visible and snaps back to the reload button when
+    // it's hidden — the field reclaims the space rather than leaving
+    // a gap, matching how the zoom indicator's dual-constraint switch
+    // governs the extensions container.
+    let urlToReload = urlField.leadingAnchor.constraint(
+      equalTo: reloadButton.trailingAnchor, constant: 4
+    )
+    let urlToMute = urlField.leadingAnchor.constraint(
+      equalTo: muteButton.trailingAnchor, constant: 4
+    )
+    urlToReload.isActive = true
+    urlToMute.isActive = false
+    urlFieldLeadingToReload = urlToReload
+    urlFieldLeadingToMute = urlToMute
+
     NSLayoutConstraint.activate([
       backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
       backButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -610,7 +652,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
       reloadButton.widthAnchor.constraint(equalToConstant: buttonSize),
       reloadButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
-      urlField.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 4),
+      muteButton.leadingAnchor.constraint(equalTo: reloadButton.trailingAnchor, constant: 2),
+      muteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      muteButton.widthAnchor.constraint(equalToConstant: buttonSize),
+      muteButton.heightAnchor.constraint(equalToConstant: buttonSize),
+
       urlField.trailingAnchor.constraint(
         equalTo: extensionsContainer.leadingAnchor, constant: -6
       ),
@@ -827,6 +873,45 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     urlField.refusesFirstResponder = true
   }
 
+  /// Reflect the focused pane's mute / playback state in the speaker
+  /// affordance. The button is hidden when the pane has nothing to
+  /// say about audio (no active media, or muted on a page that
+  /// isn't actually playing anything) so quiet pages don't
+  /// accumulate UI noise. Visible when audio is actually emitting
+  /// or when the pane is muted but a media element is still active
+  /// — that second branch keeps the unmute affordance reachable
+  /// after the user mutes an audible tab. When visible:
+  ///   - `isMuted` shows `speaker.slash.fill` (struck-through), tip
+  ///     "Unmute tab".
+  ///   - playing & not muted shows `speaker.wave.2.fill`, tip
+  ///     "Mute tab".
+  /// Toggles the URL field's leading anchor between reload / mute so
+  /// the field reclaims the slot when the speaker disappears.
+  public func setMuteState(isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool) {
+    let visible = isPlayingAudio || (isMuted && hasActiveMedia)
+    muteButton.isHidden = !visible
+    if visible {
+      urlFieldLeadingToReload?.isActive = false
+      urlFieldLeadingToMute?.isActive = true
+    } else {
+      urlFieldLeadingToMute?.isActive = false
+      urlFieldLeadingToReload?.isActive = true
+    }
+    let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+    let accessibility = isMuted ? "Unmute tab" : "Mute tab"
+    if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
+      .withSymbolConfiguration(Self.iconConfig)
+    {
+      muteButton.image = image
+      muteButton.imagePosition = .imageOnly
+      muteButton.title = ""
+    } else {
+      muteButton.image = nil
+      muteButton.title = isMuted ? "\u{1F507}" : "\u{1F50A}"
+    }
+    muteButton.toolTip = accessibility
+  }
+
   /// Update the inline zoom indicator to reflect the focused browser
   /// pane's current `pageZoom`. Pass 1.0 to hide the indicator (the
   /// URL field reclaims the trailing space); non-default values
@@ -973,6 +1058,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     } else {
       onReload?()
     }
+  }
+
+  @objc private func muteAction() {
+    onClicked?()
+    onMuteToggle?()
   }
 
   @objc private func foldAction() {
