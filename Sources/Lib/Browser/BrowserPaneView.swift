@@ -130,9 +130,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Whether this pane was constructed for a `WKWebExtensionContext`
   /// (e.g. an extension's options page). The flag gates services that
   /// only make sense for general web content — adblocker rule-list
-  /// late-attach, hover-link preview — so an extension-owned pane
-  /// keeps the configuration WebKit handed it untouched.
-  private let isExtensionHosted: Bool
+  /// late-attach, hover-link preview, persistent site mute — so an
+  /// extension-owned pane keeps the configuration WebKit handed it
+  /// untouched.
+  let isExtensionHosted: Bool
 
   public override convenience init(frame: NSRect) {
     self.init(frame: frame, extensionContext: nil, dataStore: nil)
@@ -829,6 +830,27 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         }
       }
     }
+    applySiteMutePreference()
+  }
+
+  /// Apply the persistent per-site mute preference to a freshly
+  /// landed page. Looks up the current host in `MutedSitesStore` and
+  /// flips the pane to `setMuted(true)` when it matches; the
+  /// in-tab toggle path stays authoritative once the page has
+  /// loaded, so an already-muted pane stays muted regardless of the
+  /// store state and the unmute direction is the user's call.
+  ///
+  /// Re-evaluating on `pushState` / `replaceState` isn't necessary —
+  /// the History API's same-origin restriction means the host can't
+  /// change without triggering a full navigation, and the store is
+  /// keyed by host alone.
+  private func applySiteMutePreference() {
+    guard !isExtensionHosted, !isMuted,
+      let host = webView.url?.host(percentEncoded: false),
+      !host.isEmpty,
+      MutedSitesStore.shared.isMuted(host: host)
+    else { return }
+    setMuted(true)
   }
 
   public func webView(
@@ -1031,12 +1053,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// live media element, regardless of whether sound is actually
   /// coming out. `<video autoplay muted>` hero videos register as
   /// `.playing`; niconico's player stays at `.paused` through
-  /// visible playback. The injected `__e05_audioState` walks the DOM
-  /// and reports two bits — "any media active" and "audio actually
-  /// audible" — so the UI can keep the speaker glyph reachable on a
-  /// muted-but-active tab while still hiding it on quiet pages. Web
-  /// Audio / WebRTC / cross-origin iframes are still out of reach —
-  /// escalation path is `_setPageMuted:` SPI.
+  /// visible playback. The injected `__e05_isAudible` walks the DOM
+  /// and only returns true for elements that meet
+  /// `!paused && !muted && volume>0 && readyState>=2 && !ended`,
+  /// which is what users actually mean by "this tab is making
+  /// noise". Web Audio / WebRTC / cross-origin iframes are still
+  /// out of reach — escalation path is `_setPageMuted:` SPI.
   public func updateAudioStateOnce() async {
     if isExtensionHosted { return }
     let state = await webView.requestMediaPlaybackState()

@@ -248,6 +248,17 @@ extension PaneContainerViewController {
       pane.urlBar.onMuteToggle = { [weak bv] in
         bv?.toggleMute()
       }
+      pane.urlBar.onMuteSiteToggle = { [weak self] host in
+        let store = MutedSitesStore.shared
+        let nextMuted = !store.isMuted(host: host)
+        store.setMuted(nextMuted, host: host)
+        // Apply the new state to every already-open pane on the
+        // same host so the toggle reads as "set this site's mute
+        // policy" rather than "remember it for next time"; future
+        // pane loads pick the value up through
+        // `applySiteMutePreference` after navigation.
+        self?.applyMuteToPanes(matchingHost: host, muted: nextMuted)
+      }
       bv.onDownloadStarted = { [weak self] wkDownload in
         self?.downloadsManager.adopt(wkDownload)
       }
@@ -1096,6 +1107,29 @@ extension PaneContainerViewController {
   /// shifted, since muting from the sidebar is a one-shot action.
   public func toggleMuteForPane(id paneId: ULID) {
     locatePane(id: paneId)?.pane.browserView?.toggleMute()
+  }
+
+  /// Apply `muted` to every already-open browser pane whose current
+  /// URL host matches `host` (case-insensitive). The site-mute menu
+  /// uses this so a "Mute this Site" toggle takes effect on every
+  /// in-flight tab rather than only the one the menu opened from;
+  /// panes that load the host *after* the toggle pick the value up
+  /// through `BrowserPaneView.applySiteMutePreference` on
+  /// navigation finish.
+  public func applyMuteToPanes(matchingHost host: String, muted: Bool) {
+    let target = host.lowercased()
+    for ws in workspaces {
+      for col in ws.columns {
+        for pane in col.panes {
+          guard let bv = pane.browserView,
+            !bv.isExtensionHosted,
+            let paneHost = bv.webView.url?.host(percentEncoded: false),
+            paneHost.lowercased() == target
+          else { continue }
+          bv.setMuted(muted)
+        }
+      }
+    }
   }
 
   /// Resolved coordinate of a pane found by id. Carries the

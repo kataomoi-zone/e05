@@ -3,7 +3,7 @@ import AppKit
 /// Shared URL bar for all pane types. Displays the current address and allows navigation.
 /// Toggleable visibility — when hidden, PaneHeaderView serves as fallback notification.
 @MainActor
-public final class PaneURLBar: NSView, NSTextFieldDelegate {
+public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   public static let barHeight: CGFloat = 28
 
   private let backButton: HoverIconButton
@@ -106,6 +106,26 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// Called when the user clicks the speaker affordance to toggle
   /// the pane's mute flag.
   public var onMuteToggle: (() -> Void)?
+  /// Called when the user picks "Mute this Site" / "Unmute this Site"
+  /// from the speaker's right-click menu. The host string is the
+  /// fully-qualified host of the URL the bar last displayed; the
+  /// caller decides whether to add or remove the entry.
+  public var onMuteSiteToggle: ((String) -> Void)?
+
+  /// Host of the URL most recently passed to `setDisplayURL`,
+  /// captured for the speaker's right-click "Mute this Site" menu.
+  /// The URL bar is single-source-of-truth for what the user sees;
+  /// pulling the host from here (rather than `webView.url`) keeps
+  /// the menu's site reference aligned with the displayed string.
+  ///
+  /// `setDisplayURL` is only called by the host pane with model-
+  /// derived URL strings, never with raw field-editor input or
+  /// suggestion previews, so `currentHost` cannot drift to text the
+  /// user is typing. A non-URL display string (e.g. an `e05://`
+  /// internal scheme without a host) collapses `currentHost` to
+  /// `nil` and `menuNeedsUpdate(_:)` builds an empty menu — no
+  /// stale-host risk.
+  private var currentHost: String?
   /// Called when user presses ESC to dismiss URL field.
   public var onCancel: (() -> Void)?
   /// Called when text changes in the URL field. Return suggestions to display.
@@ -257,6 +277,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
     muteButton.action = #selector(muteAction)
     muteButton.toolTip = "Mute tab"
     muteButton.isHidden = true
+    // Right-click on the speaker opens a context menu with the
+    // persistent "Mute this Site" toggle. The menu's items are
+    // rebuilt in `menuNeedsUpdate(_:)` against the current host so
+    // the label flips between Mute / Unmute without keeping a
+    // separate cache.
+    let muteContextMenu = NSMenu()
+    muteContextMenu.delegate = self
+    muteButton.menu = muteContextMenu
     foldButton.target = self
     foldButton.action = #selector(foldAction)
     foldButton.toolTip = "Fold column"
@@ -818,6 +846,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   /// Update the displayed URL text.
   public func setDisplayURL(_ urlString: String) {
     writeURLFieldText(urlString)
+    if let url = URL(string: urlString),
+      let host = url.host(percentEncoded: false), !host.isEmpty
+    {
+      currentHost = host
+    } else {
+      currentHost = nil
+    }
   }
 
   /// Enable/disable back and forward buttons.
@@ -1063,6 +1098,35 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate {
   @objc private func muteAction() {
     onClicked?()
     onMuteToggle?()
+  }
+
+  @objc private func muteSiteAction(_ sender: NSMenuItem) {
+    guard let host = sender.representedObject as? String else { return }
+    onClicked?()
+    onMuteSiteToggle?(host)
+  }
+
+  // MARK: - NSMenuDelegate (speaker right-click)
+
+  /// Rebuild the speaker's right-click menu against the current
+  /// host so the label flips between "Mute this Site" and "Unmute
+  /// this Site" as the persistent state changes. The current host
+  /// is captured per call so the menu reflects whatever URL the
+  /// host last passed through `setDisplayURL`; a host-less bar
+  /// (terminal / finder pane, or a non-URL display) yields an
+  /// empty menu so the right-click reads as a no-op rather than
+  /// dispatching against the wrong site.
+  public func menuNeedsUpdate(_ menu: NSMenu) {
+    guard menu === muteButton.menu else { return }
+    menu.removeAllItems()
+    guard let host = currentHost else { return }
+    let isSiteMuted = MutedSitesStore.shared.isMuted(host: host)
+    let title = isSiteMuted ? "Unmute this Site" : "Mute this Site"
+    let item = NSMenuItem(
+      title: title, action: #selector(muteSiteAction(_:)), keyEquivalent: "")
+    item.target = self
+    item.representedObject = host
+    menu.addItem(item)
   }
 
   @objc private func foldAction() {
