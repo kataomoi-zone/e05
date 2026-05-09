@@ -264,6 +264,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     else {
       return true
     }
+    // Disable every e05 action while the main window has a sheet
+    // attached. The modern `requestMediaCapturePermissionFor` hook
+    // ships with WebKit's own modal hold so the parent window's key
+    // dispatch is suspended for free, but the legacy
+    // `_webView:requestGeolocationPermissionForOrigin:...` SPI does
+    // not — without this guard a geolocation prompt sees ⌘W slip
+    // through to `removeCurrentPane`, the pane vanishes mid-sheet,
+    // and AppKit leaves the modal dim layer orphaned on the host
+    // window. Stock AppKit actions (Edit > Cut/Copy/Paste, Window
+    // menu, …) bypass this validator entirely and stay reachable.
+    if NSApp.mainWindow?.attachedSheet != nil {
+      return false
+    }
     let action = actions[menuItem.tag]
     guard let validate = action.validate else { return true }
     let result = validate()

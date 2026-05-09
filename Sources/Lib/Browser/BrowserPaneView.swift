@@ -142,6 +142,31 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// auto-respond, then read-only afterwards.
   var sessionPermissions: [String: PermissionEntry] = [:]
 
+  /// Pending permission-prompt queue. The frontmost entry maps to
+  /// the NSAlert sheet currently displayed; subsequent entries wait
+  /// behind it and present when the active sheet completes. The
+  /// queue exists so two concurrent WebKit permission requests
+  /// (e.g. camera then geolocation arriving in the same tick) do
+  /// not stack two near-identical sheets onto the same window. The
+  /// detach path (`viewWillMove(toWindow: nil)`) drains every entry
+  /// with `.deny` so WebKit's "decisionHandler must fire exactly
+  /// once" contract is honoured even when the pane is closed
+  /// mid-prompt.
+  var pendingPermissionPrompts: [PermissionPromptRequest] = []
+
+  /// Sheet window for the active permission prompt, captured so
+  /// the detach path can `endSheet` it explicitly. Weak because
+  /// AppKit owns the alert's window and we just want to ride along
+  /// for cancellation.
+  weak var activePermissionAlertWindow: NSWindow?
+
+  public override func viewWillMove(toWindow newWindow: NSWindow?) {
+    super.viewWillMove(toWindow: newWindow)
+    if newWindow == nil {
+      drainPermissionPromptsOnDetach()
+    }
+  }
+
   public override convenience init(frame: NSRect) {
     self.init(frame: frame, extensionContext: nil, dataStore: nil)
   }
@@ -811,9 +836,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// surfaces a single decision per request, so a combined
   /// `.cameraAndMicrophone` request requires a unanimous grant
   /// across both kinds before granting; any deny or undecided slot
-  /// resolves to deny so the safer answer wins. The undecided
-  /// branch falls back to deny in this stub — the prompt UI swaps
-  /// it for an interactive sheet in a follow-up commit.
+  /// resolves to deny so the safer answer wins. An undecided
+  /// request falls through to the Safari-style prompt sheet so the
+  /// user can record the choice (session-only or persistent) for
+  /// every kind in the request at once.
   public func webView(
     _: WKWebView,
     requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -826,23 +852,45 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     case .camera: kinds = [.camera]
     case .microphone: kinds = [.microphone]
     case .cameraAndMicrophone: kinds = [.camera, .microphone]
-    @unknown default: kinds = []
+    @unknown default:
+      logger.warning(
+        "[permissions/media] Unknown WKMediaCaptureType raw=\(type.rawValue, privacy: .public); denying"
+      )
+      kinds = []
     }
-    decisionHandler(resolvePermissionDecision(host: origin.host, kinds: kinds) ?? .deny)
+    if let resolved = resolvePermissionDecision(host: origin.host, kinds: kinds) {
+      decisionHandler(resolved)
+      return
+    }
+    promptForPermission(host: origin.host, kinds: kinds, completion: decisionHandler)
   }
 
-  /// Geolocation permission requests originate here. Resolution
-  /// follows the same session-then-store lookup as the media
-  /// capture path; the undecided branch falls back to deny until
-  /// the prompt UI lands.
-  public func webView(
+  /// Geolocation permission requests reach the delegate through the
+  /// `WKUIDelegatePrivate` SPI instead of a public selector — the
+  /// `webView(_:requestGeolocationPermissionFor:initiatedByFrame:decisionHandler:)`
+  /// counterpart is gated `WK_MAC_TBA` in WebKit trunk and absent
+  /// from every shipping macOS SDK, so `@optional` Swift methods
+  /// declared with that name are silently never invoked. The SPI
+  /// has been stable since macOS 12 and is what `UIDelegate.mm`
+  /// actually dispatches against; the `@objc` selector override
+  /// matches it without needing a bridging header. The completion
+  /// handler takes `Bool` (legacy shape), so the prompt's
+  /// `WKPermissionDecision` is folded down via `== .grant`.
+  @objc(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
+  public func _webView(
     _: WKWebView,
-    requestGeolocationPermissionFor origin: WKSecurityOrigin,
+    requestGeolocationPermissionForOrigin origin: WKSecurityOrigin,
     initiatedByFrame _: WKFrameInfo,
-    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    decisionHandler: @escaping @MainActor @Sendable (Bool) -> Void
   ) {
-    decisionHandler(
-      resolvePermissionDecision(host: origin.host, kinds: [.geolocation]) ?? .deny)
+    let host = origin.host
+    if let resolved = resolvePermissionDecision(host: host, kinds: [.geolocation]) {
+      decisionHandler(resolved == .grant)
+      return
+    }
+    promptForPermission(host: host, kinds: [.geolocation]) { decision in
+      decisionHandler(decision == .grant)
+    }
   }
 
   /// Look up `(host, kinds)` against the per-pane session dict
@@ -851,12 +899,26 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// prompt UI; any deny in the chain short-circuits to `.deny` so
   /// a partial grant (e.g. mic granted, camera denied) never
   /// escalates into a combined grant.
+  ///
+  /// Combined-request quirk: a session-only deny for one kind
+  /// silently shadows a stored grant for another kind in a combined
+  /// request. E.g. the user persists camera as Always-Allow and
+  /// then session-denies microphone; a subsequent
+  /// `.cameraAndMicrophone` request resolves to `.deny` here
+  /// without re-prompting because every slot is decided. This
+  /// matches the Brave / Safari "any deny wins" rule, but the deny
+  /// side never surfaces a fresh prompt to the user.
   private func resolvePermissionDecision(
     host: String,
     kinds: [PermissionKind]
   ) -> WKPermissionDecision? {
     let normalized = host.lowercased()
-    guard !normalized.isEmpty, !kinds.isEmpty else { return .deny }
+    guard !normalized.isEmpty, !kinds.isEmpty else {
+      logger.warning(
+        "[permissions/resolve] Invalid request (host=\"\(host, privacy: .public)\" kinds=\(kinds.count)); denying"
+      )
+      return .deny
+    }
     var states: [PermissionState] = []
     for kind in kinds {
       if let session = sessionPermissions[normalized]?.state(for: kind) {

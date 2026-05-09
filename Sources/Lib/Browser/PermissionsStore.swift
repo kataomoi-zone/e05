@@ -49,7 +49,7 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
     }
   }
 
-  fileprivate mutating func setState(
+  public mutating func setState(
     _ state: PermissionState?, for kind: PermissionKind
   ) {
     switch kind {
@@ -59,7 +59,7 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
     }
   }
 
-  fileprivate var isEmpty: Bool {
+  var isEmpty: Bool {
     camera == nil && microphone == nil && geolocation == nil
   }
 }
