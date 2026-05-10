@@ -12,13 +12,14 @@ extension PaneContainerViewController {
   /// + word-boundary) plus bookmark and frecency bonuses.
   ///
   /// Cost: O(B + H × |query| × avg(|url| + |title|)) where B =
-  /// bookmarks, H ≤ 500. Runs synchronously on the main thread,
-  /// acceptable under `PaneURLBar`'s ~150ms debounce. If the
-  /// history cap ever grows meaningfully past 500, hoist this onto
-  /// a background Task to avoid main-thread blocking while typing.
+  /// bookmarks, H ≤ `BrowsingHistory.defaultAggregatedLimit`. Runs
+  /// synchronously on the main thread, acceptable under
+  /// `PaneURLBar`'s ~150ms debounce. If the history cap ever grows
+  /// meaningfully past that limit, hoist this onto a background
+  /// Task to avoid main-thread blocking while typing.
   func searchSuggestions(query: String) -> [Suggestion] {
     let bookmarkEntries = bookmarks.all()
-    let historyEntries = browsingHistory.mostRecentAggregated(limit: 500)
+    let historyEntries = browsingHistory.mostRecentAggregated()
     let bookmarkURLs = Set(bookmarkEntries.map(\.url))
 
     var candidates: [Suggestion] = bookmarkEntries
@@ -79,7 +80,7 @@ extension PaneContainerViewController {
         title: "\(query) \u{2014} DuckDuckGo Search",
         isBookmark: false
       )
-      let insertAt = min(3, results.count)  // after top 3 matches
+      let insertAt = min(Self.searchEntryInsertOffset, results.count)
       results.insert(searchEntry, at: insertAt)
     }
 
@@ -180,6 +181,12 @@ extension PaneContainerViewController {
   /// Kept in sync with `SuggestionListView.maxVisibleRows` so the list
   /// never scrolls.
   static let maxSuggestionRows = 8
+
+  /// Position at which to insert the explicit search-engine entry into
+  /// the suggestion list, measured from the top. Placed after the top
+  /// few strong matches (Brave-style) so direct hits remain reachable
+  /// by ↓-Enter without skipping a search affordance underneath.
+  static let searchEntryInsertOffset = 3
 
   /// Hosts whose `?q=` parameter is the canonical identity of the
   /// page. Two visits to such a host with different peripheral

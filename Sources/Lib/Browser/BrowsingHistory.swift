@@ -168,11 +168,18 @@ public final class BrowsingHistory {
 
   // MARK: - Read
 
+  /// Default cap on the aggregated-history pool the URL bar walks
+  /// through `Suggestion.rank`. Sized large enough that even
+  /// frequently-visited tail entries reach the rank step, small
+  /// enough that the per-keystroke `O(N × |query|)` substring scan
+  /// stays under the ~150ms debounce budget.
+  public static let defaultAggregatedLimit = 500
+
   /// Get the most recent history entries deduplicated by URL,
   /// joined with the URL's total visit count and last-visit
   /// timestamp. The URL bar feeds these into a frecency bonus on
   /// top of the substring-match score.
-  public func mostRecentAggregated(limit: Int = 500) -> [AggregatedEntry] {
+  public func mostRecentAggregated(limit: Int = defaultAggregatedLimit) -> [AggregatedEntry] {
     guard let db else { return [] }
     let sql = """
       SELECT h.url, h.title, agg.visits, agg.last_visit
