@@ -105,7 +105,7 @@ final class SidebarOverlayView: NSView {
   /// workspace background.
   private func applyGlassTint() {
     let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    glass.tintColor = isDark ? NSColor(white: 0.05, alpha: 0.3) : nil
+    glass.tintColor = isDark ? AppColors.sidebarGlassTint : nil
   }
 
   override func viewDidChangeEffectiveAppearance() {

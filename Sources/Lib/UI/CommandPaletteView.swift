@@ -59,9 +59,9 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private func setup() {
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = NSColor(white: 0.12, alpha: 0.95).cgColor
+    layer?.backgroundColor = AppColors.popoverSurfaceTranslucent.cgColor
     layer?.cornerRadius = 10
-    layer?.borderColor = NSColor(white: 0.3, alpha: 1.0).cgColor
+    layer?.borderColor = AppColors.popoverBorder.cgColor
     layer?.borderWidth = 1
     shadow = NSShadow()
     layer?.shadowColor = NSColor.black.withAlphaComponent(0.5).cgColor

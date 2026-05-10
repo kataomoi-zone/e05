@@ -276,7 +276,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = NSColor(white: 0.15, alpha: 1.0).cgColor
+    layer?.backgroundColor = AppColors.paneSurface.cgColor
 
     focusReportingWebView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()
@@ -375,7 +375,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // on first attach. `drawsBackground` is a long-stable private
     // property accessed via KVC; there is no public replacement.
     webView.setValue(false, forKey: "drawsBackground")
-    webView.underPageBackgroundColor = NSColor(white: 0.15, alpha: 1.0)
+    webView.underPageBackgroundColor = AppColors.paneSurface
     browserHostView.addSubview(webView)
   }
 

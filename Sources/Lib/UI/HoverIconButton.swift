@@ -58,7 +58,7 @@ public final class HoverIconButton: NSButton {
   private func updateHoverAppearance() {
     layer?.backgroundColor =
       isHovering
-      ? NSColor(white: 1.0, alpha: 0.1).cgColor
+      ? AppColors.buttonHoverOverlay.cgColor
       : nil
   }
 }

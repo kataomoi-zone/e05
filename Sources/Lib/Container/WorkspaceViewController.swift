@@ -60,7 +60,7 @@ public final class WorkspaceViewController: NSViewController {
     scrollView.hasHorizontalScroller = true
     scrollView.hasVerticalScroller = false
     scrollView.drawsBackground = true
-    scrollView.backgroundColor = NSColor(white: 0.5, alpha: 1.0)  // neutral gray
+    scrollView.backgroundColor = AppColors.workspaceBackground
     scrollView.horizontalScrollElasticity = .allowed
     scrollView.verticalScrollElasticity = .none
     scrollView.automaticallyAdjustsContentInsets = false

@@ -148,7 +148,7 @@ public final class ToastPillView: NSView {
     layer?.masksToBounds = false
     layer?.backgroundColor = accent.withAlphaComponent(0.92).cgColor
     layer?.borderWidth = 0.5
-    layer?.borderColor = NSColor(white: 1.0, alpha: 0.18).cgColor
+    layer?.borderColor = AppColors.toastBorder.cgColor
     // Faint glow so the pill stays visible even over high-contrast
     // pane content like dark code editors with bright syntax tokens.
     layer?.shadowColor = accent.cgColor

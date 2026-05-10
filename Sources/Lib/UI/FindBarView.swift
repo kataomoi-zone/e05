@@ -75,12 +75,12 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     super.init(frame: frame)
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = NSColor(white: 0.13, alpha: 0.92).cgColor
+    layer?.backgroundColor = AppColors.findBarSurface.cgColor
     layer?.cornerRadius = 12
     layer?.cornerCurve = .continuous
     layer?.masksToBounds = true
     layer?.borderWidth = 0.5
-    layer?.borderColor = NSColor(white: 1.0, alpha: 0.08).cgColor
+    layer?.borderColor = AppColors.findBarBorder.cgColor
 
     setupField()
     setupMatchCountLabel()

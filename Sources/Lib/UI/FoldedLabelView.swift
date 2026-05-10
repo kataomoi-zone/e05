@@ -63,7 +63,7 @@ public final class FoldedLabelView: NSView {
 
   private func setup() {
     wantsLayer = true
-    layer?.backgroundColor = NSColor(white: 0.12, alpha: 1.0).cgColor
+    layer?.backgroundColor = AppColors.popoverSurface.cgColor
 
     // Rotate label -90° (clockwise) so text reads top-to-bottom (Watchtower-style).
     label.frameCenterRotation = -90

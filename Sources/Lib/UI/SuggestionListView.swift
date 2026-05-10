@@ -59,9 +59,9 @@ public final class SuggestionListView: NSView {
   private func setup() {
     wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = NSColor(white: 0.15, alpha: 0.95).cgColor
+    layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
     layer?.cornerRadius = 4
-    layer?.borderColor = NSColor(white: 0.3, alpha: 1.0).cgColor
+    layer?.borderColor = AppColors.popoverBorder.cgColor
     layer?.borderWidth = 1
 
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("suggestion"))

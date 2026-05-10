@@ -11,7 +11,7 @@ final class FinderStatusBar: NSView {
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
-    layer?.backgroundColor = NSColor(white: 0.08, alpha: 1.0).cgColor
+    layer?.backgroundColor = AppColors.statusBarSurface.cgColor
 
     label.font = .systemFont(ofSize: 11)
     label.textColor = .secondaryLabelColor

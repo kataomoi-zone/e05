@@ -243,7 +243,7 @@ private final class PlacesButton: NSView {
   private func applyBackground() {
     let showHover = isHovered && !isSelected
     layer?.backgroundColor =
-      showHover ? NSColor(white: 1.0, alpha: 0.08).cgColor : nil
+      showHover ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = showHover ? 6 : 0
   }
 
@@ -278,7 +278,7 @@ private final class SelectionIndicator: NSView {
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
-    layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.15).cgColor
+    layer?.backgroundColor = AppColors.activeOverlay.cgColor
     layer?.cornerRadius = 6
   }
 

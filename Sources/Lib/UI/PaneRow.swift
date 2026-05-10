@@ -295,7 +295,7 @@ final class PaneRow: NSView {
       return
     }
     layer?.backgroundColor =
-      isHovered ? NSColor(white: 1.0, alpha: 0.08).cgColor : nil
+      isHovered ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = isHovered ? 4 : 0
   }
 
