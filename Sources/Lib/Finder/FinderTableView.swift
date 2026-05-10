@@ -70,27 +70,29 @@ final class FinderTableView: NSTableView {
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
     switch event.keyCode {
-    case 49:  // Space
+    case KeyCode.space:
       if flags.isEmpty {
         pane.toggleQuickLook()
         return
       }
-    case 36, 76:  // Return / numpad enter — rename, matching Finder list view
+    case KeyCode.returnKey, KeyCode.numpadEnter:
+      // Rename, matching Finder list view.
       if flags.isEmpty {
         pane.beginRenameEntry()
         return
       }
-    case 51:  // Delete / Backspace — go up, matches Finder
+    case KeyCode.delete:
+      // Go up, matching Finder.
       if flags.isEmpty {
         pane.goUp()
         return
       }
-    case 124:  // Right arrow — enter selected
+    case KeyCode.rightArrow:
       if flags.isEmpty {
         pane.openSelectedRow()
         return
       }
-    case 123:  // Left arrow — go up
+    case KeyCode.leftArrow:
       if flags.isEmpty {
         pane.goUp()
         return

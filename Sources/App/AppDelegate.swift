@@ -133,12 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
     tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
       guard let self,
-        // 0x30 is Apple's virtual key code for Tab on standard
-        // layouts. Layout switches (JIS, Dvorak) keep the same
-        // physical-position mapping, but third-party remappers
-        // like Karabiner-Elements can override it — those setups
-        // are unverified here.
-        event.keyCode == 0x30
+        event.keyCode == KeyCode.tab
       else { return event }
       let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
       // Only handle plain ⌃⇥ / ⌃⇧⇥. Letting ⌘⇥ / ⌥⇥ through keeps

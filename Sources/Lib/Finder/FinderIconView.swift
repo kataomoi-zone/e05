@@ -90,17 +90,18 @@ final class FinderIconCollectionView: NSCollectionView {
     let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
     switch event.keyCode {
-    case 49:  // Space — Quick Look
+    case KeyCode.space:
       if flags.isEmpty {
         pane.toggleQuickLook()
         return
       }
-    case 36, 76:  // Return / numpad enter — rename, matching list view
+    case KeyCode.returnKey, KeyCode.numpadEnter:
+      // Rename, matching list view.
       if flags.isEmpty {
         pane.beginRenameEntry()
         return
       }
-    case 51:  // Delete / Backspace — go up
+    case KeyCode.delete:
       if flags.isEmpty {
         pane.goUp()
         return
