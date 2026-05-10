@@ -16,7 +16,37 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   private let muteButton: HoverIconButton
   private let foldButton: HoverIconButton
   private let urlField: NSTextField
-  private let suggestionList = SuggestionListView()
+  private let suggestionList = SuggestionListView(useGlass: true)
+  /// Child NSPanel that hosts `suggestionList`. AppKit's
+  /// NSTrackingArea machinery is not z-order aware, so a same-window
+  /// dropdown lets the WKWebView underneath keep firing hover events
+  /// (CSS `:hover`) even while the dropdown is on top. Lifting the
+  /// list into a child window makes hover / click routing bypass the
+  /// main window's contentView entirely — the WebView stops seeing
+  /// cursor traffic the moment the panel is ordered front. Mirrors
+  /// how Safari / Spotlight implement their popups.
+  ///
+  /// `nonactivatingPanel` keeps first responder on the URL field so
+  /// the user can keep typing after the panel appears; `popUpMenu`
+  /// level sits above ordinary windows; `transient` collection
+  /// behavior keeps the panel out of Mission Control / window cycle.
+  /// Created lazily on first show so panes that never present a
+  /// dropdown don't pay the allocation.
+  private var suggestionPanel: NSPanel?
+
+  /// Observer token for the workspace's clipView bounds notifications.
+  /// The panel sits in screen coordinates, so when the user scrolls
+  /// the workspace horizontally the URL field slides under the panel
+  /// without the panel following. Re-running `positionSuggestionList`
+  /// on every clipView bounds change keeps the panel anchored to the
+  /// field's current screen rect.
+  ///
+  /// `nonisolated(unsafe)` so `deinit` can read it under Swift 6
+  /// strict concurrency. `NSObjectProtocol` does not conform to
+  /// Sendable, but the value is only mutated on MainActor and only
+  /// read by the deinit handoff to NotificationCenter — the same
+  /// pattern as `BookmarksSidebarView.scrollObserver`.
+  nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
   /// Domain objects backing the current dropdown. `SuggestionListView`
   /// only knows about cell models (index-addressable), so we retain the
   /// originals here and translate between index ↔ `Suggestion` at the
@@ -234,6 +264,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // its closure alive inside NotificationCenter until the token
     // is removed explicitly.
     if let token = extensionsObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = scrollObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }
@@ -705,26 +738,133 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
   // MARK: - Suggestion List Positioning
 
-  /// Position the suggestion list below the URL field using frame-based layout.
-  /// Uses window's content view for z-ordering above all pane content.
-  private func positionSuggestionList() {
-    guard let windowContentView = window?.contentView else { return }
+  /// Build (or reattach) the child NSPanel that hosts the suggestion
+  /// list. Idempotent: subsequent calls return the existing panel and
+  /// re-parent it if the URL bar has migrated to a different host
+  /// window (single-window-app invariant currently rules this out, but
+  /// the guard is cheap insurance against future multi-window changes).
+  private func ensureSuggestionPanel(parentWindow: NSWindow) -> NSPanel {
+    if let panel = suggestionPanel {
+      if panel.parent !== parentWindow {
+        panel.parent?.removeChildWindow(panel)
+        parentWindow.addChildWindow(panel, ordered: .above)
+      }
+      return panel
+    }
+    let panel = NSPanel(
+      contentRect: .zero,
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: true
+    )
+    panel.contentView = suggestionList
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
+    panel.level = .popUpMenu
+    panel.hidesOnDeactivate = true
+    panel.collectionBehavior = [.transient, .ignoresCycle]
+    panel.acceptsMouseMovedEvents = true
+    // The panel is owned through `suggestionPanel` and via the parent's
+    // child-window retain. Disabling the implicit close-then-release
+    // path avoids the double-release crash if AppKit ever closes the
+    // panel from a path we don't drive (e.g. parent close while we
+    // still hold the reference).
+    panel.isReleasedWhenClosed = false
+    parentWindow.addChildWindow(panel, ordered: .above)
+    suggestionPanel = panel
+    return panel
+  }
 
-    if suggestionList.superview !== windowContentView {
-      suggestionList.removeFromSuperview()
-      windowContentView.addSubview(suggestionList)
+  /// Position the suggestion panel directly below the URL field and
+  /// drive its visibility from `suggestionList.isHidden`. The list's
+  /// own `update(items:)` is the source of truth for whether anything
+  /// is worth showing — empty results hide the list, populated results
+  /// reveal it — so this method just translates that flag into the
+  /// panel's `orderFront` / `orderOut` lifecycle.
+  private func positionSuggestionList() {
+    if suggestionList.isHidden {
+      suggestionPanel?.orderOut(nil)
+      return
+    }
+    guard let mainWindow = window else { return }
+
+    // Capture the list's height before `ensureSuggestionPanel`. The
+    // first-time `panel.contentView = suggestionList` assignment
+    // resizes the contentView to the panel's `contentLayoutRect`
+    // (zero on a freshly init'd panel), wiping the height that
+    // `update(items:)` just wrote.
+    let listHeight = suggestionList.frame.size.height
+
+    let panel = ensureSuggestionPanel(parentWindow: mainWindow)
+
+    // Anchor the panel to the URL field's bottom edge in screen
+    // coordinates. AppKit screen Y is bottom-up, so subtracting the
+    // panel height from `fieldOnScreen.minY` puts the panel just below
+    // the field visually (same outcome as the prior windowContentView
+    // path, just routed through screen space because child windows
+    // live there).
+    let fieldInWindow = urlField.convert(urlField.bounds, to: nil)
+    let fieldOnScreen = mainWindow.convertToScreen(fieldInWindow)
+
+    // Clip the URL field's screen rect to the host window's frame.
+    // The URL field can sit partly (or wholly) outside the window
+    // when the user scrolls the workspace far enough that the field's
+    // pane is past either edge. A child window doesn't inherit the
+    // parent contentView's clipping, so without this clip the panel
+    // can render past the window — fully off-screen on hard scrolls,
+    // or as a thin vertical sliver when only a few pixels of field
+    // peek over the edge. The Liquid Glass blur in those positions
+    // also picks up undefined off-screen sample sources, which shows
+    // up as the dropdown turning white when the field eventually
+    // scrolls back. Clipping to the window bounds keeps the panel
+    // anchored to whatever portion of the field is actually visible.
+    let windowFrame = mainWindow.frame
+    let visibleLeft = max(fieldOnScreen.minX, windowFrame.minX)
+    let visibleRight = min(fieldOnScreen.maxX, windowFrame.maxX)
+    let visibleWidth = max(0, visibleRight - visibleLeft)
+
+    // If the field is essentially clipped away, hide the panel
+    // outright. Showing a 20pt-wide dropdown over the last visible
+    // sliver is unreadable and the partial render would push past
+    // the clamp anyway. The threshold is intentionally loose so that
+    // even a half-clipped field still gets a useful (if narrow)
+    // dropdown rather than vanishing on the slightest overscroll.
+    let minVisibleWidth: CGFloat = 80
+    if visibleWidth < minVisibleWidth {
+      panel.orderOut(nil)
+      return
     }
 
-    // Convert URL field's bottom-left to window content view coordinates
-    // AppKit Y=0 is bottom, so fieldFrame.minY is the bottom edge of the field
-    let fieldFrame = urlField.convert(urlField.bounds, to: windowContentView)
-
-    suggestionList.frame = NSRect(
-      x: fieldFrame.minX,
-      y: fieldFrame.minY - suggestionList.frame.height,
-      width: fieldFrame.width,
-      height: suggestionList.frame.height
+    let panelFrame = NSRect(
+      x: visibleLeft,
+      y: fieldOnScreen.minY - listHeight,
+      width: visibleWidth,
+      height: listHeight
     )
+    panel.setFrame(panelFrame, display: true)
+    panel.orderFront(nil)
+  }
+
+  /// Detach the suggestion panel and the workspace scroll observer
+  /// when the URL bar leaves its window. The parent window retains
+  /// its child windows, so without explicit detachment the panel
+  /// would survive past the pane's lifetime in the parent's
+  /// child-window list. The scroll observer is released for symmetry
+  /// — the next `viewDidMoveToWindow` rebinds whichever scrollView
+  /// the URL bar then sits under.
+  public override func viewWillMove(toWindow newWindow: NSWindow?) {
+    super.viewWillMove(toWindow: newWindow)
+    guard newWindow == nil else { return }
+    if let panel = suggestionPanel {
+      panel.orderOut(nil)
+      panel.parent?.removeChildWindow(panel)
+      suggestionPanel = nil
+    }
+    if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+      scrollObserver = nil
+    }
   }
 
   public override func viewDidMoveToWindow() {
@@ -736,6 +876,29 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
         self, selector: #selector(windowDidResize),
         name: NSWindow.didResizeNotification, object: window
       )
+    }
+    // Subscribe to the workspace clipView's bounds change so the
+    // suggestion panel re-anchors to the URL field's screen rect as
+    // the user scrolls panes horizontally. The panel lives in screen
+    // coordinates, so without this it would sit at the field's
+    // pre-scroll position until the next debounce typed-in re-runs
+    // `positionSuggestionList`.
+    if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+      scrollObserver = nil
+    }
+    if let clipView = enclosingScrollView?.contentView {
+      clipView.postsBoundsChangedNotifications = true
+      scrollObserver = NotificationCenter.default.addObserver(
+        forName: NSView.boundsDidChangeNotification,
+        object: clipView,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          guard let self, !self.suggestionList.isHidden else { return }
+          self.positionSuggestionList()
+        }
+      }
     }
     // Wire up suggestion click handler. The list reports an index into
     // the cell model array — we look up the matching Suggestion in our
@@ -977,6 +1140,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     }
   }
 
+  /// Public entry point used by the host (`PaneContainerViewController`)
+  /// to close the dropdown synchronously before a workspace slide
+  /// animation starts. Without it the focus-loss path
+  /// (`controlTextDidEndEditing`'s deferred dismiss) only fires after
+  /// `setFocus` has moved first responder, which lands several frames
+  /// past the slide's start and leaves the dropdown stranded over the
+  /// outgoing workspace for the duration of the animation. Mirrors
+  /// `closeFindBar` in the workspace-switch path.
+  public func dismissSuggestionDropdown() {
+    dismissSuggestions()
+  }
+
   /// Hide the suggestion dropdown AND cancel any debounce timer that
   /// hasn't fired yet. Without the timer cancel, a fast
   /// type→Enter sequence dismisses the list before the debounce
@@ -989,6 +1164,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     searchDebounceTimer?.invalidate()
     searchDebounceTimer = nil
     suggestionList.dismiss()
+    suggestionPanel?.orderOut(nil)
   }
 
   /// Push `text` into the URL field while keeping the cell value and

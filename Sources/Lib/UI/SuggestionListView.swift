@@ -46,7 +46,19 @@ public final class SuggestionListView: NSView {
   /// etc.) to enact the selection.
   public var onSelectIndex: ((Int) -> Void)?
 
+  /// macOS 26 Liquid Glass surface used when the host opted into
+  /// `useGlass`. Hosts that already provide their own popover surface
+  /// leave this nil and fall back to a flat translucent fill.
+  private let glass: NSGlassEffectView?
+
+  public init(useGlass: Bool = false) {
+    self.glass = useGlass ? NSGlassEffectView() : nil
+    super.init(frame: .zero)
+    setup()
+  }
+
   public override init(frame: NSRect) {
+    self.glass = nil
     super.init(frame: frame)
     setup()
   }
@@ -57,12 +69,41 @@ public final class SuggestionListView: NSView {
   }
 
   private func setup() {
-    wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
-    layer?.cornerRadius = 4
-    layer?.borderColor = AppColors.popoverBorder.cgColor
-    layer?.borderWidth = 1
+
+    // The "surface" hosts the scrollView. With Liquid Glass it is the
+    // glass's contentView (so blur + tint + corner clip live on the
+    // glass backing layer); without it, the surface is `self` and the
+    // dropdown renders as a flat translucent rounded rect.
+    let surface: NSView
+    if let glass {
+      glass.translatesAutoresizingMaskIntoConstraints = false
+      let content = NSView()
+      content.translatesAutoresizingMaskIntoConstraints = false
+      glass.contentView = content
+      glass.wantsLayer = true
+      // Match `SidebarOverlayView` and `PaneModel.containerView` so the
+      // dropdown reads as the same material tier as the rest of the
+      // window chrome (lessons.md "NSGlassEffectView の cornerRadius").
+      glass.layer?.cornerRadius = 12
+      glass.layer?.cornerCurve = .continuous
+      glass.layer?.masksToBounds = true
+      addSubview(glass)
+      NSLayoutConstraint.activate([
+        glass.topAnchor.constraint(equalTo: topAnchor),
+        glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+        glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+        glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+      ])
+      surface = content
+    } else {
+      wantsLayer = true
+      layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
+      layer?.cornerRadius = 4
+      layer?.borderColor = AppColors.popoverBorder.cgColor
+      layer?.borderWidth = 1
+      surface = self
+    }
 
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("suggestion"))
     column.resizingMask = .autoresizingMask
@@ -105,7 +146,7 @@ public final class SuggestionListView: NSView {
     scrollView.automaticallyAdjustsContentInsets = false
     scrollView.contentInsets = NSEdgeInsetsZero
     scrollView.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(scrollView)
+    surface.addSubview(scrollView)
 
     // Inset the scrollView 6pt from the top and bottom so the dropdown
     // gets visual breathing room without inflating the clipView beyond
@@ -114,11 +155,18 @@ public final class SuggestionListView: NSView {
     // keeps documentView == clipView height, so the overlay scrollbar
     // never appears on single-hit queries.
     NSLayoutConstraint.activate([
-      scrollView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-      scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+      scrollView.topAnchor.constraint(equalTo: surface.topAnchor, constant: 6),
+      scrollView.leadingAnchor.constraint(equalTo: surface.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: surface.trailingAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: surface.bottomAnchor, constant: -6),
     ])
+
+    // Hosts read `isHidden` as the source of truth for "panel should
+    // be on screen". The NSView default of `false` would let the
+    // first reposition pass order an empty panel front before any
+    // content arrives; `update(items:)` flips this back when items
+    // populate.
+    isHidden = true
   }
 
   // MARK: - Row Height
@@ -232,19 +280,21 @@ public final class SuggestionListView: NSView {
     if let trackingArea {
       removeTrackingArea(trackingArea)
     }
+    // Drop `.cursorUpdate` and the matching `cursorUpdate(with:)`
+    // override. The `addCursorRect` route in `resetCursorRects` is the
+    // recommended cursor mechanism for an overlay above WKWebView
+    // (lessons.md "Cursor over the sidebar's transparent gaps"); a
+    // `cursorUpdate` tracking area at the same level fights with the
+    // cursor-rect resolution and the WebView's own cursor calls,
+    // letting the link-pointer leak through onto the dropdown.
     let area = NSTrackingArea(
       rect: bounds,
-      options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .cursorUpdate],
+      options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways],
       owner: self,
       userInfo: nil
     )
     addTrackingArea(area)
     trackingArea = area
-  }
-
-  public override func cursorUpdate(with event: NSEvent) {
-    // Override background elements' cursor — show arrow over the list.
-    NSCursor.arrow.set()
   }
 
   public override func mouseMoved(with event: NSEvent) {
@@ -261,6 +311,34 @@ public final class SuggestionListView: NSView {
       tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     }
   }
+
+  // MARK: - Hit-test passthrough block (Liquid Glass only)
+
+  // `NSGlassEffectView` reports its transparent areas as non-hit
+  // (returns nil for points its own subviews don't cover), so without
+  // these overrides AppKit walks past the dropdown and lands on the
+  // workspace pane underneath — visible as the page's link cursor
+  // bleeding through onto the suggestion rows and clicks reaching the
+  // page DOM. Mirrors the same fix in `SidebarOverlayView`.
+  //
+  // Unconditional: harmless when `glass` is nil because the layer-fill
+  // path already absorbs hits via the backing layer's opaque colour;
+  // these overrides just become a redundant second line of defence.
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    let local = convert(point, from: superview)
+    guard !isHidden, window != nil, bounds.contains(local) else {
+      return super.hitTest(point)
+    }
+    return super.hitTest(point) ?? self
+  }
+
+  public override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .arrow)
+  }
+
+  public override func mouseDown(with _: NSEvent) {}
+  public override func mouseDragged(with _: NSEvent) {}
+  public override func mouseUp(with _: NSEvent) {}
 
   // MARK: - Actions
 

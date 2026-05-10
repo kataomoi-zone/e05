@@ -68,12 +68,14 @@ extension PaneContainerViewController {
       return
     }
 
-    // Dismiss the find bar before the slide animation begins. The
-    // completion-handler path eventually runs `setFocus`, which would
-    // close the bar anyway, but that fires after the 250ms slide —
-    // leaving the overlay visibly stranded on the outgoing workspace
-    // for the duration. Closing up front lets the slide start clean.
+    // Dismiss the find bar and the URL bar suggestion dropdown
+    // before the slide animation begins. The completion-handler
+    // path eventually runs `setFocus`, which would close them anyway,
+    // but that fires after the 250ms slide — leaving the overlay
+    // visibly stranded on the outgoing workspace for the duration.
+    // Closing up front lets the slide start clean.
     closeFindBar()
+    focusedPane?.urlBar.dismissSuggestionDropdown()
 
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
@@ -211,6 +213,9 @@ extension PaneContainerViewController {
   public func createWorkspace(isPrivate: Bool = false) {
     logger.info("createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)")
 
+    closeFindBar()
+    focusedPane?.urlBar.dismissSuggestionDropdown()
+
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     preserveSurfaces(in: outgoing)
@@ -244,6 +249,8 @@ extension PaneContainerViewController {
   /// terminates the app when the last workspace is gone.
   public func closeCurrentWorkspace() {
     logger.info("closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
+    closeFindBar()
+    focusedPane?.urlBar.dismissSuggestionDropdown()
     let closing = currentWorkspace
     let closingVC = currentWorkspaceVC
     let closingIndex = focusedWorkspaceIndex
@@ -352,6 +359,8 @@ extension PaneContainerViewController {
       logger.debug("movePane guard failed")
       return
     }
+    closeFindBar()
+    focusedPane?.urlBar.dismissSuggestionDropdown()
     // Block cross-private-boundary moves: a `WKWebView`'s
     // `WKWebsiteDataStore` is bound at construction time, so
     // moving a pane across the boundary would either leak the
