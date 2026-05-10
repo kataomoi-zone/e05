@@ -2,21 +2,36 @@ import AppKit
 
 /// Global command palette overlay shown at the top-center of the window.
 ///
-/// Fully frame-based layout — no Auto Layout constraints. This matches
-/// `SuggestionListView`'s own frame-based height management and avoids
-/// the circular dependency that occurs when mixing Auto Layout with
-/// `SuggestionListView.update(items:)` which sets `frame.size.height`
-/// directly.
+/// Hosted in a child NSPanel so the OS routes hover, click, and cursor
+/// events to the palette window first — same pattern as the URL bar
+/// suggestion dropdown. The previous in-window subview let the
+/// underlying WKWebView keep firing `:hover` events through the
+/// translucent card; the cross-window split blocks that.
+///
+/// The card surface is `NSGlassEffectView` (macOS 26 Liquid Glass), so
+/// the palette inherits the same material as the sidebar and pane
+/// chrome rather than the prior flat translucent fill.
+///
+/// Layout inside the palette stays frame-based (positions written by
+/// `layoutSubviews`) — that matches `SuggestionListView.update(items:)`
+/// which sets `frame.size.height` directly, and avoids the circular
+/// dependency that would arise mixing Auto Layout with self-sized
+/// content.
 ///
 /// Lifecycle:
-/// - `show(in:)` adds the palette to the window, focuses the text field
-/// - `dismiss()` removes it and returns focus to the previous responder
+/// - `show(in:)` orders the panel front and focuses the text field
+/// - `dismiss()` orders the panel out and notifies the host
 /// - `toggle(in:)` switches between the two
 @MainActor
 public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private let inputField = NSTextField()
   private let divider = NSBox()
   private let suggestionList = SuggestionListView()
+  private let glass = NSGlassEffectView()
+  /// `card.isFlipped = true` so the frame-based layout below can keep
+  /// using top-down y coordinates after the subview tree moved inside
+  /// the glass effect view (an ordinary, non-flipped NSView).
+  private let card = FlippedView()
 
   private let containerWidth: CGFloat = 500
   private let inputHeight: CGFloat = 24
@@ -42,6 +57,20 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   /// the host can restore keyboard focus to the appropriate pane.
   public var onDismiss: (() -> Void)?
 
+  /// Child NSPanel that hosts this view. Lazily created on first show.
+  /// Lives at `popUpMenu` level over the parent window so it draws
+  /// above all pane content; `canBecomeKey = true` (via the subclass
+  /// override) so the input field actually receives keystrokes.
+  private var panel: NSPanel?
+
+  /// Observer for the parent window's resize. Registered against the
+  /// parent rather than `self.window` because, after the child-panel
+  /// migration, `self.window` resolves to the panel and the panel
+  /// never resizes on its own.
+  /// `nonisolated(unsafe)` lets `deinit` release the token under
+  /// Swift 6 strict concurrency.
+  nonisolated(unsafe) private var parentResizeObserver: NSObjectProtocol?
+
   public override init(frame: NSRect) {
     super.init(frame: frame)
     setup()
@@ -51,25 +80,41 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   required init?(coder _: NSCoder) { fatalError() }
 
   deinit {
-    NotificationCenter.default.removeObserver(self)
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    // The panel↔self retain pair is left intact: the host owns the
+    // palette for the process lifetime, so the cycle never has a
+    // chance to leak. Touching MainActor-isolated `NSWindow` methods
+    // here would trip Swift 6 strict-concurrency in a nonisolated
+    // deinit. A future multi-window split that releases palettes
+    // mid-session can route cleanup through an explicit teardown
+    // hook on the owning controller.
   }
 
   // MARK: - Setup
 
   private func setup() {
-    wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = AppColors.popoverSurfaceTranslucent.cgColor
-    layer?.cornerRadius = 10
-    layer?.borderColor = AppColors.popoverBorder.cgColor
-    layer?.borderWidth = 1
-    shadow = NSShadow()
-    layer?.shadowColor = NSColor.black.withAlphaComponent(0.5).cgColor
-    layer?.shadowOpacity = 1
-    layer?.shadowRadius = 16
-    layer?.shadowOffset = CGSize(width: 0, height: -6)
 
-    // Input field — frame-based, positioned in layoutSubviews().
+    // Glass surface with rounded clip. The 12pt radius matches the
+    // sidebar / pane chrome so the palette reads as the same material
+    // tier when it overlaps them.
+    glass.translatesAutoresizingMaskIntoConstraints = false
+    card.translatesAutoresizingMaskIntoConstraints = false
+    glass.contentView = card
+    glass.wantsLayer = true
+    glass.layer?.cornerRadius = 12
+    glass.layer?.cornerCurve = .continuous
+    glass.layer?.masksToBounds = true
+    addSubview(glass)
+    NSLayoutConstraint.activate([
+      glass.topAnchor.constraint(equalTo: topAnchor),
+      glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+      glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+      glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+
     inputField.placeholderString = "Execute a command\u{2026}"
     inputField.font = .systemFont(ofSize: 16, weight: .light)
     inputField.textColor = .white
@@ -78,45 +123,26 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     inputField.focusRingType = .none
     inputField.cell?.isScrollable = true
     inputField.delegate = self
-    addSubview(inputField)
+    card.addSubview(inputField)
 
-    // Divider — thin line between input and list.
     divider.boxType = .separator
-    addSubview(divider)
+    card.addSubview(divider)
 
-    // Suggestion list — frame-based, same pattern as PaneURLBar.
-    addSubview(suggestionList)
+    card.addSubview(suggestionList)
     suggestionList.onSelectIndex = { [weak self] index in
       self?.executeAction(at: index)
     }
   }
 
-  // MARK: - Cursor
-
-  public override func cursorUpdate(with event: NSEvent) {
-    // Prevent background elements from changing the cursor over the
-    // palette's non-input areas (divider, padding).
-    let local = convert(event.locationInWindow, from: nil)
-    if inputField.frame.contains(local) {
-      NSCursor.iBeam.set()
-    } else {
-      NSCursor.arrow.set()
-    }
-  }
-
-  // MARK: - Flipped coordinates
-
-  // Use top-down coordinates so Y=0 is the top of the palette.
-  // This makes frame calculations straightforward: input at Y=8,
-  // divider below, suggestion list below that.
-  public override var isFlipped: Bool { true }
-
   // MARK: - Layout
 
-  /// Reposition subviews within the palette. Called after the palette
-  /// frame is set or the suggestion list content changes.
+  /// Reposition the input row, divider, and suggestion list within the
+  /// glass card. Called after the panel frame is set or the suggestion
+  /// list content changes. Reads `card.bounds.width` (== panel content
+  /// width) and writes child frames in top-down coordinates because
+  /// `card` is flipped.
   private func layoutSubviews() {
-    let w = bounds.width
+    let w = card.bounds.width
     inputField.frame = NSRect(
       x: 12, y: topPadding, width: w - 24, height: inputHeight)
     divider.frame = NSRect(
@@ -129,42 +155,66 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
       x: 0, y: listTop, width: w, height: listHeight)
   }
 
-  /// Compute the total palette height and position it at the top-center
-  /// of the window's contentView.
-  private func layoutInWindow(_ contentView: NSView) {
-    let availableWidth = contentView.bounds.width - 40
+  /// Compute the panel's screen rect and apply it. Also re-runs the
+  /// internal subview layout because `card.bounds` only updates after
+  /// AppKit propagates `panel.setFrame` through the contentView chain.
+  private func layoutInPanel() {
+    guard let panel, let parent = panel.parent else { return }
+    let parentFrame = parent.frame
+    let availableWidth = parentFrame.width - 40
     let width = min(containerWidth, availableWidth)
     let listHeight = suggestionList.isHidden ? 0 : suggestionList.frame.height
     let totalHeight = inputAreaHeight + listHeight
+    let panelX = parentFrame.minX + (parentFrame.width - width) / 2
+    // Top-of-window minus margin minus palette height. Screen Y is
+    // bottom-up, so panel.minY is the bottom edge.
+    var panelY = parentFrame.maxY - totalHeight - topMargin
 
-    let x = (contentView.bounds.width - width) / 2
-    // AppKit Y=0 is bottom. Top of the window minus margin minus palette height.
-    let y = contentView.bounds.height - totalHeight - topMargin
-    frame = NSRect(x: x, y: y, width: width, height: totalHeight)
+    // Clamp the panel's top edge to the screen's `visibleFrame`. The
+    // parent window can sit above its host screen's visible area
+    // under Stage Manager / split-screen / pre-fullscreen morph, in
+    // which case the naive computation above pushes the panel off
+    // the top of the display.
+    if let screen = parent.screen ?? NSScreen.main {
+      let visibleTop = screen.visibleFrame.maxY
+      let panelTop = panelY + totalHeight
+      if panelTop > visibleTop {
+        panelY = visibleTop - totalHeight
+      }
+    }
 
+    panel.setFrame(
+      NSRect(x: panelX, y: panelY, width: width, height: totalHeight),
+      display: true)
     layoutSubviews()
   }
 
   // MARK: - Public API
 
-  /// Whether the palette is currently visible.
-  public var isVisible: Bool { superview != nil }
+  /// Whether the palette panel is currently on screen.
+  public var isVisible: Bool { panel?.isVisible ?? false }
 
-  /// Show the palette in the given window. Positions itself at the
-  /// top-center and focuses the text field.
+  /// Show the palette over `window`, focus the input field, and start
+  /// observing parent resize so the panel re-anchors on window resize.
   public func show(in window: NSWindow) {
-    guard let contentView = window.contentView else { return }
-    if superview !== contentView {
-      removeFromSuperview()
-      contentView.addSubview(self)
-    }
+    let panel = ensurePanel(parentWindow: window)
 
     inputField.stringValue = ""
     let items = onSearch?("") ?? []
     suggestionList.update(items: items)
 
-    layoutInWindow(contentView)
-    window.makeFirstResponder(inputField)
+    layoutInPanel()
+    panel.makeKeyAndOrderFront(nil)
+    panel.makeFirstResponder(inputField)
+
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    parentResizeObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didResizeNotification, object: window, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.layoutInPanel() }
+    }
   }
 
   /// Hide the palette and notify the host. Idempotent — safe to call
@@ -172,9 +222,13 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   /// `toggleCommandPalette` which dismisses first, then `executeAction`
   /// calls `dismiss` again).
   public func dismiss() {
-    guard isVisible else { return }
+    guard let panel, panel.isVisible else { return }
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+      parentResizeObserver = nil
+    }
     suggestionList.dismiss()
-    removeFromSuperview()
+    panel.orderOut(nil)
     onDismiss?()
   }
 
@@ -187,22 +241,36 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     }
   }
 
-  // MARK: - Window Resize
+  // MARK: - Panel lifecycle
 
-  public override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    NotificationCenter.default.removeObserver(
-      self, name: NSWindow.didResizeNotification, object: nil)
-    if let window {
-      NotificationCenter.default.addObserver(
-        self, selector: #selector(windowDidResize),
-        name: NSWindow.didResizeNotification, object: window)
+  /// Build (or reattach) the child panel. Reparent guards against a
+  /// future multi-window split — currently single-window, dead but
+  /// cheap.
+  private func ensurePanel(parentWindow: NSWindow) -> NSPanel {
+    if let existing = panel {
+      if existing.parent !== parentWindow {
+        existing.parent?.removeChildWindow(existing)
+        parentWindow.addChildWindow(existing, ordered: .above)
+      }
+      return existing
     }
-  }
-
-  @objc private func windowDidResize(_ notification: Notification) {
-    guard let contentView = window?.contentView, isVisible else { return }
-    layoutInWindow(contentView)
+    let p = CommandPalettePanel(
+      contentRect: .zero,
+      styleMask: [.borderless],
+      backing: .buffered,
+      defer: true
+    )
+    p.contentView = self
+    p.isOpaque = false
+    p.backgroundColor = .clear
+    p.hasShadow = true
+    p.level = .popUpMenu
+    p.hidesOnDeactivate = true
+    p.collectionBehavior = [.transient, .ignoresCycle]
+    p.isReleasedWhenClosed = false
+    parentWindow.addChildWindow(p, ordered: .above)
+    panel = p
+    return p
   }
 
   // MARK: - Action Execution
@@ -218,10 +286,7 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     let query = inputField.stringValue
     let items = onSearch?(query) ?? []
     suggestionList.update(items: items)
-
-    if let contentView = window?.contentView {
-      layoutInWindow(contentView)
-    }
+    layoutInPanel()
   }
 
   public func control(
@@ -250,12 +315,16 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   }
 
   public func controlTextDidEndEditing(_ notification: Notification) {
-    // Focus loss dismisses the palette (ghostty behavior).
-    // Delay check to avoid dismissing when focus moves to the field
-    // editor (NSTextView) which is a descendant of this view.
+    // The input field can lose first responder when the parent window
+    // becomes key (user clicked outside the panel) or when AppKit
+    // tears down the field editor mid-focus-cycle. The deferred check
+    // distinguishes the two: a real blur leaves `currentEditor()` nil
+    // and the new first responder outside the palette tree, in which
+    // case dismissing is the right move.
     DispatchQueue.main.async { [weak self] in
       guard let self, self.isVisible else { return }
-      if let responder = self.window?.firstResponder as? NSView,
+      if let panel = self.panel,
+        let responder = panel.firstResponder as? NSView,
         responder.isDescendant(of: self)
       {
         return
@@ -263,4 +332,20 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
       self.dismiss()
     }
   }
+}
+
+/// NSView subclass that flips its coordinate system. Used as the glass
+/// content host so the palette's frame-based subview layout (written
+/// in top-down coords) survives the move from `self` into
+/// `glass.contentView`.
+private final class FlippedView: NSView {
+  override var isFlipped: Bool { true }
+}
+
+/// Borderless panel that opts into key-window status. The default for
+/// a borderless NSPanel is `canBecomeKey = false`, which would block
+/// keyboard input to the palette's text field.
+private final class CommandPalettePanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { false }
 }
