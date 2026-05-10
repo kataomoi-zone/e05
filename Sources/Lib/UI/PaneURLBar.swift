@@ -34,6 +34,29 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// dropdown don't pay the allocation.
   private var suggestionPanel: NSPanel?
 
+  /// Animatable leading offset that shifts the suggestion list inside
+  /// the panel's clipping wrapper. When the URL field is partially
+  /// clipped by the host window's leading edge, this constant goes
+  /// negative so the list extends behind the wrapper's left edge —
+  /// matching `FindBarView.cardLeadingConstraint` (lessons.md
+  /// "Anchored content with clipping"). Zero when the field is fully
+  /// visible.
+  private weak var suggestionListLeadingConstraint: NSLayoutConstraint?
+  /// Width constraint on the suggestion list inside the wrapper. Set
+  /// to the URL field's natural on-screen width so cells render at
+  /// the field's full width regardless of how narrow the visible
+  /// panel slice becomes; the wrapper's `masksToBounds` clip cuts
+  /// off the off-window portion. Updated in `positionSuggestionList`
+  /// alongside the leading offset.
+  private weak var suggestionListWidthConstraint: NSLayoutConstraint?
+  /// Clipping wrapper hosting `suggestionList` inside the dropdown
+  /// panel. Held weakly so `positionSuggestionList` can flip the
+  /// wrapper's `maskedCorners` to square off whichever side is
+  /// hidden behind the window edge — preserving the "the dropdown
+  /// continues past the screen" affordance instead of rounding the
+  /// clipped edge as if the dropdown ended there.
+  private weak var suggestionWrapperView: NSView?
+
   /// Observer token for the workspace's clipView bounds notifications.
   /// The panel sits in screen coordinates, so when the user scrolls
   /// the workspace horizontally the URL field slides under the panel
@@ -757,7 +780,50 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       backing: .buffered,
       defer: true
     )
-    panel.contentView = suggestionList
+
+    // Wrap the suggestion list in a clipping container that owns the
+    // rounded-corner clip and the visible-width adjustments. The
+    // suggestion list itself stays at the URL field's natural width
+    // (driven by `suggestionListWidthConstraint`) so cells render
+    // full-width regardless of how narrow the visible panel slice
+    // becomes — the wrapper's `masksToBounds` cuts off the off-window
+    // portion. Same pattern as `FindBarView.glass.contentView = inner`
+    // + fixed `card` (lessons.md "Anchored content with clipping").
+    // Truncate-within-cell was the prior path, but at the field's
+    // far-edge positions the visible slice is too narrow for any text
+    // to read anyway, so clipping at the panel boundary looks cleaner
+    // without losing information that wasn't already lost.
+    let wrapper = NSView()
+    wrapper.wantsLayer = true
+    wrapper.layer?.cornerRadius = 12
+    wrapper.layer?.cornerCurve = .continuous
+    wrapper.layer?.masksToBounds = true
+    // NSWindow auto-resizes its contentView via the autoresizing
+    // path on every `setFrame`; opt in explicitly so the wrapper's
+    // bounds stay locked to `panel.contentLayoutRect` whenever
+    // `positionSuggestionList` reframes the panel.
+    wrapper.autoresizingMask = [.width, .height]
+    panel.contentView = wrapper
+
+    suggestionList.translatesAutoresizingMaskIntoConstraints = false
+    wrapper.addSubview(suggestionList)
+    let leading = suggestionList.leadingAnchor.constraint(
+      equalTo: wrapper.leadingAnchor)
+    // Width starts at 0 as a sentinel; `positionSuggestionList`
+    // overrides it with `fieldOnScreen.width` before the panel is
+    // ever ordered front, so the zero never reaches a layout pass
+    // that would render a 0pt-wide list.
+    let width = suggestionList.widthAnchor.constraint(equalToConstant: 0)
+    NSLayoutConstraint.activate([
+      leading,
+      width,
+      suggestionList.topAnchor.constraint(equalTo: wrapper.topAnchor),
+      suggestionList.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor),
+    ])
+    suggestionListLeadingConstraint = leading
+    suggestionListWidthConstraint = width
+    suggestionWrapperView = wrapper
+
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = true
@@ -789,12 +855,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     }
     guard let mainWindow = window else { return }
 
-    // Capture the list's height before `ensureSuggestionPanel`. The
-    // first-time `panel.contentView = suggestionList` assignment
-    // resizes the contentView to the panel's `contentLayoutRect`
-    // (zero on a freshly init'd panel), wiping the height that
-    // `update(items:)` just wrote.
-    let listHeight = suggestionList.frame.size.height
+    // The suggestion list is constraint-driven inside the wrapper
+    // (its frame tracks the wrapper's height and the natural-width
+    // constraint), so `frame.size.height` doesn't carry the value
+    // that `update(items:)` just computed. Pull from
+    // `intrinsicContentSize` instead — that returns the same
+    // `contentHeight` the list assigns to its frame internally.
+    let listHeight = suggestionList.intrinsicContentSize.height
 
     let panel = ensureSuggestionPanel(parentWindow: mainWindow)
 
@@ -835,6 +902,35 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       panel.orderOut(nil)
       return
     }
+
+    // Suggestion list keeps the URL field's natural on-screen width
+    // so cells render full-width; the wrapper's `masksToBounds`
+    // clips the portion that extends past the visible panel slice.
+    // The leading shift goes negative when the field is left-clipped
+    // (`fieldOnScreen.minX < visibleLeft`), matching find bar's
+    // `cardLeadingConstraint = naturalLeft - clippedLeft`.
+    suggestionListWidthConstraint?.constant = fieldOnScreen.width
+    suggestionListLeadingConstraint?.constant = fieldOnScreen.minX - visibleLeft
+
+    // Square off whichever side is hidden behind the window edge so
+    // the dropdown reads as "continuing past the screen" instead of
+    // a balanced rounded rect that happens to sit at the window
+    // boundary. AppKit's coordinate system has y increasing upward,
+    // so `MaxY` is the top edge and `MinY` is the bottom edge —
+    // both share the clipped horizontal side.
+    var corners: CACornerMask = [
+      .layerMinXMinYCorner, .layerMinXMaxYCorner,
+      .layerMaxXMinYCorner, .layerMaxXMaxYCorner,
+    ]
+    if fieldOnScreen.minX < windowFrame.minX {
+      corners.remove(.layerMinXMinYCorner)
+      corners.remove(.layerMinXMaxYCorner)
+    }
+    if fieldOnScreen.maxX > windowFrame.maxX {
+      corners.remove(.layerMaxXMinYCorner)
+      corners.remove(.layerMaxXMaxYCorner)
+    }
+    suggestionWrapperView?.layer?.maskedCorners = corners
 
     let panelFrame = NSRect(
       x: visibleLeft,
