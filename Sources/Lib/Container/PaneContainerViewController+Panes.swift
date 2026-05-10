@@ -764,6 +764,13 @@ extension PaneContainerViewController {
     else { return }
 
     let pane = column.panes.remove(at: paneIndex)
+    // The pane is being torn out of the view tree; dismiss its
+    // find bar so the orphaned panel doesn't linger as a child
+    // window of the host. Per-pane persistence keeps bars alive on
+    // focus changes, but pane removal is the one terminal event.
+    if pane.isFindBarVisible {
+      dismissFindSession(on: pane)
+    }
     // Fire the close notification right after the model mutation so
     // a sync-call into `tabs(for:)` from inside `didCloseTab` no
     // longer reports the closed tab. Cached bridge is dropped here;

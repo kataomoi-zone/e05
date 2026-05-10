@@ -72,6 +72,13 @@ public final class PaneModel {
   /// reveal animates the panel's alpha.
   public private(set) var isFindBarVisible = false
 
+  /// Debounce timer for match-count updates driven by typing into
+  /// this pane's find bar. Per-pane rather than container-wide so
+  /// typing into one pane's bar doesn't invalidate a pending update
+  /// for another pane's bar — a real concern under per-pane find
+  /// session persistence where multiple bars can be live at once.
+  var findCountDebounceTimer: Timer?
+
   // TODO: wire this into vertical drag resize.
   public var heightConstraint: NSLayoutConstraint?
 

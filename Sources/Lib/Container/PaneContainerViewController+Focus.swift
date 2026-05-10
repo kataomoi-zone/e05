@@ -21,16 +21,16 @@ extension PaneContainerViewController {
     }
     let previouslyFocused = focusedPane
 
-    // Dismiss the find bar whenever focus is moving to a pane other
-    // than the one the bar targets. `setFocus` is the funnel point
-    // for every pane / column / workspace mutation (add, remove,
-    // split, switchWorkspace, createWorkspace, closeCurrentWorkspace,
-    // movePane, undo-close), so one hook here covers them all without
-    // sprinkling close calls across every caller.
+    // Per-pane find bar persistence: pane focus moves no longer
+    // dismiss any pane's bar. Each pane keeps its own searchText,
+    // visibility, and highlight state across ⌘⌃Tab cycles. Bars on
+    // previously focused panes stay visible as passive overlays and
+    // accept direct interaction via the per-bar callbacks bound in
+    // `wireFindBarCallbacks`. Workspace slides dismiss every visible
+    // bar in the outgoing workspace (see `+Workspaces.swift`)
+    // because find panels are children of the host window and don't
+    // follow `topConstraint` slide animation.
     let incomingPaneId = column.panes[paneIndex].id
-    if let target = findBarTargetPane, target.id != incomingPaneId {
-      closeFindBar()
-    }
 
     // Collapse any ⌘L peek on the outgoing pane — the URL bar
     // belongs to the user's current focus, so it shouldn't linger
@@ -127,6 +127,7 @@ extension PaneContainerViewController {
 
   public func focusLeft() {
     guard focusedColumnIndex > 0 else { return }
+    reclaimMainWindowKey()
     let newColIndex = focusedColumnIndex - 1
     let paneIndex = columns[newColIndex].focusedPaneIndex
     setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
@@ -135,6 +136,7 @@ extension PaneContainerViewController {
 
   public func focusRight() {
     guard focusedColumnIndex < columns.count - 1 else { return }
+    reclaimMainWindowKey()
     let newColIndex = focusedColumnIndex + 1
     let paneIndex = columns[newColIndex].focusedPaneIndex
     setFocus(columnIndex: newColIndex, paneIndex: paneIndex)
@@ -145,6 +147,7 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex],
       column.focusedPaneIndex > 0
     else { return }
+    reclaimMainWindowKey()
     setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
     showToast("Focus Up")
   }
@@ -153,6 +156,7 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex],
       column.focusedPaneIndex < column.panes.count - 1
     else { return }
+    reclaimMainWindowKey()
     setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
     showToast("Focus Down")
   }
@@ -164,6 +168,7 @@ extension PaneContainerViewController {
   /// the conventional "next tab" gesture in keyboard-driven apps.
   public func focusNextPane() {
     guard let column = columns[safe: focusedColumnIndex] else { return }
+    reclaimMainWindowKey()
     if column.focusedPaneIndex < column.panes.count - 1 {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
       showToast("Next Pane")
@@ -180,6 +185,7 @@ extension PaneContainerViewController {
   /// back to the last column's last pane.
   public func focusPreviousPane() {
     guard let column = columns[safe: focusedColumnIndex] else { return }
+    reclaimMainWindowKey()
     if column.focusedPaneIndex > 0 {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
       showToast("Previous Pane")
@@ -190,6 +196,18 @@ extension PaneContainerViewController {
       setFocus(columnIndex: prevColumnIndex, paneIndex: lastPaneIndex)
       showToast("Previous Pane")
     }
+  }
+
+  /// Pull key-window status back to the host window before a
+  /// keyboard-driven pane focus change. A find bar panel left key
+  /// from a prior `focusField` would otherwise keep eating Enter /
+  /// Esc / typed characters even after `setFocus` redirects the
+  /// main window's first responder. Mouse-driven focus paths (bar
+  /// click, sidebar pane row click) intentionally skip this so the
+  /// click's own key transfer wins.
+  private func reclaimMainWindowKey() {
+    guard let mainWindow = view.window, !mainWindow.isKeyWindow else { return }
+    mainWindow.makeKey()
   }
 
   /// Walk the columns array in `step` direction (+1 / -1) starting

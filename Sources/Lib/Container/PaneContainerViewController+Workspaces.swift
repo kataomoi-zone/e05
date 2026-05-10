@@ -68,13 +68,16 @@ extension PaneContainerViewController {
       return
     }
 
-    // Dismiss the find bar and the URL bar suggestion dropdown
-    // before the slide animation begins. The completion-handler
-    // path eventually runs `setFocus`, which would close them anyway,
-    // but that fires after the 250ms slide — leaving the overlay
-    // visibly stranded on the outgoing workspace for the duration.
-    // Closing up front lets the slide start clean.
-    closeFindBar()
+    // Dismiss every visible find bar in the outgoing workspace and
+    // the focused pane's URL bar suggestion dropdown before the
+    // slide animation begins. Per-pane persistence keeps non-focused
+    // panes' find bars alive across focus changes, but the find
+    // panels are child windows of the host and don't follow the
+    // workspace VC's slide; without an explicit pre-slide dismiss
+    // they'd hover over the incoming workspace at their old screen
+    // positions. The URL bar dropdown is single-pane so the
+    // focusedPane variant suffices there.
+    dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
 
     let outgoing = currentWorkspace
@@ -213,7 +216,7 @@ extension PaneContainerViewController {
   public func createWorkspace(isPrivate: Bool = false) {
     logger.info("createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)")
 
-    closeFindBar()
+    dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
 
     let outgoing = currentWorkspace
@@ -249,7 +252,7 @@ extension PaneContainerViewController {
   /// terminates the app when the last workspace is gone.
   public func closeCurrentWorkspace() {
     logger.info("closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
-    closeFindBar()
+    dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
     let closing = currentWorkspace
     let closingVC = currentWorkspaceVC
@@ -359,7 +362,7 @@ extension PaneContainerViewController {
       logger.debug("movePane guard failed")
       return
     }
-    closeFindBar()
+    dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
     // Block cross-private-boundary moves: a `WKWebView`'s
     // `WKWebsiteDataStore` is bound at construction time, so

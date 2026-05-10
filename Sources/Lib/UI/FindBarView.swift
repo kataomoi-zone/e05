@@ -42,7 +42,19 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   private let nextButton: HoverIconButton
   private let closeButton: HoverIconButton
   private let glass = NSGlassEffectView()
+  /// Wrapper that fills `glass.contentView` so the fixed-size card
+  /// can sit inside it at an offset. Required because
+  /// `NSGlassEffectView` auto-pins its `contentView` to its bounds —
+  /// using `card` directly as `contentView` would force `card` to
+  /// resize when the panel clips, defeating the "stay anchored, clip
+  /// the overflow" layout the URL bar uses.
+  private let inner = NSView()
   private let card = NSView()
+  /// Leading constraint that shifts `card` within `inner` so the bar
+  /// keeps its natural position relative to the pane while the panel
+  /// itself is clipped to the host window. Negative when the bar's
+  /// left edge has scrolled past the window's left edge.
+  private var cardLeadingConstraint: NSLayoutConstraint?
 
   private var panel: NSPanel?
   /// Anchor view passed to the most recent `show(anchoredTo:)`. The
@@ -59,6 +71,11 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// Observer for the parent window's resize notification.
   /// Same nonisolated rationale as `scrollObserver`.
   nonisolated(unsafe) private var parentResizeObserver: NSObjectProtocol?
+
+  /// Observer for the find panel's `didBecomeKeyNotification`. Fires
+  /// `onPanelBecameKey` so the host can chase pane focus when the
+  /// user clicks a non-focused pane's bar.
+  nonisolated(unsafe) private var panelKeyObserver: NSObjectProtocol?
 
   /// Generation counter that gates the hide animation's completion
   /// handler against a `show` that arrives mid-fade. Without it, an
@@ -92,6 +109,12 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// Called when the user dismisses the bar (Esc, `×` button, or the
   /// container closing it due to focus / sidebar interaction).
   public var onClose: (() -> Void)?
+  /// Fired when the bar's panel becomes key — typically because the
+  /// user clicked into the search field or one of the buttons. The
+  /// host uses this to move pane focus to the bar's owning pane so
+  /// interacting with a non-focused pane's bar visibly elevates it
+  /// (the user clicked there, after all).
+  public var onPanelBecameKey: (() -> Void)?
 
   public override init(frame: NSRect) {
     prevButton = Self.makeIconButton(
@@ -131,24 +154,36 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     if let token = parentResizeObserver {
       NotificationCenter.default.removeObserver(token)
     }
+    if let token = panelKeyObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
   }
 
   // MARK: - Glass surface
 
   private func setupGlass() {
     glass.translatesAutoresizingMaskIntoConstraints = false
+    inner.translatesAutoresizingMaskIntoConstraints = false
     card.translatesAutoresizingMaskIntoConstraints = false
-    glass.contentView = card
+    glass.contentView = inner
     glass.wantsLayer = true
     glass.layer?.cornerRadius = 12
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
     addSubview(glass)
+    inner.addSubview(card)
+    let cardLeading = card.leadingAnchor.constraint(
+      equalTo: inner.leadingAnchor, constant: 0)
+    cardLeadingConstraint = cardLeading
     NSLayoutConstraint.activate([
       glass.topAnchor.constraint(equalTo: topAnchor),
       glass.leadingAnchor.constraint(equalTo: leadingAnchor),
       glass.trailingAnchor.constraint(equalTo: trailingAnchor),
       glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+      cardLeading,
+      card.topAnchor.constraint(equalTo: inner.topAnchor),
+      card.widthAnchor.constraint(equalToConstant: Self.barWidth),
+      card.heightAnchor.constraint(equalToConstant: Self.barHeight),
     ])
   }
 
@@ -453,6 +488,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     p.isReleasedWhenClosed = false
     parentWindow.addChildWindow(p, ordered: .above)
     panel = p
+    panelKeyObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didBecomeKeyNotification,
+      object: p,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.onPanelBecameKey?() }
+    }
     return p
   }
 
@@ -493,15 +535,16 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }
   }
 
-  /// Compute the panel's screen rect against the anchor's visible
-  /// slice within the host window. The bar normally sits at
-  /// `anchor.bottom + bottomMargin`, horizontally centered on the
-  /// pane, at the fixed 380×36 size. When the pane scrolls past a
-  /// window edge the bar shrinks to fit the visible portion rather
-  /// than overflowing — and only when the pane is fully clipped
-  /// does the panel order out. Re-orders front automatically once
-  /// the pane scrolls back into view, so the user never lands in an
-  /// "invisible but still active" state.
+  /// Place the panel at the bar's natural anchor position
+  /// (centered on the pane's full width, fixed 380×36) and clip it
+  /// to the host window's visible frame. The card inside the panel
+  /// keeps its full barWidth and shifts via `cardLeadingConstraint`
+  /// so the visible portion of the bar stays in lockstep with the
+  /// pane — matching the URL bar dropdown's "anchored content,
+  /// clipped chrome" behaviour rather than shrinking the bar's
+  /// internal layout to fit. Orders out when the visible slice
+  /// drops below a readable threshold; re-orders front
+  /// automatically once the pane scrolls back into view.
   private func repositionPanel() {
     guard let panel, let anchor = anchorView,
       let parent = anchor.window
@@ -510,44 +553,37 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     let anchorOnScreen = parent.convertToScreen(anchorInWindow)
 
     let windowFrame = parent.frame
-    let visibleLeft = max(anchorOnScreen.minX, windowFrame.minX)
-    let visibleRight = min(anchorOnScreen.maxX, windowFrame.maxX)
-    let visibleWidth = visibleRight - visibleLeft
+    let naturalLeft = anchorOnScreen.midX - Self.barWidth / 2
+    let naturalRight = naturalLeft + Self.barWidth
+    let clippedLeft = max(naturalLeft, windowFrame.minX)
+    let clippedRight = min(naturalRight, windowFrame.maxX)
+    let clippedWidth = clippedRight - clippedLeft
 
-    if visibleWidth <= 0 {
-      // Pane is entirely off-screen. Drop the panel until the next
-      // reposition fires from a scroll/resize observer; the show
-      // path's `isFindBarVisible` stays true so re-entry restores
-      // the bar without the user re-invoking ⌘F.
+    let minVisibleWidth: CGFloat = 80
+    if clippedWidth < minVisibleWidth {
       if panel.isVisible { panel.orderOut(nil) }
       return
     }
 
-    // Shrink the bar to fit a partly-clipped pane rather than
-    // letting it spill over the window edge. The visible center is
-    // the natural anchor; clamp the resulting left edge so the bar
-    // never extends beyond the visible slice on either side.
-    let panelWidth = min(Self.barWidth, visibleWidth)
-    let visibleCenter = (visibleLeft + visibleRight) / 2
-    var panelLeft = visibleCenter - panelWidth / 2
-    panelLeft = max(panelLeft, visibleLeft)
-    panelLeft = min(panelLeft, visibleRight - panelWidth)
+    // Shift the card within the panel so the same content stays
+    // anchored to the pane regardless of how the panel itself was
+    // clipped against the window edge. A negative offset means the
+    // bar's left edge has scrolled past the window's left and the
+    // card extends behind it (clipped by `glass.masksToBounds`).
+    cardLeadingConstraint?.constant = naturalLeft - clippedLeft
 
     // Screen Y is bottom-up: `anchorOnScreen.minY` is the anchor's
     // bottom edge in screen space, so `+ bottomMargin` lifts the
     // panel's bottom edge `bottomMargin` points above the anchor's
-    // bottom — leaving a `bottomMargin`-tall gap between the bar and
-    // the pane's bottom edge.
+    // bottom — leaving a `bottomMargin`-tall gap between the bar
+    // and the pane's bottom edge.
     let panelFrame = NSRect(
-      x: panelLeft,
+      x: clippedLeft,
       y: anchorOnScreen.minY + Self.bottomMargin,
-      width: panelWidth,
+      width: clippedWidth,
       height: Self.barHeight
     )
     panel.setFrame(panelFrame, display: true)
-    // The pane just scrolled back into view — restore the panel
-    // without re-keying so an in-progress scroll gesture doesn't
-    // steal first responder mid-stroke.
     if !panel.isVisible { panel.orderFront(nil) }
   }
 

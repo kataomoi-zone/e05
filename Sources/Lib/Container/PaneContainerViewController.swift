@@ -193,21 +193,12 @@ public final class PaneContainerViewController: NSViewController {
   var cachedAllActions: [Action] = []
 
   // MARK: - Find in Page
-
-  /// Pane the active find session targets. Each `PaneModel` owns its
-  /// own `FindBarView`; this reference identifies which pane's bar
-  /// the container has bound its callbacks to so ⌘G / ⌘⇧G route the
-  /// query to the right pane. Held separately from `focusedPane` so
-  /// subsequent focus moves (sidebar click, workspace switch, URL bar
-  /// edit) don't silently redirect the session. Weak so a pane
-  /// closing while the bar is open doesn't strand the reference.
-  weak var findBarTargetPane: PaneModel?
-
-  /// Debounce timer for match-count updates. `onSearch` fires on
-  /// every keystroke; `callAsyncJavaScript` is cheap per call but
-  /// cumulative cost during fast typing is noticeable, so coalesce
-  /// with a short delay before issuing the count script.
-  var findCountDebounceTimer: Timer?
+  //
+  // Each `PaneModel` owns its own `FindBarView`. `focusedPane`
+  // identifies which bar receives ⌘F / ⌘G / ⌘⇧G; the per-pane
+  // debounce timer lives on `PaneModel.findCountDebounceTimer` so
+  // typing into one pane's bar can't invalidate a pending match-count
+  // update for another pane's bar.
 
   // MARK: - Init
 

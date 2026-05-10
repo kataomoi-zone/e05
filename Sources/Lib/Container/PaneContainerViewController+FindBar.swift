@@ -11,16 +11,11 @@ extension PaneContainerViewController {
   /// refer to the pane whose bar is currently revealed.
   public func openFindBar() {
     guard let pane = focusedPane, let helper = pane.findHelper else { return }
-    // If a previous session still has its bar revealed on another
-    // pane, dismiss it end-to-end first — each pane has its own bar
-    // and we want only the newly-targeted one visible, with the
-    // underlying find session ended so no highlight state leaks
-    // between panes.
-    if let previous = findBarTargetPane, previous !== pane {
-      dismissFindSession(on: previous)
-    }
+    // Per-pane persistence: each pane keeps its own find bar state
+    // across focus changes, so opening on a new pane no longer
+    // dismisses the previous pane's session. The bars coexist as
+    // independent child panels.
     wireFindBarCallbacks(on: pane)
-    findBarTargetPane = pane
     // Configure the bar's stepping affordance per pane kind: browser
     // / terminal step through matches, finder filters the row list.
     // Re-applied on every open so a pane swap (browser → finder)
@@ -40,72 +35,86 @@ extension PaneContainerViewController {
     // stale "3 / 5".
   }
 
-  /// Advance to the next match. When no bar is currently revealed — a
-  /// cold ⌘G with no open session — fall back to opening the bar
-  /// against the focused pane, matching Safari's resume behaviour.
+  /// Advance to the next match on the focused pane's bar. When the
+  /// focused pane has no visible bar, fall back to opening one so
+  /// ⌘G acts as a "start finding here" gesture (Safari/Chrome
+  /// convention).
   public func findNext() {
-    guard let target = findBarTargetPane, target.isFindBarVisible else {
+    guard let pane = focusedPane else { return }
+    guard pane.isFindBarVisible else {
       openFindBar()
       return
     }
-    guard currentFindHelper() != nil else {
+    guard pane.findHelper != nil else {
       closeFindBar()
       return
     }
-    applyFindResult(needle: target.findBar.searchText, forward: true, pane: target)
+    applyFindResult(needle: pane.findBar.searchText, forward: true, pane: pane)
   }
 
-  /// Step to the previous match. Same fallbacks as `findNext`.
+  /// Step to the previous match on the focused pane's bar. Same
+  /// fallbacks as `findNext`.
   public func findPrev() {
-    guard let target = findBarTargetPane, target.isFindBarVisible else {
+    guard let pane = focusedPane else { return }
+    guard pane.isFindBarVisible else {
       openFindBar()
       return
     }
-    guard currentFindHelper() != nil else {
+    guard pane.findHelper != nil else {
       closeFindBar()
       return
     }
-    applyFindResult(needle: target.findBar.searchText, forward: false, pane: target)
+    applyFindResult(needle: pane.findBar.searchText, forward: false, pane: pane)
   }
 
-  /// Hide the target pane's find bar and end the current session.
-  /// Safe to call when the bar has never been opened or the target
-  /// pane has been released.
+  /// Hide the focused pane's find bar and end its session. Safe to
+  /// call when no bar is open. Used by Esc / × on the focused
+  /// pane's bar and by workspace-slide pre-dismiss; non-focused
+  /// panes' bars persist and are dismissed via their own onClose
+  /// closure (see `wireFindBarCallbacks`).
   public func closeFindBar() {
-    guard let target = findBarTargetPane, target.isFindBarVisible else { return }
-    dismissFindSession(on: target)
+    guard let pane = focusedPane, pane.isFindBarVisible else { return }
+    dismissFindSession(on: pane)
     // Return first responder to the pane content so terminal input or
     // WKWebView keystrokes resume immediately; without this the
     // collapsed search field keeps responder status and eats the next
-    // keypress. Mirrors the URL bar's `onCancel` path in
-    // `PaneContainerViewController+Panes.swift`. Focus-change callers
-    // (`setFocus`) overwrite this responder a few lines later with the
-    // new pane's target, so there's no flicker for that path.
-    target.containerView.window?.makeFirstResponder(target.preferredFirstResponder)
-    findBarTargetPane = nil
+    // keypress.
+    pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
   }
 
   // MARK: - Internals
 
   /// Collapse `pane`'s bar and end its underlying find session as a
-  /// single atomic step. Shared by `openFindBar` (handing off between
-  /// panes) and `closeFindBar` (user-driven dismiss) so the two paths
-  /// can never drift out of step — once JS-channel highlight clearing
-  /// lands in `BrowserPaneView.endFind`, both paths pick it up
-  /// automatically.
-  private func dismissFindSession(on pane: PaneModel) {
-    findCountDebounceTimer?.invalidate()
-    findCountDebounceTimer = nil
+  /// single atomic step.
+  func dismissFindSession(on pane: PaneModel) {
+    pane.findCountDebounceTimer?.invalidate()
+    pane.findCountDebounceTimer = nil
     pane.findBar.setMatchPosition(current: nil, total: nil)
     pane.setFindBarVisible(false)
     pane.findHelper?.endFind()
   }
 
-  /// Bind the shared container-side callback set onto the supplied
-  /// pane's bar. The same set is re-bound on every `openFindBar` so
-  /// the closures always capture the latest target pane directly,
-  /// avoiding a round-trip through `findBarTargetPane` inside the
-  /// incremental-search hot path.
+  /// Close every visible find bar across `workspace`'s panes. Used
+  /// before workspace slides because per-pane persistence keeps
+  /// non-focused bars open, but the find panels are children of the
+  /// host window and don't follow `topConstraint` slide animation
+  /// (no `boundsDidChange` / `didResize` fires for the panel during
+  /// the slide), so without this they'd hover over the incoming
+  /// workspace at their old screen positions.
+  func dismissAllFindSessions(in workspace: WorkspaceModel) {
+    for column in workspace.columns {
+      for pane in column.panes where pane.isFindBarVisible {
+        dismissFindSession(on: pane)
+      }
+    }
+  }
+
+  /// Bind the container-side callback set onto `pane`'s bar. Each
+  /// callback captures the specific pane so a click on a non-focused
+  /// pane's bar (e.g. the user mouses over to pane B's × while
+  /// focus is still on pane A) routes to that pane's own session
+  /// rather than to `focusedPane`. Re-bound on every `openFindBar`
+  /// so the closure always carries the latest helper reference.
   private func wireFindBarCallbacks(on pane: PaneModel) {
     let bar = pane.findBar
     // `onSearch` fires per keystroke and walks the DOM, so route it
@@ -115,32 +124,58 @@ extension PaneContainerViewController {
       guard let pane else { return }
       self?.scheduleFindUpdate(needle: needle, forward: true, pane: pane)
     }
-    bar.onNext = { [weak self] in self?.findNext() }
-    bar.onPrev = { [weak self] in self?.findPrev() }
-    bar.onClose = { [weak self] in self?.closeFindBar() }
+    bar.onNext = { [weak self, weak pane] in
+      guard let self, let pane, pane.isFindBarVisible else { return }
+      let needle = pane.findBar.searchText
+      guard !needle.isEmpty else { return }
+      self.applyFindResult(needle: needle, forward: true, pane: pane)
+    }
+    bar.onPrev = { [weak self, weak pane] in
+      guard let self, let pane, pane.isFindBarVisible else { return }
+      let needle = pane.findBar.searchText
+      guard !needle.isEmpty else { return }
+      self.applyFindResult(needle: needle, forward: false, pane: pane)
+    }
+    bar.onClose = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      self.dismissFindSession(on: pane)
+      pane.containerView.window?.makeFirstResponder(pane.preferredFirstResponder)
+    }
+    // Click on a non-focused pane's bar promotes that pane to focus
+    // so subsequent ⌘G / ⌘⇧G / ⌘F target it. The panel's
+    // `becomeKey` reaches us through this observer; routing through
+    // `focusPane(id:)` rather than mutating `focusedPane*` directly
+    // also drives sidebar refresh and the rest of the focus side
+    // effects. `setFocus` doesn't reclaim the main window's key
+    // status (only keyboard-driven focus paths do that), so the
+    // panel keeps key state and the user's click intent on the
+    // search field is honoured.
+    bar.onPanelBecameKey = { [weak self, weak pane] in
+      guard let self, let pane else { return }
+      if self.focusedPane?.id != pane.id {
+        self.focusPane(id: pane.id)
+      }
+    }
   }
 
   /// Coalesce keystroke-driven find invocations behind a 200ms
-  /// debounce so fast typing doesn't spawn one
-  /// `callAsyncJavaScript` per character. The completion guards on
-  /// the current search text so stale returns can't overwrite a
-  /// newer label.
+  /// debounce. The timer lives on `PaneModel` so concurrent typing
+  /// in two panes' bars doesn't see one timer invalidating the
+  /// other; the closure-captured pane reference also lets the stale
+  /// guard fire on `pane.isFindBarVisible` rather than a single
+  /// container-wide target.
   private func scheduleFindUpdate(needle: String, forward: Bool, pane: PaneModel) {
-    findCountDebounceTimer?.invalidate()
+    pane.findCountDebounceTimer?.invalidate()
     guard !needle.isEmpty else {
       pane.findHelper?.endFind()
       pane.findBar.setMatchPosition(current: nil, total: nil)
       return
     }
-    findCountDebounceTimer = Timer.scheduledTimer(
+    pane.findCountDebounceTimer = Timer.scheduledTimer(
       withTimeInterval: 0.2, repeats: false
     ) { [weak self, weak pane] _ in
       DispatchQueue.main.async {
-        guard let self, let pane else { return }
-        // Verify the session still targets this pane. A background
-        // workspace switch or close could have rerouted things
-        // during the debounce window.
-        guard self.findBarTargetPane === pane else { return }
+        guard let self, let pane, pane.isFindBarVisible else { return }
         self.applyFindResult(needle: needle, forward: forward, pane: pane)
       }
     }
@@ -155,9 +190,5 @@ extension PaneContainerViewController {
       guard pane.findBar.searchText == needle else { return }
       pane.findBar.setMatchPosition(current: position.current, total: position.total)
     }
-  }
-
-  private func currentFindHelper() -> FindHelper? {
-    findBarTargetPane?.findHelper
   }
 }
