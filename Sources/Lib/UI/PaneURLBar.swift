@@ -969,12 +969,26 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
   private func acceptSuggestion(_ suggestion: Suggestion) {
     writeURLFieldText(suggestion.url)
-    suggestionList.dismiss()
+    dismissSuggestions()
     if let paneID = suggestion.openPaneID {
       onSwitchToPane?(paneID)
     } else {
       onNavigate?(suggestion.url)
     }
+  }
+
+  /// Hide the suggestion dropdown AND cancel any debounce timer that
+  /// hasn't fired yet. Without the timer cancel, a fast
+  /// type→Enter sequence dismisses the list before the debounce
+  /// fires, then the deferred `update(items:)` un-hides the
+  /// dropdown over the page that navigation has already loaded.
+  /// All call sites that intend "the dropdown should stay closed"
+  /// must go through here rather than `suggestionList.dismiss()`
+  /// directly.
+  private func dismissSuggestions() {
+    searchDebounceTimer?.invalidate()
+    searchDebounceTimer = nil
+    suggestionList.dismiss()
   }
 
   /// Push `text` into the URL field while keeping the cell value and
@@ -1159,8 +1173,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   public func controlTextDidChange(_ notification: Notification) {
     let text = urlField.stringValue
     guard !text.isEmpty else {
-      searchDebounceTimer?.invalidate()
-      suggestionList.dismiss()
+      dismissSuggestions()
       return
     }
     // Debounce search to avoid SQLite query on every keystroke
@@ -1190,11 +1203,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       } else {
         onNavigate?(urlField.stringValue)
       }
-      suggestionList.dismiss()
+      dismissSuggestions()
       return true
     }
     if selector == #selector(cancelOperation(_:)) {
-      suggestionList.dismiss()
+      dismissSuggestions()
       onCancel?()
       return true
     }
@@ -1234,7 +1247,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       {
         return
       }
-      self.suggestionList.dismiss()
+      self.dismissSuggestions()
       // Tell the host editing has ended with the cursor outside the
       // bar so the peek can collapse right away. While the field
       // editor was attached, hover-out fires were suppressed
