@@ -1,33 +1,71 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FindBar")
 
 /// Floating pill shown over the focused pane for incremental
-/// find-in-page. Anchored to the pane's bottom edge by `PaneModel`,
-/// rendered as a translucent dark surface so the page beneath stays
-/// visible. Independent of the URL bar — `setFindBarVisible(true)`
-/// can fire whether or not the URL bar is currently revealed.
+/// find-in-page. Hosted in a child NSPanel anchored to the pane's
+/// bottom edge by `PaneModel.setFindBarVisible(_:)`, rendered on
+/// `NSGlassEffectView` so the page beneath stays visible through
+/// the Liquid Glass material. Independent of the URL bar —
+/// `setFindBarVisible(true)` can fire whether or not the URL bar
+/// is currently revealed.
 ///
-/// An earlier revision wrapped the bar in `NSGlassEffectView` for
-/// Liquid Glass blur, but that caused a one-frame black flash on the
-/// very first reveal (the glass's backdrop layer is built lazily on
-/// first paint) and a brief "completion-popup-shaped" black square
-/// below the bar from the same lazy-attach window. The transient
-/// nature of the find bar made the trade-off lopsided: the visual
-/// payoff of glass was small, and the launch-time artefacts were
-/// distracting. The bar is now a plain layer-backed view with a
-/// translucent fill — same squircle shape, same close-×-leading
-/// layout, just rendered with a single CALayer fill instead of a
-/// blurred backdrop.
+/// An earlier in-window revision wrapped the bar in
+/// `NSGlassEffectView` directly and was reverted because the
+/// backdrop layer's lazy first-paint produced a one-frame black
+/// flash on initial reveal. The child-panel architecture sidesteps
+/// that path: panel + glass are created once, kept alive across
+/// show/hide cycles, and only the panel's alpha animates — the
+/// backdrop attaches once and survives every subsequent toggle.
 @MainActor
 public final class FindBarView: NSView, NSTextFieldDelegate {
   /// Pill height. Tall enough to read as a discrete overlay rather
   /// than a chrome strip; the URL bar is the latter.
   public static let barHeight: CGFloat = 36
 
+  /// Pill width. Fixed so the layout stays predictable across pane
+  /// sizes and so positioning logic in `PaneModel` can compute the
+  /// panel rect without measuring intrinsic content.
+  public static let barWidth: CGFloat = 380
+
+  /// Pill bottom margin from the anchor view's bottom edge.
+  public static let bottomMargin: CGFloat = 16
+
+  /// Reveal / dismiss animation duration. Matches the prior alpha
+  /// fade so the visible cadence stays the same.
+  private static let fadeDuration: TimeInterval = 0.12
+
   private let searchField = NSTextField()
   private let matchCountLabel = NSTextField(labelWithString: "")
   private let prevButton: HoverIconButton
   private let nextButton: HoverIconButton
   private let closeButton: HoverIconButton
+  private let glass = NSGlassEffectView()
+  private let card = NSView()
+
+  private var panel: NSPanel?
+  /// Anchor view passed to the most recent `show(anchoredTo:)`. The
+  /// scroll and window-resize observers reposition the panel against
+  /// this view; it stays in sync with the pane the bar is targeting.
+  private weak var anchorView: NSView?
+
+  /// Observer for the workspace clipView's bounds change. Re-runs
+  /// `repositionPanel` so the panel follows the pane as the user
+  /// scrolls panes horizontally. `nonisolated(unsafe)` so `deinit`
+  /// can release the token under Swift 6 strict concurrency.
+  nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
+
+  /// Observer for the parent window's resize notification.
+  /// Same nonisolated rationale as `scrollObserver`.
+  nonisolated(unsafe) private var parentResizeObserver: NSObjectProtocol?
+
+  /// Generation counter that gates the hide animation's completion
+  /// handler against a `show` that arrives mid-fade. Without it, an
+  /// in-flight hide tween's completion would still call `orderOut`
+  /// after `show` fired the next reveal, blanking out a bar the user
+  /// just summoned.
+  private var hideGeneration = 0
 
   /// Last `current` value we displayed that was strictly positive.
   /// Retained so that a `current = 0` return from the position query
@@ -73,15 +111,8 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     )
 
     super.init(frame: frame)
-    wantsLayer = true
     appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = AppColors.findBarSurface.cgColor
-    layer?.cornerRadius = 12
-    layer?.cornerCurve = .continuous
-    layer?.masksToBounds = true
-    layer?.borderWidth = 0.5
-    layer?.borderColor = AppColors.findBarBorder.cgColor
-
+    setupGlass()
     setupField()
     setupMatchCountLabel()
     setupButtons()
@@ -91,6 +122,34 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   @available(*, unavailable)
   required init?(coder _: NSCoder) {
     fatalError()
+  }
+
+  deinit {
+    if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+  }
+
+  // MARK: - Glass surface
+
+  private func setupGlass() {
+    glass.translatesAutoresizingMaskIntoConstraints = false
+    card.translatesAutoresizingMaskIntoConstraints = false
+    glass.contentView = card
+    glass.wantsLayer = true
+    glass.layer?.cornerRadius = 12
+    glass.layer?.cornerCurve = .continuous
+    glass.layer?.masksToBounds = true
+    addSubview(glass)
+    NSLayoutConstraint.activate([
+      glass.topAnchor.constraint(equalTo: topAnchor),
+      glass.leadingAnchor.constraint(equalTo: leadingAnchor),
+      glass.trailingAnchor.constraint(equalTo: trailingAnchor),
+      glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
   }
 
   // MARK: - Icon Button Factory
@@ -136,7 +195,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     searchField.isBezeled = false
     searchField.drawsBackground = false
     searchField.textColor = .labelColor
-    addSubview(searchField)
+    card.addSubview(searchField)
   }
 
   /// Font driving the search field's intrinsic height.
@@ -159,7 +218,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     matchCountLabel.alignment = .right
     matchCountLabel.isHidden = true
     matchCountLabel.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(matchCountLabel)
+    card.addSubview(matchCountLabel)
   }
 
   private func setupButtons() {
@@ -173,9 +232,9 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     closeButton.action = #selector(closeAction)
     closeButton.toolTip = "Close (Esc)"
 
-    addSubview(prevButton)
-    addSubview(nextButton)
-    addSubview(closeButton)
+    card.addSubview(prevButton)
+    card.addSubview(nextButton)
+    card.addSubview(closeButton)
   }
 
   private func setupLayout() {
@@ -184,13 +243,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       // Close × on the leading edge follows macOS Safari / Firefox-on-mac
       // convention for find bars: dismiss is the most predictable
       // gesture and lives where the user expects it on this platform.
-      closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-      closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      closeButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+      closeButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
       closeButton.widthAnchor.constraint(equalToConstant: buttonSize),
       closeButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
       searchField.leadingAnchor.constraint(equalTo: closeButton.trailingAnchor, constant: 8),
-      searchField.centerYAnchor.constraint(equalTo: centerYAnchor),
+      searchField.centerYAnchor.constraint(equalTo: card.centerYAnchor),
       searchField.heightAnchor.constraint(equalToConstant: Self.searchFieldHeight),
       // searchField → matchCountLabel → prevButton → nextButton.
       // When the count label is hidden its intrinsic size collapses
@@ -199,15 +258,15 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       searchField.trailingAnchor.constraint(equalTo: matchCountLabel.leadingAnchor, constant: -4),
 
       matchCountLabel.trailingAnchor.constraint(equalTo: prevButton.leadingAnchor, constant: -4),
-      matchCountLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+      matchCountLabel.centerYAnchor.constraint(equalTo: card.centerYAnchor),
 
-      prevButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      prevButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
       prevButton.widthAnchor.constraint(equalToConstant: buttonSize),
       prevButton.heightAnchor.constraint(equalToConstant: buttonSize),
 
       nextButton.leadingAnchor.constraint(equalTo: prevButton.trailingAnchor, constant: 2),
-      nextButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-      nextButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      nextButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+      nextButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
       nextButton.widthAnchor.constraint(equalToConstant: buttonSize),
       nextButton.heightAnchor.constraint(equalToConstant: buttonSize),
     ])
@@ -226,8 +285,16 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
 
   /// Move first responder to the search field and select its contents
   /// so the typical "type to replace, shift-arrow to extend" flow works.
+  /// `makeKey` is required alongside `makeFirstResponder` because a
+  /// click on the page beneath leaves the panel visible but resigned
+  /// from key state — without re-keying, ⌘F would re-enter
+  /// `openFindBar` but the field would never receive keystrokes
+  /// (typing falls through to whichever responder owns the main
+  /// window).
   public func focusField() {
-    window?.makeFirstResponder(searchField)
+    guard let panel else { return }
+    if !panel.isKeyWindow { panel.makeKey() }
+    panel.makeFirstResponder(searchField)
     searchField.selectText(nil)
   }
 
@@ -299,43 +366,196 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     matchCountLabel.stringValue
   }
 
+  // MARK: - Panel lifecycle
+
+  /// Show the panel anchored to `view`'s bottom edge and fade it in.
+  /// Idempotent — repeat shows reuse the existing panel and just
+  /// re-run the layout against the (possibly new) anchor.
+  public func show(anchoredTo view: NSView) {
+    guard let parentWindow = view.window else { return }
+    let panel = ensurePanel(parentWindow: parentWindow)
+    // Bump the generation so any in-flight hide tween's completion
+    // handler is invalidated and won't orderOut the panel we're
+    // about to reveal.
+    hideGeneration += 1
+    anchorView = view
+    bindWorkspaceObservers(parent: parentWindow, anchor: view)
+    repositionPanel()
+
+    if !panel.isVisible {
+      panel.alphaValue = 0
+    }
+    panel.makeKeyAndOrderFront(nil)
+    NSAnimationContext.runAnimationGroup { ctx in
+      ctx.duration = Self.fadeDuration
+      ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      panel.animator().alphaValue = 1
+    }
+  }
+
+  /// Fade the panel out and order it out at the end of the tween.
+  /// Safe to call when the bar was never shown.
+  public func hide() {
+    guard let panel, panel.isVisible else { return }
+    hideGeneration += 1
+    let myGeneration = hideGeneration
+    NSAnimationContext.runAnimationGroup({ ctx in
+      ctx.duration = Self.fadeDuration
+      ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      panel.animator().alphaValue = 0
+    }, completionHandler: { [weak self] in
+      // A `show` arriving mid-fade bumps the generation; bail when
+      // ours doesn't match so we don't blank out the just-revealed
+      // panel.
+      guard let self, self.hideGeneration == myGeneration else { return }
+      self.panel?.orderOut(nil)
+    })
+    if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+      scrollObserver = nil
+    }
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+      parentResizeObserver = nil
+    }
+    anchorView = nil
+  }
+
+  /// Build (or reattach) the find panel. Reparent guard mirrors
+  /// `PaneURLBar.ensureSuggestionPanel` — dead in the single-window
+  /// invariant, cheap insurance for a future multi-window split.
+  private func ensurePanel(parentWindow: NSWindow) -> NSPanel {
+    if let existing = panel {
+      if existing.parent !== parentWindow {
+        existing.parent?.removeChildWindow(existing)
+        parentWindow.addChildWindow(existing, ordered: .above)
+      }
+      return existing
+    }
+    let p = FindBarPanel(
+      contentRect: .zero,
+      styleMask: [.borderless],
+      backing: .buffered,
+      defer: true
+    )
+    p.contentView = self
+    p.isOpaque = false
+    p.backgroundColor = .clear
+    p.hasShadow = true
+    p.level = .popUpMenu
+    // The find bar is a "session" overlay — Cmd+Tabbing to another
+    // app and coming back should leave the search state intact, the
+    // way Safari's find bar does. URL bar dropdown / command palette
+    // use `hidesOnDeactivate = true` because they're transient
+    // pickers; the find bar is closer to a sticky inspector.
+    p.hidesOnDeactivate = false
+    p.collectionBehavior = [.transient, .ignoresCycle]
+    p.isReleasedWhenClosed = false
+    parentWindow.addChildWindow(p, ordered: .above)
+    panel = p
+    return p
+  }
+
+  /// Subscribe to the workspace clipView's bounds change and the
+  /// parent window's resize so the panel re-anchors as the pane
+  /// moves. Mirrors `PaneURLBar.viewDidMoveToWindow` setup.
+  private func bindWorkspaceObservers(parent: NSWindow, anchor: NSView) {
+    if let token = scrollObserver {
+      NotificationCenter.default.removeObserver(token)
+      scrollObserver = nil
+    }
+    if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+      parentResizeObserver = nil
+    }
+    if let clipView = anchor.enclosingScrollView?.contentView {
+      clipView.postsBoundsChangedNotifications = true
+      scrollObserver = NotificationCenter.default.addObserver(
+        forName: NSView.boundsDidChangeNotification,
+        object: clipView,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated { self?.repositionPanel() }
+      }
+    } else {
+      // No scroll view in the anchor's superview chain — workspace
+      // horizontal scrolls won't trigger reposition. Logged rather
+      // than silently dropped so a future host that bypasses the
+      // workspace scroll machinery surfaces this loss.
+      logger.info("scroll-tracking disabled: anchor has no enclosing scrollView")
+    }
+    parentResizeObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didResizeNotification,
+      object: parent,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.repositionPanel() }
+    }
+  }
+
+  /// Compute the panel's screen rect against the anchor's visible
+  /// slice within the host window. The bar normally sits at
+  /// `anchor.bottom + bottomMargin`, horizontally centered on the
+  /// pane, at the fixed 380×36 size. When the pane scrolls past a
+  /// window edge the bar shrinks to fit the visible portion rather
+  /// than overflowing — and only when the pane is fully clipped
+  /// does the panel order out. Re-orders front automatically once
+  /// the pane scrolls back into view, so the user never lands in an
+  /// "invisible but still active" state.
+  private func repositionPanel() {
+    guard let panel, let anchor = anchorView,
+      let parent = anchor.window
+    else { return }
+    let anchorInWindow = anchor.convert(anchor.bounds, to: nil)
+    let anchorOnScreen = parent.convertToScreen(anchorInWindow)
+
+    let windowFrame = parent.frame
+    let visibleLeft = max(anchorOnScreen.minX, windowFrame.minX)
+    let visibleRight = min(anchorOnScreen.maxX, windowFrame.maxX)
+    let visibleWidth = visibleRight - visibleLeft
+
+    if visibleWidth <= 0 {
+      // Pane is entirely off-screen. Drop the panel until the next
+      // reposition fires from a scroll/resize observer; the show
+      // path's `isFindBarVisible` stays true so re-entry restores
+      // the bar without the user re-invoking ⌘F.
+      if panel.isVisible { panel.orderOut(nil) }
+      return
+    }
+
+    // Shrink the bar to fit a partly-clipped pane rather than
+    // letting it spill over the window edge. The visible center is
+    // the natural anchor; clamp the resulting left edge so the bar
+    // never extends beyond the visible slice on either side.
+    let panelWidth = min(Self.barWidth, visibleWidth)
+    let visibleCenter = (visibleLeft + visibleRight) / 2
+    var panelLeft = visibleCenter - panelWidth / 2
+    panelLeft = max(panelLeft, visibleLeft)
+    panelLeft = min(panelLeft, visibleRight - panelWidth)
+
+    // Screen Y is bottom-up: `anchorOnScreen.minY` is the anchor's
+    // bottom edge in screen space, so `+ bottomMargin` lifts the
+    // panel's bottom edge `bottomMargin` points above the anchor's
+    // bottom — leaving a `bottomMargin`-tall gap between the bar and
+    // the pane's bottom edge.
+    let panelFrame = NSRect(
+      x: panelLeft,
+      y: anchorOnScreen.minY + Self.bottomMargin,
+      width: panelWidth,
+      height: Self.barHeight
+    )
+    panel.setFrame(panelFrame, display: true)
+    // The pane just scrolled back into view — restore the panel
+    // without re-keying so an in-progress scroll gesture doesn't
+    // steal first responder mid-stroke.
+    if !panel.isVisible { panel.orderFront(nil) }
+  }
+
   // MARK: - Button Actions
 
   @objc private func prevAction() { onPrev?() }
   @objc private func nextAction() { onNext?() }
   @objc private func closeAction() { onClose?() }
-
-  // MARK: - Cursor / event absorption
-  //
-  // The bar floats over WKWebView / GhosttyTerminalView surfaces.
-  // The translucent fill covers the bar's full bounds, but the
-  // search field's I-beam cursor rect would otherwise win over the
-  // page's text cursor only inside the field's narrow rect — leaving
-  // a sliver around the icons where the page-beneath cursor leaks
-  // through. Force `arrow` over the whole pill and let child views
-  // (search field → I-beam, buttons → pointing hand) override
-  // hierarchically. Empty mouse-event overrides ensure clicks on
-  // the bar's padding don't fall through to the page's text
-  // selection.
-
-  public override func resetCursorRects() {
-    addCursorRect(bounds, cursor: .arrow)
-  }
-
-  public override func hitTest(_ point: NSPoint) -> NSView? {
-    // When the bar is invisible (alpha 0) it must let clicks fall
-    // through to the pane content beneath. Without this guard, the
-    // mouseDown/Dragged/Up overrides below would absorb every click
-    // landing in the bar's permanent 380×36 rect at the pane bottom
-    // — turning that strip into a dead zone for link clicks and
-    // text selection while no find session is active.
-    guard alphaValue > 0.01 else { return nil }
-    return super.hitTest(point)
-  }
-
-  public override func mouseDown(with _: NSEvent) {}
-  public override func mouseDragged(with _: NSEvent) {}
-  public override func mouseUp(with _: NSEvent) {}
 
   // MARK: - NSTextFieldDelegate
 
@@ -388,4 +608,13 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }
     return false
   }
+}
+
+/// Borderless panel that opts into key-window status. The default for
+/// a borderless NSPanel is `canBecomeKey = false`, which would block
+/// keyboard input to the search field. Same shape as
+/// `CommandPalettePanel`.
+private final class FindBarPanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+  override var canBecomeMain: Bool { false }
 }

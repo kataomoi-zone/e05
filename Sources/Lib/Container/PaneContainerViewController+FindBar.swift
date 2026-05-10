@@ -29,16 +29,15 @@ extension PaneContainerViewController {
     pane.findBar.setSteppingEnabled(helper.supportsStepping)
     pane.setFindBarVisible(true)
     pane.findBar.focusField()
-    // Re-run find against whatever needle the field still carries
-    // from a previous session on this pane. Without this the
-    // position label would show stale or empty values until the
-    // user types another character.
-    let needle = pane.findBar.searchText
-    if needle.isEmpty {
-      pane.findBar.setMatchPosition(current: nil, total: nil)
-    } else {
-      applyFindResult(needle: needle, forward: true, pane: pane)
-    }
+    // ⌘F never auto-advances. The needle retained in the field
+    // from a prior session stays put; the user steps explicitly
+    // via Return / ⌘G or types to search anew. `performFind`
+    // doesn't expose a stay-in-place mode, and `forward: true`
+    // would walk past the previously highlighted match because the
+    // DOM selection survives `endFind` — making ⌘F read like ⌘G.
+    // The position label was cleared by `dismissFindSession` on the
+    // prior close, so re-entry shows an empty count rather than a
+    // stale "3 / 5".
   }
 
   /// Advance to the next match. When no bar is currently revealed — a

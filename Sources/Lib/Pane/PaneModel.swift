@@ -66,9 +66,10 @@ public final class PaneModel {
   public var isURLBarVisible: Bool { urlBarHoverState.isRevealed }
 
   /// Whether the find bar is currently revealed. Controlled through
-  /// `setFindBarVisible(_:)`. The bar is a floating overlay so showing
-  /// or hiding it does not change content layout — only `alphaValue`
-  /// flips, leaving width/height/anchor constraints permanent.
+  /// `setFindBarVisible(_:)`. The bar is hosted in a child NSPanel
+  /// so showing or hiding it does not change content layout —
+  /// `setFindBarVisible(_:)` orders the panel front or out and the
+  /// reveal animates the panel's alpha.
   public private(set) var isFindBarVisible = false
 
   // TODO: wire this into vertical drag resize.
@@ -270,18 +271,17 @@ public final class PaneModel {
   private func setupContainerView() {
     let cv = rawContentView
     urlBar.translatesAutoresizingMaskIntoConstraints = false
-    findBar.translatesAutoresizingMaskIntoConstraints = false
     headerView.translatesAutoresizingMaskIntoConstraints = false
 
-    // Both bars are floating overlays driven by `alphaValue`. The
-    // URL bar covers the top of the pane and the find bar pins to
-    // the bottom; `cv` always spans the full container, so peek /
-    // pinned / hidden transitions never shift content layout. Click
-    // pass-through is alpha-gated in `PaneURLBar.hitTest` and
-    // `FindBarView.hitTest` so an invisible bar leaves the page
-    // beneath fully interactive.
+    // The URL bar is a floating overlay driven by `alphaValue` over
+    // the pane's top edge. `cv` always spans the full container, so
+    // peek / pinned / hidden transitions never shift content layout.
+    // Click pass-through is alpha-gated in `PaneURLBar.hitTest` so
+    // an invisible bar leaves the page beneath fully interactive.
+    // The find bar lives in a child NSPanel managed by
+    // `FindBarView.show(anchoredTo:)` and isn't part of this view
+    // tree.
     urlBar.alphaValue = 0
-    findBar.alphaValue = 0
 
     // Top-edge hit zone is hidden until this pane gains focus —
     // unfocused panes don't react to hover, so AppKit doesn't even
@@ -290,40 +290,25 @@ public final class PaneModel {
 
     // Order matters: `addSubview(_:)` appends to the end of the
     // sibling list = topmost in z-order. `cv` goes in first so
-    // every other view paints over it. The URL bar and find bar
-    // are floating overlays. The hit zone sits above the URL bar
-    // chrome so its tracking strip stays reachable while the bar
-    // is invisible; the hover scheduler bails when the bar is
-    // already visible, so the overlapping case is handled in code
-    // rather than by shuffling z-order at runtime.
+    // every other view paints over it. The URL bar is a floating
+    // overlay. The hit zone sits above the URL bar chrome so its
+    // tracking strip stays reachable while the bar is invisible;
+    // the hover scheduler bails when the bar is already visible,
+    // so the overlapping case is handled in code rather than by
+    // shuffling z-order at runtime.
     containerView.addSubview(cv)
     containerView.addSubview(urlBar)
-    containerView.addSubview(findBar)
     containerView.addSubview(urlBarTopEdgeHitZone)
     containerView.addSubview(headerView)
 
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
     let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)
 
-    // Find bar pill is centered horizontally and sits 16pt above
-    // the pane bottom. Width is fixed so the layout stays
-    // predictable across pane sizes.
-    let findBarBottomMargin: CGFloat = 16
-    let findBarWidth: CGFloat = 380
-
     NSLayoutConstraint.activate([
       urlBarTopConstraint!,
       urlBar.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       urlBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       urlBarHeight,
-
-      findBar.bottomAnchor.constraint(
-        equalTo: containerView.bottomAnchor,
-        constant: -findBarBottomMargin
-      ),
-      findBar.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
-      findBar.widthAnchor.constraint(equalToConstant: findBarWidth),
-      findBar.heightAnchor.constraint(equalToConstant: FindBarView.barHeight),
 
       // `cv` always spans the full container — URL bar visibility
       // never moves the page content.
@@ -455,12 +440,10 @@ public final class PaneModel {
     guard findHelper != nil else { return }
     guard visible != isFindBarVisible else { return }
     isFindBarVisible = visible
-    let target: CGFloat = visible ? 1.0 : 0.0
-    NSAnimationContext.runAnimationGroup { ctx in
-      ctx.duration = 0.12
-      ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-      ctx.allowsImplicitAnimation = true
-      findBar.animator().alphaValue = target
+    if visible {
+      findBar.show(anchoredTo: containerView)
+    } else {
+      findBar.hide()
     }
   }
 }
