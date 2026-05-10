@@ -31,6 +31,11 @@ extension FinderPaneView {
         title: "New Folder",
         symbolName: "folder.badge.plus",
         action: #selector(contextMenuNewFolder(_:))))
+      menu.addItem(.separator())
+      menu.addItem(makeContextMenuItem(
+        title: "Show in Finder",
+        symbolName: "finder",
+        action: #selector(contextMenuShowInFinder(_:))))
       return menu
     }
 
@@ -46,6 +51,10 @@ extension FinderPaneView {
         title: "Open With...",
         symbolName: "arrow.up.forward.app",
         action: #selector(contextMenuOpenWith(_:))))
+      menu.addItem(makeContextMenuItem(
+        title: "Show in Finder",
+        symbolName: "finder",
+        action: #selector(contextMenuShowInFinder(_:))))
       menu.addItem(.separator())
       menu.addItem(makeContextMenuItem(
         title: "Move to Trash",
@@ -101,6 +110,10 @@ extension FinderPaneView {
         title: "Open With...",
         symbolName: "arrow.up.forward.app",
         action: #selector(contextMenuOpenWith(_:))))
+      menu.addItem(makeContextMenuItem(
+        title: "Show in Finder",
+        symbolName: "finder",
+        action: #selector(contextMenuShowInFinder(_:))))
       menu.addItem(.separator())
       menu.addItem(makeContextMenuItem(
         title: "Move to Trash",
@@ -157,4 +170,23 @@ extension FinderPaneView {
   @objc func contextMenuShare(_ sender: Any?) { shareSelection() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }
   @objc func contextMenuNewFolderWithSelection(_ sender: Any?) { newFolderWithSelection() }
+
+  /// Hand the current selection (or, on empty-area click, the
+  /// directory the pane is showing) to the native Finder app and
+  /// bring Finder forward with the entries highlighted. Multi-select
+  /// is supported in one call — `activateFileViewerSelecting` opens
+  /// a single Finder window with all entries selected, mirroring
+  /// the native ⌘⇧F4 / right-click "Show in Enclosing Folder" flow.
+  ///
+  /// The `finder` SF Symbol that decorates this menu item is one of
+  /// Apple's restricted glyphs: per the SF Symbols license it may
+  /// only be used in contexts that refer to the macOS Finder app.
+  /// Driving Finder via `activateFileViewerSelecting` is exactly that
+  /// use, so the glyph is permitted here and would not be elsewhere
+  /// (e.g. as a generic "files" icon).
+  @objc func contextMenuShowInFinder(_ sender: Any?) {
+    let urls = selectedURLs
+    let targets = urls.isEmpty ? [currentURL] : urls
+    NSWorkspace.shared.activateFileViewerSelecting(targets)
+  }
 }
