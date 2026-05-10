@@ -712,7 +712,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Toggle Web Inspector. Opens inline inside this view (Safari/Chrome-style split).
   public func toggleInspector() {
     guard let inspector = webView.value(forKey: Self.inspectorKey) as? NSObject else {
-      NSLog("[e05-browser] _inspector not available")
+      logger.error("_inspector not available")
       return
     }
     // Update state BEFORE side effects so layout() sees the correct value during reentrant calls
@@ -720,14 +720,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       isInspectorOpen = false
       inspector.perform(InspectorSelector.close)
       webView.frame = browserHostView.bounds
-      NSLog("[e05-browser] Inspector closed")
+      logger.debug("Inspector closed")
     } else {
       isInspectorOpen = true
       // attach BEFORE show so Inspector opens inline from the start
       // (avoids the flash of a separate window when remembered state is detached)
       inspector.perform(InspectorSelector.attach)
       inspector.perform(InspectorSelector.show)
-      NSLog("[e05-browser] Inspector opened (inline)")
+      logger.debug("Inspector opened (inline)")
     }
   }
 

@@ -1,21 +1,22 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Focus")
 
 extension PaneContainerViewController {
   // MARK: - Focus
 
   public func setFocus(columnIndex: Int, paneIndex: Int, scroll: Bool = true) {
-    NSLog(
-      "[e05/ws] setFocus entry col=%d pane=%d scroll=%@ currentWs=%d",
-      columnIndex, paneIndex, scroll ? "yes" : "no", focusedWorkspaceIndex)
+    logger.info("setFocus entry col=\(columnIndex) pane=\(paneIndex) scroll=\(scroll ? "yes" : "no", privacy: .public) currentWs=\(self.focusedWorkspaceIndex)")
     guard columns.indices.contains(columnIndex) else {
-      NSLog("[e05/ws] setFocus guard: bad columnIndex")
+      logger.error("setFocus guard: bad columnIndex")
       return
     }
     guard let column = columns[safe: columnIndex],
       column.panes.indices.contains(paneIndex)
     else {
-      NSLog("[e05/ws] setFocus guard: bad paneIndex")
+      logger.error("setFocus guard: bad paneIndex")
       return
     }
     let previouslyFocused = focusedPane
@@ -71,7 +72,7 @@ extension PaneContainerViewController {
     }
 
     if let previousPane = focusedPane {
-      NSLog("[e05/ws] setFocus clearing previous pane=%@", String(describing: previousPane.id))
+      logger.debug("setFocus clearing previous pane=\(String(describing: previousPane.id), privacy: .public)")
       clearFocusBorder(previousPane)
       hideHeaderForPane(previousPane)
     }
@@ -80,7 +81,7 @@ extension PaneContainerViewController {
     column.focusedPaneIndex = paneIndex
 
     let pane = column.panes[paneIndex]
-    NSLog("[e05/ws] setFocus applying pane=%@ addr=%@", String(describing: pane.id), pane.address.description)
+    logger.info("setFocus applying pane=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
     // Inform the WKWebExtension bridge of the focus change up front
     // so the sticky "active browser pane" tracker stays current
     // regardless of what subsequent UI work (popup webView, find bar,
@@ -100,10 +101,7 @@ extension PaneContainerViewController {
       pane.urlBar.focusURLField()
     } else {
       let result = view.window?.makeFirstResponder(pane.preferredFirstResponder) ?? false
-      NSLog(
-        "[e05/ws] setFocus makeFirstResponder result=%@ actualFirstResponder=%@",
-        result ? "true" : "false",
-        String(describing: view.window?.firstResponder))
+      logger.debug("setFocus makeFirstResponder result=\(result ? "true" : "false", privacy: .public) actualFirstResponder=\(String(describing: self.view.window?.firstResponder), privacy: .public)")
     }
     updateHandleActiveStates()
     showHeaderForFocusedPane()
@@ -595,12 +593,9 @@ extension PaneContainerViewController {
       cv.layer?.borderWidth = focusBorderWidth
       cv.layer?.borderColor = focusBorderColor.cgColor
     }
-    NSLog(
-      "[e05/ws] applyFocusBorder paneId=%@ layerExists=%@ borderWidth=%f private=%@",
-      String(describing: pane.id),
-      cv.layer == nil ? "no" : "yes",
-      cv.layer?.borderWidth ?? -1,
-      isPrivate ? "yes" : "no")
+    logger.debug(
+      "applyFocusBorder paneId=\(String(describing: pane.id), privacy: .public) layerExists=\(cv.layer == nil ? "no" : "yes", privacy: .public) borderWidth=\(cv.layer?.borderWidth ?? -1) private=\(isPrivate ? "yes" : "no", privacy: .public)"
+    )
 
     if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }),
       column.isFolded
@@ -626,7 +621,7 @@ extension PaneContainerViewController {
     cv.layer?.borderColor = nil
     removeDottedBorderOverlay(in: cv)
     if hadBorder {
-      NSLog("[e05/ws] clearFocusBorder paneId=%@ (had border)", String(describing: pane.id))
+      logger.debug("clearFocusBorder paneId=\(String(describing: pane.id), privacy: .public) (had border)")
     }
 
     if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }) {
@@ -709,9 +704,7 @@ extension PaneContainerViewController {
   /// resolve correctly. The previous current-WS-only scan would silently
   /// drop focus updates for panes parked in non-current workspaces.
   func handleFocusChange(from pane: PaneModel) {
-    NSLog(
-      "[e05/ws] handleFocusChange paneId=%@ addr=%@",
-      String(describing: pane.id), pane.address.description)
+    logger.debug("handleFocusChange paneId=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
     // Cold-restore guard: while `pendingInitialFocus` is non-nil the
     // session restore is still in flight and `viewDidAppear` hasn't
     // re-applied the saved focus yet. AppKit's `_setUpFirstResponder`
@@ -726,14 +719,14 @@ extension PaneContainerViewController {
     // here keeps the saved scrollX intact; viewDidAppear's
     // `pendingInitialFocus` re-apply restores focus cleanly.
     if pendingInitialFocus != nil {
-      NSLog("[e05/ws] handleFocusChange skipped: pending initial focus")
+      logger.debug("handleFocusChange skipped: pending initial focus")
       return
     }
     // O(1) short-circuit: already the focused pane → nothing to do.
     // Any other case falls through to focusPane, which handles both
     // same-WS and cross-WS cases (and its own reentrancy guard).
     if focusedPane?.id == pane.id {
-      NSLog("[e05/ws] handleFocusChange guard: already focused")
+      logger.debug("handleFocusChange guard: already focused")
       return
     }
     focusPane(id: pane.id)
@@ -761,7 +754,7 @@ extension PaneContainerViewController {
   /// Silently returns if no pane matches.
   public func focusPane(id: ULID) {
     guard !isAnimatingWorkspaceSwitch else {
-      NSLog("[e05/ws] focusPane skipped: workspace switch animation in flight")
+      logger.debug("focusPane skipped: workspace switch animation in flight")
       return
     }
     for (wsIdx, ws) in workspaces.enumerated() {

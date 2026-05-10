@@ -1,5 +1,8 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "GhosttyApp")
 
 /// Manages the ghostty runtime lifecycle: init, config, app, tick.
 @MainActor
@@ -10,12 +13,12 @@ public final class GhosttyApp {
   public init() {
     let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
     guard initResult == 0 else {
-      NSLog("[e05] ghostty_init failed: \(initResult)")
+      logger.error("ghostty_init failed: \(initResult)")
       return
     }
 
     guard let cfg = ghostty_config_new() else {
-      NSLog("[e05] ghostty_config_new failed")
+      logger.error("ghostty_config_new failed")
       return
     }
     let configPath = NSString("~/.config/e05/config").expandingTildeInPath
@@ -52,17 +55,17 @@ public final class GhosttyApp {
     // API: ghostty_surface_complete_clipboard_request(surface, text, state, confirm)
     runtime.read_clipboard_cb = { ud, clipboard, state in
       guard let ud, let state else {
-        NSLog("[e05] read_clipboard_cb: ud or state is nil")
+        logger.error("read_clipboard_cb: ud or state is nil")
         return false
       }
       let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
       guard let surface = view.surface else { return false }
       let pasteboard = NSPasteboard.general
       guard let text = pasteboard.string(forType: .string) else {
-        NSLog("[e05] read_clipboard_cb: no text in pasteboard")
+        logger.debug("read_clipboard_cb: no text in pasteboard")
         return false
       }
-      NSLog("[e05] read_clipboard_cb: pasting %d chars", text.count)
+      logger.debug("read_clipboard_cb: pasting \(text.count) chars")
       guard let cStr = strdup(text) else { return false }
       DispatchQueue.main.async {
         ghostty_surface_complete_clipboard_request(surface, cStr, state, true)
@@ -111,10 +114,10 @@ public final class GhosttyApp {
 
     self.app = ghostty_app_new(&runtime, cfg)
     guard self.app != nil else {
-      NSLog("[e05] ghostty_app_new failed")
+      logger.error("ghostty_app_new failed")
       return
     }
-    NSLog("[e05] ghostty runtime initialized")
+    logger.info("ghostty runtime initialized")
   }
 
   nonisolated deinit {

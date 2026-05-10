@@ -75,7 +75,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
     surface = ghostty_surface_new(app, &cfg)
     guard surface != nil else {
-      NSLog("[e05] ghostty_surface_new failed")
+      logger.error("ghostty_surface_new failed")
       return
     }
 
@@ -269,18 +269,15 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     let result: Bool
     if shouldSendText, let text {
       let textHex = text.unicodeScalars.map { String(format: "0x%02X", $0.value) }.joined(separator: " ")
-      NSLog(
-        "[e05-key] keyCode=0x%02X action=%d text=\"%@\" hex=[%@]",
-        event.keyCode, action.rawValue, text, textHex)
+      let kc = String(format: "0x%02X", event.keyCode)
+      logger.debug("[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=\"\(text, privacy: .public)\" hex=[\(textHex, privacy: .public)]")
       result = text.withCString { ptr in
         key.text = ptr
         return ghostty_surface_key(surface, key)
       }
     } else {
-      NSLog(
-        "[e05-key] keyCode=0x%02X action=%d text=nil (raw=%@)",
-        event.keyCode, action.rawValue,
-        text ?? "nil")
+      let kc = String(format: "0x%02X", event.keyCode)
+      logger.debug("[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=nil (raw=\(text ?? "nil", privacy: .public))")
       result = ghostty_surface_key(surface, key)
     }
     return result
@@ -364,7 +361,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// Terminal views should NOT execute these commands — the raw key
   /// events are sent to ghostty instead.
   public override func doCommand(by selector: Selector) {
-    NSLog("[e05] doCommand(by: %@)", NSStringFromSelector(selector))
+    logger.debug("doCommand(by: \(NSStringFromSelector(selector), privacy: .public))")
     // Intentionally do nothing. Without this, AppKit sends the command
     // up the responder chain, which can cause hangs (e.g. cancelOperation: for ESC).
   }
@@ -391,7 +388,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
     // Outside keyDown (e.g. drag-and-drop): send directly to PTY
     guard let surface else { return }
-    NSLog("[e05-key] insertText outside keyDown: \"%@\"", text)
+    logger.debug("[key] insertText outside keyDown: \"\(text, privacy: .public)\"")
     text.withCString { ptr in
       ghostty_surface_text(surface, ptr, UInt(text.utf8.count))
     }

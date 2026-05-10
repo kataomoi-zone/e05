@@ -1,5 +1,8 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Container")
 
 public final class PaneContainerViewController: NSViewController {
   let ghosttyApp: GhosttyApp
@@ -312,14 +315,12 @@ public final class PaneContainerViewController: NSViewController {
   /// `workspaces[0]` and install its view full-bounds. `restoreSession`
   /// may later replace this VC wholesale if a persisted session exists.
   private func installInitialWorkspaceVC() {
-    NSLog("[e05/ws] installInitialWorkspaceVC entry: view.bounds=%@", String(describing: view.bounds))
+    logger.debug("installInitialWorkspaceVC entry: view.bounds=\(String(describing: self.view.bounds), privacy: .public)")
     let vc = WorkspaceViewController(workspace: workspaces[0])
     addChild(vc)
     workspaceVCs.append(vc)
     installWorkspaceView(vc, makeCurrent: true)
-    NSLog(
-      "[e05/ws] installInitialWorkspaceVC done: workspaceVCs.count=%d, subviews=%d",
-      workspaceVCs.count, view.subviews.count)
+    logger.debug("installInitialWorkspaceVC done: workspaceVCs.count=\(self.workspaceVCs.count), subviews=\(self.view.subviews.count)")
   }
 
   /// Describe each subview of the container's view for debugging. Maps
@@ -332,7 +333,7 @@ public final class PaneContainerViewController: NSViewController {
       }
       return "[\(i)]other=\(type(of: sv))"
     }
-    NSLog("[e05/ws] %@ subviews=%@", tag, subs.joined(separator: " "))
+    logger.debug("\(tag, privacy: .public) subviews=\(subs.joined(separator: " "), privacy: .public)")
   }
 
   /// Add `vc.view` as a constraint-pinned subview of the container. All
@@ -396,13 +397,9 @@ public final class PaneContainerViewController: NSViewController {
       vc.scrollView.contentView.setBoundsOrigin(NSPoint(x: initialOriginX, y: 0))
     }
 
-    NSLog(
-      "[e05/ws] installWorkspaceView wsId=%@ current=%@ topConstant=%f bounds.h=%f hidden=%@",
-      String(describing: vc.workspace.id),
-      makeCurrent ? "yes" : "no",
-      initialConstant,
-      view.bounds.height,
-      wv.isHidden ? "yes" : "no")
+    logger.debug(
+      "installWorkspaceView wsId=\(String(describing: vc.workspace.id), privacy: .public) current=\(makeCurrent ? "yes" : "no", privacy: .public) topConstant=\(initialConstant) bounds.h=\(self.view.bounds.height) hidden=\(wv.isHidden ? "yes" : "no", privacy: .public)"
+    )
   }
 
   /// Flag flipped by `animateSlide` so that `viewDidLayout` doesn't stomp
@@ -456,9 +453,7 @@ public final class PaneContainerViewController: NSViewController {
       hasAppearedOnce = true
       if let target = pendingInitialFocus {
         pendingInitialFocus = nil
-        NSLog(
-          "[e05/ws] viewDidAppear re-applying focus → ws=%d col=%d pane=%d",
-          target.workspaceIndex, target.columnIndex, target.paneIndex)
+        logger.info("viewDidAppear re-applying focus → ws=\(target.workspaceIndex) col=\(target.columnIndex) pane=\(target.paneIndex)")
         // Wipe every border in the current workspace first. Between
         // restoreFocus and viewDidAppear, AppKit's key-window init
         // can hand first responder to the leftmost terminal pane,
@@ -482,7 +477,7 @@ public final class PaneContainerViewController: NSViewController {
         // requested offset to 0. Re-applying here with the saved
         // `workspace.scrollX` puts the viewport where it was saved.
         restoreScroll(in: currentWorkspace)
-        NSLog("[e05/ws] viewDidAppear restoreScroll x=%f", currentWorkspace.scrollX)
+        logger.info("viewDidAppear restoreScroll x=\(self.currentWorkspace.scrollX)")
 
         // The saved `scrollX` lives in document-view coordinates and
         // doesn't know about the current `contentInsets.left` — a

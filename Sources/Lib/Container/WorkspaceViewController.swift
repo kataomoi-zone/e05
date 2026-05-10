@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Workspace")
 
 /// One workspace's horizontal column strip. Owns its own scrollView +
 /// stackView so that switching workspaces reduces to swapping the visible
@@ -42,7 +45,7 @@ public final class WorkspaceViewController: NSViewController {
   required init?(coder _: NSCoder) { fatalError() }
 
   public override func loadView() {
-    NSLog("[e05/ws] WorkspaceVC.loadView wsId=%@", String(describing: workspace.id))
+    logger.debug("WorkspaceVC.loadView wsId=\(String(describing: self.workspace.id), privacy: .public)")
     // Constraint-driven layout — the container installs leading/trailing/
     // height/top constraints and animates `topConstraint.constant` to
     // slide this view vertically. Autoresizing mask is turned off to

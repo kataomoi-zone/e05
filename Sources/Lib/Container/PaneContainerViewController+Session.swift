@@ -1,5 +1,8 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Session")
 
 extension PaneContainerViewController {
   // MARK: - Session Save/Restore
@@ -15,13 +18,11 @@ extension PaneContainerViewController {
     // (which never restores `.hoverPeek`) couldn't undo.
     currentWorkspace.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
 
-    NSLog("[e05/ws] captureSession: focusedWsIdx=%d, wsCount=%d", focusedWorkspaceIndex, workspaces.count)
+    logger.info("captureSession: focusedWsIdx=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
     for (i, ws) in workspaces.enumerated() {
       let colFocused = ws.focusedColumnIndex
       let paneFocused = ws.columns[safe: colFocused]?.focusedPaneIndex ?? -1
-      NSLog(
-        "[e05/ws] captureSession ws[%d] id=%@ focusedCol=%d focusedPane=%d columns=%d",
-        i, String(describing: ws.id), colFocused, paneFocused, ws.columns.count)
+      logger.debug("captureSession ws[\(i)] id=\(String(describing: ws.id), privacy: .public) focusedCol=\(colFocused) focusedPane=\(paneFocused) columns=\(ws.columns.count)")
     }
 
     // Drop private workspaces from the snapshot: they're explicitly
@@ -171,9 +172,7 @@ extension PaneContainerViewController {
       if !ws.columns.isEmpty {
         ws.focusedColumnIndex = min(max(wsState.focusedColumnIndex, 0), ws.columns.count - 1)
       }
-      NSLog(
-        "[e05/ws] restoreSession wsId=%@ saved focusedCol=%d → set to %d, columns=%d",
-        String(describing: ws.id), wsState.focusedColumnIndex, ws.focusedColumnIndex, ws.columns.count)
+      logger.debug("restoreSession wsId=\(String(describing: ws.id), privacy: .public) saved focusedCol=\(wsState.focusedColumnIndex) → set to \(ws.focusedColumnIndex), columns=\(ws.columns.count)")
     }
 
     // Drop workspaces that ended up empty (e.g. all addresses unparseable).
@@ -231,9 +230,7 @@ extension PaneContainerViewController {
       let column = ws.columns[colIdx]
       let paneIdx = min(max(column.focusedPaneIndex, 0), column.panes.count - 1)
       pendingInitialFocus = (focusedWorkspaceIndex, colIdx, paneIdx)
-      NSLog(
-        "[e05/ws] restoreSession snapshot focus ws=%d col=%d pane=%d",
-        focusedWorkspaceIndex, colIdx, paneIdx)
+      logger.debug("restoreSession snapshot focus ws=\(self.focusedWorkspaceIndex) col=\(colIdx) pane=\(paneIdx)")
     }
     restoreFocusInCurrentWorkspace()
     // First responder now firmly on current WS's target pane — safe to

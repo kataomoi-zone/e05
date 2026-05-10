@@ -110,10 +110,7 @@ final class NativeMessagingPort {
   ) throws {
     self.port = port
     self.manifestPath = manifest.path
-    NSLog(
-      "[e05/nm] Spawning host name=%@ path=%@ origin=%@",
-      manifest.name, manifest.path, callerOrigin ?? "(none)"
-    )
+    logger.info("Spawning host name=\(manifest.name, privacy: .public) path=\(manifest.path, privacy: .public) origin=\(callerOrigin ?? "(none)", privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: manifest.path)
     if let origin = callerOrigin {
@@ -125,11 +122,11 @@ final class NativeMessagingPort {
     process.standardInput = stdinPipe
     process.standardOutput = stdoutPipe
     // Use a pipe (not inherited stderr) so the host's diagnostic
-    // output is line-buffered into NSLog with a clear `[e05/nm/stderr]`
-    // prefix. Inheriting standardError sent the bytes to e05's stderr
-    // raw, which interleaved unpredictably with NSLog and made it
-    // hard to correlate proxy crashes with the surrounding bridge
-    // events.
+    // output is line-buffered into os.Logger with a clear `[stderr]`
+    // tag. Inheriting standardError sent the bytes to e05's stderr
+    // raw, which interleaved unpredictably with os.Logger output and
+    // made it hard to correlate proxy crashes with the surrounding
+    // bridge events.
     process.standardError = stderrPipe
     self.process = process
     self.stdinPipe = stdinPipe
@@ -141,17 +138,9 @@ final class NativeMessagingPort {
     // Wire termination logging *before* spawning so Process can
     // never deliver the callback before our handler is set.
     process.terminationHandler = { proc in
-      NSLog(
-        "[e05/nm] host process terminated pid=%d status=%d reason=%@",
-        proc.processIdentifier, proc.terminationStatus,
-        proc.terminationReason == .exit ? "exit" : "uncaughtSignal"
-      )
+      logger.info("host process terminated pid=\(proc.processIdentifier) status=\(proc.terminationStatus) reason=\(proc.terminationReason == .exit ? "exit" : "uncaughtSignal", privacy: .public)")
     }
     try process.run()
-    NSLog(
-      "[e05/nm] Launched host pid=%d path=%@ origin=%@",
-      process.processIdentifier, manifest.path, callerOrigin ?? "(none)"
-    )
     logger.info(
       "Native host launched pid=\(process.processIdentifier) path=\(manifest.path, privacy: .public) origin=\(callerOrigin ?? "(none)", privacy: .public)"
     )
@@ -181,18 +170,15 @@ final class NativeMessagingPort {
         // to a launch crash and clutters the log with false leads.
         guard !self.isClosed else { return }
         if !self.process.isRunning {
-          NSLog(
-            "[e05/nm] WARN host exited within 500ms pid=%d status=%d path=%@",
-            pid, self.process.terminationStatus, path
-          )
+          logger.error("WARN host exited within 500ms pid=\(pid) status=\(self.process.terminationStatus) path=\(path, privacy: .public)")
         } else {
-          NSLog("[e05/nm] host still alive after 500ms pid=%d", pid)
+          logger.debug("host still alive after 500ms pid=\(pid)")
         }
       }
     }
   }
 
-  /// Drain the host's stderr line-by-line into NSLog. Uses
+  /// Drain the host's stderr line-by-line into os.Logger. Uses
   /// readabilityHandler so partial lines coming from a panicking host
   /// still flush before the process dies.
   private func startStderrLoop() {
@@ -204,7 +190,7 @@ final class NativeMessagingPort {
         }
         let text = String(data: chunk, encoding: .utf8) ?? "(binary \(chunk.count) bytes)"
         for line in text.split(whereSeparator: \.isNewline) where !line.isEmpty {
-          NSLog("[e05/nm/stderr] %@", String(line))
+          logger.info("[stderr] \(String(line), privacy: .public)")
         }
       }
     }
@@ -214,19 +200,19 @@ final class NativeMessagingPort {
     port.messageHandler = { [weak self] message, error in
       guard let self else { return }
       if let error {
-        NSLog("[e05/nm] messageHandler error: %@", error.localizedDescription)
+        logger.error("messageHandler error: \(error.localizedDescription, privacy: .public)")
         return
       }
       let preview = NativeMessagingPort.previewDescription(of: message)
-      NSLog("[e05/nm] ext→host message: %@", preview)
+      logger.debug("ext→host message: \(preview, privacy: .public)")
       self.send(toHost: message)
     }
     port.disconnectHandler = { [weak self] error in
       let detail = error?.localizedDescription ?? "(no error)"
-      NSLog("[e05/nm] port disconnectHandler fired: %@", detail)
+      logger.debug("port disconnectHandler fired: \(detail, privacy: .public)")
       self?.shutdown(reason: "extension disconnected")
     }
-    NSLog("[e05/nm] configureBridges done (handlers attached)")
+    logger.info("configureBridges done (handlers attached)")
   }
 
   /// Best-effort one-line summary of an `Any` payload for log output.
@@ -251,7 +237,7 @@ final class NativeMessagingPort {
   /// pipe errors do trigger shutdown because the host is no longer reachable.
   private func send(toHost message: Any?) {
     guard let message else {
-      NSLog("[e05/nm] send(toHost:) skipped (nil message)")
+      logger.error("send(toHost:) skipped (nil message)")
       return
     }
     // WebKit's MessagePort delivers JSON values; the extension can pass
@@ -266,10 +252,7 @@ final class NativeMessagingPort {
         withJSONObject: message, options: [.fragmentsAllowed]
       )
     } catch {
-      NSLog(
-        "[e05/nm] JSON encode failed for ext→host payload: %@",
-        error.localizedDescription
-      )
+      logger.error("JSON encode failed for ext→host payload: \(error.localizedDescription, privacy: .public)")
       return
     }
     var length = UInt32(data.count).littleEndian
@@ -282,12 +265,9 @@ final class NativeMessagingPort {
       try stdin.write(contentsOf: combined)
       let body = String(data: data, encoding: .utf8) ?? "(binary)"
       let preview = body.count > 200 ? String(body.prefix(200)) + "…" : body
-      NSLog("[e05/nm] wrote %d bytes to host stdin: %@", data.count, preview)
+      logger.debug("wrote \(data.count) bytes to host stdin: \(preview, privacy: .public)")
     } catch {
-      NSLog(
-        "[e05/nm] stdin write failed (%d bytes): %@",
-        data.count, error.localizedDescription
-      )
+      logger.error("stdin write failed (\(data.count) bytes): \(error.localizedDescription, privacy: .public)")
       shutdown(reason: "stdin write failed")
     }
   }
@@ -300,11 +280,11 @@ final class NativeMessagingPort {
   /// teardown logic are main-actor isolated.
   private func startReadLoop() {
     let handle = stdout
-    NSLog("[e05/nm] startReadLoop entering detached task")
+    logger.debug("startReadLoop entering detached task")
     readTask = Task.detached { [weak self] in
       while !Task.isCancelled {
         guard let header = try? handle.read(upToCount: 4), header.count == 4 else {
-          NSLog("[e05/nm] read loop hit EOF on header read")
+          logger.error("read loop hit EOF on header read")
           await MainActor.run { [weak self] in
             self?.shutdown(reason: "stdout EOF")
           }
@@ -323,13 +303,13 @@ final class NativeMessagingPort {
         }
         let count = Int(length)
         guard let body = try? handle.read(upToCount: count), body.count == count else {
-          NSLog("[e05/nm] read loop got truncated body (wanted %d)", count)
+          logger.error("read loop got truncated body (wanted \(count))")
           await MainActor.run { [weak self] in
             self?.shutdown(reason: "stdout truncated payload")
           }
           return
         }
-        NSLog("[e05/nm] host→ext frame %d bytes", count)
+        logger.debug("host→ext frame \(count) bytes")
         await MainActor.run { [weak self] in
           self?.deliverFromHost(body)
         }
@@ -339,7 +319,7 @@ final class NativeMessagingPort {
 
   private func deliverFromHost(_ frame: Data) {
     guard !port.isDisconnected else {
-      NSLog("[e05/nm] deliverFromHost skipped: port already disconnected")
+      logger.error("deliverFromHost skipped: port already disconnected")
       return
     }
     let payload: Any
@@ -350,21 +330,15 @@ final class NativeMessagingPort {
     } catch {
       // Skip malformed frames rather than tearing down the channel —
       // the host may emit diagnostic noise the extension can ignore.
-      NSLog(
-        "[e05/nm] host emitted non-JSON payload (%d bytes): %@",
-        frame.count, error.localizedDescription
-      )
+      logger.error("host emitted non-JSON payload (\(frame.count) bytes): \(error.localizedDescription, privacy: .public)")
       return
     }
     let body = String(data: frame, encoding: .utf8) ?? "(binary)"
     let bodyPreview = body.count > 200 ? String(body.prefix(200)) + "…" : body
-    NSLog("[e05/nm] forwarding to ext (%d bytes): %@", frame.count, bodyPreview)
+    logger.debug("forwarding to ext (\(frame.count) bytes): \(bodyPreview, privacy: .public)")
     port.sendMessage(payload) { error in
       if let error {
-        NSLog(
-          "[e05/nm] sendMessage to ext failed: %@",
-          error.localizedDescription
-        )
+        logger.error("sendMessage to ext failed: \(error.localizedDescription, privacy: .public)")
       }
     }
   }
@@ -372,7 +346,7 @@ final class NativeMessagingPort {
   func shutdown(reason: String) {
     guard !isClosed else { return }
     isClosed = true
-    NSLog("[e05/nm] shutdown reason=%@", reason)
+    logger.info("shutdown reason=\(reason, privacy: .public)")
     readTask?.cancel()
     readTask = nil
     stderrTask?.cancel()
@@ -392,10 +366,7 @@ final class NativeMessagingPort {
       Task.detached {
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         if proc.isRunning {
-          NSLog(
-            "[e05/nm] host did not exit on SIGTERM, sending SIGKILL pid=%d",
-            pidToKill
-          )
+          logger.error("host did not exit on SIGTERM, sending SIGKILL pid=\(pidToKill)")
           kill(pidToKill, SIGKILL)
         }
       }

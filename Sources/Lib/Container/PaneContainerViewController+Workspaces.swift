@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Workspaces")
 
 extension PaneContainerViewController {
   // MARK: - Accent color palette
@@ -55,15 +58,13 @@ extension PaneContainerViewController {
     slidingUp: Bool? = nil,
     completion: (@MainActor @Sendable () -> Void)? = nil
   ) {
-    NSLog(
-      "[e05/ws] switchWorkspace(to:%d) entry: focused=%d, wsCount=%d, targetCol=%d targetPane=%d",
-      index, focusedWorkspaceIndex, workspaces.count,
-      workspaces[safe: index]?.focusedColumnIndex ?? -1,
-      workspaces[safe: index]?.columns[safe: workspaces[safe: index]?.focusedColumnIndex ?? 0]?.focusedPaneIndex ?? -1)
+    let targetCol = workspaces[safe: index]?.focusedColumnIndex ?? -1
+    let targetPane = workspaces[safe: index]?.columns[safe: workspaces[safe: index]?.focusedColumnIndex ?? 0]?.focusedPaneIndex ?? -1
+    logger.info("switchWorkspace(to:\(index)) entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), targetCol=\(targetCol) targetPane=\(targetPane)")
     guard index != focusedWorkspaceIndex,
       workspaces.indices.contains(index)
     else {
-      NSLog("[e05/ws] switchWorkspace guard failed")
+      logger.debug("switchWorkspace guard failed")
       return
     }
 
@@ -115,10 +116,7 @@ extension PaneContainerViewController {
     guard let fromTop = fromVC.topConstraint,
       let toTop = toVC.topConstraint
     else {
-      NSLog(
-        "[e05/ws] animateSlide missing constraints — from=%@ to=%@",
-        fromVC.topConstraint == nil ? "nil" : "ok",
-        toVC.topConstraint == nil ? "nil" : "ok")
+      logger.error("animateSlide missing constraints — from=\(fromVC.topConstraint == nil ? "nil" : "ok", privacy: .public) to=\(toVC.topConstraint == nil ? "nil" : "ok", privacy: .public)")
       completion?()
       return
     }
@@ -153,9 +151,7 @@ extension PaneContainerViewController {
     }
     view.layoutSubtreeIfNeeded()
 
-    NSLog(
-      "[e05/ws] animateSlide start: slidingUp=%@ fromConst=%f toStart=%f h=%f",
-      slidingUp ? "yes" : "no", fromTop.constant, toTop.constant, h)
+    logger.debug("animateSlide start: slidingUp=\(slidingUp ? "yes" : "no", privacy: .public) fromConst=\(fromTop.constant) toStart=\(toTop.constant) h=\(h)")
 
     NSAnimationContext.runAnimationGroup(
       { ctx in
@@ -170,7 +166,7 @@ extension PaneContainerViewController {
         MainActor.assumeIsolated {
           guard let self else { return }
           self.isAnimatingWorkspaceSwitch = false
-          NSLog("[e05/ws] animateSlide end: subviews=%d", self.view.subviews.count)
+          logger.debug("animateSlide end: subviews=\(self.view.subviews.count)")
           // Order matters: move first responder to the target pane
           // BEFORE hiding the from-view. Otherwise AppKit sees the
           // current first responder land inside a hidden view, picks
@@ -213,9 +209,7 @@ extension PaneContainerViewController {
   /// closed-pane undo is disabled, and the focus border renders as
   /// a dotted line so the workspace reads as set apart at a glance.
   public func createWorkspace(isPrivate: Bool = false) {
-    NSLog(
-      "[e05/ws] createWorkspace entry: focused=%d, wsCount=%d, private=%@",
-      focusedWorkspaceIndex, workspaces.count, isPrivate ? "yes" : "no")
+    logger.info("createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)")
 
     let outgoing = currentWorkspace
     outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
@@ -249,9 +243,7 @@ extension PaneContainerViewController {
   /// stashed surfaces belong to the workspace we're discarding) and
   /// terminates the app when the last workspace is gone.
   public func closeCurrentWorkspace() {
-    NSLog(
-      "[e05/ws] closeCurrentWorkspace entry: focused=%d, wsCount=%d",
-      focusedWorkspaceIndex, workspaces.count)
+    logger.info("closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
     let closing = currentWorkspace
     let closingVC = currentWorkspaceVC
     let closingIndex = focusedWorkspaceIndex
@@ -318,9 +310,7 @@ extension PaneContainerViewController {
     }
     let closing = workspaces[index]
     let closingVC = workspaceVCs[index]
-    NSLog(
-      "[e05/ws] closeWorkspace(at:%d) non-current: focused=%d wsCount=%d",
-      index, focusedWorkspaceIndex, workspaces.count)
+    logger.info("closeWorkspace(at:\(index)) non-current: focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)")
 
     for column in closing.columns {
       for pane in column.panes {
@@ -353,13 +343,13 @@ extension PaneContainerViewController {
   /// surface is preserved across the move. If the source column/workspace
   /// is left empty, it collapses per the standard invariants.
   public func movePane(toWorkspaceId id: ULID) {
-    NSLog("[e05/ws] movePane(toWorkspaceId) entry: focused=%d", focusedWorkspaceIndex)
+    logger.info("movePane(toWorkspaceId) entry: focused=\(self.focusedWorkspaceIndex)")
     guard let target = workspaces.firstIndex(where: { $0.id == id }),
       target != focusedWorkspaceIndex,
       let column = columns[safe: focusedColumnIndex],
       let pane = column.focusedPane
     else {
-      NSLog("[e05/ws] movePane guard failed")
+      logger.debug("movePane guard failed")
       return
     }
     // Block cross-private-boundary moves: a `WKWebView`'s
@@ -375,10 +365,7 @@ extension PaneContainerViewController {
     // ⌘N / ⌘⇧N in the desired workspace instead.
     let sourceIsPrivate = workspaces[focusedWorkspaceIndex].isPrivate
     if sourceIsPrivate != workspaces[target].isPrivate {
-      NSLog(
-        "[e05/ws] movePane blocked: cross-private-boundary move (source=%@, target=%@)",
-        sourceIsPrivate ? "private" : "public",
-        workspaces[target].isPrivate ? "private" : "public")
+      logger.error("movePane blocked: cross-private-boundary move (source=\(sourceIsPrivate ? "private" : "public", privacy: .public), target=\(self.workspaces[target].isPrivate ? "private" : "public", privacy: .public))")
       showToast("Can't move pane across the private boundary", style: .error)
       return
     }
@@ -487,14 +474,12 @@ extension PaneContainerViewController {
   /// suppressed here so the workspace's saved offset isn't clobbered.
   func restoreFocusInCurrentWorkspace() {
     let ws = currentWorkspace
-    NSLog(
-      "[e05/ws] restoreFocusInCurrentWorkspace: wsId=%@ columns=%d wsFocusedCol=%d wsIdx=%d",
-      String(describing: ws.id), ws.columns.count, ws.focusedColumnIndex, focusedWorkspaceIndex)
+    logger.debug("restoreFocusInCurrentWorkspace: wsId=\(String(describing: ws.id), privacy: .public) columns=\(ws.columns.count) wsFocusedCol=\(ws.focusedColumnIndex) wsIdx=\(self.focusedWorkspaceIndex)")
     guard !ws.columns.isEmpty else { return }
     let colIdx = min(max(ws.focusedColumnIndex, 0), ws.columns.count - 1)
     let column = ws.columns[colIdx]
     let paneIdx = min(max(column.focusedPaneIndex, 0), column.panes.count - 1)
-    NSLog("[e05/ws] restoreFocus → setFocus(col=%d, pane=%d)", colIdx, paneIdx)
+    logger.debug("restoreFocus → setFocus(col=\(colIdx), pane=\(paneIdx))")
     setFocus(columnIndex: colIdx, paneIndex: paneIdx, scroll: false)
   }
 

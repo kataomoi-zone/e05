@@ -128,10 +128,10 @@ public final class ExtensionController {
       "Version/17.0 Chrome/120.0.0.0 Safari/605.1.15"
 
     // Forward popup / background / content script console output to
-    // NSLog so a popup webView that hangs after some user input
+    // os.Logger so a popup webView that hangs after some user input
     // (Bitwarden's 1-time code submit, OAuth handoff, etc.) surfaces
-    // its JS errors and request failures in the same stderr stream
-    // as the rest of the bridge — Web Inspector on a popover-hosted
+    // its JS errors and request failures in the same log stream as
+    // the rest of the bridge — Web Inspector on a popover-hosted
     // web view is fragile to attach to in practice.
     let userContent = extConfig.webViewConfiguration.userContentController
     let relayHandler = ConsoleRelayHandler()
@@ -160,7 +160,7 @@ public final class ExtensionController {
     // the injection — useful while bisecting polyfill regressions to
     // see whether the polyfill itself is at fault for some breakage.
     if ProcessInfo.processInfo.environment["E05_DISABLE_CHROME_POLYFILL"] == "1" {
-      NSLog("[e05/ext] chrome MV3 polyfill DISABLED (E05_DISABLE_CHROME_POLYFILL=1)")
+      logger.info("chrome MV3 polyfill DISABLED (E05_DISABLE_CHROME_POLYFILL=1)")
     } else {
       // Per-section disable: E05_DISABLE_POLYFILL=offscreen,notifications,...
       // Lets us bisect a regression to a single polyfill chunk
@@ -174,10 +174,7 @@ public final class ExtensionController {
           data: JSONSerialization.data(withJSONObject: disabledNames), encoding: .utf8
         )) ?? "[]"
       if !disabledNames.isEmpty {
-        NSLog(
-          "[e05/ext] chrome MV3 polyfill sections disabled: %@",
-          disabledNames.joined(separator: ",")
-        )
+        logger.info("chrome MV3 polyfill sections disabled: \(disabledNames.joined(separator: ","), privacy: .public)")
       }
       let prelude =
         "window.__e05PolyfillDisabled = new Set(\(disabledJSON));\n"
@@ -564,7 +561,7 @@ public final class ExtensionController {
   public func shutdownAllNativePorts() {
     let ports = Array(delegateProxy.nativePorts.values)
     if ports.isEmpty { return }
-    NSLog("[e05/ext] shutting down %d native port(s) at app teardown", ports.count)
+    logger.info("Shutting down \(ports.count) native port(s) at app teardown")
     for port in ports {
       port.shutdown(reason: "app terminating")
     }
@@ -612,10 +609,7 @@ public final class ExtensionController {
     for entry in loadedExtensions where entry.isEnabled {
       guard let ctx = contextsByFilename[entry.sourceURL.lastPathComponent] else { continue }
       if ctx.performCommand(for: event) {
-        NSLog(
-          "[e05/ext] performCommand consumed event by '%@'",
-          entry.displayName
-        )
+        logger.debug("performCommand consumed event by '\(entry.displayName, privacy: .public)'")
         return true
       }
     }
@@ -819,10 +813,7 @@ public final class ExtensionController {
   /// under `~/.config/e05/`; an empty directory simply produces no loads.
   public func loadAll() async {
     loadPersistedState()
-    NSLog(
-      "[e05/ext] loadAll start: disabledFilenames=[%@]",
-      disabledFilenames.sorted().joined(separator: ",")
-    )
+    logger.info("loadAll start: disabledFilenames=[\(self.disabledFilenames.sorted().joined(separator: ","), privacy: .public)]")
 
     let root = Self.extensionsRoot
     let fm = FileManager.default
@@ -1004,13 +995,10 @@ public final class ExtensionController {
     if isDir {
       do {
         if try ManifestRewriter.mv3ToMV2(at: url) {
-          NSLog("[e05/ext] MV3→MV2 rewrite applied at %@", url.lastPathComponent)
+          logger.info("MV3→MV2 rewrite applied at \(url.lastPathComponent, privacy: .public)")
         }
       } catch {
-        NSLog(
-          "[e05/ext] manifest rewrite skipped for %@: %@",
-          url.lastPathComponent, String(describing: error)
-        )
+        logger.info("manifest rewrite skipped for \(url.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)")
       }
     }
     let ext = try await WKWebExtension(resourceBaseURL: url)
@@ -1162,10 +1150,7 @@ public final class ExtensionController {
     let filename = sourceURL.lastPathComponent
     contextsByFilename[filename] = ctx
     let isEnabled = !disabledFilenames.contains(filename)
-    NSLog(
-      "[e05/ext] loadFromBundle '%@' filename=%@ isEnabled=%@",
-      name, filename, isEnabled ? "true" : "false"
-    )
+    logger.info("activate '\(name, privacy: .public)' filename=\(filename, privacy: .public) isEnabled=\(isEnabled)")
 
     if isEnabled {
       try controller.load(ctx)
@@ -1228,24 +1213,12 @@ public final class ExtensionController {
     Task { @MainActor in
       try? await Task.sleep(for: .seconds(3))
       let ext = ctx.webExtension
-      NSLog(
-        "[e05/ext] +3s recheck '%@' inject=%@ cmr=%@ allURLs=%@",
-        name,
-        ctx.hasInjectedContent ? "true" : "false",
-        ctx.hasContentModificationRules ? "true" : "false",
-        ctx.hasAccessToAllURLs ? "true" : "false"
-      )
+      logger.debug("+3s recheck '\(name, privacy: .public)' inject=\(ctx.hasInjectedContent) cmr=\(ctx.hasContentModificationRules) allURLs=\(ctx.hasAccessToAllURLs)")
       if ext.hasInjectedContent, !ctx.hasInjectedContent {
-        NSLog(
-          "[e05/ext] WARNING '%@' advertises injected content but ctx inject=false after 3s",
-          name
-        )
+        logger.error("WARNING '\(name, privacy: .public)' advertises injected content but ctx inject=false after 3s")
       }
       if ext.hasContentModificationRules, !ctx.hasContentModificationRules {
-        NSLog(
-          "[e05/ext] WARNING '%@' advertises content modification rules but ctx cmr=false after 3s",
-          name
-        )
+        logger.error("WARNING '\(name, privacy: .public)' advertises content modification rules but ctx cmr=false after 3s")
       }
       Self.logErrors(ctx: ctx, source: "+3s recheck")
     }
@@ -1772,14 +1745,7 @@ public final class ExtensionController {
     }
     let displayName = ctx.webExtension.displayName ?? filename
     let action = ctx.action(for: nil)
-    NSLog(
-      "[e05/ext] performAction '%@' presentsPopup=%@ hasPopover=%@ hasWebView=%@ isEnabled=%@",
-      displayName,
-      (action?.presentsPopup ?? false) ? "true" : "false",
-      (action?.popupPopover != nil) ? "true" : "false",
-      (action?.popupWebView != nil) ? "true" : "false",
-      (action?.isEnabled ?? false) ? "true" : "false"
-    )
+    logger.info("performAction '\(displayName, privacy: .public)' presentsPopup=\(action?.presentsPopup ?? false) hasPopover=\((action?.popupPopover != nil)) hasWebView=\((action?.popupWebView != nil)) isEnabled=\(action?.isEnabled ?? false)")
     pendingPopupAnchorView = anchorView
     pendingPopupAnchorRect = anchorRect
     ctx.performAction(for: nil)
@@ -2100,15 +2066,12 @@ public final class ExtensionController {
           if ns.domain == "WKWebExtensionContextErrorDomain"
             && ns.code == WKWebExtensionContext.Error.noBackgroundContent.rawValue
           {
-            NSLog("[e05/ext] '%@' has no background content (declarative-only)", name)
+            logger.info("'\(name, privacy: .public)' has no background content (declarative-only)")
           } else {
-            NSLog(
-              "[e05/ext] loadBackgroundContent FAILED '%@' domain=%@ code=%ld desc=%@",
-              name, ns.domain, ns.code, ns.localizedDescription
-            )
+            logger.error("loadBackgroundContent FAILED '\(name, privacy: .public)' domain=\(ns.domain, privacy: .public) code=\(ns.code) desc=\(ns.localizedDescription, privacy: .public)")
           }
         } else {
-          NSLog("[e05/ext] loadBackgroundContent OK '%@' — bg is awake", name)
+          logger.info("loadBackgroundContent OK '\(name, privacy: .public)' — bg is awake")
         }
       }
     }
@@ -2118,16 +2081,12 @@ public final class ExtensionController {
     let errs = ctx.errors
     let name = ctx.webExtension.displayName ?? "(unknown)"
     if errs.isEmpty {
-      NSLog("[e05/ext] [%@] no runtime errors for '%@'", source, name)
+      logger.debug("[\(source, privacy: .public)] no runtime errors for '\(name, privacy: .public)'")
       return
     }
     for (i, err) in errs.enumerated() {
       let ns = err as NSError
-      NSLog(
-        "[e05/ext] [%@] err[%d] '%@' domain=%@ code=%ld desc=%@ userInfo=%@",
-        source, i, name, ns.domain, ns.code, ns.localizedDescription,
-        String(describing: ns.userInfo)
-      )
+      logger.error("[\(source, privacy: .public)] err[\(i)] '\(name, privacy: .public)' domain=\(ns.domain, privacy: .public) code=\(ns.code) desc=\(ns.localizedDescription, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
     }
   }
 }
@@ -2406,10 +2365,6 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   ) {
     let appId = port.applicationIdentifier ?? ""
     let extName = context.webExtension.displayName ?? "(unknown)"
-    NSLog(
-      "[e05/ext] connectUsingMessagePort '%@' → host=%@",
-      extName, appId
-    )
     logger.info(
       """
       connectUsingMessagePort '\(extName, privacy: .public)' \
@@ -2453,10 +2408,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
           let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
           !s.isEmpty
         {
-          NSLog(
-            "[e05/ext] using derived caller origin '%@' for host '%@'",
-            s, appId
-          )
+          logger.debug("using derived caller origin '\(s, privacy: .public)' for host '\(appId, privacy: .public)'")
           return s
         }
       }
@@ -2531,12 +2483,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
         // so it's safe to assume isolation here for the isLoading /
         // url reads.
         MainActor.assumeIsolated {
-          NSLog(
-            "[e05/ext] popup URL '%@' loading=%@ url=%@",
-            name,
-            wv.isLoading ? "true" : "false",
-            wv.url?.absoluteString ?? "(nil)"
-          )
+          logger.debug("popup URL '\(name, privacy: .public)' loading=\(wv.isLoading) url=\(wv.url?.absoluteString ?? "(nil)", privacy: .public)")
         }
       }
       objc_setAssociatedObject(
@@ -2546,15 +2493,9 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
         .OBJC_ASSOCIATION_RETAIN_NONATOMIC
       )
     }
-    NSLog(
-      "[e05/ext] presentActionPopup '%@' hasPopover=%@ hasWebView=%@ anchorCaptured=%@",
-      name,
-      (action.popupPopover != nil) ? "true" : "false",
-      (action.popupWebView != nil) ? "true" : "false",
-      (self.controller?.pendingPopupAnchorView != nil) ? "true" : "false"
-    )
+    logger.info("presentActionPopup '\(name, privacy: .public)' hasPopover=\((action.popupPopover != nil)) hasWebView=\((action.popupWebView != nil)) anchorCaptured=\((self.controller?.pendingPopupAnchorView != nil))")
     guard let popover = action.popupPopover else {
-      NSLog("[e05/ext] presentActionPopup '%@' → no popupPopover, no-op", name)
+      logger.debug("presentActionPopup '\(name, privacy: .public)' → no popupPopover, no-op")
       completionHandler(nil)
       return
     }
@@ -2568,10 +2509,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     guard let anchorView = controller?.pendingPopupAnchorView,
       anchorView.window != nil, anchorView.superview != nil
     else {
-      NSLog(
-        "[e05/ext] presentActionPopup '%@' → no live anchor view (workspace switch tore URL bar down?)",
-        name
-      )
+      logger.error("presentActionPopup '\(name, privacy: .public)' → no live anchor view (workspace switch tore URL bar down?)")
       completionHandler(nil)
       return
     }
@@ -2585,11 +2523,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     // switch (matching the conventional browser-popup ergonomics) but
     // keeps it alive across in-app focus changes.
     popover.behavior = .semitransient
-    NSLog(
-      "[e05/ext] showing popover '%@' anchor=%@ rect=%@",
-      name, String(describing: type(of: anchorView)),
-      String(describing: anchorRect)
-    )
+    logger.info("showing popover '\(name, privacy: .public)' anchor=\(String(describing: type(of: anchorView)), privacy: .public) rect=\(String(describing: anchorRect), privacy: .public)")
     popover.show(
       relativeTo: anchorRect,
       of: anchorView,
@@ -2612,11 +2546,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   ) {
     let extName = context.webExtension.displayName ?? "(unknown)"
     let url = configuration.url
-    NSLog(
-      "[e05/ext] openNewTabUsing '%@' url=%@ shouldFocus=%@",
-      extName, url?.absoluteString ?? "(nil)",
-      configuration.shouldBeActive ? "true" : "false"
-    )
+    logger.info("openNewTabUsing '\(extName, privacy: .public)' url=\(url?.absoluteString ?? "(nil)", privacy: .public) shouldFocus=\(configuration.shouldBeActive)")
     guard let container = controller?.workspaceBridge.container else {
       completionHandler(
         nil,
@@ -2658,9 +2588,9 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
 /// Receives `postMessage` payloads from the console-relay shim
 /// installed on the controller's shared `userContentController`. Each
 /// payload is a `{level, text, url}` triple; we collapse it to a
-/// single NSLog line so popup / background / content-script console
-/// output flows into the same stderr stream as the native messaging
-/// trace, sidestepping the fragility of attaching Web Inspector to a
+/// single os.Logger line so popup / background / content-script console
+/// output flows into the same log stream as the native messaging trace,
+/// sidestepping the fragility of attaching Web Inspector to a
 /// popover-hosted web view.
 @MainActor
 private final class ConsoleRelayHandler: NSObject, WKScriptMessageHandler {
@@ -2672,7 +2602,7 @@ private final class ConsoleRelayHandler: NSObject, WKScriptMessageHandler {
     let level = (dict["level"] as? String) ?? "?"
     let text = (dict["text"] as? String) ?? "(empty)"
     let url = (dict["url"] as? String) ?? "(no url)"
-    NSLog("[e05/console %@] %@ — %@", level, text, url)
+    logger.info("[\(level, privacy: .public)] \(text, privacy: .public) — \(url, privacy: .public)")
   }
 }
 

@@ -1,5 +1,8 @@
 import AppKit
 import GhosttyKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Panes")
 
 extension PaneContainerViewController {
   // MARK: - Column Management
@@ -1243,7 +1246,7 @@ extension PaneContainerViewController {
           let col = self.columns[safe: colIdx],
           let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId })
         else {
-          NSLog("[e05/ws] close alert: target pane not in current WS")
+          logger.error("close alert: target pane not in current WS")
           return
         }
         self.removePane(columnIndex: colIdx, paneIndex: paneIdx)

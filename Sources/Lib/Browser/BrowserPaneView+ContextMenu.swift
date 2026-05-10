@@ -1,5 +1,8 @@
 import AppKit
 import WebKit
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "BrowserContextMenu")
 
 /// Right-click context menu customisation for browser panes.
 ///
@@ -79,16 +82,9 @@ extension BrowserPaneView {
   ) {
     let linkURL = Self.linkURL(from: element)
 
-    NSLog(
-      "[e05/ctxmenu] proposed menu items=%d linkURL=%@",
-      menu.items.count,
-      linkURL?.absoluteString ?? "nil")
+    logger.debug("proposed menu items=\(menu.items.count) linkURL=\(linkURL?.absoluteString ?? "nil", privacy: .public)")
     for item in menu.items {
-      NSLog(
-        "[e05/ctxmenu]  item title=%@ action=%@ identifier=%@",
-        item.title,
-        item.action.map(NSStringFromSelector) ?? "nil",
-        item.identifier?.rawValue ?? "nil")
+      logger.debug("  item title=\(item.title, privacy: .public) action=\(item.action.map(NSStringFromSelector) ?? "nil", privacy: .public) identifier=\(item.identifier?.rawValue ?? "nil", privacy: .public)")
     }
 
     // Drop "Open Link in New Window" — e05 is a single-window app
