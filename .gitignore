@@ -29,3 +29,6 @@ result-*
 # Environment
 .env
 .env.*
+
+# .app bundle output (assembled by scripts/build_app.sh)
+/build/
