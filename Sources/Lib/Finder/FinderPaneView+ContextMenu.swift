@@ -91,6 +91,10 @@ extension FinderPaneView {
         symbolName: "doc.on.doc",
         action: #selector(contextMenuCopy(_:))))
       menu.addItem(makeContextMenuItem(
+        title: "Copy \"\(name)\" as Pathname",
+        symbolName: "text.alignleft",
+        action: #selector(contextMenuCopyPathname(_:))))
+      menu.addItem(makeContextMenuItem(
         title: "Share...",
         symbolName: "square.and.arrow.up",
         action: #selector(contextMenuShare(_:))))
@@ -142,6 +146,10 @@ extension FinderPaneView {
         symbolName: "doc.on.doc",
         action: #selector(contextMenuCopy(_:))))
       menu.addItem(makeContextMenuItem(
+        title: "Copy \(count) Items as Pathnames",
+        symbolName: "text.alignleft",
+        action: #selector(contextMenuCopyPathname(_:))))
+      menu.addItem(makeContextMenuItem(
         title: "Share...",
         symbolName: "square.and.arrow.up",
         action: #selector(contextMenuShare(_:))))
@@ -166,6 +174,7 @@ extension FinderPaneView {
   @objc func contextMenuMakeAlias(_ sender: Any?) { makeAliasForSelection() }
   @objc func contextMenuQuickLook(_ sender: Any?) { toggleQuickLook() }
   @objc func contextMenuCopy(_ sender: Any?) { copySelectionToPasteboard() }
+  @objc func contextMenuCopyPathname(_ sender: Any?) { copyPathnamesToPasteboard() }
   @objc func contextMenuPaste(_ sender: Any?) { pasteFromPasteboard() }
   @objc func contextMenuShare(_ sender: Any?) { shareSelection() }
   @objc func contextMenuNewFolder(_ sender: Any?) { createNewFolder() }

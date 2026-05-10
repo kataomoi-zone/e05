@@ -24,6 +24,24 @@ extension FinderPaneView {
     pasteboard.writeObjects(urls as [NSURL])
   }
 
+  /// Write the POSIX path of each selected entry onto the general
+  /// pasteboard as a plain `.string`, one path per line for
+  /// multi-select (matching macOS Finder's ⌥⌘C behaviour). Distinct
+  /// from `copySelectionToPasteboard` which writes file URLs in the
+  /// pasteboard's URL flavour: a path-only payload pastes cleanly into
+  /// terminals, editors, and shell scripts that don't decode the
+  /// `kPasteboardTypeFileURL` representation. The two helpers
+  /// overwrite each other on the pasteboard — that's a deliberate
+  /// match for the menu items being separate one-shot choices.
+  public func copyPathnamesToPasteboard() {
+    let urls = selectedURLs
+    guard !urls.isEmpty else { return }
+    let joined = urls.map { $0.path(percentEncoded: false) }.joined(separator: "\n")
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(joined, forType: .string)
+  }
+
   // MARK: - Paste
 
   /// Number of file URLs currently on the general pasteboard. The
