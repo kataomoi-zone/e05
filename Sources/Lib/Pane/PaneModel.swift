@@ -340,7 +340,7 @@ public final class PaneModel {
     ])
 
     containerView.wantsLayer = true
-    containerView.layer?.cornerRadius = 12
+    containerView.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     containerView.layer?.cornerCurve = .continuous
     containerView.layer?.masksToBounds = true
 

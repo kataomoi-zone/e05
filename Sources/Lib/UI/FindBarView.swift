@@ -167,7 +167,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     card.translatesAutoresizingMaskIntoConstraints = false
     glass.contentView = inner
     glass.wantsLayer = true
-    glass.layer?.cornerRadius = 12
+    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
     addSubview(glass)

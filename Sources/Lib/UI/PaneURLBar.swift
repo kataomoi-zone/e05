@@ -795,7 +795,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // without losing information that wasn't already lost.
     let wrapper = NSView()
     wrapper.wantsLayer = true
-    wrapper.layer?.cornerRadius = 12
+    wrapper.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     wrapper.layer?.cornerCurve = .continuous
     wrapper.layer?.masksToBounds = true
     // NSWindow auto-resizes its contentView via the autoresizing

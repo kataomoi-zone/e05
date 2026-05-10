@@ -92,7 +92,7 @@ final class SidebarOverlayView: NSView {
       glass.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
     glass.wantsLayer = true
-    glass.layer?.cornerRadius = 12
+    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
     applyGlassTint()

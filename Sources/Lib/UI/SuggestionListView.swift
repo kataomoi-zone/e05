@@ -85,7 +85,7 @@ public final class SuggestionListView: NSView {
       // Match `SidebarOverlayView` and `PaneModel.containerView` so the
       // dropdown reads as the same material tier as the rest of the
       // window chrome (lessons.md "NSGlassEffectView の cornerRadius").
-      glass.layer?.cornerRadius = 12
+      glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
       glass.layer?.cornerCurve = .continuous
       glass.layer?.masksToBounds = true
       addSubview(glass)

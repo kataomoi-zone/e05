@@ -104,7 +104,7 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     card.translatesAutoresizingMaskIntoConstraints = false
     glass.contentView = card
     glass.wantsLayer = true
-    glass.layer?.cornerRadius = 12
+    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
     addSubview(glass)
