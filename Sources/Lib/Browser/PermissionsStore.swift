@@ -73,12 +73,13 @@ public struct PermissionEntry: Codable, Equatable, Sendable {
 }
 
 /// Per-host capability decisions, mirrored to
-/// `~/.config/e05/permissions.json`. Keys are fully-qualified hosts
-/// (`mail.google.com` is distinct from `docs.google.com`); eTLD+1
-/// collapsing is intentionally avoided so each subdomain decides
-/// its own capability budget. Mirrors `MutedSitesStore` so a future
-/// site-settings UI can iterate every host-keyed store with the
-/// same shape.
+/// `~/Library/Application Support/<bundle-id>/permissions.json`
+/// (resolved through `E05Paths.default.dataDir`). Keys are fully-
+/// qualified hosts (`mail.google.com` is distinct from
+/// `docs.google.com`); eTLD+1 collapsing is intentionally avoided so
+/// each subdomain decides its own capability budget. Mirrors
+/// `MutedSitesStore` so a future site-settings UI can iterate every
+/// host-keyed store with the same shape.
 @MainActor
 public final class PermissionsStore {
   /// Process-wide store. Browser panes share this instance so a
@@ -92,16 +93,17 @@ public final class PermissionsStore {
 
   private var entries: [String: PermissionEntry]
 
-  /// Production initialiser reads `~/.config/e05/permissions.json`.
-  /// Pass `inMemory: true` from tests to keep the dict ephemeral and
-  /// avoid touching the user's real config directory.
+  /// Production initialiser reads
+  /// `~/Library/Application Support/<bundle-id>/permissions.json` via
+  /// `E05Paths.default.dataDir`. Pass `inMemory: true` from tests to
+  /// keep the dict ephemeral and avoid touching the user's real data
+  /// directory.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(storeURL: nil)
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     self.init(storeURL: dir.appendingPathComponent("permissions.json"))
   }
 
