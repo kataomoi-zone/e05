@@ -47,10 +47,14 @@ public struct SessionState: Codable {
 
   // MARK: - File Path
 
+  /// Production path for the saved session, resolved through
+  /// `E05Paths.default.dataDir` so dev (`org.kawarimidoll.e05.debug`)
+  /// and release (`org.kawarimidoll.e05`) builds keep separate
+  /// session files without code branches. `save()` creates the
+  /// directory on demand — `Application Support/<bundle-id>/` is
+  /// not guaranteed to exist on first launch.
   private static var sessionFilePath: URL {
-    let configDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
-    return configDir.appendingPathComponent("session.json")
+    E05Paths.default.dataDir.appendingPathComponent("session.json")
   }
 
   // MARK: - Save
