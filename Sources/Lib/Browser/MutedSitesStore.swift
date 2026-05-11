@@ -4,7 +4,8 @@ import os.log
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "MutedSitesStore")
 
 /// Per-host site mute preferences, mirrored to
-/// `~/.config/e05/muted-sites.json`. The set holds fully-qualified
+/// `~/Library/Application Support/<bundle-id>/muted-sites.json` (resolved
+/// through `E05Paths.default.dataDir`). The set holds fully-qualified
 /// hosts (`mail.google.com` is distinct from `docs.google.com`) —
 /// eTLD+1 collapsing is intentionally avoided so each subdomain
 /// decides its own noise budget.
@@ -27,23 +28,24 @@ public final class MutedSitesStore {
 
   private var hosts: Set<String>
 
-  /// Production initialiser reads `~/.config/e05/muted-sites.json`.
-  /// Pass `inMemory: true` from tests to keep the set ephemeral and
-  /// avoid touching the user's real config directory.
+  /// Production initialiser reads
+  /// `~/Library/Application Support/<bundle-id>/muted-sites.json` via
+  /// `E05Paths.default.dataDir`. Pass `inMemory: true` from tests to
+  /// keep the set ephemeral and avoid touching the user's real data
+  /// directory.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(storeURL: nil)
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     self.init(storeURL: dir.appendingPathComponent("muted-sites.json"))
   }
 
   /// Internal initialiser that drives the same on-disk format
   /// against an arbitrary file URL. Tests use this to exercise
   /// `save` / `load` end-to-end against a temp file without
-  /// touching the user's real config directory; production code
+  /// touching the user's real data directory; production code
   /// reaches it via `init(inMemory:)`. `nil` keeps the set
   /// ephemeral.
   init(storeURL: URL?) {
