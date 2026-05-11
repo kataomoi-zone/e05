@@ -18,8 +18,8 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "AdBloc
 ///
 /// Extensions that ship their own ad filtering (layer B, `WKWebExtension`)
 /// stay out of this path entirely; placing an adblocker extension under
-/// `~/.config/e05/extensions/` on top of this would double-block and is
-/// not a supported configuration.
+/// `ExtensionController.extensionsRoot` on top of this would double-block
+/// and is not a supported configuration.
 ///
 /// ## Multi-list trade-off
 /// Sources are compiled into one ``WKContentRuleList`` per source and all

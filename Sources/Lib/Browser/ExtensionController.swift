@@ -10,9 +10,13 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Extens
 /// `shared.controller` from this singleton when it constructs its config.
 ///
 /// Extensions live on disk as unpacked directories or ZIP archives under
-/// `~/.config/e05/extensions/`. Each immediate child is interpreted as one
-/// extension's resource base URL. The root directory is created lazily at
-/// first scan; the user is responsible for placing extensions there.
+/// `~/Library/Application Support/<bundle-id>/extensions/` (resolved
+/// through `E05Paths.default.dataDir`). Each immediate child is
+/// interpreted as one extension's resource base URL. The root
+/// directory is created lazily at first scan; the user is responsible
+/// for placing extensions there. Companion state files
+/// (`extensions-state.json`, `extensions-app-bundles.json`) live
+/// alongside the dir under the same `dataDir`.
 @MainActor
 public final class ExtensionController {
   public static let shared = ExtensionController()
@@ -42,8 +46,8 @@ public final class ExtensionController {
   /// sidebar can call `controller.load` / `controller.unload` without
   /// re-reading the manifest. The keys mirror `disabledFilenames` so
   /// the JSON state file stays portable across machines (the parent
-  /// directory of `~/.config/e05/extensions/` is the user-controlled
-  /// part; only the directory or ZIP basename is persisted).
+  /// directory `extensions/` is the user-controlled part; only the
+  /// directory or ZIP basename is persisted).
   private var contextsByFilename: [String: WKWebExtensionContext] = [:]
 
   /// Set of source-URL filenames the user has explicitly disabled.
@@ -709,19 +713,20 @@ public final class ExtensionController {
 
   /// Root directory scanned at launch. Each immediate child (either an
   /// unpacked directory or a ZIP archive) is treated as an extension.
+  /// Resolved through `E05Paths.default.dataDir`.
   public static var extensionsRoot: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/extensions", isDirectory: true)
+    E05Paths.default.dataDir.appendingPathComponent(
+      "extensions", isDirectory: true)
   }
 
   /// Persistent enable/disable state for installed extensions. Stored
   /// alongside the extensions root rather than inside it so a user
   /// who copies an extension directory between machines doesn't drag
   /// the state with it (the file's location matches the convention of
-  /// the other top-level stores under `~/.config/e05/`).
+  /// the other top-level stores under `dataDir`).
   private static var extensionsStateFileURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/extensions-state.json", isDirectory: false)
+    E05Paths.default.dataDir.appendingPathComponent(
+      "extensions-state.json", isDirectory: false)
   }
 
   /// Persisted list of external `.appex` paths the user added through
@@ -730,8 +735,8 @@ public final class ExtensionController {
   /// (entries can vanish when the host app is trashed; archive
   /// entries live and die with `extensionsRoot`).
   private static var appBundlesStateFileURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/extensions-app-bundles.json", isDirectory: false)
+    E05Paths.default.dataDir.appendingPathComponent(
+      "extensions-app-bundles.json", isDirectory: false)
   }
 
   /// On-disk shape of the state file. Kept as a dedicated nested
@@ -810,7 +815,7 @@ public final class ExtensionController {
 
   /// Scan `extensionsRoot` and load every child as an extension. Creates
   /// the root directory if missing to match the other persistence stores
-  /// under `~/.config/e05/`; an empty directory simply produces no loads.
+  /// under `dataDir`; an empty directory simply produces no loads.
   public func loadAll() async {
     loadPersistedState()
     logger.info("loadAll start: disabledFilenames=[\(self.disabledFilenames.sorted().joined(separator: ","), privacy: .public)]")
@@ -1106,8 +1111,8 @@ public final class ExtensionController {
 
     // Pre-grant every requested permission and host pattern so
     // content-blocking paths run end-to-end without surfacing a
-    // prompt. Placing an extension under ~/.config/e05/extensions/
-    // is treated as explicit user trust; a richer permission flow
+    // prompt. Placing an extension under `extensionsRoot` is
+    // treated as explicit user trust; a richer permission flow
     // ships with the extensions sidebar UI.
     //
     // `optionalPermissions` are pre-granted too. Bitwarden declares
@@ -2097,7 +2102,7 @@ public final class ExtensionController {
 /// `NSImage` is not `Sendable`, so the type is `MainActor`-confined —
 /// every accessor touches it from the main queue. Stable identity for
 /// per-row routing comes from `sourceURL`: the directory or ZIP path
-/// under `~/.config/e05/extensions/` is unique per extension.
+/// under `ExtensionController.extensionsRoot` is unique per extension.
 @MainActor
 public struct LoadedExtension {
   public let sourceURL: URL
@@ -2136,9 +2141,9 @@ public struct LoadedExtension {
 /// access-level review.
 public enum SourceKind: Sendable {
   /// Unpacked directory or ZIP archive under
-  /// `~/.config/e05/extensions/` — including ones the user dropped
-  /// in by hand and ones e05 wrote there from a Web Store / AMO
-  /// download. Safe targets for Reload / Move to Trash.
+  /// `ExtensionController.extensionsRoot` — including ones the user
+  /// dropped in by hand and ones e05 wrote there from a Web Store /
+  /// AMO download. Safe targets for Reload / Move to Trash.
   case archive
   /// `.appex` bundle inside an external `.app` (typically a
   /// Mac App Store app's bundled Safari Web Extension). Loaded in

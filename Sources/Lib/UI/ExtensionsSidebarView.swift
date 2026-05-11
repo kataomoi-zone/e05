@@ -148,12 +148,19 @@ final class ExtensionsSidebarView: NSView {
     emptyLabel.isHidden = true
     emptyLabel.alignment = .center
     emptyLabel.maximumNumberOfLines = 0
-    emptyLabel.lineBreakMode = .byWordWrapping
+    // The bundle-id-keyed path under `~/Library/Application Support/`
+    // has no internal whitespace to break on, so `.byWordWrapping`
+    // would push the long token off the sidebar's right edge. Char-
+    // wrapping lets the path wrap inside the bundle id segment, and
+    // the leading `~` keeps the home prefix readable.
+    emptyLabel.lineBreakMode = .byCharWrapping
+    let abbreviatedPath = ExtensionController.extensionsRoot.path
+      .replacingOccurrences(of: NSHomeDirectory(), with: "~")
     emptyLabel.stringValue =
       "No extensions loaded.\n"
       + "Use “Add Extension” above or drop an\n"
       + "unpacked extension into\n"
-      + "~/.config/e05/extensions/"
+      + abbreviatedPath
     emptyLabel.translatesAutoresizingMaskIntoConstraints = false
     addSubview(emptyLabel)
 
