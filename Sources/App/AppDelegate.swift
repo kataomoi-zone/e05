@@ -43,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// and the keystroke just rings the system bell.
   private var extensionCommandMonitor: Any?
 
+  /// Unix-socket IPC listener. External `e05` CLI invocations land
+  /// here; the handler closure runs on the main actor so it can touch
+  /// `paneContainer` directly. Held strongly so the listener keeps
+  /// running for the host process lifetime.
+  private var controlSocket: ControlSocket?
+
   func applicationDidFinishLaunching(_: Notification) {
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
@@ -124,6 +130,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     setupMenuKeyBindings()
     installTabKeyMonitor()
     installExtensionCommandMonitor()
+    installControlSocket()
+  }
+
+  /// Bring up the `~/Library/Application Support/<bid>/control.sock`
+  /// listener. EADDRINUSE means a sibling e05 with the same bundle id
+  /// is already running, so this process aborts before persisting any
+  /// state — the single-window invariant is supposed to keep the
+  /// listener unique, and a half-functional duplicate would silently
+  /// route CLI clients to a phantom window. Other start failures are
+  /// logged and tolerated — IPC is a convenience surface, not a
+  /// launch prerequisite.
+  private func installControlSocket() {
+    let path = E05Paths.default.dataDir
+      .appendingPathComponent("control.sock").path
+    let socket = ControlSocket(socketPath: path) { [weak self] request in
+      self?.handleControlRequest(request)
+        ?? ControlSocket.Response(ok: false, error: "host not ready")
+    }
+    do {
+      try socket.start()
+      self.controlSocket = socket
+    } catch let posix as POSIXError where posix.code == .EADDRINUSE {
+      logger.error(
+        "[app/ipc] another e05 instance owns \(path, privacy: .public); aborting startup"
+      )
+      // Skip `NSApp.terminate` so `applicationWillTerminate` does not
+      // run — that path would call `paneContainer?.saveSession()` and
+      // overwrite the live instance's session with this aborted
+      // process's empty default state.
+      Darwin.exit(75)  // EX_TEMPFAIL
+    } catch {
+      logger.error(
+        "[app/ipc] control socket start failed: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+  }
+
+  private func handleControlRequest(_ request: ControlSocket.Request) -> ControlSocket.Response {
+    switch request.op {
+    case "open":
+      guard let urlString = request.url, let url = URL(string: urlString) else {
+        return ControlSocket.Response(ok: false, error: "missing or invalid 'url'")
+      }
+      guard let container = paneContainer else {
+        return ControlSocket.Response(ok: false, error: "paneContainer not yet attached")
+      }
+      let address: PaneAddress
+      if url.isFileURL {
+        address = PaneAddress.finder(path: url.path(percentEncoded: false))
+      } else {
+        address = PaneAddress(url)
+      }
+      container.addColumn(address: address)
+      window?.makeKeyAndOrderFront(nil)
+      NSApp.activate()
+      return ControlSocket.Response(ok: true)
+    default:
+      return ControlSocket.Response(ok: false, error: "unknown op: \(request.op)")
+    }
   }
 
   /// Route `CFBundleURLTypes` activations into a new column,
@@ -163,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // explicit teardown the children inherit no parent and become
     // orphans until the user logs out.
     ExtensionController.shared.shutdownAllNativePorts()
+    controlSocket?.stop()
   }
 
   // MARK: - Tab Key Monitor
