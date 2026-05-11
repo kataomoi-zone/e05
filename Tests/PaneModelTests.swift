@@ -46,34 +46,31 @@ struct PaneModelTests {
   func findBarStartsCollapsed() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
     #expect(!pane.isFindBarVisible)
-    // Visibility lives on `alphaValue` so the bar can fade smoothly
-    // and stays in the layout pipeline; `isHidden` is intentionally
-    // unused.
-    #expect(pane.findBar.alphaValue == 0)
   }
 
-  @Test("setFindBarVisible toggles alphaValue alongside the flag")
-  func setFindBarVisibleTogglesAlpha() {
+  @Test("setFindBarVisible flips the flag in both directions")
+  func setFindBarVisibleTogglesFlag() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    // The actual show/hide animation lives on a child NSPanel and is
+    // skipped when the pane is not yet attached to a window, so the
+    // unit-level contract is the public flag — the panel-side fade is
+    // covered indirectly by the panel itself.
     pane.setFindBarVisible(true)
     #expect(pane.isFindBarVisible)
-    #expect(pane.findBar.alphaValue == 1)
     pane.setFindBarVisible(false)
     #expect(!pane.isFindBarVisible)
-    #expect(pane.findBar.alphaValue == 0)
   }
 
   @Test("setFindBarVisible with the same value is a no-op")
   func setFindBarVisibleIdempotent() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
-    // Re-applying the default must not drive spurious constraint
-    // churn or animation restarts.
+    // Re-applying the default must not drive spurious panel orderings
+    // or animation restarts.
     pane.setFindBarVisible(false)
     #expect(!pane.isFindBarVisible)
     pane.setFindBarVisible(true)
     pane.setFindBarVisible(true)
     #expect(pane.isFindBarVisible)
-    #expect(pane.findBar.alphaValue == 1)
   }
 
   @Test("setURLBarPeek(true) on hidden enters peek")
