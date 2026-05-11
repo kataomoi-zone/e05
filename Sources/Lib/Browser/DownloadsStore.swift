@@ -5,7 +5,8 @@ import os.log
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DownloadsStore")
 
 /// Persistent download records stored in SQLite at
-/// `~/.config/e05/downloads.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// `~/Library/Application Support/<bundle-id>/downloads.db` (resolved
+/// through `E05Paths.default.dataDir`). Rows are id-keyed (`AUTOINCREMENT`)
 /// rather than host-keyed or path-keyed; the same URL can be
 /// downloaded multiple times and each attempt gets its own row.
 ///
@@ -33,16 +34,19 @@ public final class DownloadsStore {
   // MARK: - Lifecycle
 
   /// Create a downloads instance pointing at the production SQLite
-  /// file under `~/.config/e05/downloads.db`, creating the directory
-  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
-  /// open a `:memory:` database that disappears with the instance.
+  /// file under `~/Library/Application Support/<bundle-id>/downloads.db`
+  /// (via `E05Paths.default.dataDir`), creating the directory if it
+  /// doesn't exist yet — `Application Support/<bundle-id>/` is not
+  /// guaranteed to exist on first launch, so the `createDirectory`
+  /// stays even after the relocation off `~/.config`. Pass
+  /// `inMemory: true` from tests to open a `:memory:` database that
+  /// disappears with the instance.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(databasePath: ":memory:")
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     try? FileManager.default.createDirectory(
       at: dir, withIntermediateDirectories: true)
     self.init(databasePath: dir.appendingPathComponent("downloads.db").path)
