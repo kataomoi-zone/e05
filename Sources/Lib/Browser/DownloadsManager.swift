@@ -133,14 +133,23 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   // MARK: - Sidecar paths
 
   /// Directory holding resume-data sidecar files, one per paused
-  /// download. `~/.config/e05/resume/<id>.resume`.
+  /// download. `~/Library/Application Support/<bundle-id>/resume/<id>.resume`
+  /// (resolved through `E05Paths.default.dataDir`). Lives under
+  /// `Application Support` rather than `Caches` because resume data
+  /// is the only way to continue an interrupted download — losing it
+  /// forces the user to re-fetch from byte zero, which is state-like
+  /// rather than regenerable cache.
   private static var resumeDir: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/resume")
+    E05Paths.default.dataDir.appendingPathComponent(
+      "resume", isDirectory: true)
   }
 
-  /// Sidecar URL for a given download id. Exposed so tests can
-  /// verify the path format without running a real download.
+  /// Sidecar URL for a given download id. Located under
+  /// `Application Support/<bundle-id>/resume/` rather than `Caches`
+  /// because losing it forces the user to re-fetch the download
+  /// from byte zero, which is state-like rather than regenerable
+  /// cache. Exposed so tests can verify the path format without
+  /// running a real download.
   public static func sidecarURL(for id: Int64) -> URL {
     resumeDir.appendingPathComponent("\(id).resume")
   }

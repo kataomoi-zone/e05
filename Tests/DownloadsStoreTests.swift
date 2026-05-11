@@ -198,14 +198,16 @@ struct DownloadsManagerHelperTests {
     #expect(DownloadsManager.sanitize(filename: "ok\0.txt") == "ok.txt")
   }
 
-  @Test("sidecarURL places <id>.resume under ~/.config/e05/resume")
+  @Test("sidecarURL places <id>.resume inside the resume dir under E05Paths.dataDir")
   func sidecarURLLocation() {
     let url = DownloadsManager.sidecarURL(for: 42)
     #expect(url.lastPathComponent == "42.resume")
-    #expect(url.deletingLastPathComponent().lastPathComponent == "resume")
-    #expect(
-      url.deletingLastPathComponent().deletingLastPathComponent()
-        .lastPathComponent == "e05"
-    )
+    let resumeDir = url.deletingLastPathComponent()
+    #expect(resumeDir.lastPathComponent == "resume")
+    // Compare against the resolver directly so the test verifies the
+    // contract end-to-end and survives both production (bundle id set
+    // → `Application Support/<bid>/`) and test (bundle id nil →
+    // `~/.config/e05`) environments.
+    #expect(resumeDir.deletingLastPathComponent() == E05Paths.default.dataDir)
   }
 }
