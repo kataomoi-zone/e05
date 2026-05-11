@@ -12,7 +12,8 @@ public final class BookmarksListenerToken {
 }
 
 /// Persistent bookmarks stored in SQLite at
-/// `~/.config/e05/bookmarks.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// `~/Library/Application Support/<bundle-id>/bookmarks.db` (resolved
+/// through `E05Paths.default.dataDir`). Rows are id-keyed (`AUTOINCREMENT`)
 /// rather than host-keyed (`MutedSitesStore`, `PermissionsStore`) or
 /// path-keyed (`FinderModeStore`) — the same URL can be re-added
 /// after deletion and gets a fresh id, so callers must hold onto the
@@ -40,16 +41,19 @@ public final class Bookmarks {
   // MARK: - Lifecycle
 
   /// Create a bookmarks instance pointing at the production SQLite
-  /// file under `~/.config/e05/bookmarks.db`, creating the directory
-  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
-  /// open a `:memory:` database that disappears with the instance.
+  /// file under `~/Library/Application Support/<bundle-id>/bookmarks.db`
+  /// (via `E05Paths.default.dataDir`), creating the directory if it
+  /// doesn't exist yet — `Application Support/<bundle-id>/` is not
+  /// guaranteed to exist on first launch, so the `createDirectory`
+  /// stays even after the relocation off `~/.config`. Pass
+  /// `inMemory: true` from tests to open a `:memory:` database that
+  /// disappears with the instance.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(databasePath: ":memory:")
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     try? FileManager.default.createDirectory(
       at: dir, withIntermediateDirectories: true)
     self.init(databasePath: dir.appendingPathComponent("bookmarks.db").path)
