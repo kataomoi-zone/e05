@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened Runtime entitlements for release builds only.
+         App Sandbox is intentionally NOT enabled: e05 hosts
+         libghostty terminals, WKWebView panes, .appex web extensions,
+         and a native filesystem-browser pane that all need broad
+         user-tier access. Each cs.* key relaxes one Hardened Runtime
+         restriction; start minimal and add more only when a release
+         crash log demands it. -->
+
+    <!-- WebKit JIT compiles JavaScript via writable+executable pages. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- WKWebView helpers (com.apple.WebKit.WebContent etc.) and
+         loaded .appex web extensions are signed with their own
+         identities, not e05's. Library validation would refuse to
+         load them otherwise. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

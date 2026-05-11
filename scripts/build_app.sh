@@ -145,12 +145,42 @@ trap - ERR
 # breadcrumb trap is no longer needed past this point.
 
 # Ad-hoc sign so Bundle.main resolves and unified log Logger
-# picks up the bundle id as subsystem. Hardened runtime is
-# intentionally off in dev so unsigned WebKit helpers and
-# bundled extensions load without per-component entitlements.
-codesign --force --sign - "$APP_DIR" || {
-    echo "build_app.sh: codesign failed for $FLAVOR bundle at $APP_DIR" >&2
-    exit 1
-}
+# picks up the bundle id as subsystem. dev keeps Hardened Runtime
+# off so unsigned WebKit helpers and bundled extensions load
+# without per-component entitlements; release turns it on with
+# the minimum entitlements needed by libghostty / WKWebView /
+# .appex extensions to mirror what a distributed bundle uses.
+case "$FLAVOR" in
+    release)
+        codesign --force --sign - --options runtime \
+            --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
+            "$APP_DIR" || {
+            echo "build_app.sh: codesign (release) failed at $APP_DIR" >&2
+            exit 1
+        }
+        # Verify the seal is consistent across every nested
+        # framework / helper bundle. An ad-hoc identity passes
+        # --strict as long as the hash chain is intact, so a
+        # failure here points at a packaging bug (missing helper
+        # signature, embedded bundle drift) rather than identity
+        # mismatch.
+        codesign --verify --deep --strict --verbose=2 "$APP_DIR" 2>&1 | tail -5 || {
+            echo "build_app.sh: codesign --verify failed for $APP_DIR" >&2
+            exit 1
+        }
+        # Gatekeeper assessment is informational: ad-hoc bundles
+        # without notarization are always rejected, so the output
+        # confirms the rejection reason matches expectations
+        # (`source=No matching credential`, etc.) rather than
+        # surfacing a blocking error.
+        spctl --assess --type execute --verbose=2 "$APP_DIR" 2>&1 | tail -5 || true
+        ;;
+    *)
+        codesign --force --sign - "$APP_DIR" || {
+            echo "build_app.sh: codesign failed for $FLAVOR bundle at $APP_DIR" >&2
+            exit 1
+        }
+        ;;
+esac
 
 echo "$APP_DIR"
