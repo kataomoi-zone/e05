@@ -6,6 +6,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private var window: NSWindow?
   private let ghosttyApp = GhosttyApp()
   private var paneContainer: PaneContainerViewController?
+
+  /// Strong reference for the WKWebsiteDataStore + UNUserNotificationCenter
+  /// delegate. `WKWebsiteDataStore._delegate` is `weak`, so the delegate
+  /// would be deallocated immediately if we let it go out of scope. Only
+  /// `WKWebsiteDataStore.default()` is attached; private workspaces' own
+  /// `nonPersistent()` data stores are intentionally not wired (private
+  /// mode and persistent notifications don't mix).
+  private var notificationDelivery: NotificationDeliveryDelegate?
   /// Actions retrieved from the pane container, cached at menu-build time.
   /// Indexed by `NSMenuItem.tag` (= position in the actions array) so that
   /// `validateMenuItem` and `performAction` can look up the right entry in
@@ -89,6 +97,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // simply ordering the synchronous bind call before the Task
     // creation is enough to win the race.
     ExtensionController.shared.bindContainer(container)
+
+    // Attach the notification delivery delegate BEFORE loading any
+    // extension — extensions can register service workers that fire
+    // `self.registration.showNotification(...)` immediately on load,
+    // and a missed delegate at that moment drops the first batch of
+    // notifications until the data store is poked again. The order
+    // mirrors `bindContainer` (must precede `loadAll`). `install`
+    // returns `nil` (and logs) when the WebKit SPI is unavailable
+    // on this macOS revision; we keep the property type uniform so
+    // the rest of the code can treat the no-wire case as no-op.
+    self.notificationDelivery = NotificationDeliveryDelegate.install(
+      container: container
+    )
+
     Task { await ExtensionController.shared.loadAll() }
 
     window.center()
