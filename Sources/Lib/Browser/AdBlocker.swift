@@ -31,6 +31,13 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "AdBloc
 /// cancel a block declared in EasyList. Filterlists are authored with
 /// the intra-list assumption anyway, so the practical impact is limited
 /// to cross-list overlaps that are already rare by design.
+///
+/// On-disk filterlist copies live under
+/// `~/Library/Caches/<bundle-id>/adblocker/` rather than
+/// `Application Support` because they are regenerable from the
+/// upstream URL on the next refresh — losing them costs only one
+/// extra fetch on next launch, so Time Machine and other backup
+/// tooling can skip them.
 @MainActor
 public final class AdBlocker {
   public static let shared = AdBlocker()
@@ -43,9 +50,10 @@ public final class AdBlocker {
   )
 
   /// A filterlist source used to build the combined rule list. Each
-  /// source is downloaded on first run, cached under
-  /// `~/.config/e05/adblocker/`, converted to Safari JSON, and merged
-  /// before compilation.
+  /// source is downloaded on first run, cached under the directory
+  /// returned by `cacheRoot` (see class doc for the
+  /// `Caches`-vs-`Application Support` rationale), converted to
+  /// Safari JSON, and merged before compilation.
   private struct FilterSource {
     let name: String
     /// Short identifier-safe token used as part of the compiled
@@ -95,11 +103,14 @@ public final class AdBlocker {
 
   private init() {}
 
-  /// Root directory for cached filterlist sources. Mirrors the
-  /// convention used by other persistence stores under `~/.config/e05/`.
+  /// Root directory for cached filterlist sources. Resolved via
+  /// `E05Paths.default.cacheDir` — `Caches/<bundle-id>/` is not
+  /// guaranteed to exist on first launch, so callers writing to
+  /// this dir must ensure it exists (`download(...)` does so via
+  /// `createDirectory(withIntermediateDirectories: true)`).
   public static var cacheRoot: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/adblocker", isDirectory: true)
+    E05Paths.default.cacheDir.appendingPathComponent(
+      "adblocker", isDirectory: true)
   }
 
   /// Ensure a compiled ``WKContentRuleList`` is available. Fast path

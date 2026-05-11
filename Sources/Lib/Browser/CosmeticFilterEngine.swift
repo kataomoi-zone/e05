@@ -167,9 +167,9 @@ public struct CosmeticIndex: Sendable {
   public mutating func add(_ rule: ABPCosmeticParser.ParsedRule) {
     // Defensive gate: a valid CSS selector cannot contain `{` or `}`
     // at the top level. The filter text itself is fetched over HTTPS,
-    // but the on-disk cache under `~/.config/e05/adblocker/` is
-    // user-writable; reject any selector that could escape the CSS
-    // rule boundary before it reaches `document.adoptedStyleSheets`.
+    // but the on-disk cache under `AdBlocker.cacheRoot` is user-
+    // writable; reject any selector that could escape the CSS rule
+    // boundary before it reaches `document.adoptedStyleSheets`.
     if rule.selector.contains("{") || rule.selector.contains("}") {
       return
     }
@@ -426,10 +426,10 @@ public final class CosmeticFilterEngine {
 
   /// Load the cosmetic half of each filter source and populate
   /// ``index``. Meant to be called after ``AdBlocker/start()`` so
-  /// the filter text cache under `~/.config/e05/adblocker/` is
-  /// already warm — this method reads cache only and does not fall
-  /// back to the network. Missing cache entries are skipped; the
-  /// next launch will have them after AdBlocker finishes.
+  /// the filter text cache under `AdBlocker.cacheRoot` is already
+  /// warm — this method reads cache only and does not fall back to
+  /// the network. Missing cache entries are skipped; the next launch
+  /// will have them after AdBlocker finishes.
   public func start() async {
     let startedAt = Date()
     logger.info(
