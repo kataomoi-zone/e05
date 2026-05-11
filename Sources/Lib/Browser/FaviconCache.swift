@@ -5,7 +5,10 @@ import os.log
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FaviconCache")
 
 /// Per-host favicon cache backed by a memory LRU and a PNG directory
-/// under `~/.config/e05/favicons/`.
+/// under `~/.config/e05/favicons/`. Disk entries are host-keyed
+/// (`<host>.png`), but the file is regenerable cache rather than
+/// state — a wipe just means the next visit re-fetches from
+/// `https://<host>/favicon.ico`.
 ///
 /// Lookup is synchronous: the UI calls ``image(for:)`` for every row
 /// it draws, and ``prefetch(for:)`` enqueues a network fetch when the
@@ -36,17 +39,35 @@ public final class FaviconCache {
   private var negativeCache: Set<String> = []
   private let cacheDir: URL?
 
-  /// `inMemory: true` disables disk persistence so tests can construct
-  /// an isolated cache without touching `~/.config/e05/`.
-  public init(inMemory: Bool = false) {
+  /// Create a cache pointing at the production directory under
+  /// `~/.config/e05/favicons/`, creating it if it doesn't exist
+  /// yet. Pass `inMemory: true` from tests to skip disk persistence
+  /// entirely.
+  public convenience init(inMemory: Bool = false) {
     if inMemory {
-      cacheDir = nil
-    } else {
-      let dir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/e05/favicons", isDirectory: true)
-      try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      cacheDir = dir
+      self.init(cacheDir: nil)
+      return
     }
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05/favicons", isDirectory: true)
+    try? FileManager.default.createDirectory(
+      at: dir, withIntermediateDirectories: true)
+    self.init(cacheDir: dir)
+  }
+
+  /// Internal initialiser that points the cache at an arbitrary
+  /// directory (or no directory at all). Tests reach this to use a
+  /// temp dir without touching the user's real cache directory;
+  /// production code reaches it via `init(inMemory:)`. The parameter
+  /// is `URL?` to mirror the lazy-save stores' `init(storeURL:)`
+  /// shape (no SQLite-native marker is in play here), and `nil`
+  /// keeps the cache memory-only. Callers passing a non-`nil` URL
+  /// should ensure the directory already exists if they expect the
+  /// PNG persistence path to actually write — `image(for:)` reads
+  /// gracefully against a missing dir, but the fetch-completion
+  /// write fails silently otherwise.
+  init(cacheDir: URL?) {
+    self.cacheDir = cacheDir
   }
 
   /// Synchronous lookup. Returns the cached favicon on memory or disk

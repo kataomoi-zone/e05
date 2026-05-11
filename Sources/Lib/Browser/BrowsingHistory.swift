@@ -11,7 +11,11 @@ public final class BrowsingHistoryListenerToken {
   fileprivate init() {}
 }
 
-/// Persistent browsing history stored in SQLite (~/.config/e05/history.db).
+/// Persistent browsing history stored in SQLite at
+/// `~/.config/e05/history.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// rather than host-keyed or path-keyed — the same URL can be
+/// visited many times and each visit gets its own row id, while
+/// per-URL aggregation lives in `AggregatedEntry`.
 ///
 /// Mutation observers can register via `addListener(_:)` so UI (the
 /// sidebar history list, future status indicators) refreshes when
@@ -47,9 +51,32 @@ public final class BrowsingHistory {
 
   // MARK: - Lifecycle
 
-  /// Create a history instance. Pass `inMemory: true` for testing.
-  public init(inMemory: Bool = false) {
-    openDatabase(inMemory: inMemory)
+  /// Create a history instance pointing at the production SQLite
+  /// file under `~/.config/e05/history.db`, creating the directory
+  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
+  /// open a `:memory:` database that disappears with the instance.
+  public convenience init(inMemory: Bool = false) {
+    if inMemory {
+      self.init(databasePath: ":memory:")
+      return
+    }
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05")
+    try? FileManager.default.createDirectory(
+      at: dir, withIntermediateDirectories: true)
+    self.init(databasePath: dir.appendingPathComponent("history.db").path)
+  }
+
+  /// Internal initialiser that opens the SQLite database at an
+  /// arbitrary path. Tests reach this to point at a temp file
+  /// without touching the user's real data directory; production
+  /// code reaches it via `init(inMemory:)`. The parameter is `String`
+  /// rather than `URL?` so the SQLite-native `:memory:` marker can
+  /// flow through unchanged; callers passing a filesystem path must
+  /// ensure the parent directory already exists, since
+  /// `sqlite3_open` fails outright on a missing directory.
+  init(databasePath: String) {
+    openDatabase(at: databasePath)
     createTable()
     // Warm up cache
     lastRecordedURL = mostRecent(limit: 1).first?.url
@@ -63,15 +90,7 @@ public final class BrowsingHistory {
 
   // MARK: - Database Setup
 
-  private static var dbPath: String {
-    let configDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
-    try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-    return configDir.appendingPathComponent("history.db").path
-  }
-
-  private func openDatabase(inMemory: Bool) {
-    let path = inMemory ? ":memory:" : Self.dbPath
+  private func openDatabase(at path: String) {
     if sqlite3_open(path, &db) != SQLITE_OK {
       logger.error("Failed to open history database at \(path)")
       db = nil

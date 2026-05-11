@@ -11,7 +11,12 @@ public final class BookmarksListenerToken {
   fileprivate init() {}
 }
 
-/// Persistent bookmarks stored in SQLite (~/.config/e05/bookmarks.db).
+/// Persistent bookmarks stored in SQLite at
+/// `~/.config/e05/bookmarks.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// rather than host-keyed (`MutedSitesStore`, `PermissionsStore`) or
+/// path-keyed (`FinderModeStore`) — the same URL can be re-added
+/// after deletion and gets a fresh id, so callers must hold onto the
+/// `Entry.id` they care about rather than re-deriving it.
 ///
 /// Mutation observers can register via `addListener(_:)` so UI (the
 /// sidebar bookmarks list, future status indicators) refreshes when
@@ -34,9 +39,32 @@ public final class Bookmarks {
 
   // MARK: - Lifecycle
 
-  /// Create a bookmarks instance. Pass `inMemory: true` for testing.
-  public init(inMemory: Bool = false) {
-    openDatabase(inMemory: inMemory)
+  /// Create a bookmarks instance pointing at the production SQLite
+  /// file under `~/.config/e05/bookmarks.db`, creating the directory
+  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
+  /// open a `:memory:` database that disappears with the instance.
+  public convenience init(inMemory: Bool = false) {
+    if inMemory {
+      self.init(databasePath: ":memory:")
+      return
+    }
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05")
+    try? FileManager.default.createDirectory(
+      at: dir, withIntermediateDirectories: true)
+    self.init(databasePath: dir.appendingPathComponent("bookmarks.db").path)
+  }
+
+  /// Internal initialiser that opens the SQLite database at an
+  /// arbitrary path. Tests reach this to point at a temp file
+  /// without touching the user's real data directory; production
+  /// code reaches it via `init(inMemory:)`. The parameter is `String`
+  /// rather than `URL?` so the SQLite-native `:memory:` marker can
+  /// flow through unchanged; callers passing a filesystem path must
+  /// ensure the parent directory already exists, since
+  /// `sqlite3_open` fails outright on a missing directory.
+  init(databasePath: String) {
+    openDatabase(at: databasePath)
     createTable()
   }
 
@@ -48,15 +76,7 @@ public final class Bookmarks {
 
   // MARK: - Database Setup
 
-  private static var dbPath: String {
-    let configDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
-    try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-    return configDir.appendingPathComponent("bookmarks.db").path
-  }
-
-  private func openDatabase(inMemory: Bool) {
-    let path = inMemory ? ":memory:" : Self.dbPath
+  private func openDatabase(at path: String) {
     if sqlite3_open(path, &db) != SQLITE_OK {
       logger.error("Failed to open bookmarks database at \(path)")
       db = nil

@@ -4,7 +4,10 @@ import os.log
 
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DownloadsStore")
 
-/// Persistent download records stored in SQLite (`~/.config/e05/downloads.db`).
+/// Persistent download records stored in SQLite at
+/// `~/.config/e05/downloads.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// rather than host-keyed or path-keyed; the same URL can be
+/// downloaded multiple times and each attempt gets its own row.
 ///
 /// Mirrors the structure of `BrowsingHistory` / `Bookmarks` (C API +
 /// `@MainActor` + in-memory mode for tests). Rows cover both active and
@@ -29,8 +32,32 @@ public final class DownloadsStore {
 
   // MARK: - Lifecycle
 
-  public init(inMemory: Bool = false) {
-    openDatabase(inMemory: inMemory)
+  /// Create a downloads instance pointing at the production SQLite
+  /// file under `~/.config/e05/downloads.db`, creating the directory
+  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
+  /// open a `:memory:` database that disappears with the instance.
+  public convenience init(inMemory: Bool = false) {
+    if inMemory {
+      self.init(databasePath: ":memory:")
+      return
+    }
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent(".config/e05")
+    try? FileManager.default.createDirectory(
+      at: dir, withIntermediateDirectories: true)
+    self.init(databasePath: dir.appendingPathComponent("downloads.db").path)
+  }
+
+  /// Internal initialiser that opens the SQLite database at an
+  /// arbitrary path. Tests reach this to point at a temp file
+  /// without touching the user's real data directory; production
+  /// code reaches it via `init(inMemory:)`. The parameter is `String`
+  /// rather than `URL?` so the SQLite-native `:memory:` marker can
+  /// flow through unchanged; callers passing a filesystem path must
+  /// ensure the parent directory already exists, since
+  /// `sqlite3_open` fails outright on a missing directory.
+  init(databasePath: String) {
+    openDatabase(at: databasePath)
     createTable()
   }
 
@@ -42,15 +69,7 @@ public final class DownloadsStore {
 
   // MARK: - Database Setup
 
-  private static var dbPath: String {
-    let configDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
-    try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-    return configDir.appendingPathComponent("downloads.db").path
-  }
-
-  private func openDatabase(inMemory: Bool) {
-    let path = inMemory ? ":memory:" : Self.dbPath
+  private func openDatabase(at path: String) {
     if sqlite3_open(path, &db) != SQLITE_OK {
       logger.error("Failed to open downloads database at \(path)")
       db = nil

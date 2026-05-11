@@ -12,8 +12,11 @@ public enum FinderViewMode: String, Codable, Sendable {
 /// Per-directory `FinderViewMode` cache mirrored to
 /// `~/Library/Application Support/<bundle-id>/finder-modes.json`
 /// (resolved through `E05Paths.default.dataDir`) so revisiting a
-/// folder restores the mode the user last left it in. The on-disk
-/// shape is a flat `[absolutePath: FinderViewMode]` dict — Codable
+/// folder restores the mode the user last left it in. Entries are
+/// **path-keyed** rather than host-keyed (the user's mental model
+/// here is per-folder, not per-origin), so a site-settings UI that
+/// iterates host-keyed stores skips this one. The on-disk shape is a
+/// flat `[absolutePath: FinderViewMode]` dict — Codable
 /// auto-synthesis drives the JSON layer, and `setMode` writes the
 /// dict back atomically (`Data.WritingOptions.atomic`) so a crash
 /// mid-write can't truncate the previous state into a half-valid
