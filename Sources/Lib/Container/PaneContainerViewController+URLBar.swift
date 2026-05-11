@@ -205,7 +205,14 @@ extension PaneContainerViewController {
   /// Matched on host (lowercased) plus the `q` parameter only,
   /// which is the user-visible query string for every engine in
   /// the allowlist.
-  static func searchEngineQueryKey(for urlString: String) -> String? {
+  ///
+  /// `nonisolated` because the body is pure URL parsing — no main-
+  /// actor state is touched. Without it, the `.first(where:)` closure
+  /// inherits the implicit `@MainActor` isolation that NSViewController
+  /// propagates to its subclass, and the Swift 6 runtime traps when a
+  /// non-MainActor caller (the suggestion-filter unit tests) invokes
+  /// the closure off the main queue.
+  nonisolated static func searchEngineQueryKey(for urlString: String) -> String? {
     guard let url = URL(string: urlString),
       let host = url.host(percentEncoded: false)?.lowercased(),
       Self.searchEngineHosts.contains(host)
