@@ -44,25 +44,31 @@ public final class ExtensionController {
   /// Per-extension `WKWebExtensionContext` cache keyed by source-URL
   /// filename. Built once during `load(at:)` so a toggle from the
   /// sidebar can call `controller.load` / `controller.unload` without
-  /// re-reading the manifest. The keys mirror `disabledFilenames` so
+  /// re-reading the manifest. The keys mirror `disabledExtensions` so
   /// the JSON state file stays portable across machines (the parent
   /// directory `extensions/` is the user-controlled part; only the
   /// directory or ZIP basename is persisted).
   private var contextsByFilename: [String: WKWebExtensionContext] = [:]
 
-  /// Set of source-URL filenames the user has explicitly disabled.
-  /// Persisted as JSON at `extensionsStateFileURL`. Never includes
-  /// filenames that aren't currently present on disk — the launch-time
-  /// scan only writes back known entries, so a user pruning the
-  /// extensions directory by hand doesn't accumulate stale entries.
-  private var disabledFilenames: Set<String> = []
+  /// Extensions the user has explicitly disabled. Each value is the
+  /// extension's directory or ZIP basename — the same identifier used
+  /// across `contextsByFilename` and the JSON file — but the property
+  /// is named after the user-facing concept so the on-disk
+  /// `extensions-state.json` reads naturally. Persisted as JSON at
+  /// `extensionsStateFileURL`. Never includes entries whose source is
+  /// no longer present on disk: the launch-time scan only writes back
+  /// known entries, so a user pruning the extensions directory by
+  /// hand doesn't accumulate stale entries.
+  private var disabledExtensions: Set<String> = []
 
-  /// Filenames the user has pinned to the URL-bar action row. New
-  /// extensions default to unpinned (Chrome convention), so installing
-  /// one drops it into the puzzle popover instead of cluttering the
-  /// URL bar without consent. Persisted alongside `disabledFilenames`
-  /// in `extensions-state.json`; pruned the same way at scan time.
-  private var pinnedFilenames: Set<String> = []
+  /// Extensions the user has pinned to the URL-bar action row. Same
+  /// basename-keyed convention as `disabledExtensions`. New
+  /// extensions default to unpinned (Chrome convention), so
+  /// installing one drops it into the puzzle popover instead of
+  /// cluttering the URL bar without consent. Persisted alongside
+  /// `disabledExtensions` in `extensions-state.json`; pruned the
+  /// same way at scan time.
+  private var pinnedExtensions: Set<String> = []
 
   /// External `.appex` paths the user added through `From App Bundle…`.
   /// Persisted as JSON at `appBundlesStateFileURL` so the bundle
@@ -745,12 +751,12 @@ public final class ExtensionController {
   /// breaking existing files — Codable synthesis tolerates unknown
   /// keys when decoding via the default initializer.
   private struct PersistedState: Codable {
-    var disabledFilenames: [String] = []
+    var disabledExtensions: [String] = []
     /// URL-bar pinning state. Codable's synthesized init treats this
     /// as the empty default when the file predates the field, so a
     /// state.json written before the URL-bar pinning feature shipped
     /// decodes to "all unpinned" without a migration step.
-    var pinnedFilenames: [String] = []
+    var pinnedExtensions: [String] = []
   }
 
   /// On-disk shape of `appBundlesStateFileURL`. Stores absolute file
@@ -818,7 +824,7 @@ public final class ExtensionController {
   /// under `dataDir`; an empty directory simply produces no loads.
   public func loadAll() async {
     loadPersistedState()
-    logger.info("loadAll start: disabledFilenames=[\(self.disabledFilenames.sorted().joined(separator: ","), privacy: .public)]")
+    logger.info("loadAll start: disabledExtensions=[\(self.disabledExtensions.sorted().joined(separator: ","), privacy: .public)]")
 
     let root = Self.extensionsRoot
     let fm = FileManager.default
@@ -880,11 +886,11 @@ public final class ExtensionController {
     // scan keeps the file small and surfaces the live convention to
     // anyone hand-editing it.
     let presentFilenames = Set(contextsByFilename.keys)
-    let staleDisabled = disabledFilenames.subtracting(presentFilenames)
-    let stalePinned = pinnedFilenames.subtracting(presentFilenames)
+    let staleDisabled = disabledExtensions.subtracting(presentFilenames)
+    let stalePinned = pinnedExtensions.subtracting(presentFilenames)
     if !staleDisabled.isEmpty || !stalePinned.isEmpty {
-      disabledFilenames.formIntersection(presentFilenames)
-      pinnedFilenames.formIntersection(presentFilenames)
+      disabledExtensions.formIntersection(presentFilenames)
+      pinnedExtensions.formIntersection(presentFilenames)
       savePersistedState()
     }
 
@@ -1154,7 +1160,7 @@ public final class ExtensionController {
 
     let filename = sourceURL.lastPathComponent
     contextsByFilename[filename] = ctx
-    let isEnabled = !disabledFilenames.contains(filename)
+    let isEnabled = !disabledExtensions.contains(filename)
     logger.info("activate '\(name, privacy: .public)' filename=\(filename, privacy: .public) isEnabled=\(isEnabled)")
 
     if isEnabled {
@@ -1192,7 +1198,7 @@ public final class ExtensionController {
       manifestVersion: ext.manifestVersion,
       icon: Self.bestIcon(for: ext),
       isEnabled: isEnabled,
-      isPinned: pinnedFilenames.contains(filename),
+      isPinned: pinnedExtensions.contains(filename),
       sourceKind: sourceKind,
       hasOptionsPage: ext.hasOptionsPage
     )
@@ -1307,7 +1313,7 @@ public final class ExtensionController {
   /// of the documented "extension is disabled" alert.
   public func optionsPageURL(for sourceURL: URL) -> URL? {
     let filename = sourceURL.lastPathComponent
-    guard !disabledFilenames.contains(filename) else { return nil }
+    guard !disabledExtensions.contains(filename) else { return nil }
     return contextsByFilename[filename]?.optionsPageURL
   }
 
@@ -1335,7 +1341,7 @@ public final class ExtensionController {
       )
     }
     let displayName = oldCtx.webExtension.displayName ?? filename
-    let wasEnabled = !disabledFilenames.contains(filename)
+    let wasEnabled = !disabledExtensions.contains(filename)
     // Capture the prior snapshot's source kind so the rollback path
     // can restore it without re-deriving it from controller state —
     // future bundle-source reload support won't have to touch this
@@ -1365,7 +1371,7 @@ public final class ExtensionController {
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
 
     do {
-      // `load(at:)` reads `disabledFilenames` to decide whether to
+      // `load(at:)` reads `disabledExtensions` to decide whether to
       // re-`controller.load`, so the user-toggled state survives the
       // round-trip without explicit handling here.
       try await load(at: sourceURL)
@@ -1435,7 +1441,7 @@ public final class ExtensionController {
       manifestVersion: oldExt.manifestVersion,
       icon: Self.bestIcon(for: oldExt),
       isEnabled: wasEnabled,
-      isPinned: pinnedFilenames.contains(filename),
+      isPinned: pinnedExtensions.contains(filename),
       sourceKind: sourceKind,
       hasOptionsPage: oldExt.hasOptionsPage
     )
@@ -1777,10 +1783,10 @@ public final class ExtensionController {
 
     errorsTasksByFilename[filename]?.cancel()
     errorsTasksByFilename.removeValue(forKey: filename)
-    // Same disabledFilenames-gated unload as `removeExtension`; see
+    // Same disabledExtensions-gated unload as `removeExtension`; see
     // there for the reasoning (entries that were never `controller.load`'d
     // throw on unload).
-    if !disabledFilenames.contains(filename) {
+    if !disabledExtensions.contains(filename) {
       do {
         try controller.unload(ctx)
       } catch {
@@ -1795,8 +1801,8 @@ public final class ExtensionController {
     }
 
     contextsByFilename.removeValue(forKey: filename)
-    disabledFilenames.remove(filename)
-    pinnedFilenames.remove(filename)
+    disabledExtensions.remove(filename)
+    pinnedExtensions.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
     persistedAppBundlePaths.removeAll { $0.path == sourceURL.path }
     savePersistedState()
@@ -1870,10 +1876,10 @@ public final class ExtensionController {
 
     // Skip `controller.unload` for entries that were never loaded —
     // `load(at:)` skips `controller.load` for any filename in
-    // `disabledFilenames`, so calling unload here would always throw
+    // `disabledExtensions`, so calling unload here would always throw
     // for disabled rows. The throw itself is harmless but the
     // resulting log line reads like a real bug.
-    if !disabledFilenames.contains(filename) {
+    if !disabledExtensions.contains(filename) {
       do {
         try controller.unload(ctx)
       } catch {
@@ -1902,8 +1908,8 @@ public final class ExtensionController {
     }
 
     contextsByFilename.removeValue(forKey: filename)
-    disabledFilenames.remove(filename)
-    pinnedFilenames.remove(filename)
+    disabledExtensions.remove(filename)
+    pinnedExtensions.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
     savePersistedState()
     NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
@@ -1924,12 +1930,12 @@ public final class ExtensionController {
       )
       return
     }
-    let wasDisabled = disabledFilenames.contains(filename)
+    let wasDisabled = disabledExtensions.contains(filename)
     guard enabled == wasDisabled else { return }
 
     let displayName = ctx.webExtension.displayName ?? filename
     if enabled {
-      disabledFilenames.remove(filename)
+      disabledExtensions.remove(filename)
       do {
         try controller.load(ctx)
         logger.info("Enabled '\(displayName, privacy: .public)'")
@@ -1950,7 +1956,7 @@ public final class ExtensionController {
         )
       }
     } else {
-      disabledFilenames.insert(filename)
+      disabledExtensions.insert(filename)
       // Tear down the diagnostics subscription so the AsyncSequence
       // for-await self-terminates and the Task can be released.
       errorsTasksByFilename[filename]?.cancel()
@@ -1986,12 +1992,12 @@ public final class ExtensionController {
   /// against the new flag.
   public func setPinned(_ pinned: Bool, for sourceURL: URL) {
     let filename = sourceURL.lastPathComponent
-    let wasPinned = pinnedFilenames.contains(filename)
+    let wasPinned = pinnedExtensions.contains(filename)
     guard pinned != wasPinned else { return }
     if pinned {
-      pinnedFilenames.insert(filename)
+      pinnedExtensions.insert(filename)
     } else {
-      pinnedFilenames.remove(filename)
+      pinnedExtensions.remove(filename)
     }
     if let i = loadedExtensions.firstIndex(where: { $0.sourceURL == sourceURL }) {
       loadedExtensions[i].isPinned = pinned
@@ -2010,8 +2016,8 @@ public final class ExtensionController {
     }
     do {
       let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
-      disabledFilenames = Set(decoded.disabledFilenames)
-      pinnedFilenames = Set(decoded.pinnedFilenames)
+      disabledExtensions = Set(decoded.disabledExtensions)
+      pinnedExtensions = Set(decoded.pinnedExtensions)
     } catch {
       logger.error(
         """
@@ -2026,8 +2032,8 @@ public final class ExtensionController {
   private func savePersistedState() {
     let url = Self.extensionsStateFileURL
     let payload = PersistedState(
-      disabledFilenames: disabledFilenames.sorted(),
-      pinnedFilenames: pinnedFilenames.sorted()
+      disabledExtensions: disabledExtensions.sorted(),
+      pinnedExtensions: pinnedExtensions.sorted()
     )
     do {
       let encoder = JSONEncoder()
