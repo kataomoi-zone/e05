@@ -10,12 +10,14 @@ public enum FinderViewMode: String, Codable, Sendable {
 }
 
 /// Per-directory `FinderViewMode` cache mirrored to
-/// `~/.config/e05/finder-modes.json` so revisiting a folder restores
-/// the mode the user last left it in. The on-disk shape is a flat
-/// `[absolutePath: FinderViewMode]` dict — Codable auto-synthesis
-/// drives the JSON layer, and `setMode` writes the dict back
-/// atomically (`Data.WritingOptions.atomic`) so a crash mid-write
-/// can't truncate the previous state into a half-valid file.
+/// `~/Library/Application Support/<bundle-id>/finder-modes.json`
+/// (resolved through `E05Paths.default.dataDir`) so revisiting a
+/// folder restores the mode the user last left it in. The on-disk
+/// shape is a flat `[absolutePath: FinderViewMode]` dict — Codable
+/// auto-synthesis drives the JSON layer, and `setMode` writes the
+/// dict back atomically (`Data.WritingOptions.atomic`) so a crash
+/// mid-write can't truncate the previous state into a half-valid
+/// file.
 ///
 /// `.list` is the implicit default for unseen directories. `setMode`
 /// prunes `.list` entries from the dict instead of writing them so
@@ -42,23 +44,24 @@ public final class FinderModeStore {
 
   private var modes: [String: FinderViewMode]
 
-  /// Production initialiser reads `~/.config/e05/finder-modes.json`.
-  /// Pass `inMemory: true` from tests to keep the dict ephemeral and
-  /// avoid touching the user's real config directory.
+  /// Production initialiser reads
+  /// `~/Library/Application Support/<bundle-id>/finder-modes.json` via
+  /// `E05Paths.default.dataDir`. Pass `inMemory: true` from tests to
+  /// keep the dict ephemeral and avoid touching the user's real data
+  /// directory.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(storeURL: nil)
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     self.init(storeURL: dir.appendingPathComponent("finder-modes.json"))
   }
 
   /// Internal initialiser that drives the same on-disk format against
   /// an arbitrary file URL. Tests use this to exercise `save` / `load`
   /// end-to-end against a temp file without touching the user's real
-  /// config directory; production code reaches it via the public
+  /// data directory; production code reaches it via the public
   /// `init(inMemory:)` convenience. `nil` keeps the dict ephemeral.
   init(storeURL: URL?) {
     self.storeURL = storeURL
