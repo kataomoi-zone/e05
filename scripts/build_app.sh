@@ -17,16 +17,22 @@
 set -euo pipefail
 
 FLAVOR="${1:-dev}"
+# URL_HANDLER_RANK keeps `open e05://...` deterministic when both
+# flavors are registered with Launch Services on the same machine:
+# dev stays `Alternate` so a release install always wins, and a
+# dev-only machine still has the only registered handler.
 case "$FLAVOR" in
     dev)
         BUNDLE_ID="org.kawarimidoll.e05.debug"
         DISPLAY_NAME="e05[DEV]"
         BIN_SRC=".build/debug/e05"
+        URL_HANDLER_RANK="Alternate"
         ;;
     release)
         BUNDLE_ID="org.kawarimidoll.e05"
         DISPLAY_NAME="e05"
         BIN_SRC=".build/release/e05"
+        URL_HANDLER_RANK="Owner"
         ;;
     *)
         echo "build_app.sh: unknown flavor '$FLAVOR' (expected dev|release)" >&2
@@ -68,6 +74,7 @@ sed \
     -e "s|__DISPLAY_NAME__|$DISPLAY_NAME|g" \
     -e "s|__SHORT_VERSION__|$SHORT_VERSION|g" \
     -e "s|__BUILD_NUMBER__|$BUILD_NUMBER|g" \
+    -e "s|__URL_HANDLER_RANK__|$URL_HANDLER_RANK|g" \
     "$REPO_ROOT/Resources/Info.plist.in" > "$CONTENTS/Info.plist"
 
 if [[ ! -f "$BIN_SRC" ]]; then

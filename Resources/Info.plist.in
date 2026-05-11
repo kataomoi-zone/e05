@@ -36,5 +36,18 @@
     <string>e05 needs location access to satisfy permission requests from web pages.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>e05 needs location access to satisfy permission requests from web pages.</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>__BUNDLE_ID__.url</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>e05</string>
+            </array>
+            <key>LSHandlerRank</key>
+            <string>__URL_HANDLER_RANK__</string>
+        </dict>
+    </array>
 </dict>
 </plist>

@@ -1,5 +1,8 @@
 import AppKit
 import E05Lib
+import os.log
+
+private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "App")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
@@ -121,6 +124,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     setupMenuKeyBindings()
     installTabKeyMonitor()
     installExtensionCommandMonitor()
+  }
+
+  /// Route `CFBundleURLTypes` activations into a new column,
+  /// matching Safari / Chrome's "external URL → new tab" model.
+  /// AppKit guarantees `paneContainer` is attached before this
+  /// fires, but the nil guard remains for re-entrant test paths.
+  /// Subsequent `addColumn` calls each move `focusedColumnIndex`
+  /// to the inserted slot, so multi-URL invocations land in the
+  /// same order the caller passed.
+  func application(_ application: NSApplication, open urls: [URL]) {
+    guard let container = paneContainer else {
+      logger.error("[app/url] dropped \(urls.count) URL(s): paneContainer not yet attached")
+      return
+    }
+    for url in urls {
+      let address = PaneAddress(url)
+      if address.kind == .unknown {
+        logger.warning(
+          "[app/url] opening unknown address as blank browser: \(url.absoluteString, privacy: .public)"
+        )
+      }
+      container.addColumn(address: address)
+    }
+    window?.makeKeyAndOrderFront(nil)
+    application.activate()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
