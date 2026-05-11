@@ -5,10 +5,12 @@ import os.log
 private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FaviconCache")
 
 /// Per-host favicon cache backed by a memory LRU and a PNG directory
-/// under `~/.config/e05/favicons/`. Disk entries are host-keyed
-/// (`<host>.png`), but the file is regenerable cache rather than
-/// state — a wipe just means the next visit re-fetches from
-/// `https://<host>/favicon.ico`.
+/// under `~/Library/Caches/<bundle-id>/favicons/` (resolved through
+/// `E05Paths.default.cacheDir` — `Caches`, not `Application Support`,
+/// because the disk entries are regenerable). Disk entries are
+/// host-keyed (`<host>.png`); a wipe just means the next visit
+/// re-fetches from `https://<host>/favicon.ico`, which is also why
+/// missing-dir write failures degrade silently rather than erroring.
 ///
 /// Lookup is synchronous: the UI calls ``image(for:)`` for every row
 /// it draws, and ``prefetch(for:)`` enqueues a network fetch when the
@@ -40,16 +42,20 @@ public final class FaviconCache {
   private let cacheDir: URL?
 
   /// Create a cache pointing at the production directory under
-  /// `~/.config/e05/favicons/`, creating it if it doesn't exist
-  /// yet. Pass `inMemory: true` from tests to skip disk persistence
-  /// entirely.
+  /// `~/Library/Caches/<bundle-id>/favicons/` (via
+  /// `E05Paths.default.cacheDir`), creating it if it doesn't exist
+  /// yet — `Caches/<bundle-id>/` is not guaranteed to exist on
+  /// first launch, and the fetch-completion write degrades silently
+  /// against a missing dir, so the `createDirectory` matters even
+  /// though the read path is forgiving. Pass `inMemory: true` from
+  /// tests to skip disk persistence entirely.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(cacheDir: nil)
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05/favicons", isDirectory: true)
+    let dir = E05Paths.default.cacheDir
+      .appendingPathComponent("favicons", isDirectory: true)
     try? FileManager.default.createDirectory(
       at: dir, withIntermediateDirectories: true)
     self.init(cacheDir: dir)
