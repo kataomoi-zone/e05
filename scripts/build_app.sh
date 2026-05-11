@@ -83,6 +83,67 @@ if [[ ! -f "$BIN_SRC" ]]; then
 fi
 cp -f "$BIN_SRC" "$CONTENTS/MacOS/e05"
 
+# App icon: rsvg-convert renders icon.svg into the seven PNG sizes
+# the macOS .appiconset format references, then actool compiles them
+# into AppIcon.icns + Assets.car. PartialInfo.plist is requested only
+# because actool warns when omitted; the two CFBundleIcon* keys it
+# would emit are stable across SDK versions, so they are appended
+# directly via PlistBuddy below. The staging dir lives under build/
+# so the source asset catalog stays free of generated PNGs.
+if ! command -v rsvg-convert >/dev/null 2>&1; then
+    echo "build_app.sh: rsvg-convert not found (install via \`brew install librsvg\`)" >&2
+    exit 1
+fi
+
+# Localised ERR trap: anything inside the icon section that fails
+# (rsvg-convert / cp / mkdir / actool) leaves a scoped breadcrumb
+# instead of an opaque `set -e` abort.
+trap 'echo "build_app.sh: icon section failed at line $LINENO" >&2' ERR
+
+ICON_STAGING="$REPO_ROOT/build/$FLAVOR/icon-staging"
+ICON_OUT="$REPO_ROOT/build/$FLAVOR/icon-out"
+rm -rf "$ICON_STAGING" "$ICON_OUT"
+mkdir -p "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset" "$ICON_OUT"
+cp "$REPO_ROOT/Resources/Assets.xcassets/Contents.json" \
+    "$ICON_STAGING/Assets.xcassets/Contents.json"
+cp "$REPO_ROOT/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json" \
+    "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset/Contents.json"
+for size in 16 32 64 128 256 512 1024; do
+    rsvg-convert -w "$size" -h "$size" \
+        "$REPO_ROOT/Resources/icon.svg" \
+        -o "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset/icon_${size}x${size}.png"
+done
+
+ACTOOL_LOG="$ICON_OUT/actool.log"
+xcrun actool \
+    --compile "$ICON_OUT" \
+    --app-icon AppIcon \
+    --platform macosx \
+    --minimum-deployment-target 26.0 \
+    --output-partial-info-plist "$ICON_OUT/PartialInfo.plist" \
+    --warnings --notices --errors \
+    "$ICON_STAGING/Assets.xcassets" >"$ACTOOL_LOG" 2>&1
+# actool returns 0 even when it embeds errors into its plist output,
+# so grep the log explicitly to surface them.
+if grep -q "com.apple.actool.errors" "$ACTOOL_LOG"; then
+    echo "build_app.sh: actool reported errors:" >&2
+    cat "$ACTOOL_LOG" >&2
+    exit 1
+fi
+
+cp "$ICON_OUT/AppIcon.icns" "$ICON_OUT/Assets.car" "$CONTENTS/Resources/"
+# Info.plist is regenerated from the template each build (sed block
+# above), so PlistBuddy `Add` never collides with a previous run.
+/usr/libexec/PlistBuddy \
+    -c "Add :CFBundleIconFile string AppIcon" \
+    -c "Add :CFBundleIconName string AppIcon" \
+    "$CONTENTS/Info.plist" >/dev/null
+
+trap - ERR
+# The codesign block below has its own explicit `|| { ... }` error
+# handler that surfaces flavor-tagged failures, so the localized
+# breadcrumb trap is no longer needed past this point.
+
 # Ad-hoc sign so Bundle.main resolves and unified log Logger
 # picks up the bundle id as subsystem. Hardened runtime is
 # intentionally off in dev so unsigned WebKit helpers and
