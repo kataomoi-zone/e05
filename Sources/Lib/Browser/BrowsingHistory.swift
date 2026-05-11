@@ -12,7 +12,8 @@ public final class BrowsingHistoryListenerToken {
 }
 
 /// Persistent browsing history stored in SQLite at
-/// `~/.config/e05/history.db`. Rows are id-keyed (`AUTOINCREMENT`)
+/// `~/Library/Application Support/<bundle-id>/history.db` (resolved
+/// through `E05Paths.default.dataDir`). Rows are id-keyed (`AUTOINCREMENT`)
 /// rather than host-keyed or path-keyed — the same URL can be
 /// visited many times and each visit gets its own row id, while
 /// per-URL aggregation lives in `AggregatedEntry`.
@@ -52,16 +53,19 @@ public final class BrowsingHistory {
   // MARK: - Lifecycle
 
   /// Create a history instance pointing at the production SQLite
-  /// file under `~/.config/e05/history.db`, creating the directory
-  /// if it doesn't exist yet. Pass `inMemory: true` from tests to
-  /// open a `:memory:` database that disappears with the instance.
+  /// file under `~/Library/Application Support/<bundle-id>/history.db`
+  /// (via `E05Paths.default.dataDir`), creating the directory if it
+  /// doesn't exist yet — `Application Support/<bundle-id>/` is not
+  /// guaranteed to exist on first launch, so the `createDirectory`
+  /// stays even after the relocation off `~/.config`. Pass
+  /// `inMemory: true` from tests to open a `:memory:` database that
+  /// disappears with the instance.
   public convenience init(inMemory: Bool = false) {
     if inMemory {
       self.init(databasePath: ":memory:")
       return
     }
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent(".config/e05")
+    let dir = E05Paths.default.dataDir
     try? FileManager.default.createDirectory(
       at: dir, withIntermediateDirectories: true)
     self.init(databasePath: dir.appendingPathComponent("history.db").path)
