@@ -166,6 +166,30 @@ public final class GhosttyApp {
       let raw = action.action.search_selected.selected
       view.handleSearchSelected(raw >= 0 ? Int(raw) : nil)
       return true
+    case GHOSTTY_ACTION_OPEN_URL:
+      guard let view = terminalView(for: target) else {
+        logger.error("[ghostty/open-url] no terminal view for target")
+        return false
+      }
+      guard let urlPtr = action.action.open_url.url else {
+        logger.error("[ghostty/open-url] payload had nil url pointer")
+        return false
+      }
+      // libghostty hands the URL as a length-prefixed UTF-8 buffer
+      // (the trailing byte is not guaranteed to be NUL), so build the
+      // String from the explicit byte range rather than treating the
+      // pointer as a C string.
+      let len = Int(action.action.open_url.len)
+      let urlString = urlPtr.withMemoryRebound(to: UInt8.self, capacity: len) {
+        String(decoding: UnsafeBufferPointer(start: $0, count: len), as: UTF8.self)
+      }
+      guard let url = URL(string: urlString) else {
+        logger.error(
+          "[ghostty/open-url] URL(string:) rejected \(urlString, privacy: .public)")
+        return false
+      }
+      view.onOpenURL?(url)
+      return true
     default:
       return false
     }

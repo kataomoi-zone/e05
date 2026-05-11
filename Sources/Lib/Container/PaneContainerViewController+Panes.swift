@@ -172,6 +172,19 @@ extension PaneContainerViewController {
           }
         }
       }
+
+      // file:// URLs land in a finder pane; everything else routes
+      // through `PaneAddress`, which keeps the browser / unknown-
+      // fallback decision in one place.
+      tv.onOpenURL = { [weak self] url in
+        let address: PaneAddress
+        if url.isFileURL {
+          address = PaneAddress.finder(path: url.path(percentEncoded: false))
+        } else {
+          address = PaneAddress(url)
+        }
+        self?.addColumn(address: address)
+      }
     }
 
     if let bv = pane.browserView {

@@ -18,6 +18,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   public var onTitleChange: ((String) -> Void)?
   public var onClose: (() -> Void)?
   public var onFocusChanged: ((Bool) -> Void)?
+  /// Fired when libghostty raises `GHOSTTY_ACTION_OPEN_URL` for this
+  /// surface. Covers OSC 8 anchors, auto-detected URLs, and ⌘+click,
+  /// all unified by libghostty into one action. The host decides
+  /// whether the URL becomes a browser or finder pane.
+  public var onOpenURL: ((URL) -> Void)?
 
   /// When true, surface is preserved when the view is removed from window.
   /// Used by undo close to keep the terminal alive while detached.
