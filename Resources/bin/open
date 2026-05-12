@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# `open` shim for shells spawned inside e05's terminal panes. Bundled
+# at `Contents/Resources/bin/open`, ahead of `/usr/bin/open` on the
+# inherited PATH. Pane-creating cases (no args / single directory /
+# single http(s) URL) hand off to the bundled `e05 open` so the host
+# opens them as a new column; everything else falls through to
+# `/usr/bin/open` so `-a App` / `-W` / `-n` / `-R` / document files
+# keep their stock Launch Services behaviour.
+
+set -e
+
+script_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+e05_cli="$script_dir/e05"
+
+fallback() {
+    exec /usr/bin/open "$@"
+}
+
+# Bundled CLI absent (only realistic for a corrupted bundle): keep
+# stock behaviour rather than failing loudly inside the user's shell.
+if [[ ! -x "$e05_cli" ]]; then
+    fallback "$@"
+fi
+
+# No args → current directory becomes a finder pane.
+if [[ $# -eq 0 ]]; then
+    exec "$e05_cli" open .
+fi
+
+# Any flag or multi-positional → defer to /usr/bin/open. macOS `open`
+# uses leading `-X` for nearly everything (`-a`, `-W`, `-n`, ...) so
+# this keeps the shim out of LS's lane.
+if [[ $# -ne 1 || "$1" == -* ]]; then
+    fallback "$@"
+fi
+
+arg="$1"
+case "$arg" in
+    http://*|https://*)
+        exec "$e05_cli" open "$arg"
+        ;;
+esac
+
+if [[ -d "$arg" ]]; then
+    exec "$e05_cli" open "$(cd -- "$arg" && pwd)"
+fi
+
+# Files / unknown schemes / non-existent paths → stock open. PDFs,
+# images, etc. should hand off to the user's default app, not the
+# browser pane.
+fallback "$@"

@@ -50,6 +50,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private var controlSocket: ControlSocket?
 
   func applicationDidFinishLaunching(_: Notification) {
+    // Prepend the bundled `Contents/Resources/bin` to PATH so every
+    // ghostty surface inherits the e05-aware shims (the `open`
+    // redirect that lands `open .` / `open https://...` as a pane on
+    // the host). Skipped when the directory is absent so `swift run`
+    // and other non-bundled launches keep stock PATH; the `contains`
+    // gate makes the inject idempotent against future re-init paths.
+    if let resourceURL = Bundle.main.resourceURL {
+      let binDir = resourceURL.appendingPathComponent("bin").path
+      if FileManager.default.fileExists(atPath: binDir) {
+        let current = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let alreadyInjected = current.split(separator: ":").contains(Substring(binDir))
+        if !alreadyInjected {
+          if setenv("PATH", "\(binDir):\(current)", 1) != 0 {
+            logger.error("[app/path-inject] setenv PATH failed errno=\(errno)")
+          }
+        }
+      }
+    }
+
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
     // panes created before compilation completes get no blocker this
