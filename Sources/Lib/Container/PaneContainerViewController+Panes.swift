@@ -7,13 +7,31 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Panes"
 extension PaneContainerViewController {
   // MARK: - Column Management
 
+  /// Build a pane via `makePane` and append a column for it. Pass
+  /// `startSuspended: true` (with `initialTitle:`) to skip the
+  /// first navigation on a browser pane — see `PaneModel.init` for
+  /// the contract. `focusOnInsert: false` is opt-in for callers that
+  /// commit their own focus target after the insert loop completes
+  /// (e.g. `restoreSession` finishes with
+  /// `restoreFocusInCurrentWorkspace`); without that follow-up the
+  /// container is left with stale focus state.
   @discardableResult
-  public func addColumn(address: PaneAddress = .terminal) -> ColumnModel {
-    insertColumn(with: makePane(address: address))
+  public func addColumn(
+    address: PaneAddress = .terminal,
+    startSuspended: Bool = false,
+    initialTitle: String? = nil,
+    focusOnInsert: Bool = true
+  ) -> ColumnModel {
+    insertColumn(
+      with: makePane(
+        address: address,
+        startSuspended: startSuspended,
+        initialTitle: initialTitle),
+      focusOnInsert: focusOnInsert)
   }
 
   @discardableResult
-  func insertColumn(with pane: PaneModel) -> ColumnModel {
+  func insertColumn(with pane: PaneModel, focusOnInsert: Bool = true) -> ColumnModel {
     let column = ColumnModel(pane: pane)
 
     setupPaneCallbacks(pane: pane, column: column)
@@ -112,8 +130,14 @@ extension PaneContainerViewController {
 
     // The animation already owns the scroll — tell setFocus to
     // leave it alone so scrollToColumn doesn't fire a second
-    // tween after the insert's completion handler.
-    setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
+    // tween after the insert's completion handler. Skipping
+    // entirely (`focusOnInsert: false`) is the bulk-insert escape
+    // hatch — `setFocus` would otherwise route through
+    // `restoreIfSuspended()` for every column added, defeating any
+    // `startSuspended: true` pane the caller just created.
+    if focusOnInsert {
+      setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
+    }
     return column
   }
 

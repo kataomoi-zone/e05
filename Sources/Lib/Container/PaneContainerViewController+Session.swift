@@ -106,7 +106,36 @@ extension PaneContainerViewController {
     workspaces.removeAll()
     workspaceVCs.removeAll()
 
-    for wsState in session.workspaces {
+    // Resolve the single pane that boots into a live `WKWebView`:
+    // the focused pane of the focused workspace. Every other browser
+    // pane is constructed with `startSuspended: true` and renders the
+    // placeholder until first focus restores it — avoids loading
+    // every restored browser pane simultaneously. When the saved
+    // indices fail to resolve a target (corrupt session, every
+    // workspace empty), every pane boots suspended and the first
+    // user focus brings one back.
+    let liveTarget: (wsIdx: Int, colIdx: Int, paneIdx: Int)? = {
+      guard session.workspaces.indices.contains(session.focusedWorkspaceIndex) else {
+        logger.warning(
+          "[session/restore] liveTarget unresolved: focusedWorkspaceIndex out of range")
+        return nil
+      }
+      let liveWs = session.workspaces[session.focusedWorkspaceIndex]
+      guard !liveWs.columns.isEmpty else {
+        logger.warning("[session/restore] liveTarget unresolved: focused workspace has no columns")
+        return nil
+      }
+      let colIdx = min(max(liveWs.focusedColumnIndex, 0), liveWs.columns.count - 1)
+      let liveCol = liveWs.columns[colIdx]
+      guard !liveCol.panes.isEmpty else {
+        logger.warning("[session/restore] liveTarget unresolved: focused column has no panes")
+        return nil
+      }
+      let paneIdx = min(max(liveCol.focusedPaneIndex, 0), liveCol.panes.count - 1)
+      return (session.focusedWorkspaceIndex, colIdx, paneIdx)
+    }()
+
+    for (wsIdx, wsState) in session.workspaces.enumerated() {
       let ws = WorkspaceModel()
       ws.scrollX = CGFloat(wsState.scrollX)
       let vc = WorkspaceViewController(workspace: ws)
@@ -119,11 +148,20 @@ extension PaneContainerViewController {
       // focused VC is installed below.
       focusedWorkspaceIndex = workspaces.count - 1
 
-      for colState in wsState.columns {
+      for (colIdx, colState) in wsState.columns.enumerated() {
         guard let firstPaneState = colState.panes.first else { continue }
         let firstAddress = PaneAddress(firstPaneState.address) ?? .terminal
 
-        let column = addColumn(address: firstAddress)
+        let firstIsLive =
+          liveTarget?.wsIdx == wsIdx
+          && liveTarget?.colIdx == colIdx
+          && liveTarget?.paneIdx == 0
+        let column = addColumn(
+          address: firstAddress,
+          startSuspended: !firstIsLive,
+          initialTitle: firstPaneState.title,
+          focusOnInsert: false
+        )
         column.widthConstraint?.constant = CGFloat(colState.width)
         // Direct assignment rather than `handleTitleChange`: restore
         // runs before the sidebar view is installed, and we don't
@@ -133,9 +171,18 @@ extension PaneContainerViewController {
           column.panes.first?.title = title
         }
 
-        for paneState in colState.panes.dropFirst() {
+        for (offset, paneState) in colState.panes.dropFirst().enumerated() {
+          let paneIdx = offset + 1
           let address = PaneAddress(paneState.address) ?? .terminal
-          let pane = makePane(address: address)
+          let isLive =
+            liveTarget?.wsIdx == wsIdx
+            && liveTarget?.colIdx == colIdx
+            && liveTarget?.paneIdx == paneIdx
+          let pane = makePane(
+            address: address,
+            startSuspended: !isLive,
+            initialTitle: paneState.title
+          )
           if let title = paneState.title { pane.title = title }
           setupPaneCallbacks(pane: pane, column: column)
           column.panes.append(pane)

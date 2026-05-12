@@ -404,9 +404,20 @@ public final class PaneContainerViewController: NSViewController {
   /// **target** workspace (not the focused one) so panes built for a
   /// new workspace honour its private flag even before the container
   /// switches over to it.
-  func makePane(address: PaneAddress, in workspace: WorkspaceModel? = nil) -> PaneModel {
+  ///
+  /// `startSuspended` and `initialTitle` are forwarded to `PaneModel`
+  /// for the browser-lazy-load path; both default to "off" for every
+  /// existing callsite. See `PaneModel.init` for the exact contract.
+  func makePane(
+    address: PaneAddress,
+    in workspace: WorkspaceModel? = nil,
+    startSuspended: Bool = false,
+    initialTitle: String? = nil
+  ) -> PaneModel {
     let ws = workspace ?? currentWorkspace
-    return PaneModel(address: address, ghosttyApp: ghosttyApp, dataStore: ws.dataStore)
+    return PaneModel(
+      address: address, ghosttyApp: ghosttyApp, dataStore: ws.dataStore,
+      startSuspended: startSuspended, initialTitle: initialTitle)
   }
 
   private var hasAppearedOnce = false
