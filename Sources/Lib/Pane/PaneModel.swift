@@ -135,6 +135,21 @@ public final class PaneModel {
     address == .blankBrowser
   }
 
+  /// True when this is a browser pane whose `WKWebView` has been
+  /// detached — either by an explicit `suspend()` or by being
+  /// constructed with `startSuspended: true`. Non-browser panes
+  /// always report `false`.
+  public var isBrowserSuspended: Bool {
+    browserView?.isSuspended ?? false
+  }
+
+  /// Bring a suspended browser pane back to a live `WKWebView`,
+  /// re-applying its captured `interactionState`. No-op for
+  /// non-browser panes and for browser panes that are already live.
+  public func restoreIfSuspended() {
+    browserView?.restore()
+  }
+
   /// The view that should become first responder when this pane is focused.
   public var preferredFirstResponder: NSView {
     switch content {
@@ -156,9 +171,21 @@ public final class PaneModel {
   /// `dataStore` is propagated to `BrowserPaneView` so private workspaces
   /// can isolate cookies / storage from the default profile. Nil keeps
   /// the existing default-store behaviour for normal workspaces.
+  ///
+  /// `startSuspended` only matters for browser panes. When true, the
+  /// pane skips its first navigation and renders the suspend
+  /// placeholder; a subsequent `restoreIfSuspended()` (typically from
+  /// the focus handler) builds the live web view and loads the URL.
+  /// `initialTitle` is plumbed through to both `self.title` and the
+  /// placeholder so sidebar / worklane rows have something to render
+  /// before the page actually loads; when nil the placeholder falls
+  /// back to the URL's host. Both parameters are ignored for
+  /// non-browser kinds and for blank / unresolved-extension browsers.
   public init(
     address: PaneAddress, ghosttyApp: GhosttyApp?,
-    dataStore: WKWebsiteDataStore? = nil
+    dataStore: WKWebsiteDataStore? = nil,
+    startSuspended: Bool = false,
+    initialTitle: String? = nil
   ) {
     self.address = address
     switch address.kind {
@@ -249,6 +276,15 @@ public final class PaneModel {
     {
       if isUnresolvedExtensionURL {
         bv.loadExtensionUnavailableError(for: address.url)
+      } else if startSuspended {
+        // Title is captured before the placeholder render so sidebar
+        // worklane rows can show the saved title verbatim instead of
+        // flashing the hostname fallback while the pane sits
+        // suspended.
+        if let initialTitle, !initialTitle.isEmpty {
+          self.title = initialTitle
+        }
+        bv.suspendInitially(url: address.url, title: initialTitle)
       } else {
         bv.navigate(to: address.url.absoluteString)
       }
