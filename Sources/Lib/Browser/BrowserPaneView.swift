@@ -197,8 +197,55 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     extensionContext: WKWebExtensionContext?,
     dataStore: WKWebsiteDataStore?
   ) {
+    let built = Self.makeWebView(
+      extensionContext: extensionContext, dataStore: dataStore)
+    webView = built.webView
+    hoverLinkMessageHandler = built.hoverHandler
+    muteChannelId = built.channelId
+    isExtensionHosted = built.isExtensionHosted
+
+    super.init(frame: frame)
+
+    built.hoverHandler.onMessage = { [weak self] url, side in
+      guard let self else { return }
+      self.applyHoverLinkSide(side)
+      if let url, !url.isEmpty {
+        self.hoverLinkOverlay.show(url: url)
+      } else {
+        self.hoverLinkOverlay.hide()
+      }
+    }
+    wantsLayer = true
+    appearance = NSAppearance(named: .darkAqua)
+    layer?.backgroundColor = AppColors.paneSurface.cgColor
+
+    built.webView.onFocusGained = { [weak self] in
+      self?.onFocusChanged?()
+    }
+
+    setupHostAndWebView()
+    setupObservers()
+    observeAdBlockerReady()
+  }
+
+  /// Build a fresh `FocusReportingWebView` with the full per-pane
+  /// configuration: web extension controller wiring, adblocker rule
+  /// list, cosmetic filter content script, hover-link preview, and
+  /// the per-pane mute IIFE. Extracted from `init` so `restore()`
+  /// can reuse the exact same wiring when re-creating the web view
+  /// after a `suspend()` — `WKWebView` snapshots its configuration
+  /// at init time, so a suspend/restore cycle requires building the
+  /// whole configuration tree again rather than mutating the old one.
+  private static func makeWebView(
+    extensionContext: WKWebExtensionContext?,
+    dataStore: WKWebsiteDataStore?
+  ) -> (
+    webView: FocusReportingWebView,
+    hoverHandler: HoverLinkMessageHandler,
+    channelId: String,
+    isExtensionHosted: Bool
+  ) {
     let channelId = "e05-mute-" + UUID().uuidString.lowercased()
-    self.muteChannelId = channelId
     let config: WKWebViewConfiguration
     let hoverHandler = HoverLinkMessageHandler()
     let extensionConfig = extensionContext?.webViewConfiguration
@@ -258,33 +305,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       config.userContentController.addUserScript(
         Self.makeMuteUserScript(channelId: channelId))
     }
-    hoverLinkMessageHandler = hoverHandler
-    let focusReportingWebView = FocusReportingWebView(frame: .zero, configuration: config)
-    webView = focusReportingWebView
-    isExtensionHosted = (extensionConfig != nil)
-
-    super.init(frame: frame)
-
-    hoverHandler.onMessage = { [weak self] url, side in
-      guard let self else { return }
-      self.applyHoverLinkSide(side)
-      if let url, !url.isEmpty {
-        self.hoverLinkOverlay.show(url: url)
-      } else {
-        self.hoverLinkOverlay.hide()
-      }
-    }
-    wantsLayer = true
-    appearance = NSAppearance(named: .darkAqua)
-    layer?.backgroundColor = AppColors.paneSurface.cgColor
-
-    focusReportingWebView.onFocusGained = { [weak self] in
-      self?.onFocusChanged?()
-    }
-
-    setupHostAndWebView()
-    setupObservers()
-    observeAdBlockerReady()
+    let webView = FocusReportingWebView(frame: .zero, configuration: config)
+    return (webView, hoverHandler, channelId, extensionConfig != nil)
   }
 
   /// When the pane is built before ``AdBlocker.shared`` finishes its
