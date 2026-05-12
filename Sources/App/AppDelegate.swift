@@ -187,13 +187,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   }
 
   private func handleControlRequest(_ request: ControlSocket.Request) -> ControlSocket.Response {
+    // Every op needs the pane container, so the readiness check lives
+    // here rather than being repeated per-case.
+    guard let container = paneContainer else {
+      return ControlSocket.Response(ok: false, error: "host not ready")
+    }
     switch request.op {
     case "open":
       guard let urlString = request.url, let url = URL(string: urlString) else {
         return ControlSocket.Response(ok: false, error: "missing or invalid 'url'")
-      }
-      guard let container = paneContainer else {
-        return ControlSocket.Response(ok: false, error: "paneContainer not yet attached")
       }
       let address: PaneAddress
       if url.isFileURL {
@@ -209,12 +211,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       guard let actionId = request.id else {
         return ControlSocket.Response(ok: false, error: "missing 'id'")
       }
-      guard let container = paneContainer else {
-        return ControlSocket.Response(ok: false, error: "paneContainer not yet attached")
-      }
       guard container.dispatchAction(id: actionId) else {
         return ControlSocket.Response(ok: false, error: "unknown action: \(actionId)")
       }
+      return ControlSocket.Response(ok: true)
+    case "switch-workspace":
+      guard let index = request.index else {
+        return ControlSocket.Response(ok: false, error: "missing 'index'")
+      }
+      // `switchWorkspace(to:)` no-ops on out-of-range indices already,
+      // but reject up-front so the CLI sees a typed error rather than
+      // an apparent success that did nothing.
+      let workspaceCount = container.workspaces.count
+      guard index >= 0 && index < workspaceCount else {
+        return ControlSocket.Response(
+          ok: false, error: "index \(index) out of range (have \(workspaceCount) workspaces)"
+        )
+      }
+      container.switchWorkspace(to: index)
+      return ControlSocket.Response(ok: true)
+    case "notify":
+      guard let message = request.message, !message.isEmpty else {
+        return ControlSocket.Response(ok: false, error: "missing 'message'")
+      }
+      container.showToast(message)
       return ControlSocket.Response(ok: true)
     default:
       return ControlSocket.Response(ok: false, error: "unknown op: \(request.op)")

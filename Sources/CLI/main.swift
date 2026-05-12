@@ -17,6 +17,10 @@ case "open":
   runOpen(rest)
 case "action":
   runAction(rest)
+case "switch-workspace":
+  runSwitchWorkspace(rest)
+case "notify":
+  runNotify(rest)
 case "help", "--help", "-h":
   printUsage(to: FileHandle.standardOutput)
   exit(0)
@@ -28,20 +32,29 @@ default:
 
 // MARK: - Subcommands
 
+/// Translate a host reply into a process exit so shell scripts can
+/// branch on `host responded ok=false` (exit 1) versus `host
+/// unreachable / transport blew up` (exit 3) without parsing stderr.
+func exitFromReply(_ reply: Reply, prefix: String) -> Never {
+  switch reply {
+  case .ok:
+    exit(0)
+  case .hostError(let message):
+    errln("\(prefix): \(message)")
+    exit(1)
+  case .transportError(let message):
+    errln("\(prefix): \(message)")
+    exit(3)
+  }
+}
+
 func runOpen(_ args: [String]) {
   guard let target = args.first else {
     errln("e05 open: missing argument")
     exit(2)
   }
   let urlString = normalizeOpenArgument(target)
-  let response = sendRequest(["op": "open", "url": urlString])
-  switch response {
-  case .ok:
-    exit(0)
-  case .err(let message):
-    errln("e05 open: \(message)")
-    exit(1)
-  }
+  exitFromReply(sendRequest(["op": "open", "url": urlString]), prefix: "e05 open")
 }
 
 func runAction(_ args: [String]) {
@@ -49,14 +62,28 @@ func runAction(_ args: [String]) {
     errln("e05 action: missing action id (e.g. focus_right, new_browser)")
     exit(2)
   }
-  let response = sendRequest(["op": "action", "id": id])
-  switch response {
-  case .ok:
-    exit(0)
-  case .err(let message):
-    errln("e05 action: \(message)")
-    exit(1)
+  exitFromReply(sendRequest(["op": "action", "id": id]), prefix: "e05 action")
+}
+
+func runSwitchWorkspace(_ args: [String]) {
+  guard let raw = args.first, let index = Int(raw), index >= 0 else {
+    errln("e05 switch-workspace: missing or invalid <index> (0-based)")
+    exit(2)
   }
+  exitFromReply(
+    sendRequest(["op": "switch-workspace", "index": index]),
+    prefix: "e05 switch-workspace")
+}
+
+func runNotify(_ args: [String]) {
+  // Join positional args so `e05 notify Hello world` and
+  // `e05 notify "Hello world"` reach the host identically.
+  let message = args.joined(separator: " ")
+  guard !message.isEmpty else {
+    errln("e05 notify: missing <message>")
+    exit(2)
+  }
+  exitFromReply(sendRequest(["op": "notify", "message": message]), prefix: "e05 notify")
 }
 
 /// Bare paths become `file://` URLs so the host can route them through
@@ -78,15 +105,22 @@ func normalizeOpenArgument(_ arg: String) -> String {
 // MARK: - Socket transport
 
 enum Reply {
+  /// Host accepted and replied `ok=true`. Maps to exit 0.
   case ok
-  case err(String)
+  /// Host replied `ok=false` with an error string. Maps to exit 1 —
+  /// shell scripts can retry after fixing the request.
+  case hostError(String)
+  /// Connection / write / read / decode failed before the host could
+  /// reply. Maps to exit 3 — shell scripts can use this to recover
+  /// "host is down" separately from "request was rejected".
+  case transportError(String)
 }
 
-func sendRequest(_ payload: [String: String]) -> Reply {
+func sendRequest(_ payload: [String: Any]) -> Reply {
   let socketPath = resolveSocketPath()
   let fd = socket(AF_UNIX, SOCK_STREAM, 0)
   guard fd >= 0 else {
-    return .err("socket() failed errno=\(errno)")
+    return .transportError("socket() failed errno=\(errno)")
   }
   defer { close(fd) }
 
@@ -94,7 +128,7 @@ func sendRequest(_ payload: [String: String]) -> Reply {
   addr.sun_family = sa_family_t(AF_UNIX)
   let maxPath = MemoryLayout.size(ofValue: addr.sun_path)
   guard socketPath.utf8CString.count <= maxPath else {
-    return .err("socket path too long: \(socketPath)")
+    return .transportError("socket path too long: \(socketPath)")
   }
   _ = socketPath.withCString { src in
     withUnsafeMutablePointer(to: &addr.sun_path) {
@@ -110,11 +144,11 @@ func sendRequest(_ payload: [String: String]) -> Reply {
     }
   }
   guard connectResult == 0 else {
-    return .err("cannot connect to \(socketPath) (is e05 running?)")
+    return .transportError("cannot connect to \(socketPath) (is e05 running?)")
   }
 
   guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-    return .err("failed to encode request")
+    return .transportError("failed to encode request")
   }
   var request = body
   request.append(UInt8(ascii: "\n"))
@@ -122,7 +156,7 @@ func sendRequest(_ payload: [String: String]) -> Reply {
     Darwin.write(fd, ptr.baseAddress, ptr.count)
   }
   guard written == request.count else {
-    return .err("write failed errno=\(errno)")
+    return .transportError("write failed errno=\(errno)")
   }
 
   var response = Data()
@@ -133,7 +167,7 @@ func sendRequest(_ payload: [String: String]) -> Reply {
     }
     if n < 0 {
       if errno == EINTR { continue }
-      return .err("read failed errno=\(errno)")
+      return .transportError("read failed errno=\(errno)")
     }
     if n == 0 { break }
     response.append(buffer, count: n)
@@ -141,13 +175,13 @@ func sendRequest(_ payload: [String: String]) -> Reply {
 
   guard let json = try? JSONSerialization.jsonObject(with: response) as? [String: Any] else {
     let raw = String(decoding: response, as: UTF8.self)
-    return .err("invalid response: \(raw)")
+    return .transportError("invalid response: \(raw)")
   }
   if let ok = json["ok"] as? Bool, ok {
     return .ok
   }
   let message = (json["error"] as? String) ?? "host returned ok=false without error message"
-  return .err(message)
+  return .hostError(message)
 }
 
 // MARK: - Socket-path discovery
@@ -215,6 +249,8 @@ func printUsage(to handle: FileHandle) {
     Subcommands:
       open <url-or-path>    Open URL or filesystem path as a new pane
       action <id>           Run a registered palette action by id
+      switch-workspace <i>  Switch focus to workspace at zero-based index
+      notify <message...>   Post a toast in the current workspace
       help                  Show this message
 
     Environment:
