@@ -82,6 +82,13 @@ extension PaneContainerViewController {
 
     let pane = column.panes[paneIndex]
     logger.info("setFocus applying pane=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
+    // Bring a suspended browser pane back to a live `WKWebView`
+    // before responder routing: a detached `WKWebView` rejects
+    // `makeFirstResponder` (returns false without changing the
+    // first responder), and `preferredFirstResponder` would
+    // otherwise hand back the detached instance. No-op for
+    // non-browser panes and already-live browsers.
+    pane.restoreIfSuspended()
     // Inform the WKWebExtension bridge of the focus change up front
     // so the sticky "active browser pane" tracker stays current
     // regardless of what subsequent UI work (popup webView, find bar,
