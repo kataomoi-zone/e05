@@ -12,6 +12,13 @@ let package = Package(
             dependencies: ["E05Lib"],
             path: "Sources/App"
         ),
+        // CLI bundled into Contents/Resources/bin/e05 by build_app.sh
+        // (renamed from `e05cli` at copy time so PATH-injected callers
+        // get the short, brand-correct name).
+        .executableTarget(
+            name: "e05cli",
+            path: "Sources/CLI"
+        ),
         .target(
             name: "E05Lib",
             dependencies: ["GhosttyKit"],

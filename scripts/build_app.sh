@@ -83,6 +83,17 @@ if [[ ! -f "$BIN_SRC" ]]; then
 fi
 cp -f "$BIN_SRC" "$CONTENTS/MacOS/e05"
 
+# CLI lands at Contents/Resources/bin/e05 so a user who PATH-injects
+# the directory invokes it as `e05` rather than `e05cli`. Kept out of
+# Contents/MacOS to avoid colliding with the main bundle executable.
+CLI_SRC="${BIN_SRC%/*}/e05cli"
+if [[ ! -f "$CLI_SRC" ]]; then
+    echo "build_app.sh: $CLI_SRC not found — run \`swift build\` first" >&2
+    exit 1
+fi
+mkdir -p "$CONTENTS/Resources/bin"
+cp -f "$CLI_SRC" "$CONTENTS/Resources/bin/e05"
+
 # App icon: rsvg-convert renders icon.svg into the seven PNG sizes
 # the macOS .appiconset format references, then actool compiles them
 # into AppIcon.icns + Assets.car. PartialInfo.plist is requested only
