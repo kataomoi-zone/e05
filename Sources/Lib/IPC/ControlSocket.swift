@@ -9,12 +9,91 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Contro
 /// is op-agnostic and forwards every parsed `Request` to the
 /// host-supplied handler closure for dispatch.
 public final class ControlSocket: @unchecked Sendable {
-  public struct Request: Decodable {
-    public let op: String
-    public let url: String?
-    public let id: String?
-    public let index: Int?
-    public let message: String?
+  /// One discriminated case per `op`. Wire format unchanged; shape
+  /// problems (missing field, unknown op, wrong field type) surface
+  /// as `.invalid` so the handler can typed-reply instead of dropping
+  /// the connection on a generic decode failure. Value problems
+  /// (`URL(string:)` rejection, empty string) live in the handler.
+  public enum Request: Decodable {
+    case open(url: String)
+    case action(id: String)
+    case switchWorkspace(index: Int)
+    case notify(message: String)
+    case invalid(message: String)
+
+    private enum CodingKeys: String, CodingKey {
+      case op, url, id, index, message
+    }
+
+    public init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      // Whole-payload type errors (e.g. `op` is a number) still throw
+      // at this top level — those mean the request is not a JSON
+      // object at all, which the connection layer reports as such.
+      guard let op = try container.decodeIfPresent(String.self, forKey: .op) else {
+        self = .invalid(message: "missing 'op'")
+        return
+      }
+      switch op {
+      case "open":
+        guard let url = Self.string(in: container, forKey: .url, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("url", in: container))
+          return
+        }
+        self = .open(url: url)
+      case "action":
+        guard let id = Self.string(in: container, forKey: .id, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("id", in: container))
+          return
+        }
+        self = .action(id: id)
+      case "switch-workspace":
+        guard let index = Self.int(in: container, forKey: .index, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("index", in: container))
+          return
+        }
+        self = .switchWorkspace(index: index)
+      case "notify":
+        guard let message = Self.string(in: container, forKey: .message, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("message", in: container))
+          return
+        }
+        self = .notify(message: message)
+      default:
+        self = .invalid(message: "unknown op: \(op)")
+      }
+    }
+
+    /// `try?` over `decodeIfPresent` so missing-field and wrong-type
+    /// both fold into `nil`. The caller distinguishes the two with
+    /// `fieldDiagnostic` so the reply still says "missing 'url'"
+    /// vs "invalid 'url': expected String" instead of one generic
+    /// "shape error".
+    private static func string(
+      in container: KeyedDecodingContainer<CodingKeys>,
+      forKey key: CodingKeys,
+      op: String
+    ) -> String? {
+      try? container.decodeIfPresent(String.self, forKey: key)
+    }
+
+    private static func int(
+      in container: KeyedDecodingContainer<CodingKeys>,
+      forKey key: CodingKeys,
+      op: String
+    ) -> Int? {
+      try? container.decodeIfPresent(Int.self, forKey: key)
+    }
+
+    private static func fieldDiagnostic(
+      _ name: String,
+      in container: KeyedDecodingContainer<CodingKeys>
+    ) -> String {
+      let key = CodingKeys(stringValue: name)!
+      return container.contains(key)
+        ? "invalid '\(name)': type mismatch"
+        : "missing '\(name)'"
+    }
   }
 
   public struct Response: Encodable, Sendable {

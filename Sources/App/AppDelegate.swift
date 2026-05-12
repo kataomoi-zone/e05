@@ -192,10 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     guard let container = paneContainer else {
       return ControlSocket.Response(ok: false, error: "host not ready")
     }
-    switch request.op {
-    case "open":
-      guard let urlString = request.url, let url = URL(string: urlString) else {
-        return ControlSocket.Response(ok: false, error: "missing or invalid 'url'")
+    switch request {
+    case .open(let urlString):
+      guard let url = URL(string: urlString) else {
+        return ControlSocket.Response(ok: false, error: "invalid 'url'")
       }
       let address: PaneAddress
       if url.isFileURL {
@@ -207,18 +207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       window?.makeKeyAndOrderFront(nil)
       NSApp.activate()
       return ControlSocket.Response(ok: true)
-    case "action":
-      guard let actionId = request.id else {
-        return ControlSocket.Response(ok: false, error: "missing 'id'")
-      }
-      guard container.dispatchAction(id: actionId) else {
-        return ControlSocket.Response(ok: false, error: "unknown action: \(actionId)")
+    case .action(let id):
+      guard container.dispatchAction(id: id) else {
+        return ControlSocket.Response(ok: false, error: "unknown action: \(id)")
       }
       return ControlSocket.Response(ok: true)
-    case "switch-workspace":
-      guard let index = request.index else {
-        return ControlSocket.Response(ok: false, error: "missing 'index'")
-      }
+    case .switchWorkspace(let index):
       // `switchWorkspace(to:)` no-ops on out-of-range indices already,
       // but reject up-front so the CLI sees a typed error rather than
       // an apparent success that did nothing.
@@ -230,14 +224,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       }
       container.switchWorkspace(to: index)
       return ControlSocket.Response(ok: true)
-    case "notify":
-      guard let message = request.message, !message.isEmpty else {
-        return ControlSocket.Response(ok: false, error: "missing 'message'")
+    case .notify(let message):
+      // Empty string is a value-validation failure (JSON shape valid,
+      // host rejects) so it lives here rather than in `Request.init`.
+      guard !message.isEmpty else {
+        return ControlSocket.Response(ok: false, error: "empty 'message'")
       }
       container.showToast(message)
       return ControlSocket.Response(ok: true)
-    default:
-      return ControlSocket.Response(ok: false, error: "unknown op: \(request.op)")
+    case .invalid(let message):
+      return ControlSocket.Response(ok: false, error: message)
     }
   }
 
