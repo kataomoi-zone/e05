@@ -3,6 +3,20 @@ import AppKit
 extension PaneContainerViewController {
   // MARK: - Action Registry
 
+  /// Look up an action by its stable id and run its handler. Returns
+  /// `false` when the id is unknown so the IPC layer can surface a
+  /// `{"ok":false,"error":"..."}` reply rather than silently drop the
+  /// request. The handler runs synchronously on the main actor; long
+  /// operations should already be wrapping their own `Task`.
+  @discardableResult
+  public func dispatchAction(id: String) -> Bool {
+    guard let action = actions().first(where: { $0.id == id }) else {
+      return false
+    }
+    action.handler()
+    return true
+  }
+
   /// All user-facing actions, in menu display order. Both the menu bar
   /// and the command palette consume this same array. Static actions
   /// (keybindings) come first, followed by dynamic "Focus: <title>"

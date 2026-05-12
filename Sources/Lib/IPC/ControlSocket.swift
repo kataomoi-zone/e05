@@ -12,6 +12,7 @@ public final class ControlSocket: @unchecked Sendable {
   public struct Request: Decodable {
     public let op: String
     public let url: String?
+    public let id: String?
   }
 
   public struct Response: Encodable, Sendable {

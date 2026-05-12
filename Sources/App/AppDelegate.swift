@@ -205,6 +205,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       window?.makeKeyAndOrderFront(nil)
       NSApp.activate()
       return ControlSocket.Response(ok: true)
+    case "action":
+      guard let actionId = request.id else {
+        return ControlSocket.Response(ok: false, error: "missing 'id'")
+      }
+      guard let container = paneContainer else {
+        return ControlSocket.Response(ok: false, error: "paneContainer not yet attached")
+      }
+      guard container.dispatchAction(id: actionId) else {
+        return ControlSocket.Response(ok: false, error: "unknown action: \(actionId)")
+      }
+      return ControlSocket.Response(ok: true)
     default:
       return ControlSocket.Response(ok: false, error: "unknown op: \(request.op)")
     }

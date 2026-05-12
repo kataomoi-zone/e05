@@ -15,6 +15,8 @@ let rest = Array(args.dropFirst(2))
 switch cmd {
 case "open":
   runOpen(rest)
+case "action":
+  runAction(rest)
 case "help", "--help", "-h":
   printUsage(to: FileHandle.standardOutput)
   exit(0)
@@ -38,6 +40,21 @@ func runOpen(_ args: [String]) {
     exit(0)
   case .err(let message):
     errln("e05 open: \(message)")
+    exit(1)
+  }
+}
+
+func runAction(_ args: [String]) {
+  guard let id = args.first else {
+    errln("e05 action: missing action id (e.g. focus_right, new_browser)")
+    exit(2)
+  }
+  let response = sendRequest(["op": "action", "id": id])
+  switch response {
+  case .ok:
+    exit(0)
+  case .err(let message):
+    errln("e05 action: \(message)")
     exit(1)
   }
 }
@@ -197,6 +214,7 @@ func printUsage(to handle: FileHandle) {
 
     Subcommands:
       open <url-or-path>    Open URL or filesystem path as a new pane
+      action <id>           Run a registered palette action by id
       help                  Show this message
 
     Environment:
