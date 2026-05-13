@@ -78,7 +78,20 @@ extension PaneContainerViewController {
       column.containerView.alphaValue = 0
     }
 
-    let insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
+    // When the caller suppresses post-insert focus (`focusOnInsert:
+    // false`, i.e. session restore) we also bypass the
+    // "insert next to the focused column" placement: the caller is
+    // iterating a saved column list and expects each new column to
+    // land at the end of the array so the final order matches the
+    // input. Without this, `focusedColumnIndex` stays at 0 for the
+    // whole loop and every column after the first lands at index
+    // 1, reversing the iteration order.
+    let insertIndex: Int
+    if !focusOnInsert {
+      insertIndex = columns.count
+    } else {
+      insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
+    }
     columns.insert(column, at: insertIndex)
     // Tell the extension controller about the new tab now that the
     // pane is reachable from the workspace bridge's `tabs(for:)`
@@ -263,6 +276,16 @@ extension PaneContainerViewController {
       bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
         pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
       }
+      // Push the current effective state once the callback is
+      // wired — `installRestoredHistory` fires from
+      // `PaneModel.init`, which runs before `setupPaneCallbacks`
+      // attaches this closure, so its `notifyNavigationStateChange`
+      // call would otherwise land on a nil handler and the URL
+      // bar's back/forward buttons would boot disabled even when
+      // the shadow stack has entries.
+      let initialBack = bv.canGoBackEffective
+      let initialFwd = bv.canGoForwardEffective
+      pane.urlBar.setNavigationEnabled(back: initialBack, forward: initialFwd)
       bv.onLoadingStateChange = { [weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
         if let pane {

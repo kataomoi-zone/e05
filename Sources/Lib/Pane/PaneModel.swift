@@ -189,6 +189,15 @@ public final class PaneModel {
   /// navigation that abandons it; see
   /// `BrowserPaneView.installRestoredHistory` for the contract.
   ///
+  /// Live-restore (`startSuspended == false`) installs the shadow
+  /// stack and calls `expectAnchorLoad()` so the immediately
+  /// following `navigate(to: address.url)` is absorbed as the
+  /// stack's anchor load rather than abandoning the stack. The
+  /// suspended branch (`startSuspended == true`) installs the
+  /// stack without `expectAnchorLoad` because no load runs until
+  /// `restore()` later — and `restore()` already increments the
+  /// counter for its own load.
+  ///
   /// All four parameters are ignored for non-browser kinds and for
   /// blank / unresolved-extension browsers.
   public init(
@@ -309,6 +318,12 @@ public final class PaneModel {
             back: initialBackHistory,
             current: address.url,
             forward: initialForwardHistory)
+          // Mark the upcoming `navigate(to:)` as the shadow stack
+          // anchor load — without this the abandon trigger would
+          // see `.other` with counter=0 and treat the load as a
+          // fresh user-initiated navigation, wiping the stack we
+          // just installed.
+          bv.expectAnchorLoad()
         }
         bv.navigate(to: address.url.absoluteString)
       }

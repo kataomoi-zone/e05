@@ -18,13 +18,6 @@ extension PaneContainerViewController {
     // (which never restores `.hoverPeek`) couldn't undo.
     currentWorkspace.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
 
-    logger.info("captureSession: focusedWsIdx=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
-    for (i, ws) in workspaces.enumerated() {
-      let colFocused = ws.focusedColumnIndex
-      let paneFocused = ws.columns[safe: colFocused]?.focusedPaneIndex ?? -1
-      logger.debug("captureSession ws[\(i)] id=\(String(describing: ws.id), privacy: .public) focusedCol=\(colFocused) focusedPane=\(paneFocused) columns=\(ws.columns.count)")
-    }
-
     // Drop private workspaces from the snapshot: they're explicitly
     // ephemeral and persisting their URLs would defeat the mode.
     // `focusedWorkspaceIndex` rebases onto the surviving workspaces
@@ -44,10 +37,33 @@ extension PaneContainerViewController {
       let columnStates = ws.columns.map { column -> SessionState.ColumnState in
         let paneStates = column.panes.map { pane -> SessionState.PaneState in
           var state = SessionState.PaneState(address: pane.address.description)
-          if let webView = pane.browserView?.webView {
+          if let bv = pane.browserView {
             if !pane.title.isEmpty { state.title = pane.title }
-            let backList = webView.backForwardList.backList.map(\.url.absoluteString)
-            let forwardList = webView.backForwardList.forwardList.map(\.url.absoluteString)
+            // Source the back/forward list from the cross-launch
+            // shadow stack while it's still active — a pane that
+            // restored from session but was never focused (or
+            // focused but never abandoned the shadow stack) has
+            // an empty `WKBackForwardList`, and reading from there
+            // would drop the saved history across the next quit.
+            // Once the shadow stack is abandoned (user navigated
+            // outside the saved cursor) the live list is the
+            // source of truth.
+            //
+            // The cursor between back and forward is `pane.address`,
+            // mirrored from `bv.restoredHistoryCurrentURL` via
+            // `onURLChange`. Both update synchronously on the main
+            // queue inside `recordUserNavigation` /
+            // `foldSPAURLChangeIntoRestoredHistory`, so the two stay
+            // in lock-step.
+            let backList: [String]
+            let forwardList: [String]
+            if bv.usesRestoredSessionHistory {
+              backList = bv.restoredBackHistoryURLs
+              forwardList = bv.restoredForwardHistoryURLs
+            } else {
+              backList = bv.webView.backForwardList.backList.map(\.url.absoluteString)
+              forwardList = bv.webView.backForwardList.forwardList.map(\.url.absoluteString)
+            }
             if !backList.isEmpty { state.backHistory = backList }
             if !forwardList.isEmpty { state.forwardHistory = forwardList }
           }
@@ -144,7 +160,6 @@ extension PaneContainerViewController {
       let paneIdx = min(max(liveCol.focusedPaneIndex, 0), liveCol.panes.count - 1)
       return (session.focusedWorkspaceIndex, colIdx, paneIdx)
     }()
-
     for (wsIdx, wsState) in session.workspaces.enumerated() {
       let ws = WorkspaceModel()
       ws.scrollX = CGFloat(wsState.scrollX)
@@ -201,10 +216,6 @@ extension PaneContainerViewController {
           setupPaneCallbacks(pane: pane, column: column)
           column.panes.append(pane)
         }
-
-        // TODO: browser back/forward history restoration requires a
-        // custom navigation stack (WKWebView.backForwardList is
-        // read-only).
 
         if column.panes.count > 1 {
           rebuildColumnView(column: column)
