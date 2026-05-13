@@ -474,13 +474,20 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
+        // `…Effective` properties OR the live `WKBackForwardList`
+        // with the restored shadow stack so the URL bar's
+        // back/forward affordances stay enabled while either
+        // source has a step. The plain `webView.canGoBack` /
+        // `canGoForward` here would be wrong for a freshly
+        // restored pane (live list is empty until the first
+        // native navigation).
+        self.onNavigationStateChange?(self.canGoBackEffective, self.canGoForwardEffective)
       }
     }
     canGoForwardObservation = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
+        self.onNavigationStateChange?(self.canGoBackEffective, self.canGoForwardEffective)
       }
     }
     isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, change in
@@ -536,6 +543,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     restoredForwardHistoryStack = Array(forward.reversed())
     restoredHistoryCurrentURL = current
     usesRestoredSessionHistory = !back.isEmpty || !forward.isEmpty
+    notifyNavigationStateChange()
+  }
+
+  /// Push the current `canGoBackEffective` / `canGoForwardEffective`
+  /// to the URL bar. Called from every mutation of the shadow stack
+  /// — the `WKBackForwardList` KVO that drives the same callback
+  /// only fires for live-list changes and would miss shadow-stack
+  /// updates.
+  private func notifyNavigationStateChange() {
+    onNavigationStateChange?(canGoBackEffective, canGoForwardEffective)
   }
 
   /// True when the URL bar's back affordance should be enabled —
@@ -571,6 +588,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     restoredHistoryCurrentURL = target
     inShadowStackNavigation = true
+    notifyNavigationStateChange()
     webView.load(URLRequest(url: target))
     return true
   }
@@ -590,6 +608,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     restoredHistoryCurrentURL = target
     inShadowStackNavigation = true
+    notifyNavigationStateChange()
     webView.load(URLRequest(url: target))
     return true
   }
@@ -605,6 +624,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     restoredForwardHistoryStack.removeAll()
     restoredHistoryCurrentURL = nil
     usesRestoredSessionHistory = false
+    notifyNavigationStateChange()
   }
 
   // MARK: - Suspend / Restore

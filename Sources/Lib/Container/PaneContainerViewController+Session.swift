@@ -89,6 +89,16 @@ extension PaneContainerViewController {
     captureSession().save()
   }
 
+  /// Map a `SessionState.PaneState` back/forward URL strings array
+  /// to a `[URL]`, silently dropping entries that no longer parse
+  /// (e.g. a malformed line edited into session.json by hand). Nil
+  /// input — pre-history-restore session files or non-browser
+  /// panes — yields an empty array.
+  private static func urls(from strings: [String]?) -> [URL] {
+    guard let strings else { return [] }
+    return strings.compactMap { URL(string: $0) }
+  }
+
   /// Restore session from a saved state.
   func restoreSession(_ session: SessionState) {
     // Set first so that `setupPaneCallbacks`, run per-pane inside the
@@ -160,6 +170,8 @@ extension PaneContainerViewController {
           address: firstAddress,
           startSuspended: !firstIsLive,
           initialTitle: firstPaneState.title,
+          initialBackHistory: Self.urls(from: firstPaneState.backHistory),
+          initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory),
           focusOnInsert: false
         )
         column.widthConstraint?.constant = CGFloat(colState.width)
@@ -181,7 +193,9 @@ extension PaneContainerViewController {
           let pane = makePane(
             address: address,
             startSuspended: !isLive,
-            initialTitle: paneState.title
+            initialTitle: paneState.title,
+            initialBackHistory: Self.urls(from: paneState.backHistory),
+            initialForwardHistory: Self.urls(from: paneState.forwardHistory)
           )
           if let title = paneState.title { pane.title = title }
           setupPaneCallbacks(pane: pane, column: column)
