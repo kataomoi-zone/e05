@@ -458,7 +458,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, change in
       guard let url = change.newValue ?? nil else { return }
       DispatchQueue.main.async {
-        self?.onURLChange?(url)
+        guard let self else { return }
+        self.onURLChange?(url)
+        self.foldSPAURLChangeIntoRestoredHistory(url)
         // Warm the favicon cache so sidebar worklane rows and URL
         // bar suggestions can stop showing the generic `globe`
         // placeholder for this host. Synchronous main-thread call
@@ -713,6 +715,28 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     restoredHistoryCurrentURL = nil
     usesRestoredSessionHistory = false
     notifyNavigationStateChange()
+  }
+
+  /// Fold a `webView.url` KVO change into the shadow stack when it
+  /// represents an SPA navigation (e.g. astro View Transitions,
+  /// Next.js Link routing) that `decidePolicyFor` cannot see because
+  /// the page used `history.pushState` / `replaceState` rather than a
+  /// real HTTP navigation. The early returns are written so the cost
+  /// for a pane without a restored shadow stack is a single Bool
+  /// check — that's almost every pane after the first user-initiated
+  /// navigation past the saved cursor.
+  ///
+  /// We rely on `decidePolicyFor` for HTTP-level navigations: those
+  /// fire `recordUserNavigation` *before* `webView.url` updates, so by
+  /// the time this observer runs `restoredHistoryCurrentURL` already
+  /// equals the new URL and the equality check short-circuits the
+  /// double-fold. Only SPA pushStates reach the `recordUserNavigation`
+  /// call below.
+  private func foldSPAURLChangeIntoRestoredHistory(_ newURL: URL) {
+    guard usesRestoredSessionHistory else { return }
+    guard inShadowStackNavigationCount == 0 else { return }
+    guard restoredHistoryCurrentURL != newURL else { return }
+    recordUserNavigation(newCurrent: newURL)
   }
 
   /// Decide whether a main-frame navigation should drop the
