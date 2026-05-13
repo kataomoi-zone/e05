@@ -179,13 +179,25 @@ public final class PaneModel {
   /// `initialTitle` is plumbed through to both `self.title` and the
   /// placeholder so sidebar / worklane rows have something to render
   /// before the page actually loads; when nil the placeholder falls
-  /// back to the URL's host. Both parameters are ignored for
-  /// non-browser kinds and for blank / unresolved-extension browsers.
+  /// back to the URL's host.
+  ///
+  /// `initialBackHistory` and `initialForwardHistory` seed the
+  /// `BrowserPaneView` shadow back/forward stack with URLs the
+  /// previous session captured from the live
+  /// `WKBackForwardList`. The shadow stack carries the URL bar's
+  /// `canGoBack` / `canGoForward` until the user starts a real
+  /// navigation that abandons it; see
+  /// `BrowserPaneView.installRestoredHistory` for the contract.
+  ///
+  /// All four parameters are ignored for non-browser kinds and for
+  /// blank / unresolved-extension browsers.
   public init(
     address: PaneAddress, ghosttyApp: GhosttyApp?,
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
-    initialTitle: String? = nil
+    initialTitle: String? = nil,
+    initialBackHistory: [URL] = [],
+    initialForwardHistory: [URL] = []
   ) {
     self.address = address
     switch address.kind {
@@ -285,7 +297,19 @@ public final class PaneModel {
           self.title = initialTitle
         }
         bv.suspendInitially(url: address.url, title: initialTitle)
+        if !initialBackHistory.isEmpty || !initialForwardHistory.isEmpty {
+          bv.installRestoredHistory(
+            back: initialBackHistory,
+            current: address.url,
+            forward: initialForwardHistory)
+        }
       } else {
+        if !initialBackHistory.isEmpty || !initialForwardHistory.isEmpty {
+          bv.installRestoredHistory(
+            back: initialBackHistory,
+            current: address.url,
+            forward: initialForwardHistory)
+        }
         bv.navigate(to: address.url.absoluteString)
       }
     }

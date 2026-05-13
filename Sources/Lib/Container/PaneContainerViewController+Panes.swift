@@ -10,9 +10,11 @@ extension PaneContainerViewController {
   /// Build a pane via `makePane` and append a column for it. Pass
   /// `startSuspended: true` (with `initialTitle:`) to skip the
   /// first navigation on a browser pane — see `PaneModel.init` for
-  /// the contract. `focusOnInsert: false` is opt-in for callers that
-  /// commit their own focus target after the insert loop completes
-  /// (e.g. `restoreSession` finishes with
+  /// the contract. `initialBackHistory` / `initialForwardHistory`
+  /// seed the cross-launch back/forward shadow stack.
+  /// `focusOnInsert: false` is opt-in for callers that commit
+  /// their own focus target after the insert loop completes (e.g.
+  /// `restoreSession` finishes with
   /// `restoreFocusInCurrentWorkspace`); without that follow-up the
   /// container is left with stale focus state.
   @discardableResult
@@ -20,13 +22,17 @@ extension PaneContainerViewController {
     address: PaneAddress = .terminal,
     startSuspended: Bool = false,
     initialTitle: String? = nil,
+    initialBackHistory: [URL] = [],
+    initialForwardHistory: [URL] = [],
     focusOnInsert: Bool = true
   ) -> ColumnModel {
     insertColumn(
       with: makePane(
         address: address,
         startSuspended: startSuspended,
-        initialTitle: initialTitle),
+        initialTitle: initialTitle,
+        initialBackHistory: initialBackHistory,
+        initialForwardHistory: initialForwardHistory),
       focusOnInsert: focusOnInsert)
   }
 
