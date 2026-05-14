@@ -1,66 +1,134 @@
 # e05
 
-A macOS app that hosts libghostty terminal panes and WKWebView browser panes in horizontally-tiled columns.
+A macOS window manager that tiles libghostty terminal panes, WKWebView browser panes, and a native finder pane in horizontally-scrolling columns across multiple workspaces inside a single window.
+
+Alpha. macOS 26+ only. Dark-mode only.
+
+## Highlights
+
+- Three pane kinds: terminal (libghostty), browser (WKWebView), and finder (native file browser at `e05://finder`).
+- Horizontally-tiled columns with intra-column vertical splits, slide animations on insert / reorder / close.
+- Multiple workspaces inside one window, cycled with `⌘⇧]` / `⌘⇧[`, plus ephemeral "private" workspaces with a non-persistent data store.
+- Sidebar with five modes — Tabs (workspace + pane tree), Bookmarks, History, Downloads, Extensions — hover-peek and pin.
+- Per-tab WKWebExtensions: install Chrome Web Store extensions (Bitwarden verified) or Safari Web Extension `.appex` bundles. Firefox `.xpi` is not supported.
+- Built-in adblocker (declarative + procedural cosmetic runtime) bundling EasyList, EasyPrivacy, and AdGuard Japanese.
+- Memory saver: idle browser panes auto-suspend after 60 minutes (and on system memory pressure), with cross-launch back/forward history restoration via a shadow URL stack.
+- Web Notifications routed to native macOS banners with deep-link dispatch through the page's Service Worker.
+- Per-host site permissions for camera / microphone / geolocation / notifications, and per-site mute.
+- Finder pane (`e05://finder`) with inline rename, undo/redo across move / trash / new folder / duplicate / drag-drop, icon view with QuickLook thumbnails, and a rich right-click menu (Get Info, Open With, Duplicate, Make Alias, Compress, Copy / Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection).
+- Toast feedback overlay, command palette (`⌘⇧P`), per-pane find bar.
+- `e05` CLI for scripting and shell integration; bundled `open` shim that routes shell-typed `open <url>` / `open <dir>` inside terminal panes to new columns.
 
 ## Requirements
 
 - macOS 26 (Tahoe) or later
 - Swift 6 toolchain (Xcode 16 or Swift 6 CLI)
-- A locally-built `GhosttyKit.xcframework` (see [CONTRIBUTING.md](./CONTRIBUTING.md#building-ghosttykit))
+- A locally-built `GhosttyKit.xcframework` at the repo root (see [CONTRIBUTING.md](./CONTRIBUTING.md#building-ghosttykit))
 - Optional: [Nix](https://nixos.org/) for the provided `flake.nix` devShell
 
 ## Build & Run
 
+e05 requires a real `.app` bundle at runtime — bundle id drives data paths, permission prompts, and `UNUserNotificationCenter`. `swift run e05` does not work.
+
 ```bash
-# 1. Place GhosttyKit.xcframework at the repo root (see CONTRIBUTING.md)
-# 2. Build and run:
-swift build
-swift run e05
+# Dev iteration (build → assemble dev bundle → exec, stderr attached):
+./scripts/dev.sh
+
+# Release bundle (ad-hoc sign + Hardened Runtime; no Developer ID / notarisation yet):
+./scripts/build_app.sh release
+open build/release/e05.app
+
+# Tests:
+swift test --disable-sandbox    # see CONTRIBUTING.md for why --disable-sandbox is needed
 ```
+
+Dev and release use separate bundle ids (`org.kawarimidoll.e05.debug` vs `org.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
+
+The release build is not yet Developer ID-signed or notarised. On first launch macOS Gatekeeper will block it; right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`.
 
 ## Keybindings
 
-Pane operations use **⌥⌃ (Opt+Ctrl) + vim-style** keys.
+Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys. Browser / workspace shortcuts use **⌘**.
 
 | Category | Keys | Action |
 |---|---|---|
-| Pane focus | ⌥⌃+H / L / J / K | Move focus left / right / down / up |
-| Pane order | ⌥⌃+Shift+H / L / J / K | Swap panes |
-| New pane | ⌘+T | New terminal column |
-| | ⌥⌃+B | New browser column |
-| | ⌥⌃+V | Vertical split within column |
-| Close / restore | ⌘+W | Close pane (with confirmation) |
-| | ⌘+Shift+T | Restore last closed pane (within 10s) |
-| Layout | ⌥⌃+/ | Cycle pane width preset (80 cols → 120 cols → 1/2 → 1/3 → ...) |
-| | ⌥⌃+F | Toggle column fold |
-| | ⌥⌃+T | Toggle title overlay |
-| Browser | ⌘+L / ⌘+Shift+L | Focus URL bar / toggle URL bar visibility |
-| | ⌘+R / ⌘+Shift+R | Reload / hard reload |
-| | ⌘+[ / ⌘+] | Back / forward |
-| | ⌘++ / ⌘+- / ⌘+0 | Zoom in / out / reset |
-| | ⌘+D | Toggle bookmark |
-| | ⌥⌘+I | Toggle Web Inspector (inline) |
-| Workspace | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous workspace |
-| UI | ⌘+Shift+P | Command palette |
-| | ⌘+B | Toggle sidebar pin |
+| Pane focus | `⌥⌃ H` / `L` / `J` / `K` | Move focus left / right / down / up |
+| | `⌃ Tab` / `⌃⇧ Tab` | Next / previous pane (cycle) |
+| Pane order | `⌥⌃⇧ H` / `L` | Move column left / right |
+| | `⌥⌃⇧ J` / `K` | Move pane down / up within column |
+| New pane | `⌘ T` | New browser column |
+| | `⌥⌃ V` | Vertical split within column |
+| | (palette) | New Terminal Column, New Finder Column |
+| Close / restore | `⌘ W` | Close pane (with confirmation for live terminals) |
+| | `⌘⇧ T` | Reopen last closed pane (within 10s) |
+| Layout | `⌥⌃ /` | Cycle pane width preset (80 cols → 120 cols → 1/2 → 1/3 → …) |
+| | `⌥⌃ F` | Toggle column fold |
+| Browser | `⌘ L` / `⌘⇧ L` | Focus URL bar / toggle URL bar visibility |
+| | `⌘ R` / `⌘⇧ R` | Reload / hard reload (bypass cache) |
+| | `⌘ [` / `⌘ ]` | Back / forward |
+| | `⌘ +` / `⌘ -` / `⌘ 0` | Zoom in / out / reset |
+| | `⌘ D` | Toggle bookmark |
+| | `⌥⌘ I` | Toggle Web Inspector (inline) |
+| Find | `⌘ F` | Find in page (or filter rows in finder pane) |
+| | `⌘ G` / `⌘⇧ G` | Find next / previous |
+| Workspace | `⌘ N` | New workspace |
+| | `⌘⇧ N` | New private workspace (also New Folder when a finder pane is focused) |
+| | `⌘⇧ W` | Close current workspace |
+| | `⌘⇧ ]` / `⌘⇧ [` | Next / previous workspace |
+| Finder pane | `⌘⌫` | Move selection to Trash |
+| | (right-click) | Get Info, Open With, Duplicate, Make Alias, Compress, Copy, Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection |
+| UI | `⌘⇧ P` | Command palette |
+| | `⌘ B` | Toggle sidebar pin |
+
+The command palette surfaces every action by id (e.g. `new_terminal`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
 
 Drag a pane edge to resize to an arbitrary width.
 
 ## Configuration
 
-Configuration lives at `~/.config/e05/config`. The format is ghostty-compatible flat `key=value`. ghostty's default theme, keybindings, and font are used as-is.
+If `~/.config/e05/config` exists it is loaded into ghostty's config parser at startup, so any ghostty config key (theme, font, keybindings, …) takes effect. There are no e05-specific config keys yet — a customisation phase is planned, and the path will start honouring `E05_CONFIG_DIR` / `XDG_CONFIG_HOME` once it does.
 
-Runtime data is stored under `~/.config/e05/`:
+## Data layout
 
-| Path | Purpose |
-|---|---|
-| `session.json` | Workspace / pane / window state |
-| `history.db` | SQLite browsing history |
-| `bookmarks.db` | SQLite bookmarks |
-| `downloads.db` | SQLite downloads log |
-| `resume/*.resume` | Per-pane resume state |
-| `adblocker/` | Compiled `WKContentRuleList` cache + filterlist sources |
-| `extensions/` | Unpacked `WKWebExtension` bundles |
+Runtime data and caches live under macOS-native locations, keyed by bundle id so dev and release builds stay isolated:
+
+```
+~/Library/Application Support/<bundle-id>/
+├── bookmarks.db          SQLite bookmarks
+├── history.db            SQLite browsing history
+├── downloads.db          SQLite downloads log
+├── session.json          Workspace / pane state
+├── permissions.json      Per-host camera / mic / location / notification grants
+├── muted-sites.json      Per-host mute list
+├── finder-modes.json     Per-directory finder view mode
+├── resume/               Per-pane download resume state
+├── extensions/           Installed WKWebExtension bundles + state
+└── control.sock          e05 CLI Unix domain socket
+~/Library/Caches/<bundle-id>/
+├── adblocker/            Compiled WKContentRuleList cache + filterlist sources
+└── favicons/             HTTP-fetched favicon cache
+```
+
+There is no automatic data migration between the dev and release bundle ids. Copy by hand if you want to carry a dev session over to release.
+
+## CLI
+
+`Contents/Resources/bin/e05` is a small CLI that talks to the running app over the Unix-domain socket above. The `.app` bundle is self-contained; symlink the binary onto your `PATH` to use it from any shell:
+
+```bash
+ln -s /Applications/e05.app/Contents/Resources/bin/e05 /usr/local/bin/e05
+```
+
+Subcommands:
+
+```bash
+e05 open <url-or-path>          # Open URL as a browser column, dir as a finder column
+e05 action <action-id>          # Run any command-palette action by id
+e05 switch-workspace <index>    # Switch to workspace N (1-based)
+e05 notify <message>            # Surface a toast in the running app
+```
+
+Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-typed `open .` / `open https://...` becomes a new finder / browser column. `open -a App` / `open file.pdf` etc. fall through to the system `/usr/bin/open` and keep their stock Launch Services behaviour.
 
 ## License
 
