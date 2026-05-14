@@ -820,6 +820,19 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// by ``suspend()`` and ``restore()`` has not yet rebuilt it).
   public var isSuspended: Bool { suspendedSnapshot != nil }
 
+  /// Whether ``suspend()`` would currently make progress (= would
+  /// return `true`). Mirrors the three guards in ``suspend()`` so
+  /// sweep loops (memory-saver auto-suspend, future manual triggers)
+  /// can pre-filter the call and treat the subsequent ``suspend()``
+  /// as guaranteed to succeed instead of swallowing a `Bool` return
+  /// they have no way to act on.
+  public var canSuspend: Bool {
+    if isSuspended { return false }
+    if isExtensionHosted { return false }
+    if webView.url == nil, lastAttemptedURL == nil { return false }
+    return true
+  }
+
   /// Detach the `WKWebView`, drop it, and show the placeholder.
   /// Returns `false` (and changes nothing) for:
   /// - panes already in the suspended state — idempotent no-op,

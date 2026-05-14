@@ -251,6 +251,18 @@ public final class PaneContainerViewController: NSViewController {
     startMediaAudibleTick()
   }
 
+  /// Idle threshold (in minutes) past which a non-focused browser
+  /// pane gets auto-suspended by the 1 Hz tick. Half of Chrome /
+  /// Edge's 2 h default and more aggressive than Safari / Firefox's
+  /// pressure-only stance — long enough that flipping between panes
+  /// mid-research doesn't reload the one you just glanced at, short
+  /// enough that a pane left from this morning is reclaimed by the
+  /// afternoon. Stored as `Int` minutes (rather than seconds) so a
+  /// future config surface can expose the value in user-friendly
+  /// units without a second conversion pass; the 1 Hz tick multiplies
+  /// by 60 at the comparison site.
+  private static let autoSuspendIdleMinutes: Int = 60
+
   /// Kick off the shared 1 Hz audio-state probe loop. Each tick walks
   /// every browser pane in the container and asks it to refresh its
   /// `isPlayingAudio` flag through `BrowserPaneView.updateAudioStateOnce`;
@@ -259,19 +271,55 @@ public final class PaneContainerViewController: NSViewController {
   /// — each pane's `await` suspends the main actor, so other UI work
   /// can interleave between IPC round-trips, and we avoid the Swift 6
   /// region-based isolation friction a `TaskGroup` would introduce.
+  ///
+  /// Same loop also drives the memory-saver auto-suspend sweep: after
+  /// each pane's audio probe completes, the pane is checked against
+  /// the idle threshold and suspended in place if it has been quiet
+  /// past the cutoff. Piggy-backing on this existing walk keeps the
+  /// runloop wake-up count at "one timer total" — adding a dedicated
+  /// auto-suspend timer would double the idle-pane wake-ups without
+  /// buying anything (the suspend check itself is a `Date` comparison
+  /// and a handful of short-circuit reads).
   private func startMediaAudibleTick() {
     mediaTickTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
         if Task.isCancelled { return }
         guard let self else { return }
+        // Snapshot the cutoff once at tick start instead of recomputing
+        // per pane. The tick visits a handful of panes at most, and
+        // anything that slips through this tick because the cutoff was
+        // captured a few ms before the per-pane check will be caught
+        // by the next tick — sweep latency is bounded by the loop
+        // interval anyway.
+        let cutoff = Date().addingTimeInterval(-TimeInterval(Self.autoSuspendIdleMinutes * 60))
+        // Protect the focused pane in *every* workspace, not just the
+        // current one: a user reading a long article on a non-current
+        // workspace doesn't move focus or change URL, so its
+        // `lastActiveAt` clock keeps drifting past the cutoff. Without
+        // this set, switching back to that workspace an hour later
+        // would find the article gone and the placeholder up.
+        let focusedPaneIds = Set(self.workspaces.compactMap { ws -> ULID? in
+          ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
+        })
         for ws in self.workspaces {
           for col in ws.columns {
             for pane in col.panes {
               if Task.isCancelled { return }
-              if let bv = pane.browserView {
-                await bv.updateAudioStateOnce()
-              }
+              guard let bv = pane.browserView else { continue }
+              await bv.updateAudioStateOnce()
+              // Auto-suspend gate. Skip the focused pane on every
+              // workspace (its activity clock would just keep ticking
+              // if we suspended it under the user). Skip anything
+              // emitting audio so a backgrounded tab still producing
+              // sound keeps playing through. `canSuspend` mirrors the
+              // three guards inside `suspend()` so the call below
+              // doesn't have to swallow a `Bool` no caller can act on.
+              if !bv.canSuspend { continue }
+              if focusedPaneIds.contains(pane.id) { continue }
+              if bv.isPlayingAudio { continue }
+              if pane.lastActiveAt > cutoff { continue }
+              bv.suspend()
             }
           }
         }

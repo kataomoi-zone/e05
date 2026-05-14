@@ -254,6 +254,7 @@ extension PaneContainerViewController {
         let urlString = url.absoluteString
         pane?.address = PaneAddress(url)
         pane?.urlBar.setDisplayURL(urlString)
+        pane?.lastActiveAt = .init()
         // Record visit (skips internal pages and duplicates). Private
         // workspaces never feed the persistent history store — that's
         // the whole point of the mode, mirroring how Safari /
@@ -271,6 +272,7 @@ extension PaneContainerViewController {
       }
       bv.onFocusChanged = { [weak self, weak pane] in
         guard let self, let pane else { return }
+        pane.lastActiveAt = .init()
         self.handleFocusChange(from: pane)
       }
       bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in

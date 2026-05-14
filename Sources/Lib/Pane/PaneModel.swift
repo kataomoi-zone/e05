@@ -79,6 +79,24 @@ public final class PaneModel {
   /// session persistence where multiple bars can be live at once.
   var findCountDebounceTimer: Timer?
 
+  /// Wall-clock instant of the most recent user-visible activity on
+  /// this pane. Seed value is the pane's construction time so a
+  /// freshly-created pane has a fresh idle clock. The container's
+  /// 1 Hz tick reads this to decide whether to auto-suspend the pane's
+  /// `WKWebView` when it has stayed quiet past the idle threshold.
+  /// "Activity" is anything that could indicate the user still cares
+  /// about the page: focus (mouse / keyboard / palette / sidebar) and
+  /// URL change (link click, address-bar nav, programmatic). Scroll
+  /// position and keystrokes inside the page do not currently feed
+  /// the clock — that wire would need a JS bridge and is deferred
+  /// until a user actually hits a long-read regression.
+  ///
+  /// Not persisted across session restore: a relaunched pane gets
+  /// its clock reset to the relaunch time, which doubles as a
+  /// grace period before the auto-suspend sweep starts reclaiming
+  /// freshly-restored panes.
+  public var lastActiveAt: Date = .init()
+
   // TODO: wire this into vertical drag resize.
   public var heightConstraint: NSLayoutConstraint?
 
