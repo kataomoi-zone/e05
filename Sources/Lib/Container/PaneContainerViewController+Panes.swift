@@ -316,6 +316,14 @@ extension PaneContainerViewController {
         ExtensionController.shared.notifyTabPropertiesChanged(
           pane, properties: [.muted, .playingAudio])
       }
+      bv.onSuspendedStateChanged = { [weak self, weak pane, weak bv] in
+        guard let pane, let bv else { return }
+        // Targeted row update so memory-saver suspend/restore flips
+        // a single dashed-circle affordance rather than rebuilding
+        // the worklane each time the 1 Hz sweep claims a tab.
+        self?.sidebarVC?.updatePaneSuspendedState(
+          paneId: pane.id, isSuspended: bv.isSuspended)
+      }
       pane.urlBar.onMuteToggle = { [weak bv] in
         bv?.toggleMute()
       }

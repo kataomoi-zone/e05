@@ -31,6 +31,32 @@ final class PaneRow: NSView {
   private let label = NSTextField(labelWithString: "")
   private let focusDot = NSView()
   private static let focusDotSize: CGFloat = 6
+  /// Dashed-circle ring drawn around the favicon while the pane is
+  /// memory-saver-suspended. Mounted on the row's own layer (not the
+  /// iconView's) so the stroke can sit *outside* the 16pt favicon
+  /// slot without clipping. Toggled via `isHidden` rather than torn
+  /// down so the row layout doesn't shift when the affordance
+  /// appears or disappears. `nil` until the first
+  /// `applySuspendedState(true)` actually needs it.
+  private var suspendedRingLayer: CAShapeLayer?
+  /// True while the row is showing the suspended affordance.
+  /// Tracked so the layout pass can redraw the ring on frame changes
+  /// without having to re-derive the state, and so
+  /// `applySuspendedState` can compute alpha from a base value
+  /// instead of multiplying re-entrantly.
+  private var isSuspendedState: Bool = false
+  /// Base (non-suspended) icon alpha picked by `configure` from the
+  /// row's current / non-current state. `applySuspendedState`
+  /// multiplies this by `suspendedAlpha` when the pane sleeps and
+  /// restores the unscaled value when it wakes — calling
+  /// `applySuspendedState(true)` twice on the same row used to dim
+  /// the alpha twice before this was extracted.
+  private var baseIconAlpha: CGFloat = 1.0
+  private var baseLabelAlpha: CGFloat = 1.0
+  private static let suspendedRingPadding: CGFloat = 2
+  private static let suspendedAlpha: CGFloat = 0.5
+  private static let inactiveIconAlpha: CGFloat = 0.75
+  private static let inactiveLabelAlpha: CGFloat = 0.8
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -76,7 +102,8 @@ final class PaneRow: NSView {
   init(
     paneId: ULID, title: String, icon: NSImage?, accentColor: NSColor,
     isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool,
-    isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool
+    isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool,
+    isSuspended: Bool
   ) {
     self.paneId = paneId
     super.init(frame: .zero)
@@ -90,6 +117,7 @@ final class PaneRow: NSView {
     applyAudioState(
       isMuted: isMuted, isPlayingAudio: isPlayingAudio,
       hasActiveMedia: hasActiveMedia)
+    applySuspendedState(isSuspended)
   }
 
   @available(*, unavailable)
@@ -199,15 +227,100 @@ final class PaneRow: NSView {
     }
   }
 
+  /// Toggle the "memory saved" affordance on the row: a dashed-circle
+  /// ring around the favicon plus a reduced alpha on icon and title.
+  /// Both cues are needed — the ring alone reads as decorative on
+  /// rows whose icon is itself rectangular (terminal SF-symbol, site
+  /// favicons without a circular crop), and alpha alone is easy to
+  /// confuse with the non-current-workspace dim already applied to
+  /// inactive rows. Together they read unambiguously as "this pane
+  /// is asleep". Internal so the worklane can flip the state on a
+  /// single row without rebuilding the list.
+  ///
+  /// Alpha is computed absolutely (`base * mul`) rather than by
+  /// repeated multiplication so the method is idempotent and survives
+  /// being called twice in a row (e.g. an init-time set followed by
+  /// a redundant `updatePaneSuspendedState` from the worklane refresh
+  /// path).
+  func applySuspendedState(_ isSuspended: Bool) {
+    isSuspendedState = isSuspended
+    let mul: CGFloat = isSuspended ? Self.suspendedAlpha : 1.0
+    iconView.alphaValue = baseIconAlpha * mul
+    label.alphaValue = baseLabelAlpha * mul
+    if isSuspended {
+      installSuspendedRingIfNeeded()
+      suspendedRingLayer?.isHidden = false
+      updateSuspendedRingFrame()
+    } else {
+      suspendedRingLayer?.isHidden = true
+    }
+  }
+
+  private func installSuspendedRingIfNeeded() {
+    guard suspendedRingLayer == nil else { return }
+    let ring = CAShapeLayer()
+    ring.fillColor = nil
+    ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+    ring.lineWidth = 1
+    ring.lineDashPattern = [3, 2]
+    // Mount on the row's own layer rather than the iconView's so the
+    // ring sits *outside* the favicon footprint without expanding the
+    // image view's intrinsic 16pt slot — a layer added to iconView
+    // would clip to its bounds and the ring would slice through.
+    layer?.addSublayer(ring)
+    suspendedRingLayer = ring
+  }
+
+  private func updateSuspendedRingFrame() {
+    guard let ring = suspendedRingLayer, isSuspendedState else { return }
+    let iconFrame = iconView.frame
+    let padding = Self.suspendedRingPadding
+    let ringRect = iconFrame.insetBy(dx: -padding, dy: -padding)
+    let path = CGPath(ellipseIn: ringRect, transform: nil)
+    // Disable implicit animation: the ring should snap to its new
+    // position when the row resizes (sidebar reveal / hover-peek)
+    // rather than crawl across.
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    ring.path = path
+    ring.frame = bounds
+    CATransaction.commit()
+  }
+
+  override func layout() {
+    super.layout()
+    updateSuspendedRingFrame()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // `CAShapeLayer.strokeColor` is a CGColor snapshot, so the
+    // dynamic `tertiaryLabelColor` value taken at install time stays
+    // frozen across appearance changes. Re-resolve it under the new
+    // appearance whenever the system flips. The app currently runs
+    // dark-only so this is dormant in practice, but the cost is one
+    // assignment and it removes a foot-gun for the eventual light-
+    // theme work.
+    guard let ring = suspendedRingLayer else { return }
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+    }
+  }
+
   private func configure(
     title: String, icon: NSImage?, accentColor: NSColor,
     isCurrent: Bool, isOwnWorkspaceFocus: Bool, isPrivate: Bool
   ) {
     isCurrentPane = isCurrent
     label.stringValue = title
-    label.alphaValue = isCurrent ? 1.0 : 0.8
+    baseIconAlpha = isCurrent ? 1.0 : Self.inactiveIconAlpha
+    baseLabelAlpha = isCurrent ? 1.0 : Self.inactiveLabelAlpha
     iconView.image = icon
-    iconView.alphaValue = isCurrent ? 1.0 : 0.75
+    // Re-apply through the suspended path so a row that boots
+    // current-and-suspended (or flips current state while suspended)
+    // lands on `base * suspendedAlpha`, not on the bare base.
+    iconView.alphaValue = baseIconAlpha * (isSuspendedState ? Self.suspendedAlpha : 1.0)
+    label.alphaValue = baseLabelAlpha * (isSuspendedState ? Self.suspendedAlpha : 1.0)
     // Private workspace rows trade the solid layer border for a
     // dotted overlay so the sidebar mirrors the in-content focus
     // indicator's visual language.

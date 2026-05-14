@@ -262,6 +262,9 @@ final class SidebarViewController: NSViewController {
           guard let bv = pane.browserView else { return (false, false, false) }
           return (bv.isMuted, bv.isPlayingAudio, bv.hasActiveMedia)
         },
+        paneIsSuspended: { pane in
+          pane.browserView?.isSuspended ?? false
+        },
         isWorkspaceCollapsed: { [weak self] id in
           self?.collapsedWorkspaceIds.contains(id) ?? false
         },
@@ -297,6 +300,15 @@ final class SidebarViewController: NSViewController {
     overlay.worklane.updatePaneAudioState(
       paneId: paneId, isMuted: isMuted, isPlayingAudio: isPlayingAudio,
       hasActiveMedia: hasActiveMedia)
+  }
+
+  /// Per-pane suspended-state flip without rebuilding the whole
+  /// worklane. Hosts call this from `onSuspendedStateChanged` so the
+  /// memory-saver sweep can flip dozens of rows per tick at most
+  /// without driving a full worklane reload.
+  func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
+    overlay.worklane.updatePaneSuspendedState(
+      paneId: paneId, isSuspended: isSuspended)
   }
 
   private func toggleWorkspaceCollapsed(_ id: ULID) {

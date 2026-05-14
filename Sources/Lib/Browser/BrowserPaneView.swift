@@ -86,6 +86,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   public var onOpenInNewWorkspace: ((URL) -> Void)?
   /// Called when either ``isMuted`` or ``isPlayingAudio`` changes.
   public var onAudioStateChanged: (() -> Void)?
+  /// Called after ``suspend()`` detaches the web view, or ``restore()``
+  /// rebuilds it. Lets the sidebar swap its per-row "memory saved"
+  /// affordance without a full worklane rebuild — the same targeted-
+  /// update pattern as ``onAudioStateChanged``.
+  public var onSuspendedStateChanged: (() -> Void)?
 
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
@@ -873,6 +878,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
     suspendedSnapshot = snapshot
     showPlaceholder(title: snapshot.title, url: snapshot.url)
+    onSuspendedStateChanged?()
     return true
   }
 
@@ -939,6 +945,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
 
     suspendedSnapshot = nil
+    onSuspendedStateChanged?()
     return true
   }
 
@@ -946,6 +953,15 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `WKWebView`. Callers use this to defer the first load until the
   /// pane is focused. The pane shows the placeholder immediately;
   /// `restore()` builds the real web view on first focus.
+  ///
+  /// Unlike ``suspend()`` this path does not fire
+  /// ``onSuspendedStateChanged``. The callback exists to flip
+  /// pre-built sidebar rows from live to suspended (or back) during
+  /// the auto-suspend sweep; at the moment `suspendInitially` runs,
+  /// `setupPaneCallbacks` hasn't wired the callback yet and the
+  /// sidebar reads the row's initial state synchronously through
+  /// `ReloadInput.paneIsSuspended` instead. Inverting that order
+  /// would also work; the current sequence keeps the wiring simpler.
   public func suspendInitially(url: URL, title: String?) {
     guard !isSuspended else { return }
     guard !isExtensionHosted else { return }

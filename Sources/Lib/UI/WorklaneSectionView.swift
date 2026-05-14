@@ -125,6 +125,7 @@ final class WorklaneSectionView: NSView {
     let paneIcon: (PaneModel) -> NSImage?
     let paneAudioState:
       (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
+    let paneIsSuspended: (PaneModel) -> Bool
     let isWorkspaceCollapsed: (ULID) -> Bool
     let onWorkspaceClick: (Int) -> Void
     let onPaneClick: (ULID) -> Void
@@ -155,6 +156,15 @@ final class WorklaneSectionView: NSView {
     paneRowsByPaneId[paneId]?.applyAudioState(
       isMuted: isMuted, isPlayingAudio: isPlayingAudio,
       hasActiveMedia: hasActiveMedia)
+  }
+
+  /// Per-pane suspended-state flip without a full reload. Same
+  /// targeted-update shape as `updatePaneAudioState` — sidebars
+  /// reload at most a row when a pane suspends or restores, so a
+  /// frequent auto-suspend cadence doesn't drive a full worklane
+  /// rebuild.
+  func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
+    paneRowsByPaneId[paneId]?.applySuspendedState(isSuspended)
   }
 
   private func rebuildRows(_ input: ReloadInput) {
@@ -206,7 +216,8 @@ final class WorklaneSectionView: NSView {
             isPrivate: ws.isPrivate,
             isMuted: audio.isMuted,
             isPlayingAudio: audio.isPlayingAudio,
-            hasActiveMedia: audio.hasActiveMedia
+            hasActiveMedia: audio.hasActiveMedia,
+            isSuspended: input.paneIsSuspended(pane)
           )
           let capturedId = pane.id
           row.onClick = { [onClick = input.onPaneClick] in onClick(capturedId) }
