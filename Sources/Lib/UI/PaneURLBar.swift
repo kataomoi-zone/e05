@@ -939,6 +939,19 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       height: listHeight
     )
     panel.setFrame(panelFrame, display: true)
+    // Defensive: this file never writes panel.alphaValue. A `< 1`
+    // value here means an external cause stuck the panel invisible
+    // while it kept dispatching keys — see `logPopupAlphaRecovery`
+    // for the candidate causes. The `< 1` gate keeps the normal
+    // reposition path silent and routes recoveries through the log.
+    // The reset itself is idempotent and so cheap on the hot path
+    // (scroll, resize, every keystroke) that keeping the check here
+    // instead of at a true "show transition" site is worth the
+    // extra coverage.
+    if panel.alphaValue < 1 {
+      logPopupAlphaRecovery(panel: panel, scope: "url-suggest")
+      panel.alphaValue = 1
+    }
     panel.orderFront(nil)
   }
 

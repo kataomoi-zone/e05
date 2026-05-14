@@ -417,9 +417,22 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     bindWorkspaceObservers(parent: parentWindow, anchor: view)
     repositionPanel()
 
-    if !panel.isVisible {
-      panel.alphaValue = 0
+    // Always reset model alpha to 0 before the fade-in animation,
+    // regardless of `panel.isVisible`. The previous "only reset when
+    // not visible" branch trusted the hide-tween completion to leave
+    // the model at 0 — but a system event that invalidates the layer
+    // mid-fade (display sleep, fullscreen transition, Liquid Glass
+    // material refresh) can leave the panel ordered front at alpha 0
+    // (key dispatch works, the bar is invisible) and the next show's
+    // animator never commits a fresh interpolation. The unconditional
+    // reset costs one extra frame of "snap to 0" on the rare
+    // interrupted-show path but guarantees the fade-in starts from a
+    // known model value. The `< 1` gate keeps the normal path silent
+    // and only routes the recovery case through the log.
+    if panel.isVisible, panel.alphaValue < 1 {
+      logPopupAlphaRecovery(panel: panel, scope: "findbar")
     }
+    panel.alphaValue = 0
     panel.makeKeyAndOrderFront(nil)
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = Self.fadeDuration

@@ -204,6 +204,15 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     suggestionList.update(items: items)
 
     layoutInPanel()
+    // Defensive: this file never writes panel.alphaValue. A `< 1`
+    // value here means an external cause stuck the panel invisible
+    // while it kept dispatching keys — see `logPopupAlphaRecovery`
+    // for the candidate causes. The `< 1` gate keeps the normal
+    // show path silent and routes recoveries through the log.
+    if panel.alphaValue < 1 {
+      logPopupAlphaRecovery(panel: panel, scope: "palette")
+      panel.alphaValue = 1
+    }
     panel.makeKeyAndOrderFront(nil)
     panel.makeFirstResponder(inputField)
 
