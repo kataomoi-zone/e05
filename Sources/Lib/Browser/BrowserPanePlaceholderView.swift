@@ -30,6 +30,14 @@ final class BrowserPanePlaceholderView: NSView {
   /// focus path that already calls `restoreIfSuspended()`.
   var onClick: (() -> Void)?
 
+  /// `BrowserPaneView.firstResponderTarget` hands this view back as
+  /// the first-responder destination while the pane is suspended,
+  /// so the placeholder needs to accept the role for the responder
+  /// chain to stay coherent (otherwise `makeFirstResponder` lands
+  /// on the host window and the focused pane has no live responder
+  /// route for keystrokes).
+  override var acceptsFirstResponder: Bool { true }
+
   init() {
     super.init(frame: .zero)
     wantsLayer = true

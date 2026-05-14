@@ -825,6 +825,21 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// by ``suspend()`` and ``restore()`` has not yet rebuilt it).
   public var isSuspended: Bool { suspendedSnapshot != nil }
 
+  /// View that should receive first-responder status when the host
+  /// focuses this pane. Returns the live `WKWebView` for a normal
+  /// pane and the placeholder while the pane is memory-saver-
+  /// suspended. Handing back a detached `WKWebView` here would make
+  /// `makeFirstResponder` refuse the change (it rejects views with
+  /// no `window`), leaving the host window's responder stranded on
+  /// itself; routing through the placeholder lets the responder
+  /// chain stay coherent under a user-driven Suspend Pane action.
+  public var firstResponderTarget: NSView {
+    if let placeholder = placeholderView, isSuspended {
+      return placeholder
+    }
+    return webView
+  }
+
   /// Whether ``suspend()`` would currently make progress (= would
   /// return `true`). Mirrors the three guards in ``suspend()`` so
   /// sweep loops (memory-saver auto-suspend, future manual triggers)

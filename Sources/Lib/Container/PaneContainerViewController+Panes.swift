@@ -548,7 +548,11 @@ extension PaneContainerViewController {
       self.cachedActionResults[index].handler()
     }
     commandPalette.onDismiss = { [weak self] in
-      self?.focusCurrentPane()
+      // Re-arm the responder chain on the focused pane without
+      // un-suspending it: a "Suspend Pane" action would otherwise
+      // reverse itself when the palette closes and the implicit
+      // re-focus routes through `restoreIfSuspended`.
+      self?.focusCurrentPane(restoreSuspended: false)
     }
   }
 
@@ -576,11 +580,17 @@ extension PaneContainerViewController {
   /// because `becomeFirstResponder` never re-fired to re-arm the
   /// guard. Re-entering `setFocus` here clears every surface in the
   /// focused workspace and re-arms exactly one.
-  func focusCurrentPane() {
+  ///
+  /// `restoreSuspended` is forwarded straight to `setFocus`; see
+  /// `setFocus(columnIndex:paneIndex:scroll:restoreSuspended:)` for
+  /// what the flag means and which call sites pass `false`.
+  func focusCurrentPane(restoreSuspended: Bool = true) {
     guard columns.indices.contains(focusedColumnIndex) else { return }
     let column = columns[focusedColumnIndex]
     guard column.panes.indices.contains(column.focusedPaneIndex) else { return }
-    setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex, scroll: false)
+    setFocus(
+      columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex,
+      scroll: false, restoreSuspended: restoreSuspended)
   }
 
   /// Search the action registry for the command palette.

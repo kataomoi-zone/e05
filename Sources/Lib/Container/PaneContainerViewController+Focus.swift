@@ -7,7 +7,24 @@ private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Focus"
 extension PaneContainerViewController {
   // MARK: - Focus
 
-  public func setFocus(columnIndex: Int, paneIndex: Int, scroll: Bool = true) {
+  /// Move the focused pane to `(columnIndex, paneIndex)`.
+  ///
+  /// `restoreSuspended` decides whether a memory-saver-suspended
+  /// incoming pane is woken up before responder routing. Default
+  /// `true` is correct for direct user navigation (arrow keys,
+  /// sidebar click, palette `Focus: <other>` action) — a detached
+  /// `WKWebView` rejects `makeFirstResponder` so the suspended
+  /// state has to drop before we hand off. Passing `false` is
+  /// reserved for "we want to re-arm the responder chain on the
+  /// already-focused pane without disturbing its suspend state",
+  /// currently the command-palette dismiss handler: the user just
+  /// fired `Suspend Pane` on the focused pane and the implicit
+  /// re-focus on palette close would otherwise reverse the action
+  /// the user just took.
+  public func setFocus(
+    columnIndex: Int, paneIndex: Int, scroll: Bool = true,
+    restoreSuspended: Bool = true
+  ) {
     logger.info("setFocus entry col=\(columnIndex) pane=\(paneIndex) scroll=\(scroll ? "yes" : "no", privacy: .public) currentWs=\(self.focusedWorkspaceIndex)")
     guard columns.indices.contains(columnIndex) else {
       logger.error("setFocus guard: bad columnIndex")
@@ -87,8 +104,13 @@ extension PaneContainerViewController {
     // `makeFirstResponder` (returns false without changing the
     // first responder), and `preferredFirstResponder` would
     // otherwise hand back the detached instance. No-op for
-    // non-browser panes and already-live browsers.
-    pane.restoreIfSuspended()
+    // non-browser panes and already-live browsers. Skipped when
+    // the caller passed `restoreSuspended: false` — the palette
+    // dismiss path needs to re-arm the responder chain without
+    // undoing a user-driven `Suspend Pane` action.
+    if restoreSuspended {
+      pane.restoreIfSuspended()
+    }
     // Inform the WKWebExtension bridge of the focus change up front
     // so the sticky "active browser pane" tracker stays current
     // regardless of what subsequent UI work (popup webView, find bar,

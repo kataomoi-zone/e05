@@ -172,7 +172,7 @@ public final class PaneModel {
   public var preferredFirstResponder: NSView {
     switch content {
     case .terminal(let tv): return tv
-    case .browser(let bv): return bv.webView
+    case .browser(let bv): return bv.firstResponderTarget
     case .finder(let fv): return fv.keyboardFocusTarget
     }
   }
