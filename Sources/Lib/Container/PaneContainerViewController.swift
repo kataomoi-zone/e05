@@ -135,6 +135,14 @@ public final class PaneContainerViewController: NSViewController {
   /// `TaskGroup` isn't used.
   private var mediaTickTask: Task<Void, Never>?
 
+  /// Dispatch source subscribed to system memory-pressure events.
+  /// Fires on `.warning` / `.critical` transitions so the memory-
+  /// saver auto-suspend sweep can run immediately under heap
+  /// pressure instead of waiting for the next idle-threshold tick.
+  /// Lives for the lifetime of the container; cancelled in the
+  /// teardown path alongside `mediaTickTask`.
+  private var memoryPressureSource: DispatchSourceMemoryPressure?
+
   // MARK: - Undo Close
 
   static let undoTimeout: TimeInterval = 10
@@ -249,6 +257,7 @@ public final class PaneContainerViewController: NSViewController {
     installSidebar(initiallyPinned: initiallyPinned)
     installToastOverlay()
     startMediaAudibleTick()
+    startMemoryPressureMonitor()
   }
 
   /// Idle threshold (in minutes) past which a non-focused browser
@@ -272,56 +281,121 @@ public final class PaneContainerViewController: NSViewController {
   /// can interleave between IPC round-trips, and we avoid the Swift 6
   /// region-based isolation friction a `TaskGroup` would introduce.
   ///
-  /// Same loop also drives the memory-saver auto-suspend sweep: after
-  /// each pane's audio probe completes, the pane is checked against
-  /// the idle threshold and suspended in place if it has been quiet
-  /// past the cutoff. Piggy-backing on this existing walk keeps the
-  /// runloop wake-up count at "one timer total" — adding a dedicated
-  /// auto-suspend timer would double the idle-pane wake-ups without
-  /// buying anything (the suspend check itself is a `Date` comparison
-  /// and a handful of short-circuit reads).
+  /// Once every pane has a fresh `isPlayingAudio` reading the tick
+  /// runs `autoSuspendBrowserPanes(force: false)` so the same walk
+  /// also drives the memory-saver idle sweep. Piggy-backing keeps
+  /// the runloop wake-up count at "one timer total" rather than
+  /// adding a dedicated auto-suspend timer.
   private func startMediaAudibleTick() {
     mediaTickTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
         if Task.isCancelled { return }
         guard let self else { return }
-        // Snapshot the cutoff once at tick start instead of recomputing
-        // per pane. The tick visits a handful of panes at most, and
-        // anything that slips through this tick because the cutoff was
-        // captured a few ms before the per-pane check will be caught
-        // by the next tick — sweep latency is bounded by the loop
-        // interval anyway.
-        let cutoff = Date().addingTimeInterval(-TimeInterval(Self.autoSuspendIdleMinutes * 60))
-        // Protect the focused pane in *every* workspace, not just the
-        // current one: a user reading a long article on a non-current
-        // workspace doesn't move focus or change URL, so its
-        // `lastActiveAt` clock keeps drifting past the cutoff. Without
-        // this set, switching back to that workspace an hour later
-        // would find the article gone and the placeholder up.
-        let focusedPaneIds = Set(self.workspaces.compactMap { ws -> ULID? in
-          ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
-        })
         for ws in self.workspaces {
           for col in ws.columns {
             for pane in col.panes {
               if Task.isCancelled { return }
-              guard let bv = pane.browserView else { continue }
-              await bv.updateAudioStateOnce()
-              // Auto-suspend gate. Skip the focused pane on every
-              // workspace (its activity clock would just keep ticking
-              // if we suspended it under the user). Skip anything
-              // emitting audio so a backgrounded tab still producing
-              // sound keeps playing through. `canSuspend` mirrors the
-              // three guards inside `suspend()` so the call below
-              // doesn't have to swallow a `Bool` no caller can act on.
-              if !bv.canSuspend { continue }
-              if focusedPaneIds.contains(pane.id) { continue }
-              if bv.isPlayingAudio { continue }
-              if pane.lastActiveAt > cutoff { continue }
-              bv.suspend()
+              if let bv = pane.browserView {
+                await bv.updateAudioStateOnce()
+              }
             }
           }
+        }
+        self.autoSuspendBrowserPanes(force: false)
+      }
+    }
+  }
+
+  /// Subscribe to the system memory-pressure dispatch source so the
+  /// memory-saver auto-suspend can react to actual heap pressure
+  /// rather than waiting for the next idle-threshold tick. On a
+  /// `.warning` or `.critical` event the same sweep that the 1 Hz
+  /// tick drives runs with the idle-age gate bypassed: every non-
+  /// focused pane that isn't emitting audio gets reclaimed
+  /// immediately. The focused pane stays alive regardless of
+  /// pressure level — taking down the page the user is currently
+  /// looking at would be more disruptive than the memory cost of
+  /// keeping it, and pressure events generally fire *ahead of* an
+  /// OOM rather than in lieu of one.
+  ///
+  /// The dispatch source is queued onto `.main` so the handler
+  /// already runs on the main thread, but Swift 6's `@MainActor`
+  /// isolation contract is a separate language-level concept from
+  /// "running on `DispatchQueue.main`". The handler reconciles the
+  /// two with `MainActor.assumeIsolated`, which asserts the thread
+  /// match (cheap in release, traps in debug if violated) and lets
+  /// us call `@MainActor` state synchronously without spawning a
+  /// `Task` per event.
+  private func startMemoryPressureMonitor() {
+    let source = DispatchSource.makeMemoryPressureSource(
+      eventMask: [.warning, .critical], queue: .main)
+    source.setEventHandler { [weak self, weak source] in
+      let level = source?.data ?? []
+      MainActor.assumeIsolated {
+        self?.handleMemoryPressure(level: level)
+      }
+    }
+    source.resume()
+    memoryPressureSource = source
+  }
+
+  private func handleMemoryPressure(level: DispatchSource.MemoryPressureEvent) {
+    // Bit-wise build so the rare "critical+warning accumulated since
+    // the last fire" case renders both labels rather than collapsing
+    // to whichever single name a priority chain happens to pick.
+    var parts: [String] = []
+    if level.contains(.critical) { parts.append("critical") }
+    if level.contains(.warning) { parts.append("warning") }
+    let name = parts.isEmpty ? "normal" : parts.joined(separator: "+")
+    logger.warning(
+      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing auto-suspend sweep")
+    autoSuspendBrowserPanes(force: true)
+  }
+
+  /// Walk every browser pane and suspend any that isn't currently
+  /// focused, isn't emitting audio, and (unless `force == true`) has
+  /// been idle past `autoSuspendIdleMinutes`. Shared by the 1 Hz
+  /// idle tick (`force: false`) and the memory-pressure handler
+  /// (`force: true`) so both paths apply the same focused / audio /
+  /// canSuspend guard set — the only difference is whether the
+  /// idle-age gate participates.
+  ///
+  /// Runs entirely synchronously with no `await`. The
+  /// `memoryPressureSource` handler relies on that — `setEventHandler`
+  /// serialises events on the main queue but doesn't serialise
+  /// against `Task`-spawned continuations, so if this method ever
+  /// grows an `await` the handler will need a re-entrancy guard
+  /// (an `isSweeping` flag, or moving sweeps onto a single serial
+  /// async queue).
+  private func autoSuspendBrowserPanes(force: Bool) {
+    // Snapshot the cutoff once at sweep start instead of recomputing
+    // per pane. The sweep visits a handful of panes at most, and
+    // anything that slips through because the cutoff was captured a
+    // few ms before the per-pane check will be caught by the next
+    // sweep — latency is bounded by the loop interval anyway.
+    let cutoff = Date().addingTimeInterval(-TimeInterval(Self.autoSuspendIdleMinutes * 60))
+    // Protect the focused pane in *every* workspace, not just the
+    // current one: a user reading a long article on a non-current
+    // workspace doesn't move focus or change URL, so its
+    // `lastActiveAt` clock keeps drifting past the cutoff. Without
+    // this set, switching back to that workspace an hour later
+    // would find the article gone and the placeholder up.
+    let focusedPaneIds = Set(workspaces.compactMap { ws -> ULID? in
+      ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
+    })
+    for ws in workspaces {
+      for col in ws.columns {
+        for pane in col.panes {
+          guard let bv = pane.browserView else { continue }
+          // `canSuspend` mirrors the three guards inside `suspend()`
+          // so the call below doesn't have to swallow a `Bool` no
+          // caller can act on.
+          if !bv.canSuspend { continue }
+          if focusedPaneIds.contains(pane.id) { continue }
+          if bv.isPlayingAudio { continue }
+          if !force, pane.lastActiveAt > cutoff { continue }
+          bv.suspend()
         }
       }
     }
@@ -631,6 +705,7 @@ public final class PaneContainerViewController: NSViewController {
       closed.timer.invalidate()
     }
     mediaTickTask?.cancel()
+    memoryPressureSource?.cancel()
   }
 
   // MARK: - Scroll Event Monitor
