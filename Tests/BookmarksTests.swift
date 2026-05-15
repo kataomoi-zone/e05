@@ -290,6 +290,45 @@ struct BookmarksTests {
     #expect(results[0].url == "https://example.com")
   }
 
+  @Test("setTitle renames a folder without touching its (nil) url")
+  func setTitleFolder() throws {
+    let bm = Bookmarks(inMemory: true)
+    let id = try #require(bm.createFolder(title: "Old Name"))
+
+    let ok = bm.setTitle(id: id, title: "New Name")
+    #expect(ok)
+
+    let entry = try #require(bm.all().first { $0.id == id })
+    #expect(entry.title == "New Name")
+    #expect(entry.url == nil)  // Folder url stays nil.
+    #expect(entry.isFolder)
+  }
+
+  @Test("setTitle on a bookmark rewrites only its title")
+  func setTitleBookmark() throws {
+    let bm = Bookmarks(inMemory: true)
+    bm.add(url: "https://example.com", title: "Example")
+    let id = try #require(bm.all().first).id
+
+    let ok = bm.setTitle(id: id, title: "Renamed")
+    #expect(ok)
+
+    let entry = try #require(bm.all().first)
+    #expect(entry.title == "Renamed")
+    #expect(entry.url == "https://example.com")  // URL untouched.
+  }
+
+  @Test("setTitle returns false for a missing id and skips listener fire")
+  func setTitleMissing() {
+    let bm = Bookmarks(inMemory: true)
+    var fireCount = 0
+    bm.addListener { fireCount += 1 }
+
+    let ok = bm.setTitle(id: 999, title: "x")
+    #expect(!ok)
+    #expect(fireCount == 0)
+  }
+
   @Test("v0 → v1 migration preserves existing rows and adds folder columns")
   func migrationFromV0() throws {
     // Stage a database on disk with the pre-hierarchy schema, then

@@ -393,8 +393,46 @@ extension BookmarksSidebarView {
   /// store call rather than a recursive walk on the view side.
   fileprivate func handleFolderAction(id: Int64, action: FolderRowAction) {
     switch action {
+    case .rename:
+      guard let node = nodesById[id] else { return }
+      presentRenameFolderSheet(for: node.entry)
     case .delete:
       bookmarks.remove(id: id)
+    }
+  }
+
+  private func presentRenameFolderSheet(for entry: Bookmarks.Entry) {
+    guard let window else { return }
+
+    let alert = NSAlert()
+    alert.messageText = "Rename Folder"
+    alert.informativeText = "Choose a new name."
+    alert.addButton(withTitle: "Save")
+    alert.addButton(withTitle: "Cancel")
+
+    let nameField = NSTextField(string: entry.title)
+    nameField.placeholderString = "Folder name"
+    nameField.translatesAutoresizingMaskIntoConstraints = false
+    nameField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+    NSLayoutConstraint.activate([
+      nameField.widthAnchor.constraint(equalToConstant: 280),
+    ])
+
+    alert.accessoryView = nameField
+    alert.window.initialFirstResponder = nameField
+    // Select the existing text so a single keystroke replaces it,
+    // matching Finder's rename affordance.
+    nameField.selectText(nil)
+
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      let title = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      // Empty title would leave a blank, hard-to-find row in the
+      // tree. Drop the rename instead of silently substituting a
+      // placeholder, mirroring the bookmark edit sheet's policy on
+      // empty URLs.
+      guard !title.isEmpty else { return }
+      _ = self.bookmarks.setTitle(id: entry.id, title: title)
     }
   }
 
@@ -485,10 +523,11 @@ enum BookmarkRowAction {
   case openInNewWorkspace
 }
 
-/// Folder-row analogue of `BookmarkRowAction`. Substages will add
-/// `rename` and `newSubFolder` cases; for now the only ellipsis
-/// option is `delete`.
+/// Folder-row analogue of `BookmarkRowAction`. Drag-into-folder
+/// reordering lands in a separate commit; the menu so far covers
+/// the destructive and rename paths.
 enum FolderRowAction {
+  case rename
   case delete
 }
 
@@ -735,6 +774,11 @@ private final class BookmarksSidebarFolderCellView: SidebarListCellView {
 
   @objc private func actionTapped() {
     let menu = NSMenu()
+    let renameItem = NSMenuItem(
+      title: "Rename…", action: #selector(menuRename), keyEquivalent: "")
+    renameItem.target = self
+    menu.addItem(renameItem)
+    menu.addItem(.separator())
     let deleteItem = NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: "")
     deleteItem.target = self
     menu.addItem(deleteItem)
@@ -742,5 +786,6 @@ private final class BookmarksSidebarFolderCellView: SidebarListCellView {
     menu.popUp(positioning: nil, at: origin, in: actionButton)
   }
 
+  @objc private func menuRename() { onRowAction?(currentID, .rename) }
   @objc private func menuDelete() { onRowAction?(currentID, .delete) }
 }

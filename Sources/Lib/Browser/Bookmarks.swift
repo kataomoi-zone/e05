@@ -425,14 +425,14 @@ public final class Bookmarks {
     fireListeners()
   }
 
-  /// Edit an existing bookmark's title and URL. Returns `true` when
-  /// the update commits, `false` when the target id doesn't exist or
-  /// when the new URL collides with another bookmark (the partial
-  /// UNIQUE index on `url` would throw otherwise). The UI layer uses
-  /// the return value to surface an "URL already bookmarked" error.
+  /// Edit a bookmark's title and URL. Returns `true` when the update
+  /// commits, `false` when the target id doesn't exist or when the
+  /// new URL collides with another bookmark (the partial UNIQUE
+  /// index on `url` would throw otherwise). The UI layer uses the
+  /// return value to surface an "URL already bookmarked" error.
   /// Fires listeners only on success so a rejected edit doesn't
-  /// churn consumers. Folder rows can pass `url == nil` (or any
-  /// value, ignored).
+  /// churn consumers. Bookmarks only — for folders use `setTitle`
+  /// which leaves the (nil) url column alone.
   @discardableResult
   public func update(id: Int64, title: String, url: String) -> Bool {
     guard let db else { return false }
@@ -470,6 +470,30 @@ public final class Bookmarks {
     // listeners for a no-op so callers can distinguish "not found"
     // from "updated" via the return value.
     guard sqlite3_changes(db) > 0 else { return false }
+    fireListeners()
+    return true
+  }
+
+  /// Rename an entry without touching the URL. Used for folder
+  /// rename (where there is no URL) and for any title-only edit on
+  /// a bookmark that doesn't also change its destination. Returns
+  /// `true` when the row exists and was rewritten, `false`
+  /// otherwise. Listeners fire only on success so `setTitle` on a
+  /// missing id is a silent no-op for consumers.
+  @discardableResult
+  public func setTitle(id: Int64, title: String) -> Bool {
+    guard let db else { return false }
+    let sql = "UPDATE bookmarks SET title = ? WHERE id = ?"
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+      let stmt
+    else { return false }
+    defer { sqlite3_finalize(stmt) }
+    _ = title.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
+    sqlite3_bind_int64(stmt, 2, id)
+    guard sqlite3_step(stmt) == SQLITE_DONE, sqlite3_changes(db) > 0 else {
+      return false
+    }
     fireListeners()
     return true
   }
