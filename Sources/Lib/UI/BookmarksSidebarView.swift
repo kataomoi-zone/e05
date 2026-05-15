@@ -1,31 +1,62 @@
 import AppKit
 
-/// Bookmarks list rendered inside the sidebar's `bookmarks` mode.
+/// Item identity for the outline view. NSOutlineView tracks
+/// expansion / selection state by `isEqual:`, so wrapping each row
+/// in a reference type with id-based equality lets us rebuild rows
+/// on every reload while keeping the user's expand/collapse state.
+/// The mutable `entry` lets folder rename / move land without
+/// invalidating the surrounding outline-view bookkeeping.
+@MainActor
+final class BookmarkNode: NSObject {
+  let id: Int64
+  fileprivate(set) var entry: Bookmarks.Entry
+  init(_ entry: Bookmarks.Entry) {
+    self.id = entry.id
+    self.entry = entry
+  }
+  override func isEqual(_ object: Any?) -> Bool {
+    guard let other = object as? BookmarkNode else { return false }
+    return id == other.id
+  }
+  override var hash: Int { Int(id) }
+}
+
+/// Bookmarks tree rendered inside the sidebar's `bookmarks` mode.
 /// Subscribes to the shared `Bookmarks` store so external mutations
-/// (URL bar Cmd+D, command palette Toggle Bookmark) reflect live
-/// without a manual reload.
+/// (URL bar Cmd+D, command palette Toggle Bookmark, folder ops on
+/// this view) reflect live without a manual reload.
 ///
 /// Sized for the 260pt sidebar: transparent background (Liquid Glass
 /// stays visible), no header (the mode name is already in the places
-/// section), compact 40pt rows with title + host, and a hover-revealed
-/// delete button.
+/// section), compact bookmark rows (40pt) and folder rows (28pt),
+/// hover-revealed per-row action menu.
 @MainActor
 final class BookmarksSidebarView: NSView {
-  /// Fired on single click. UX policy: always open in a new browser
-  /// column in the current workspace.
+  /// Fired on single click of a bookmark row. UX policy: always open
+  /// in a new browser column in the current workspace.
   var onOpen: ((String) -> Void)?
 
-  /// Fired on Cmd+click. UX policy: always open in a newly created
-  /// workspace. The container is responsible for the
+  /// Fired on Cmd+click of a bookmark row. UX policy: always open in
+  /// a newly created workspace. The container is responsible for the
   /// `createWorkspace()` + `addColumn` orchestration.
   var onOpenInNewWorkspace: ((String) -> Void)?
 
   private let bookmarks: Bookmarks
   private var listenerToken: BookmarksListenerToken?
   private let scrollView = NSScrollView()
-  private let tableView = NSTableView()
+  private let outlineView = NSOutlineView()
   private let emptyLabel = NSTextField(labelWithString: "No bookmarks yet")
-  private var rows: [Bookmarks.Entry] = []
+
+  /// Item objects keyed by id so reloads can reuse the instances that
+  /// the outline view already knows about. Without reuse, the
+  /// expand/collapse state would reset every time a row is added or
+  /// removed.
+  private var nodesById: [Int64: BookmarkNode] = [:]
+  /// Top-level rows. Outline view asks for these when item is nil.
+  private var rootChildren: [BookmarkNode] = []
+  /// Children of every folder, keyed by folder id.
+  private var childrenByParentId: [Int64: [BookmarkNode]] = [:]
+
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
   nonisolated(unsafe) private var faviconObserver: NSObjectProtocol?
 
@@ -47,7 +78,7 @@ final class BookmarksSidebarView: NSView {
       object: nil,
       queue: .main
     ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.tableView.reloadData() }
+      MainActor.assumeIsolated { self?.outlineView.reloadData() }
     }
   }
 
@@ -73,30 +104,33 @@ final class BookmarksSidebarView: NSView {
   private func setupLayout() {
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("bookmark"))
     column.resizingMask = .autoresizingMask
-    tableView.addTableColumn(column)
-    tableView.headerView = nil
-    tableView.backgroundColor = .clear
-    tableView.rowHeight = BookmarksSidebarCellView.height
-    tableView.intercellSpacing = NSSize(width: 0, height: 1)
-    tableView.selectionHighlightStyle = .regular
-    tableView.allowsMultipleSelection = false
-    tableView.style = .plain
-    tableView.target = self
-    tableView.action = #selector(handleClick)
-    tableView.dataSource = self
-    tableView.delegate = self
-    scrollView.documentView = tableView
+    outlineView.addTableColumn(column)
+    outlineView.outlineTableColumn = column
+    outlineView.headerView = nil
+    outlineView.backgroundColor = .clear
+    outlineView.rowSizeStyle = .custom
+    outlineView.intercellSpacing = NSSize(width: 0, height: 1)
+    outlineView.selectionHighlightStyle = .regular
+    outlineView.allowsMultipleSelection = false
+    outlineView.style = .plain
+    outlineView.indentationPerLevel = 12
+    outlineView.indentationMarkerFollowsCell = true
+    outlineView.target = self
+    outlineView.action = #selector(handleClick)
+    outlineView.dataSource = self
+    outlineView.delegate = self
+    installContextMenu()
+    scrollView.documentView = outlineView
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(scrollView)
 
-    // Hover-revealed × buttons rely on NSTrackingArea with
+    // Hover-revealed action buttons rely on NSTrackingArea with
     // `.inVisibleRect`, which doesn't deliver `mouseExited` when a
     // hovered cell scrolls out from under a stationary cursor. Watch
-    // the clip view's bounds change (fired continuously during both
-    // trackpad inertia and wheel scrolls) so we can force-hide every
-    // row's delete button whenever the list scrolls.
+    // the clip view's bounds change so the parent can force-hide
+    // every cell's hover affordance on any scroll.
     scrollView.contentView.postsBoundsChangedNotifications = true
     scrollObserver = NotificationCenter.default.addObserver(
       forName: NSView.boundsDidChangeNotification,
@@ -124,17 +158,52 @@ final class BookmarksSidebarView: NSView {
   }
 
   private func reload() {
-    // Stage-1 flat list: ignore folder rows until the outline-view
-    // migration lands. Once the hierarchy UI ships, this filter goes
-    // away and the data source switches to `children(of:)`.
-    rows = bookmarks.all().filter { !$0.isFolder }
-    tableView.reloadData()
-    emptyLabel.isHidden = !rows.isEmpty
+    // Snapshot the full tree in one pass so the outline-view data
+    // source can answer `numberOfChildrenOfItem` / `child:ofItem:`
+    // from in-memory dictionaries instead of re-querying SQLite for
+    // every node.
+    let allEntries = bookmarks.all()
+    var newNodes: [Int64: BookmarkNode] = [:]
+    // Reuse the existing node instance when an id survives a reload.
+    // Outline view tracks expansion state by `isEqual:`; reusing the
+    // same object short-circuits the equality check and also keeps
+    // selection / hover bookkeeping pointed at the right rows.
+    for entry in allEntries {
+      if let existing = nodesById[entry.id] {
+        existing.entry = entry
+        newNodes[entry.id] = existing
+      } else {
+        newNodes[entry.id] = BookmarkNode(entry)
+      }
+    }
+    nodesById = newNodes
+
+    var rootBuckets: [BookmarkNode] = []
+    var byParent: [Int64: [BookmarkNode]] = [:]
+    for entry in allEntries {
+      guard let node = newNodes[entry.id] else { continue }
+      if let parentId = entry.parentId {
+        byParent[parentId, default: []].append(node)
+      } else {
+        rootBuckets.append(node)
+      }
+    }
+    // Bucket order is undefined from a single `all()` (which returns
+    // most-recent-first across the whole tree). Sort each bucket by
+    // the store's authoritative `sort_order` so siblings render in
+    // the intended sequence.
+    rootChildren = rootBuckets.sorted { $0.entry.sortOrder < $1.entry.sortOrder }
+    childrenByParentId = byParent.mapValues { bucket in
+      bucket.sorted { $0.entry.sortOrder < $1.entry.sortOrder }
+    }
+
+    outlineView.reloadData()
+    emptyLabel.isHidden = !rootChildren.isEmpty
   }
 
   private func hideAllActionButtons() {
-    tableView.enumerateAvailableRowViews { _, row in
-      if let cell = self.tableView.view(
+    outlineView.enumerateAvailableRowViews { _, row in
+      if let cell = self.outlineView.view(
         atColumn: 0, row: row, makeIfNecessary: false
       ) as? SidebarListCellView {
         cell.forceHideHoverActions()
@@ -142,48 +211,159 @@ final class BookmarksSidebarView: NSView {
     }
   }
 
-  @objc private func handleClick() {
-    let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
-    let cmdHeld = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
-    activateRow(at: row, newWorkspace: cmdHeld)
+  /// Right-click context menu on the outline view background or any
+  /// row. Currently exposes "New Folder" only; later substages will
+  /// extend the menu with rename / open-all / etc. depending on the
+  /// row under the cursor.
+  private func installContextMenu() {
+    let menu = NSMenu()
+    let newFolder = NSMenuItem(
+      title: "New Folder", action: #selector(menuNewFolder), keyEquivalent: "")
+    newFolder.target = self
+    menu.addItem(newFolder)
+    outlineView.menu = menu
   }
 
-  private func activateRow(at row: Int, newWorkspace: Bool) {
-    guard rows.indices.contains(row), let url = rows[row].url else { return }
-    if newWorkspace {
+  @objc private func menuNewFolder() {
+    // Right-click in a folder row creates the new folder inside it
+    // ("New Folder Here" semantics). Right-click on a bookmark row
+    // or empty area creates it at the same level as the clicked row,
+    // falling back to the root when nothing is clicked.
+    let parentId: Int64? = {
+      let row = outlineView.clickedRow
+      guard row >= 0, let node = outlineView.item(atRow: row) as? BookmarkNode else {
+        return nil
+      }
+      return node.entry.isFolder ? node.id : node.entry.parentId
+    }()
+    presentNewFolderSheet(parentId: parentId)
+  }
+
+  private func presentNewFolderSheet(parentId: Int64?) {
+    guard let window else { return }
+
+    let alert = NSAlert()
+    alert.messageText = "New Folder"
+    alert.informativeText = "Name the folder."
+    alert.addButton(withTitle: "Create")
+    alert.addButton(withTitle: "Cancel")
+
+    let nameField = NSTextField(string: "")
+    nameField.placeholderString = "Folder name"
+    nameField.translatesAutoresizingMaskIntoConstraints = false
+    // Seed the frame for the same reason as the bookmark edit
+    // sheet — without an initial size, NSAlert collapses the
+    // accessory view to a sliver before Auto Layout resolves the
+    // text-field width.
+    nameField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+    NSLayoutConstraint.activate([
+      nameField.widthAnchor.constraint(equalToConstant: 280),
+    ])
+
+    alert.accessoryView = nameField
+    alert.window.initialFirstResponder = nameField
+
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .alertFirstButtonReturn else { return }
+      let title = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+      let resolved = title.isEmpty ? "New Folder" : title
+      // The new folder lands at the end of its parent's sibling
+      // list (see `Bookmarks.createFolder`). Expand the parent so
+      // the new row is visible without the user having to chase it.
+      _ = self.bookmarks.createFolder(title: resolved, parentId: parentId)
+      if let parentId, let parentNode = self.nodesById[parentId] {
+        self.outlineView.expandItem(parentNode)
+      }
+    }
+  }
+
+  @objc private func handleClick() {
+    let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
+    guard row >= 0, let node = outlineView.item(atRow: row) as? BookmarkNode else { return }
+    if node.entry.isFolder {
+      // Body click toggles expansion. The user can also drag the OS
+      // disclosure triangle on the leading edge for the same effect;
+      // mirroring that gesture on the row makes the affordance work
+      // without needing to hit the small triangle exactly.
+      if outlineView.isItemExpanded(node) {
+        outlineView.collapseItem(node)
+      } else {
+        outlineView.expandItem(node)
+      }
+      return
+    }
+    guard let url = node.entry.url else { return }
+    let cmdHeld = NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+    if cmdHeld {
       onOpenInNewWorkspace?(url)
     } else {
       onOpen?(url)
     }
   }
-
 }
 
-// MARK: - NSTableViewDataSource
+// MARK: - NSOutlineViewDataSource
 
-extension BookmarksSidebarView: NSTableViewDataSource {
-  func numberOfRows(in _: NSTableView) -> Int { rows.count }
+extension BookmarksSidebarView: NSOutlineViewDataSource {
+  func outlineView(_: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+    children(of: item).count
+  }
+
+  func outlineView(_: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+    children(of: item)[index]
+  }
+
+  func outlineView(_: NSOutlineView, isItemExpandable item: Any) -> Bool {
+    guard let node = item as? BookmarkNode else { return false }
+    return node.entry.isFolder
+  }
+
+  private func children(of item: Any?) -> [BookmarkNode] {
+    guard let node = item as? BookmarkNode else { return rootChildren }
+    return childrenByParentId[node.id] ?? []
+  }
 }
 
-// MARK: - NSTableViewDelegate
+// MARK: - NSOutlineViewDelegate
 
-extension BookmarksSidebarView: NSTableViewDelegate {
-  func tableView(
-    _ tableView: NSTableView, viewFor _: NSTableColumn?, row: Int
+extension BookmarksSidebarView: NSOutlineViewDelegate {
+  func outlineView(
+    _ outlineView: NSOutlineView, viewFor _: NSTableColumn?, item: Any
   ) -> NSView? {
-    let identifier = NSUserInterfaceItemIdentifier("BookmarksSidebarCell")
+    guard let node = item as? BookmarkNode else { return nil }
+    if node.entry.isFolder {
+      let id = NSUserInterfaceItemIdentifier("BookmarksSidebarFolderCell")
+      let cell =
+        outlineView.makeView(withIdentifier: id, owner: self)
+        as? BookmarksSidebarFolderCellView
+        ?? BookmarksSidebarFolderCellView(identifier: id)
+      cell.configure(with: node.entry)
+      cell.onRowAction = { [weak self] id, action in
+        self?.handleFolderAction(id: id, action: action)
+      }
+      return cell
+    }
+    let id = NSUserInterfaceItemIdentifier("BookmarksSidebarCell")
     let cell =
-      tableView.makeView(withIdentifier: identifier, owner: self)
-      as? BookmarksSidebarCellView ?? BookmarksSidebarCellView(identifier: identifier)
-    cell.configure(with: rows[row])
+      outlineView.makeView(withIdentifier: id, owner: self)
+      as? BookmarksSidebarBookmarkCellView
+      ?? BookmarksSidebarBookmarkCellView(identifier: id)
+    cell.configure(with: node.entry)
     cell.onRowAction = { [weak self] id, action in
       self?.handleRowAction(id: id, action: action)
     }
     return cell
   }
 
-  func tableView(_: NSTableView, rowViewForRow _: Int) -> NSTableRowView? {
+  func outlineView(_: NSOutlineView, rowViewForItem _: Any) -> NSTableRowView? {
     SidebarListRowView()
+  }
+
+  func outlineView(_: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+    guard let node = item as? BookmarkNode else { return BookmarksSidebarBookmarkCellView.height }
+    return node.entry.isFolder
+      ? BookmarksSidebarFolderCellView.height
+      : BookmarksSidebarBookmarkCellView.height
   }
 }
 
@@ -191,24 +371,12 @@ extension BookmarksSidebarView: NSTableViewDelegate {
 
 extension BookmarksSidebarView {
   fileprivate func handleRowAction(id: Int64, action: BookmarkRowAction) {
-    // `rows` is filtered to leaf bookmarks in `reload`, so every entry
-    // here has a non-nil url. The guard keeps the unwrap explicit
-    // rather than crashing on a future hierarchy regression.
-    guard let entry = rows.first(where: { $0.id == id }),
-      let url = entry.url
-    else {
-      if action == .delete,
-        let entry = rows.first(where: { $0.id == id })
-      {
-        bookmarks.remove(id: entry.id)
-      }
-      return
-    }
+    guard let node = nodesById[id], let url = node.entry.url else { return }
     switch action {
     case .edit:
-      presentEditSheet(for: entry, url: url)
+      presentEditSheet(for: node.entry, url: url)
     case .delete:
-      bookmarks.remove(id: entry.id)
+      bookmarks.remove(id: id)
     case .copyURL:
       let pb = NSPasteboard.general
       pb.clearContents()
@@ -217,6 +385,16 @@ extension BookmarksSidebarView {
       onOpen?(url)
     case .openInNewWorkspace:
       onOpenInNewWorkspace?(url)
+    }
+  }
+
+  /// Folder-specific actions. The schema's `ON DELETE CASCADE`
+  /// removes descendants for us so the delete path is a single
+  /// store call rather than a recursive walk on the view side.
+  fileprivate func handleFolderAction(id: Int64, action: FolderRowAction) {
+    switch action {
+    case .delete:
+      bookmarks.remove(id: id)
     }
   }
 
@@ -261,7 +439,6 @@ extension BookmarksSidebarView {
     ])
 
     alert.accessoryView = stack
-    // Focus the name field so the user can type immediately.
     alert.window.initialFirstResponder = nameField
 
     alert.beginSheetModal(for: window) { [weak self] response in
@@ -295,10 +472,11 @@ extension BookmarksSidebarView {
 
 // MARK: - Cell actions
 
-/// Per-row action surfaced via the trailing ellipsis menu. A single
-/// callback on the cell dispatches on this enum so the parent view
-/// can own all the orchestration (store mutation, pasteboard writes,
-/// workspace routing, edit sheet presentation) in one place.
+/// Per-row action surfaced via the bookmark cell's trailing ellipsis
+/// menu. A single callback on the cell dispatches on this enum so
+/// the parent view can own all the orchestration (store mutation,
+/// pasteboard writes, workspace routing, edit sheet presentation)
+/// in one place.
 enum BookmarkRowAction {
   case edit
   case delete
@@ -307,15 +485,21 @@ enum BookmarkRowAction {
   case openInNewWorkspace
 }
 
-// MARK: - Cell
+/// Folder-row analogue of `BookmarkRowAction`. Substages will add
+/// `rename` and `newSubFolder` cases; for now the only ellipsis
+/// option is `delete`.
+enum FolderRowAction {
+  case delete
+}
 
-/// Compact two-line cell: bookmark title on top (label color) and
-/// host on the bottom (secondary). Hovering reveals a trailing
-/// ellipsis (…) button that opens an action menu (Edit… / Delete /
-/// Copy URL / Open in current or new workspace). Transparent
-/// background so the Liquid Glass sidebar remains visible through
-/// the row.
-private final class BookmarksSidebarCellView: SidebarListCellView {
+// MARK: - Bookmark cell
+
+/// Compact two-line cell for a leaf bookmark: title on top (label
+/// color) and host on the bottom (secondary). Hovering reveals a
+/// trailing ellipsis (…) button that opens an action menu.
+/// Transparent background so the Liquid Glass sidebar remains
+/// visible through the row.
+private final class BookmarksSidebarBookmarkCellView: SidebarListCellView {
   static let height: CGFloat = 40
   static let iconSize: CGFloat = 16
 
@@ -363,7 +547,6 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
     actionButton.target = self
     actionButton.action = #selector(actionTapped)
     actionButton.toolTip = "More actions"
-    // Hover-revealed: the cell's tracking area toggles visibility.
     actionButton.isHidden = true
 
     addSubview(iconView)
@@ -398,9 +581,9 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
 
   func configure(with entry: Bookmarks.Entry) {
     currentID = entry.id
-    // Folder rows have a nil url and never reach this cell in the
-    // current flat layout (the data source filters them out), but
-    // unwrap defensively so a future regression renders a sensible
+    // Folder rows have a nil url and never reach this cell (the
+    // delegate routes them to the folder cell), but unwrap
+    // defensively so a future regression renders an empty
     // placeholder rather than crashing.
     let url = entry.url ?? ""
     titleLabel.stringValue = entry.title.isEmpty ? url : entry.title
@@ -414,13 +597,7 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
       iconView.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
     }
     // Tooltips surface the full text when the compact 260pt sidebar
-    // width truncates either label. The title tooltip shows the URL
-    // as a secondary line so a hover reveals "what is this?" even
-    // for bookmarks with identical titles on different hosts. When
-    // the bookmark has no title the main label already renders the
-    // URL, so a tooltip with the same string adds no information —
-    // leave it nil so the hostLabel tooltip remains the sole entry
-    // point for the full URL.
+    // width truncates either label.
     titleLabel.toolTip =
       entry.title.isEmpty
       ? nil
@@ -463,8 +640,6 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
     deleteItem.target = self
     menu.addItem(deleteItem)
 
-    // Position the menu flush to the action button's bottom-left
-    // so the first item lines up under the glyph.
     let origin = NSPoint(x: 0, y: actionButton.bounds.height)
     menu.popUp(positioning: nil, at: origin, in: actionButton)
   }
@@ -474,4 +649,98 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
   @objc private func menuCopyURL() { onRowAction?(currentID, .copyURL) }
   @objc private func menuOpenInCurrent() { onRowAction?(currentID, .openInCurrentWorkspace) }
   @objc private func menuOpenInNew() { onRowAction?(currentID, .openInNewWorkspace) }
+}
+
+// MARK: - Folder cell
+
+/// Single-line cell for a folder row: folder icon + title with a
+/// hover-revealed trailing ellipsis menu. The outline view draws
+/// its own disclosure triangle on the leading edge.
+private final class BookmarksSidebarFolderCellView: SidebarListCellView {
+  static let height: CGFloat = 28
+  static let iconSize: CGFloat = 14
+
+  private let iconView = NSImageView()
+  private let titleLabel = NSTextField(labelWithString: "")
+  private let actionButton = HoverIconButton()
+  private var currentID: Int64 = 0
+
+  var onRowAction: ((Int64, FolderRowAction) -> Void)?
+
+  init(identifier: NSUserInterfaceItemIdentifier) {
+    super.init(frame: .zero)
+    self.identifier = identifier
+    setup()
+  }
+
+  @available(*, unavailable)
+  required init?(coder _: NSCoder) { fatalError() }
+
+  private func setup() {
+    iconView.imageScaling = .scaleProportionallyUpOrDown
+    iconView.imageFrameStyle = .none
+    iconView.contentTintColor = .secondaryLabelColor
+    iconView.image = NSImage(
+      systemSymbolName: "folder", accessibilityDescription: "Folder")
+    iconView.translatesAutoresizingMaskIntoConstraints = false
+
+    titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+    titleLabel.textColor = .labelColor
+    titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.drawsBackground = false
+    titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+    actionButton.image = NSImage(
+      systemSymbolName: "ellipsis", accessibilityDescription: "More actions"
+    )
+    actionButton.imagePosition = .imageOnly
+    actionButton.isBordered = false
+    actionButton.bezelStyle = .regularSquare
+    actionButton.translatesAutoresizingMaskIntoConstraints = false
+    actionButton.target = self
+    actionButton.action = #selector(actionTapped)
+    actionButton.toolTip = "More actions"
+    actionButton.isHidden = true
+
+    addSubview(iconView)
+    addSubview(titleLabel)
+    addSubview(actionButton)
+
+    NSLayoutConstraint.activate([
+      iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+      iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+      iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
+      iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+
+      titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
+      titleLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -6),
+      titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      actionButton.widthAnchor.constraint(equalToConstant: 18),
+      actionButton.heightAnchor.constraint(equalToConstant: 18),
+    ])
+  }
+
+  override func setHoverActionsHidden(_ hidden: Bool) {
+    actionButton.isHidden = hidden
+  }
+
+  func configure(with entry: Bookmarks.Entry) {
+    currentID = entry.id
+    titleLabel.stringValue = entry.title.isEmpty ? "Untitled folder" : entry.title
+    titleLabel.toolTip = entry.title.isEmpty ? nil : entry.title
+  }
+
+  @objc private func actionTapped() {
+    let menu = NSMenu()
+    let deleteItem = NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: "")
+    deleteItem.target = self
+    menu.addItem(deleteItem)
+    let origin = NSPoint(x: 0, y: actionButton.bounds.height)
+    menu.popUp(positioning: nil, at: origin, in: actionButton)
+  }
+
+  @objc private func menuDelete() { onRowAction?(currentID, .delete) }
 }
