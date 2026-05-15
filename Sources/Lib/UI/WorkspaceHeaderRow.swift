@@ -7,10 +7,13 @@ import AppKit
 /// Clicking fires `onClick` which the sidebar routes to
 /// `PaneContainerViewController.switchWorkspace(to:)`. The hover-
 /// revealed × button fires `onClose`, which routes to
-/// `PaneContainerViewController.closeWorkspace(at:)`. The hover-
-/// revealed leading chevron fires `onToggleCollapse`, which the
-/// sidebar uses to hide / show this workspace's pane rows in the
-/// worklane (UI-only state, not persisted).
+/// `PaneContainerViewController.closeWorkspace(at:)`. The leading
+/// chevron fires `onToggleCollapse`, which the sidebar uses to hide /
+/// show this workspace's pane rows in the worklane. The chevron
+/// replaces the accent indicator on hover *and* whenever the
+/// workspace is collapsed, so a collapsed workspace stays visually
+/// distinct from an expanded one without needing the cursor over the
+/// row.
 @MainActor
 final class WorkspaceHeaderRow: NSView {
   static let height: CGFloat = 28
@@ -120,6 +123,7 @@ final class WorkspaceHeaderRow: NSView {
       isCurrent ? accentColor : accentColor.withAlphaComponent(0.6)
     indicator.isPrivate = isPrivate
     updateChevronIcon()
+    applyLeadingSlot()
   }
 
   private func updateChevronIcon() {
@@ -172,10 +176,20 @@ final class WorkspaceHeaderRow: NSView {
   private func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
-    indicator.isHidden = hovered
-    chevronButton.isHidden = !hovered
+    applyLeadingSlot()
     closeButton.isHidden = !hovered
     applyHoverBackground()
+  }
+
+  /// The leading slot toggles between the accent indicator and the
+  /// chevron. Show the chevron whenever the row is hovered (so the
+  /// affordance is always reachable) or whenever the workspace is
+  /// collapsed (so the collapsed state stays visible without
+  /// requiring hover).
+  private func applyLeadingSlot() {
+    let showChevron = isHovered || isCollapsed
+    indicator.isHidden = showChevron
+    chevronButton.isHidden = !showChevron
   }
 
   private func applyHoverBackground() {
