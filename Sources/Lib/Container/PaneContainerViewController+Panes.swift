@@ -1187,26 +1187,13 @@ extension PaneContainerViewController {
   /// state and per-workspace by design.
   public func closePane(id paneId: ULID) {
     guard let loc = locatePane(id: paneId) else { return }
-    if let surface = loc.pane.terminalView?.surface,
-      ghostty_surface_needs_confirm_quit(surface)
-    {
-      let alert = NSAlert()
-      alert.messageText = "Close this pane?"
-      alert.informativeText = "A process is still running."
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "Close")
-      alert.addButton(withTitle: "Cancel")
-      guard let window = view.window else { return }
-      alert.beginSheetModal(for: window) { [weak self] response in
-        guard response == .alertFirstButtonReturn, let self else { return }
-        // Re-locate: the alert is async, so the pane may have moved
-        // or closed between display and confirmation.
-        guard let loc = self.locatePane(id: paneId) else { return }
-        self.performBackgroundOrCurrentClose(at: loc)
-      }
-      return
+    confirmCloseIfNeeded(surface: loc.pane.terminalView?.surface) { [weak self] in
+      // Re-locate inside the confirmation callback: the alert is
+      // async, so the pane may have moved or closed between display
+      // and confirmation.
+      guard let self, let loc = self.locatePane(id: paneId) else { return }
+      self.performBackgroundOrCurrentClose(at: loc)
     }
-    performBackgroundOrCurrentClose(at: loc)
   }
 
   private func performBackgroundOrCurrentClose(at loc: PaneLocation) {
@@ -1217,6 +1204,34 @@ extension PaneContainerViewController {
         wsIndex: loc.workspaceIndex,
         columnIndex: loc.columnIndex,
         paneIndex: loc.paneIndex)
+    }
+  }
+
+  /// If the terminal surface reports unsaved work, present the
+  /// standard "Close this pane?" sheet on the main window and run
+  /// `onConfirm` only when the user clicks Close. Otherwise (no
+  /// terminal, no surface, or no unsaved work) run `onConfirm`
+  /// synchronously. Callers are expected to do their own
+  /// re-validation inside `onConfirm` since the sheet completion is
+  /// async and any pane / column / workspace state can drift between
+  /// presentation and answer.
+  private func confirmCloseIfNeeded(
+    surface: ghostty_surface_t?, onConfirm: @escaping @MainActor () -> Void
+  ) {
+    guard let surface, ghostty_surface_needs_confirm_quit(surface) else {
+      onConfirm()
+      return
+    }
+    guard let window = view.window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Close this pane?"
+    alert.informativeText = "A process is still running."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Close")
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: window) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      MainActor.assumeIsolated { onConfirm() }
     }
   }
 
@@ -1336,39 +1351,24 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex],
       let pane = column.focusedPane
     else { return }
-    if let surface = pane.terminalView?.surface,
-      ghostty_surface_needs_confirm_quit(surface)
-    {
-      let alert = NSAlert()
-      alert.messageText = "Close this pane?"
-      alert.informativeText = "A process is still running."
-      alert.alertStyle = .warning
-      alert.addButton(withTitle: "Close")
-      alert.addButton(withTitle: "Cancel")
-      guard let window = view.window else { return }
-      let targetPaneId = pane.id
-      let targetColId = column.id
-      alert.beginSheetModal(for: window) { [weak self] response in
-        guard response == .alertFirstButtonReturn, let self else { return }
-        // Alert is modal so user can't switch workspace while it's
-        // showing, but use focusPane-style cross-WS lookup anyway —
-        // defensive against programmatic WS switches (e.g. a future
-        // sidebar action) that might fire between alert display and
-        // confirmation. Falls back to current-WS `removePane` only
-        // if the pane is on the focused workspace, since removePane
-        // depends on current-WS state (see the cross-workspace
-        // cleanup TODO on `onClose`).
-        guard let colIdx = self.columns.firstIndex(where: { $0.id == targetColId }),
-          let col = self.columns[safe: colIdx],
-          let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId })
-        else {
-          logger.error("close alert: target pane not in current WS")
-          return
-        }
-        self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
+    let targetPaneId = pane.id
+    let targetColId = column.id
+    confirmCloseIfNeeded(surface: pane.terminalView?.surface) { [weak self] in
+      guard let self else { return }
+      // Re-look up by id rather than reusing the captured indices:
+      // the sheet is async, so a programmatic workspace / column
+      // mutation between presentation and confirmation could have
+      // shifted the target. `removePane` depends on current-WS state,
+      // so bail when the pane is no longer reachable from the
+      // current workspace.
+      guard let colIdx = self.columns.firstIndex(where: { $0.id == targetColId }),
+        let col = self.columns[safe: colIdx],
+        let paneIdx = col.panes.firstIndex(where: { $0.id == targetPaneId })
+      else {
+        logger.error("close alert: target pane not in current WS")
+        return
       }
-      return
+      self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
     }
-    removePane(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex)
   }
 }
