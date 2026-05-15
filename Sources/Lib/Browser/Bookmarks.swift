@@ -40,6 +40,14 @@ public final class Bookmarks {
   /// Registered mutation observers, keyed by token id.
   private var listeners: [UUID: () -> Void] = [:]
 
+  /// Active `performBatch` nesting depth. Mutations inside a batch
+  /// defer their listener fires until the outermost batch exits, so
+  /// a multi-row import doesn't repaint the sidebar once per row.
+  private var batchDepth: Int = 0
+  /// `true` when a mutation tried to fire listeners while inside a
+  /// batch; the outermost `performBatch` drains it.
+  private var pendingListenerFire = false
+
   /// Schema version stamped into `PRAGMA user_version` after migrate.
   /// Bump whenever the schema changes; `runMigrations` is responsible
   /// for stepping any older database forward.
@@ -253,10 +261,49 @@ public final class Bookmarks {
   }
 
   private func fireListeners() {
+    // Defer the fire while a batch is active so a bulk operation
+    // (import, future restore-from-backup) collapses its N row
+    // mutations into a single listener pass at the end.
+    if batchDepth > 0 {
+      pendingListenerFire = true
+      return
+    }
     // Snapshot the values before iterating so a listener that
     // registers or unregisters from within its callback doesn't
     // mutate the dictionary mid-iteration.
     for block in Array(listeners.values) { block() }
+  }
+
+  /// Run `block` with every contained mutation deferred onto a single
+  /// SQLite transaction and a single listener notification at the end.
+  /// SQLite's auto-commit mode fsyncs after every statement, so a
+  /// 5000-row import without the wrapper takes thousands of fsyncs;
+  /// `BEGIN`/`COMMIT` reduces that to one. Listener coalescing keeps
+  /// the sidebar from reloading per row. Nested calls are flattened
+  /// onto the outermost batch.
+  @discardableResult
+  public func performBatch<T>(_ block: () -> T) -> T {
+    guard let db else { return block() }
+    let wasOutermost = batchDepth == 0
+    batchDepth += 1
+    if wasOutermost, sqlite3_exec(db, "BEGIN", nil, nil, nil) != SQLITE_OK {
+      logger.error(
+        "[bookmarks/batch] BEGIN failed: \(String(cString: sqlite3_errmsg(db)))")
+    }
+    let result = block()
+    batchDepth -= 1
+    if batchDepth == 0 {
+      if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
+        logger.error(
+          "[bookmarks/batch] COMMIT failed: \(String(cString: sqlite3_errmsg(db)))")
+        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+      }
+      if pendingListenerFire {
+        pendingListenerFire = false
+        for block in Array(listeners.values) { block() }
+      }
+    }
+    return result
   }
 
   // MARK: - Write

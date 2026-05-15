@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Item identity for the outline view. NSOutlineView tracks
 /// expansion / selection state by `isEqual:`, so wrapping each row
@@ -488,11 +489,18 @@ extension BookmarksSidebarView: NSMenuDelegate {
       menu.addItem(.separator())
       append(menu, title: "Rename…", selector: #selector(menuRenameFolder)) { node.id }
       append(menu, title: "Delete", selector: #selector(menuDelete)) { node.id }
+      menu.addItem(.separator())
+      // Import lands as a subtree under the clicked folder so the
+      // user can scope a one-shot import to a specific section
+      // without dumping it at the root.
+      append(menu, title: "Import…", selector: #selector(menuImport)) { node.id }
       return
     }
 
-    // Empty area: only the root-level new folder is meaningful.
+    // Empty area: top-level actions only.
     append(menu, title: "New Folder", selector: #selector(menuNewFolder)) { Optional<Int64>.none as Any }
+    menu.addItem(.separator())
+    append(menu, title: "Import…", selector: #selector(menuImport)) { Optional<Int64>.none as Any }
   }
 
   /// Build and append a menu item bound to `self` whose
@@ -544,6 +552,10 @@ extension BookmarksSidebarView: NSMenuDelegate {
   @objc private func menuNewFolder(_ sender: NSMenuItem) {
     let parentId = sender.representedObject as? Int64
     presentNewFolderSheet(parentId: parentId)
+  }
+  @objc private func menuImport(_ sender: NSMenuItem) {
+    let parentId = sender.representedObject as? Int64
+    presentImportPanel(parentId: parentId)
   }
 }
 
@@ -652,6 +664,84 @@ extension BookmarksSidebarView {
     guard let window else { return }
     let alert = NSAlert()
     alert.messageText = "Could not save bookmark"
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.beginSheetModal(for: window, completionHandler: nil)
+  }
+
+  /// File picker + post-import summary toast for `Import…`. The
+  /// panel filters to `.html` (and the legacy `.htm`) since the
+  /// Netscape Bookmark File Format is the only thing this code path
+  /// understands. Files outside that filter are still selectable via
+  /// the panel's `Open Any File` toggle, but the parser will return
+  /// an empty array for anything that isn't a `<DL>`-based document.
+  fileprivate func presentImportPanel(parentId: Int64?) {
+    guard let window else { return }
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.html]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.title = "Import Bookmarks"
+    panel.prompt = "Import"
+    panel.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .OK, let url = panel.url else { return }
+      MainActor.assumeIsolated {
+        self.runImport(from: url, parentId: parentId)
+      }
+    }
+  }
+
+  private func runImport(from url: URL, parentId: Int64?) {
+    // UTF-8 only — Latin-1 would silently "succeed" on any byte
+    // sequence and mojibake Shift_JIS / EUC-JP exports into the
+    // store with no visible failure. Every modern browser emits
+    // UTF-8 by default and stamps `<META charset=UTF-8>` into the
+    // preamble; an exotic legacy encoding falls outside what this
+    // importer covers.
+    guard let data = try? Data(contentsOf: url),
+      let html = String(data: data, encoding: .utf8)
+    else {
+      presentImportError(
+        message: "The selected file couldn't be read or wasn't UTF-8 encoded.")
+      return
+    }
+    let parsed = NetscapeBookmarksParser.parse(html)
+    if parsed.isEmpty {
+      presentImportError(
+        message: "No bookmarks were found in the file. The Netscape "
+          + "Bookmark File Format (\u{201C}Export Bookmarks\u{201D} from a "
+          + "browser) is the only format supported.")
+      return
+    }
+    let result = BookmarksImporter.importDocument(
+      parsed, into: bookmarks, underParent: parentId)
+    presentImportSummary(result: result)
+  }
+
+  private func presentImportSummary(result: BookmarksImporter.Result) {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Bookmarks imported"
+    var message =
+      "Added \(result.bookmarks) bookmark\(result.bookmarks == 1 ? "" : "s") "
+      + "in \(result.folders) folder\(result.folders == 1 ? "" : "s")."
+    if result.skipped > 0 {
+      // Skips fold together two distinct cases — entries the importer
+      // rejected up front (disallowed `javascript:` / `data:` URLs)
+      // and entries the store refused (prepare/step failures). Point
+      // the user at Console.app so the unified-log entries from
+      // `Bookmarks` and `BookmarksImport` are findable.
+      message += " \(result.skipped) skipped (see Console.app for details)."
+    }
+    alert.informativeText = message
+    alert.beginSheetModal(for: window, completionHandler: nil)
+  }
+
+  private func presentImportError(message: String) {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Could not import bookmarks"
     alert.informativeText = message
     alert.alertStyle = .warning
     alert.beginSheetModal(for: window, completionHandler: nil)
