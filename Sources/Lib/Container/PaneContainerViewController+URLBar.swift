@@ -18,13 +18,18 @@ extension PaneContainerViewController {
   /// meaningfully past that limit, hoist this onto a background
   /// Task to avoid main-thread blocking while typing.
   func searchSuggestions(query: String) -> [Suggestion] {
-    let bookmarkEntries = bookmarks.all()
+    // Folder rows in the bookmarks store have a `nil` url; suggestion
+    // ranking only deals with destinations, so drop them up front.
+    let bookmarkEntries = bookmarks.all().filter { !$0.isFolder }
     let historyEntries = browsingHistory.mostRecentAggregated()
-    let bookmarkURLs = Set(bookmarkEntries.map(\.url))
+    let bookmarkURLs = Set(bookmarkEntries.compactMap(\.url))
 
     var candidates: [Suggestion] = bookmarkEntries
       .filter { !Self.isErrorTitle($0.title) }
-      .map { Suggestion(url: $0.url, title: $0.title, isBookmark: true) }
+      .compactMap { entry in
+        guard let url = entry.url else { return nil }
+        return Suggestion(url: url, title: entry.title, isBookmark: true)
+      }
     candidates.append(
       contentsOf: historyEntries.compactMap { entry in
         if bookmarkURLs.contains(entry.url) { return nil }

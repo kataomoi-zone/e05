@@ -124,7 +124,10 @@ final class BookmarksSidebarView: NSView {
   }
 
   private func reload() {
-    rows = bookmarks.all()
+    // Stage-1 flat list: ignore folder rows until the outline-view
+    // migration lands. Once the hierarchy UI ships, this filter goes
+    // away and the data source switches to `children(of:)`.
+    rows = bookmarks.all().filter { !$0.isFolder }
     tableView.reloadData()
     emptyLabel.isHidden = !rows.isEmpty
   }
@@ -146,8 +149,7 @@ final class BookmarksSidebarView: NSView {
   }
 
   private func activateRow(at row: Int, newWorkspace: Bool) {
-    guard rows.indices.contains(row) else { return }
-    let url = rows[row].url
+    guard rows.indices.contains(row), let url = rows[row].url else { return }
     if newWorkspace {
       onOpenInNewWorkspace?(url)
     } else {
@@ -189,28 +191,41 @@ extension BookmarksSidebarView: NSTableViewDelegate {
 
 extension BookmarksSidebarView {
   fileprivate func handleRowAction(id: Int64, action: BookmarkRowAction) {
-    guard let entry = rows.first(where: { $0.id == id }) else { return }
+    // `rows` is filtered to leaf bookmarks in `reload`, so every entry
+    // here has a non-nil url. The guard keeps the unwrap explicit
+    // rather than crashing on a future hierarchy regression.
+    guard let entry = rows.first(where: { $0.id == id }),
+      let url = entry.url
+    else {
+      if action == .delete,
+        let entry = rows.first(where: { $0.id == id })
+      {
+        bookmarks.remove(id: entry.id)
+      }
+      return
+    }
     switch action {
     case .edit:
-      presentEditSheet(for: entry)
+      presentEditSheet(for: entry, url: url)
     case .delete:
       bookmarks.remove(id: entry.id)
     case .copyURL:
       let pb = NSPasteboard.general
       pb.clearContents()
-      pb.setString(entry.url, forType: .string)
+      pb.setString(url, forType: .string)
     case .openInCurrentWorkspace:
-      onOpen?(entry.url)
+      onOpen?(url)
     case .openInNewWorkspace:
-      onOpenInNewWorkspace?(entry.url)
+      onOpenInNewWorkspace?(url)
     }
   }
 
   /// Present a modal sheet with Name and URL fields pre-populated
   /// from the bookmark. Save commits via `Bookmarks.update`; a
   /// UNIQUE collision (URL already bookmarked) surfaces a follow-up
-  /// warning alert instead of silently swallowing the edit.
-  private func presentEditSheet(for entry: Bookmarks.Entry) {
+  /// warning alert instead of silently swallowing the edit. Folder
+  /// entries have no URL, so callers pre-resolve the unwrap.
+  private func presentEditSheet(for entry: Bookmarks.Entry, url: String) {
     guard let window else { return }
 
     let alert = NSAlert()
@@ -223,7 +238,7 @@ extension BookmarksSidebarView {
     nameField.placeholderString = "Name"
     nameField.translatesAutoresizingMaskIntoConstraints = false
 
-    let urlField = NSTextField(string: entry.url)
+    let urlField = NSTextField(string: url)
     urlField.placeholderString = "URL"
     urlField.translatesAutoresizingMaskIntoConstraints = false
 
@@ -383,11 +398,16 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
 
   func configure(with entry: Bookmarks.Entry) {
     currentID = entry.id
-    titleLabel.stringValue = entry.title.isEmpty ? entry.url : entry.title
-    let host = URL(string: entry.url)?.host(percentEncoded: false)
+    // Folder rows have a nil url and never reach this cell in the
+    // current flat layout (the data source filters them out), but
+    // unwrap defensively so a future regression renders a sensible
+    // placeholder rather than crashing.
+    let url = entry.url ?? ""
+    titleLabel.stringValue = entry.title.isEmpty ? url : entry.title
+    let host = URL(string: url)?.host(percentEncoded: false)
     // Fall back to the full URL if the host can't be parsed — rare
     // but possible for entries stored with an atypical scheme.
-    hostLabel.stringValue = host ?? entry.url
+    hostLabel.stringValue = host ?? url
     if let host, !host.isEmpty, let image = FaviconCache.shared.image(for: host) {
       iconView.image = image
     } else {
@@ -404,8 +424,8 @@ private final class BookmarksSidebarCellView: SidebarListCellView {
     titleLabel.toolTip =
       entry.title.isEmpty
       ? nil
-      : "\(entry.title)\n\(entry.url)"
-    hostLabel.toolTip = entry.url
+      : "\(entry.title)\n\(url)"
+    hostLabel.toolTip = url
   }
 
   @objc private func actionTapped() {
