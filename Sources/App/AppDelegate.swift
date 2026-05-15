@@ -94,8 +94,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // tracks appearance changes.
     NSApp.appearance = NSAppearance(named: .darkAqua)
 
+    let screen = NSScreen.main ?? NSScreen.screens.first
+    let initialSize: NSSize = {
+      if let visible = screen?.visibleFrame {
+        return NSSize(width: visible.width * 0.85, height: visible.height * 0.80)
+      }
+      // Fallback for headless environments where NSScreen returns nil.
+      return NSSize(width: 1440, height: 900)
+    }()
     let window = NSWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+      contentRect: NSRect(origin: .zero, size: initialSize),
       styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered,
       defer: false
@@ -114,6 +122,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
     window.contentViewController = container
     self.paneContainer = container
+
+    // Assigning `contentViewController` resets the window's content
+    // size to the VC's `preferredContentSize` (zero), which the
+    // window then clamps up to `contentMinSize`. Reapply the
+    // requested size here so the clamp doesn't win.
+    window.setContentSize(initialSize)
+
+    // `setFrameAutosaveName(_:) -> Bool` reports name conflicts, not
+    // "saved frame was applied", so read the autosave key from
+    // `UserDefaults` directly to detect a saved frame before the
+    // call applies it.
+    let autosaveName = "e05.main-window.v3"
+    let savedFrameKey = "NSWindow Frame \(autosaveName)"
+    let hasSavedFrame = UserDefaults.standard.object(forKey: savedFrameKey) != nil
+    window.setFrameAutosaveName(autosaveName)
 
     // Bind the container to the extension bridge BEFORE kicking off
     // `loadAll()`. The web-extension controller seeds its `openTabs`
@@ -141,7 +164,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     Task { await ExtensionController.shared.loadAll() }
 
-    window.center()
+    if !hasSavedFrame, let visible = screen?.visibleFrame {
+      // Don't use `NSWindow.center()`: it places the top edge one-
+      // third down from the screen top, which on a near-fullscreen
+      // window clamps the bottom edge to the screen. Centre against
+      // `visibleFrame` (menu bar / Dock already excluded) instead.
+      let origin = NSPoint(
+        x: visible.minX + (visible.width - initialSize.width) / 2,
+        y: visible.minY + (visible.height - initialSize.height) / 2)
+      window.setFrameOrigin(origin)
+    }
     window.makeKeyAndOrderFront(nil)
     NSApp.activate()
     self.window = window
