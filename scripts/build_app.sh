@@ -43,18 +43,29 @@ esac
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Apple requires CFBundleShortVersionString to look like N[.N[.N]]
-# (Launch Services treats non-numeric as version 0, which makes
-# `open` pick the wrong .app when multiple flavors share a bundle
-# id family). Extract the SemVer prefix from `git describe`; fall
-# back to 0.0.0 when no tag exists yet. The integer commit count
-# goes into CFBundleVersion separately.
-RAW_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)"
-# Require at least N.N so an all-digit short SHA (git falls back
-# to a bare hash when there are no tags, ~4% are all decimal)
-# does not get mistaken for a version. Fall back to 0.0.0 then.
-SHORT_VERSION="$(echo "${RAW_VERSION#v}" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)*' || true)"
-SHORT_VERSION="${SHORT_VERSION:-0.0.0}"
+# Dev builds ride on git HEAD's short SHA so every rebuild has a
+# distinct, traceable version string in the sidebar header without
+# forcing a tag. Release builds extract the tag from `git describe`
+# so Launch Services has an N[.N[.N]] string to compare against
+# (Apple treats non-numeric as version 0, which would make `open`
+# pick the wrong .app when more than one release shares a bundle
+# id family). The integer commit count goes into CFBundleVersion
+# regardless of flavor.
+case "$FLAVOR" in
+    dev)
+        SHORT_VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        ;;
+    release)
+        RAW_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)"
+        # Require at least N.N so an all-digit short SHA (the
+        # `--always` fallback when no tag exists, ~4% are all
+        # decimal) does not get mistaken for a version. The regex
+        # also accepts CalVer-style tags like `2026.05.15` without
+        # special-casing.
+        SHORT_VERSION="$(echo "${RAW_VERSION#v}" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)*' || true)"
+        SHORT_VERSION="${SHORT_VERSION:-0.0.0}"
+        ;;
+esac
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 
 # Sanitize dynamic values so future git tags containing

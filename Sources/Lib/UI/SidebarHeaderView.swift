@@ -9,14 +9,17 @@ import AppKit
 final class SidebarHeaderView: NSView {
   static let height: CGFloat = 36
 
-  /// Leading inset that clears the OS traffic lights. Measured on
-  /// macOS 26 (Tahoe) where the standard close/min/zoom cluster
-  /// occupies ~70pt; 78pt gives an 8pt gap to the app title that
-  /// follows. Values may drift on later OS versions; if the title
-  /// starts overlapping the buttons, switch to a runtime read of
-  /// `window.standardWindowButton(.closeButton)?.superview?.frame.maxX`
-  /// instead of this constant.
-  private static let trafficLightInset: CGFloat = 78
+  /// Gap between the rightmost traffic-light button and the title.
+  private static let trafficLightGap: CGFloat = 8
+
+  /// Used when no window is attached (test harness, headless build).
+  /// Measured on macOS 26 (Tahoe) where the standard close/min/zoom
+  /// cluster occupies ~70pt.
+  private static let fallbackTrafficLightInset: CGFloat = 78
+
+  /// Updated in `viewDidMoveToWindow` once the standard window
+  /// buttons can be measured.
+  private var titleLeadingConstraint: NSLayoutConstraint?
 
   let pinButton: HoverIconButton = {
     let b = HoverIconButton()
@@ -28,10 +31,8 @@ final class SidebarHeaderView: NSView {
     return b
   }()
 
-  // TODO: read the version segment from `CFBundleShortVersionString`
-  // once a release pipeline exists; the literal serves until then.
   private let titleLabel: TitleLabel = {
-    let label = TitleLabel(labelWithString: "E05 alpha")
+    let label = TitleLabel(labelWithString: SidebarHeaderView.displayTitle())
     label.translatesAutoresizingMaskIntoConstraints = false
     label.font = .systemFont(ofSize: 11, weight: .medium)
     label.textColor = .secondaryLabelColor
@@ -41,11 +42,19 @@ final class SidebarHeaderView: NSView {
     return label
   }()
 
+  private static func displayTitle() -> String {
+    let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+    if let version, !version.isEmpty {
+      return "E05 \(version)"
+    }
+    return "E05"
+  }
+
   /// Pass-through label that returns nil from `hitTest` so the parent
   /// `SidebarHeaderView` receives the mouseDown — which then routes
   /// into the OS window-drag pipeline via the explicit `performDrag`
   /// call in `mouseDown(with:)` below. Without this, clicks on the
-  /// visible "E05 alpha" glyphs would land on the NSTextField itself
+  /// visible title glyphs would land on the NSTextField itself
   /// (whose default mouseDown does nothing useful for drag) and the
   /// user couldn't drag the window from the title text.
   ///
@@ -125,16 +134,31 @@ final class SidebarHeaderView: NSView {
     addSubview(pinButton)
     addSubview(titleLabel)
 
+    let leading = titleLabel.leadingAnchor.constraint(
+      equalTo: leadingAnchor, constant: Self.fallbackTrafficLightInset)
+    titleLeadingConstraint = leading
     NSLayoutConstraint.activate([
       heightAnchor.constraint(equalToConstant: Self.height),
       pinButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       pinButton.widthAnchor.constraint(equalToConstant: 22),
       pinButton.heightAnchor.constraint(equalToConstant: 22),
-      titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.trafficLightInset),
+      leading,
       titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
+  }
+
+  /// Update the title's leading inset from the live traffic-light
+  /// cluster width once a window is attached. The static fallback
+  /// (78pt, macOS 26 Tahoe measurement) is fine for the static
+  /// initial layout but desyncs on OS versions that change the
+  /// cluster geometry — `.zoomButton.frame.maxX` reads the actual
+  /// right edge whatever the cluster looks like today.
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    guard let zoom = window?.standardWindowButton(.zoomButton) else { return }
+    titleLeadingConstraint?.constant = zoom.frame.maxX + Self.trafficLightGap
   }
 
   private func updatePinAppearance() {
