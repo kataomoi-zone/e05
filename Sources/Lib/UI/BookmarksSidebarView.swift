@@ -492,8 +492,10 @@ extension BookmarksSidebarView: NSMenuDelegate {
       menu.addItem(.separator())
       // Import lands as a subtree under the clicked folder so the
       // user can scope a one-shot import to a specific section
-      // without dumping it at the root.
+      // without dumping it at the root. Export mirrors the scoping:
+      // only the clicked folder's subtree ends up in the file.
       append(menu, title: "Import…", selector: #selector(menuImport)) { node.id }
+      append(menu, title: "Export Folder…", selector: #selector(menuExport)) { node.id }
       return
     }
 
@@ -501,6 +503,7 @@ extension BookmarksSidebarView: NSMenuDelegate {
     append(menu, title: "New Folder", selector: #selector(menuNewFolder)) { Optional<Int64>.none as Any }
     menu.addItem(.separator())
     append(menu, title: "Import…", selector: #selector(menuImport)) { Optional<Int64>.none as Any }
+    append(menu, title: "Export All…", selector: #selector(menuExport)) { Optional<Int64>.none as Any }
   }
 
   /// Build and append a menu item bound to `self` whose
@@ -556,6 +559,10 @@ extension BookmarksSidebarView: NSMenuDelegate {
   @objc private func menuImport(_ sender: NSMenuItem) {
     let parentId = sender.representedObject as? Int64
     presentImportPanel(parentId: parentId)
+  }
+  @objc private func menuExport(_ sender: NSMenuItem) {
+    let parentId = sender.representedObject as? Int64
+    presentExportPanel(parentId: parentId)
   }
 }
 
@@ -742,6 +749,86 @@ extension BookmarksSidebarView {
     guard let window else { return }
     let alert = NSAlert()
     alert.messageText = "Could not import bookmarks"
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.beginSheetModal(for: window, completionHandler: nil)
+  }
+
+  /// Save panel for `Export…`. The default filename derives from
+  /// the clicked folder's title (or `bookmarks.html` for a root
+  /// export) so a multi-folder workflow doesn't collide on every
+  /// save. The actual write writes the rendered HTML as UTF-8.
+  fileprivate func presentExportPanel(parentId: Int64?) {
+    guard let window else { return }
+    let panel = NSSavePanel()
+    panel.allowedContentTypes = [.html]
+    panel.canCreateDirectories = true
+    panel.title = "Export Bookmarks"
+    panel.prompt = "Export"
+    panel.nameFieldStringValue = defaultExportFilename(parentId: parentId)
+    panel.beginSheetModal(for: window) { [weak self] response in
+      guard let self, response == .OK, let url = panel.url else { return }
+      MainActor.assumeIsolated {
+        self.runExport(to: url, parentId: parentId)
+      }
+    }
+  }
+
+  private func defaultExportFilename(parentId: Int64?) -> String {
+    // Date-stamped filename so successive exports stack up in the
+    // user's Downloads / chosen folder instead of overwriting each
+    // other. When the user exports a specific subtree, the folder's
+    // title (sanitised) is woven in so multiple per-folder exports
+    // on the same day don't collide. `en_US_POSIX` keeps the format
+    // stable across the user's locale settings.
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyyMMdd"
+    let date = formatter.string(from: Date())
+    if let parentId, let folder = nodesById[parentId] {
+      let slug = filenameSlug(folder.entry.title)
+      if !slug.isEmpty { return "bookmarks_\(slug)_\(date).html" }
+    }
+    return "bookmarks_\(date).html"
+  }
+
+  /// Make a folder title safe to embed in a save-panel default
+  /// filename. Replaces filesystem-hostile characters (`/`, `\`, `:`,
+  /// NUL) with `_`, collapses runs of `_`, and trims edge underscores.
+  /// Unicode (CJK, accented letters) passes through — macOS HFS+ /
+  /// APFS accept it, and a `Daily_Reports` vs `日報` distinction is
+  /// the whole point of weaving the title in.
+  private func filenameSlug(_ s: String) -> String {
+    var out = ""
+    var lastWasUnderscore = false
+    for char in s {
+      if char == "/" || char == "\\" || char == ":" || char == "\0" {
+        if !out.isEmpty, !lastWasUnderscore {
+          out.append("_")
+          lastWasUnderscore = true
+        }
+        continue
+      }
+      out.append(char)
+      lastWasUnderscore = char == "_"
+    }
+    return out.trimmingCharacters(
+      in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "_")))
+  }
+
+  private func runExport(to url: URL, parentId: Int64?) {
+    let html = NetscapeBookmarksWriter.render(bookmarks, underParent: parentId)
+    do {
+      try html.write(to: url, atomically: true, encoding: .utf8)
+    } catch {
+      presentExportError(message: error.localizedDescription)
+    }
+  }
+
+  private func presentExportError(message: String) {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Could not export bookmarks"
     alert.informativeText = message
     alert.alertStyle = .warning
     alert.beginSheetModal(for: window, completionHandler: nil)
