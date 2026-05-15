@@ -1187,6 +1187,29 @@ extension PaneContainerViewController {
   /// state and per-workspace by design.
   public func closePane(id paneId: ULID) {
     guard let loc = locatePane(id: paneId) else { return }
+    if let surface = loc.pane.terminalView?.surface,
+      ghostty_surface_needs_confirm_quit(surface)
+    {
+      let alert = NSAlert()
+      alert.messageText = "Close this pane?"
+      alert.informativeText = "A process is still running."
+      alert.alertStyle = .warning
+      alert.addButton(withTitle: "Close")
+      alert.addButton(withTitle: "Cancel")
+      guard let window = view.window else { return }
+      alert.beginSheetModal(for: window) { [weak self] response in
+        guard response == .alertFirstButtonReturn, let self else { return }
+        // Re-locate: the alert is async, so the pane may have moved
+        // or closed between display and confirmation.
+        guard let loc = self.locatePane(id: paneId) else { return }
+        self.performBackgroundOrCurrentClose(at: loc)
+      }
+      return
+    }
+    performBackgroundOrCurrentClose(at: loc)
+  }
+
+  private func performBackgroundOrCurrentClose(at loc: PaneLocation) {
     if loc.workspaceIndex == focusedWorkspaceIndex {
       removePane(columnIndex: loc.columnIndex, paneIndex: loc.paneIndex)
     } else {
