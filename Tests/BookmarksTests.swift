@@ -318,6 +318,45 @@ struct BookmarksTests {
     #expect(entry.url == "https://example.com")  // URL untouched.
   }
 
+  @Test("reorder renumbers siblings and can move rows between parents")
+  func reorderAcrossParents() throws {
+    let bm = Bookmarks(inMemory: true)
+    let folderId = try #require(bm.createFolder(title: "Work"))
+    bm.add(url: "https://a.example.com", title: "A")
+    bm.add(url: "https://b.example.com", title: "B")
+    bm.add(url: "https://c.example.com", title: "C")
+
+    // Two root bookmarks need to flip A and C so the root order
+    // becomes [folder, B, C, A]. The folder stays first; reorder
+    // is responsible for the bookmark order.
+    let folder = try #require(bm.all().first(where: { $0.id == folderId }))
+    let a = try #require(bm.all().first(where: { $0.url == "https://a.example.com" }))
+    let b = try #require(bm.all().first(where: { $0.url == "https://b.example.com" }))
+    let c = try #require(bm.all().first(where: { $0.url == "https://c.example.com" }))
+
+    bm.reorder(parentId: nil, orderedIds: [folder.id, b.id, c.id, a.id])
+
+    let rootUrls = bm.children(of: nil).map { $0.url ?? "<folder>" }
+    #expect(rootUrls == [
+      "<folder>", "https://b.example.com", "https://c.example.com", "https://a.example.com",
+    ])
+
+    // Cross-parent reorder: move A into the folder, in front of any
+    // existing children (folder is empty here, so the result is just
+    // A inside).
+    bm.reorder(parentId: folderId, orderedIds: [a.id])
+
+    let folderChildren = bm.children(of: folderId)
+    #expect(folderChildren.map(\.url) == ["https://a.example.com"])
+    #expect(folderChildren[0].parentId == folderId)
+    #expect(folderChildren[0].sortOrder == 0)
+
+    // Root no longer contains A: the parent_id flip in reorder
+    // dragged it out of the root bucket.
+    let newRoot = bm.children(of: nil).compactMap { $0.url }
+    #expect(!newRoot.contains("https://a.example.com"))
+  }
+
   @Test("setTitle returns false for a missing id and skips listener fire")
   func setTitleMissing() {
     let bm = Bookmarks(inMemory: true)

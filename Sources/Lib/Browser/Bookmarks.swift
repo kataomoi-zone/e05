@@ -392,6 +392,47 @@ public final class Bookmarks {
     return sqlite3_step(stmt) == SQLITE_ROW
   }
 
+  /// Rewrite every sibling's `parent_id` and `sort_order` under
+  /// `parentId` to match `orderedIds` (`orderedIds[0]` ends up at
+  /// `sort_order = 0`, etc.). Used by drag-drop where the new
+  /// ordering is the source of truth and slotting via fractional
+  /// indexes would require renumbering anyway. Ids not currently
+  /// stored are silently skipped, so stale references from a
+  /// concurrent reload don't error the whole transaction. Listeners
+  /// fire once at the end.
+  public func reorder(parentId: Int64?, orderedIds: [Int64]) {
+    guard let db, !orderedIds.isEmpty else { return }
+    // Bail early if the transaction can't even open. Without this
+    // check the subsequent UPDATEs would auto-commit individually
+    // and the final COMMIT would error on `no transaction is
+    // active`, leaving a half-applied reorder in place but no
+    // listener fire.
+    guard sqlite3_exec(db, "BEGIN", nil, nil, nil) == SQLITE_OK else {
+      logger.error(
+        "[bookmarks/reorder] BEGIN failed: \(String(cString: sqlite3_errmsg(db)))")
+      return
+    }
+    let sql = "UPDATE bookmarks SET parent_id = ?, sort_order = ? WHERE id = ?"
+    for (idx, id) in orderedIds.enumerated() {
+      var stmt: OpaquePointer?
+      guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
+        let stmt
+      else { continue }
+      bindOptionalInt64(stmt, index: 1, value: parentId)
+      sqlite3_bind_int(stmt, 2, Int32(idx))
+      sqlite3_bind_int64(stmt, 3, id)
+      sqlite3_step(stmt)
+      sqlite3_finalize(stmt)
+    }
+    if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
+      logger.error(
+        "reorder commit failed: \(String(cString: sqlite3_errmsg(db)))")
+      sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+      return
+    }
+    fireListeners()
+  }
+
   /// Overwrite the `sort_order` of a single entry. Use this for fine
   /// grained drag-reorder operations where the parent doesn't change.
   public func setSortOrder(id: Int64, sortOrder: Int) {
