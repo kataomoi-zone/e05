@@ -320,4 +320,75 @@ struct SessionStateTests {
       #expect(decoded.sidebarPinned == pinned)
     }
   }
+
+  @Test("collapsedWorkspaceIndexes round-trips and is omitted when nil")
+  func collapsedIndexesRoundTrip() throws {
+    let base = SessionState.WorkspaceState(
+      columns: [
+        SessionState.ColumnState(
+          panes: [SessionState.PaneState(address: "e05://terminal")],
+          focusedPaneIndex: 0,
+          width: 640,
+          heightRatios: []
+        )
+      ],
+      focusedColumnIndex: 0,
+      scrollX: 0
+    )
+
+    // Encoding `nil` must omit the key from the JSON payload — empty
+    // workspaces shouldn't grow a dead field over the lifetime of
+    // a session that never collapses anything.
+    let empty = SessionState(
+      workspaces: [base], focusedWorkspaceIndex: 0,
+      collapsedWorkspaceIndexes: nil
+    )
+    let emptyData = try JSONEncoder().encode(empty)
+    let emptyJSON = try #require(String(data: emptyData, encoding: .utf8))
+    #expect(!emptyJSON.contains("collapsedWorkspaceIndexes"))
+    let emptyDecoded = try JSONDecoder().decode(SessionState.self, from: emptyData)
+    #expect(emptyDecoded.collapsedWorkspaceIndexes == nil)
+
+    // Non-empty round-trip preserves the value order so callers can
+    // continue treating the array as a list of post-rebase indexes
+    // into the persisted workspace array.
+    let populated = SessionState(
+      workspaces: [base, base, base], focusedWorkspaceIndex: 0,
+      collapsedWorkspaceIndexes: [0, 2]
+    )
+    let data = try JSONEncoder().encode(populated)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    #expect(decoded.collapsedWorkspaceIndexes == [0, 2])
+  }
+
+  @Test("legacy session JSON without collapsedWorkspaceIndexes decodes as nil")
+  func legacyCollapsedIndexesMissing() throws {
+    // Pre-collapsed-persistence session payload (key absent). Guards
+    // against future hand-written `CodingKeys` breaking auto-synthesis'
+    // `decodeIfPresent`-for-Optional path on `collapsedWorkspaceIndexes`.
+    let legacy = """
+      {
+        "focusedWorkspaceIndex": 0,
+        "urlBarVisible": false,
+        "sidebarPinned": false,
+        "workspaces": [
+          {
+            "focusedColumnIndex": 0,
+            "scrollX": 0,
+            "columns": [
+              {
+                "focusedPaneIndex": 0,
+                "width": 640,
+                "heightRatios": [],
+                "panes": [{ "address": "e05://terminal" }]
+              }
+            ]
+          }
+        ]
+      }
+      """
+    let data = Data(legacy.utf8)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    #expect(decoded.collapsedWorkspaceIndexes == nil)
+  }
 }
