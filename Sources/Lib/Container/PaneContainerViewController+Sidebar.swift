@@ -26,7 +26,7 @@ extension PaneContainerViewController {
   /// `viewDidLoad` after all workspace VCs are installed, so the
   /// sidebar sits on top of them in `subviews` z-order while the hit
   /// zone sits beneath for click pass-through.
-  func installSidebar(initiallyPinned: Bool) {
+  func installSidebar(initiallyPinned: Bool, initiallyCollapsedIndexes: [Int] = []) {
     // Hit zone goes in first so the sidebar ends up above it in
     // z-order. When the sidebar is revealed it fully occludes the
     // 8pt hit zone; when hidden, the hit zone is the only thing at
@@ -80,6 +80,15 @@ extension PaneContainerViewController {
     ])
     sidebarLeadingConstraint = leading
     sidebarVC = vc
+    // Map persisted indexes to live workspace IDs *now*, before the
+    // first reload — session restore has already populated
+    // `workspaces`, but the worklane render below is what materialises
+    // the collapsed state into the row layout. Indexes that no
+    // longer point at a workspace (older session.json with more
+    // workspaces than this launch restored) are silently dropped.
+    let collapsedIds = Set(
+      initiallyCollapsedIndexes.compactMap { workspaces[safe: $0]?.id })
+    vc.seedCollapsedWorkspaces(collapsedIds)
     // `attachContainer()` wires the DownloadsManager listener for
     // the places-section badge. Called after `sidebarVC` is set so
     // the sidebar reads through the same weak back-reference as

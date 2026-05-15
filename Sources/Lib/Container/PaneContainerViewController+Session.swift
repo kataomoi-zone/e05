@@ -92,11 +92,23 @@ extension PaneContainerViewController {
       )
     }
 
+    // Walk the persisted (= non-private) workspaces and record the
+    // positions of the ones the sidebar currently has collapsed. The
+    // index is the post-rebase index inside `workspaceStates`, which
+    // is what session restore reads back. `nil` when nothing is
+    // collapsed so the on-disk payload omits the key entirely.
+    let collapsedIndexes: [Int] = persistedWorkspaces.enumerated()
+      .compactMap { rebasedIndex, entry in
+        let id = entry.element.id
+        return sidebarVC?.isWorkspaceCollapsed(id) == true ? rebasedIndex : nil
+      }
+
     return SessionState(
       workspaces: workspaceStates,
       focusedWorkspaceIndex: rebasedFocusedIndex,
       urlBarVisible: urlBarVisible,
-      sidebarPinned: sidebarVC?.currentState == .pinnedOpen
+      sidebarPinned: sidebarVC?.currentState == .pinnedOpen,
+      collapsedWorkspaceIndexes: collapsedIndexes.isEmpty ? nil : collapsedIndexes
     )
   }
 

@@ -25,12 +25,27 @@ final class SidebarViewController: NSViewController {
   private(set) var currentMode: SidebarMode = .tabs
   private var downloadsListenerToken: DownloadsListenerToken?
 
-  /// Workspaces whose pane rows are hidden in the worklane. UI-only
-  /// state — not persisted, so a fresh launch always shows every
-  /// workspace expanded. Survives sidebar mode switches and sidebar
-  /// state transitions because it lives on the VC, not the worklane
-  /// view.
+  /// Workspaces whose pane rows are hidden in the worklane. Persisted
+  /// across launches via `SessionState.collapsedWorkspaceIndexes`
+  /// (indexes are mapped to / from `ULID` here on either side of the
+  /// save/restore boundary). Survives sidebar mode switches and
+  /// sidebar state transitions because it lives on the VC, not the
+  /// worklane view.
   private var collapsedWorkspaceIds: Set<ULID> = []
+
+  /// Seed the initial collapsed-state from session restore. Must be
+  /// called *before* the first `reloadWorklane`, otherwise the
+  /// initial render shows every workspace expanded.
+  func seedCollapsedWorkspaces(_ ids: Set<ULID>) {
+    collapsedWorkspaceIds = ids
+  }
+
+  /// True when the workspace with `id` is currently collapsed in
+  /// the worklane. Container reads this at `captureSession()` time
+  /// to write the persisted list.
+  func isWorkspaceCollapsed(_ id: ULID) -> Bool {
+    collapsedWorkspaceIds.contains(id)
+  }
 
   // MARK: - State machine
 

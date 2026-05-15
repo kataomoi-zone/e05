@@ -16,6 +16,14 @@ public struct SessionState: Codable {
   /// restarts. `.hoverPeek` is ephemeral — only explicit pinning
   /// survives a session round-trip.
   public var sidebarPinned: Bool = false
+  /// Indexes into `workspaces` of the workspaces that were
+  /// collapsed in the sidebar worklane at save time. Stored by
+  /// index rather than `ULID` because workspaces are reconstructed
+  /// on restore and don't carry their IDs through session.json yet.
+  /// `Optional` so an old session.json without the key decodes
+  /// cleanly through Codable's `decodeIfPresent`-for-Optional path;
+  /// the in-code reader treats nil and empty as identical.
+  public var collapsedWorkspaceIndexes: [Int]?
 
   public struct WorkspaceState: Codable {
     public var columns: [ColumnState]

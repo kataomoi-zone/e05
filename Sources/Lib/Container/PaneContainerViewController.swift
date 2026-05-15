@@ -242,8 +242,10 @@ public final class PaneContainerViewController: NSViewController {
     setupCommandPalette()
 
     var initiallyPinned = false
+    var initiallyCollapsedIndexes: [Int] = []
     if let session = SessionState.load() {
       initiallyPinned = session.sidebarPinned
+      initiallyCollapsedIndexes = session.collapsedWorkspaceIndexes ?? []
       restoreSession(session)
     }
     if columns.isEmpty {
@@ -253,8 +255,12 @@ public final class PaneContainerViewController: NSViewController {
     // workspace VC. The pinned flag decides whether the sidebar
     // starts flush (push layout, workspace offset by
     // `sidebarWidth`) or parked off-screen (hidden, workspace
-    // flush against the leading edge).
-    installSidebar(initiallyPinned: initiallyPinned)
+    // flush against the leading edge). The collapsed-workspace
+    // list is mapped from index → ULID inside `installSidebar`
+    // since the live workspace IDs aren't known until that point.
+    installSidebar(
+      initiallyPinned: initiallyPinned,
+      initiallyCollapsedIndexes: initiallyCollapsedIndexes)
     installToastOverlay()
     startMediaAudibleTick()
     startMemoryPressureMonitor()
