@@ -108,6 +108,17 @@ final class WorklaneSectionView: NSView {
   /// reload doesn't fire `onPaneClick` and re-enter the focus flow.
   private var isSyncingSelection = false
 
+  /// Snapshot of the previous reload's tree shape, used to compute
+  /// the structural diff against the new input. `nil` before the
+  /// first reload — the bootstrap reload uses `reloadData` since
+  /// there's nothing to animate against an empty starting state.
+  private var lastSnapshot: WorklaneSnapshot?
+
+  private struct WorklaneSnapshot {
+    let workspaceIds: [ULID]
+    let panesByWorkspaceId: [ULID: [ULID]]
+  }
+
   init() {
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
@@ -191,9 +202,138 @@ final class WorklaneSectionView: NSView {
   func reload(_ input: ReloadInput) {
     lastInput = input
     rebuildNodeTree(from: input)
-    outlineView.reloadData()
+    let snapshot = currentSnapshot()
+    if let previous = lastSnapshot {
+      applyDiff(from: previous, to: snapshot)
+    } else {
+      outlineView.reloadData()
+    }
+    lastSnapshot = snapshot
     applyPersistedCollapseState(input: input)
     syncSelection(to: input.focusedPaneId)
+  }
+
+  private func currentSnapshot() -> WorklaneSnapshot {
+    var panes: [ULID: [ULID]] = [:]
+    for (wsId, nodes) in panesByWorkspaceId {
+      panes[wsId] = nodes.map(\.id)
+    }
+    return WorklaneSnapshot(
+      workspaceIds: workspaceNodes.map(\.id),
+      panesByWorkspaceId: panes
+    )
+  }
+
+  /// Walk the diff between two snapshots and translate it into
+  /// `insertItems` / `removeItems` calls so AppKit animates structural
+  /// changes. Still-present rows get a follow-up `reloadItem` so
+  /// content that depends on position (workspace accent color,
+  /// focused-pane dot) stays in sync when a sibling row was added or
+  /// removed without changing this row's own identity.
+  ///
+  /// Pure reorder (same id set, different order — e.g.
+  /// `moveColumnLeft/Right`, `movePaneUp/Down`) bypasses the diff
+  /// path and falls back to `reloadData`. The animated route would
+  /// need `moveItem(at:inParent:to:inParent:)`, whose batched-update
+  /// index semantics around mixed insert/remove are subtle enough
+  /// that giving up the animation for this one operation keeps the
+  /// data source and AppKit's internal index space in lockstep.
+  private func applyDiff(
+    from old: WorklaneSnapshot, to new: WorklaneSnapshot
+  ) {
+    if survivorOrderChanged(old: old, new: new) {
+      outlineView.reloadData()
+      return
+    }
+    outlineView.beginUpdates()
+    diffChildren(
+      oldIds: old.workspaceIds, newIds: new.workspaceIds, parent: nil)
+    let stillPresent = Set(old.workspaceIds).intersection(new.workspaceIds)
+    for wsId in stillPresent {
+      let parent = nodesByWorkspaceId[wsId]
+      diffChildren(
+        oldIds: old.panesByWorkspaceId[wsId] ?? [],
+        newIds: new.panesByWorkspaceId[wsId] ?? [],
+        parent: parent
+      )
+    }
+    outlineView.endUpdates()
+
+    // Re-vend the cells for surviving rows so the accent color
+    // (derived from workspace index) and the focus dot (derived from
+    // focusedPaneId) reflect the latest input. Newly-inserted and
+    // newly-removed rows are skipped — the insert path already
+    // configures from current state, the remove path leaves nothing
+    // behind to refresh.
+    for wsId in stillPresent {
+      if let wsNode = nodesByWorkspaceId[wsId] {
+        outlineView.reloadItem(wsNode)
+      }
+      let survivingPaneIds = Set(old.panesByWorkspaceId[wsId] ?? [])
+      for paneNode in panesByWorkspaceId[wsId] ?? []
+      where survivingPaneIds.contains(paneNode.id) {
+        outlineView.reloadItem(paneNode)
+      }
+    }
+  }
+
+  /// True when the relative order of surviving ids (those present in
+  /// both snapshots) differs at any level of the tree. The diff path
+  /// can't represent reorder of survivors through `insertItems` /
+  /// `removeItems` alone, so the caller falls back to `reloadData`.
+  private func survivorOrderChanged(
+    old: WorklaneSnapshot, new: WorklaneSnapshot
+  ) -> Bool {
+    if survivorOrderChanged(oldIds: old.workspaceIds, newIds: new.workspaceIds) {
+      return true
+    }
+    let stillPresent = Set(old.workspaceIds).intersection(new.workspaceIds)
+    for wsId in stillPresent {
+      if survivorOrderChanged(
+        oldIds: old.panesByWorkspaceId[wsId] ?? [],
+        newIds: new.panesByWorkspaceId[wsId] ?? [])
+      {
+        return true
+      }
+    }
+    return false
+  }
+
+  private func survivorOrderChanged(
+    oldIds: [ULID], newIds: [ULID]
+  ) -> Bool {
+    let oldSet = Set(oldIds)
+    let newSet = Set(newIds)
+    let survivedInOldOrder = oldIds.filter { newSet.contains($0) }
+    let survivedInNewOrder = newIds.filter { oldSet.contains($0) }
+    return survivedInOldOrder != survivedInNewOrder
+  }
+
+  private func diffChildren(
+    oldIds: [ULID], newIds: [ULID], parent: Any?
+  ) {
+    let oldSet = Set(oldIds)
+    let newSet = Set(newIds)
+
+    let removeIndexes = IndexSet(
+      oldIds.enumerated().compactMap {
+        newSet.contains($0.element) ? nil : $0.offset
+      })
+    if !removeIndexes.isEmpty {
+      outlineView.removeItems(
+        at: removeIndexes, inParent: parent,
+        withAnimation: .effectFade)
+    }
+
+    let insertIndexes = IndexSet(
+      newIds.enumerated().compactMap {
+        oldSet.contains($0.element) ? nil : $0.offset
+      })
+    if !insertIndexes.isEmpty {
+      outlineView.insertItems(
+        at: insertIndexes, inParent: parent,
+        withAnimation: .effectFade)
+    }
   }
 
   /// Per-pane audio update without a full reload. Looks up the row's
