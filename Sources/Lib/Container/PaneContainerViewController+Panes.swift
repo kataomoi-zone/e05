@@ -38,6 +38,27 @@ extension PaneContainerViewController {
       id: id)
   }
 
+  /// Insert a column into a specific workspace, regardless of
+  /// whether that workspace is currently visible. The current-
+  /// workspace path defers to the existing `addColumn(address:)`;
+  /// for a background workspace, switch over first so the user
+  /// sees the new pane immediately after the slide. Mirrors the
+  /// completion-driven pattern used by `performCrossWorkspaceMove`
+  /// to avoid racing the focus / scroll animations.
+  public func addColumn(_ address: PaneAddress, toWorkspaceId wsId: ULID) {
+    guard let wsIdx = workspaces.firstIndex(where: { $0.id == wsId }) else {
+      logger.debug("addColumn(toWorkspaceId:) guard failed: workspace not found")
+      return
+    }
+    if wsIdx == focusedWorkspaceIndex {
+      addColumn(address: address)
+      return
+    }
+    switchWorkspace(to: wsIdx) { [weak self] in
+      self?.addColumn(address: address)
+    }
+  }
+
   @discardableResult
   func insertColumn(
     with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()

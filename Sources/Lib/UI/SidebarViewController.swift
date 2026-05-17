@@ -113,6 +113,27 @@ final class SidebarViewController: NSViewController {
     overlay.onHoverEnter = { [weak self] in self?.setSidebarHovered(true) }
     overlay.onHoverExit = { [weak self] in self?.setSidebarHovered(false) }
     overlay.header.onTogglePin = { [weak self] in self?.togglePin() }
+    overlay.header.onCreateWorkspace = { [weak self] in
+      self?.container?.createWorkspace()
+    }
+    overlay.header.onCreatePrivateWorkspace = { [weak self] in
+      self?.container?.createWorkspace(isPrivate: true)
+    }
+    overlay.header.onCreateTerminalPane = { [weak self] in
+      guard let container = self?.container else { return }
+      container.addColumn()
+      container.showToast("New Terminal Pane")
+    }
+    overlay.header.onCreateBrowserPane = { [weak self] in
+      guard let container = self?.container else { return }
+      container.addColumn(address: .blankBrowser)
+      container.showToast("New Browser Pane")
+    }
+    overlay.header.onCreateFinderPane = { [weak self] in
+      guard let container = self?.container else { return }
+      container.addColumn(address: PaneAddress.finder(path: ""))
+      container.showToast("New Finder Pane")
+    }
     applyMode(currentMode)
   }
 
@@ -328,6 +349,10 @@ final class SidebarViewController: NSViewController {
         },
         onCrossPrivateBoundaryAttempt: { [weak container] in
           container?.showCrossPrivateBoundaryToast()
+        },
+        onAddPaneToWorkspace: { [weak container] wsId in
+          container?.addColumn(.blankBrowser, toWorkspaceId: wsId)
+          container?.showToast("New Browser Pane")
         }
       ))
   }

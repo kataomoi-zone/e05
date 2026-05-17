@@ -330,6 +330,10 @@ final class WorklaneSectionView: NSView {
     /// indicator), so the toast is the only feedback the user
     /// gets about why their drop won't land.
     let onCrossPrivateBoundaryAttempt: () -> Void
+    /// Add a blank-browser column to the given workspace. The
+    /// container resolves the "switch first if non-current" branch
+    /// internally so callers can stay workspace-agnostic.
+    let onAddPaneToWorkspace: (ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {

@@ -32,12 +32,26 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.isHidden = true
     return b
   }()
+  private let addButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "plus", accessibilityDescription: "New browser pane in this workspace")
+    b.toolTip = "New browser pane in this workspace"
+    b.isHidden = true
+    return b
+  }()
 
   private var trackingArea: NSTrackingArea?
   private var isHovered = false
 
   private weak var node: WorklaneWorkspaceNode?
   private var onCloseHandler: (() -> Void)?
+  private var onAddHandler: (() -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -68,9 +82,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
     closeButton.target = self
     closeButton.action = #selector(closeTapped(_:))
+    addButton.target = self
+    addButton.action = #selector(addTapped(_:))
 
     addSubview(indicator)
     addSubview(label)
+    addSubview(addButton)
     addSubview(closeButton)
 
     NSLayoutConstraint.activate([
@@ -80,8 +97,13 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
       indicator.widthAnchor.constraint(equalToConstant: 3),
 
       label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 8),
-      label.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
+      label.trailingAnchor.constraint(lessThanOrEqualTo: addButton.leadingAnchor, constant: -4),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      addButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
+      addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      addButton.widthAnchor.constraint(equalToConstant: 18),
+      addButton.heightAnchor.constraint(equalToConstant: 18),
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -109,8 +131,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     indicator.isPrivate = node.model.isPrivate
 
     let workspaceIndex = node.index
+    let workspaceId = node.id
     onCloseHandler = {
       [onClose = input.onWorkspaceClose] in onClose(workspaceIndex)
+    }
+    onAddHandler = {
+      [onAdd = input.onAddPaneToWorkspace] in onAdd(workspaceId)
     }
   }
 
@@ -138,6 +164,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     guard hovered != isHovered else { return }
     isHovered = hovered
     closeButton.isHidden = !hovered
+    addButton.isHidden = !hovered
     layer?.backgroundColor =
       hovered ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = hovered ? 4 : 0
@@ -145,6 +172,10 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
   @objc private func closeTapped(_: NSButton) {
     onCloseHandler?()
+  }
+
+  @objc private func addTapped(_: NSButton) {
+    onAddHandler?()
   }
 
   override func resetCursorRects() {

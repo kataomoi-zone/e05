@@ -31,6 +31,19 @@ final class SidebarHeaderView: NSView {
     return b
   }()
 
+  let addButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "plus", accessibilityDescription: "New workspace or pane")
+    b.toolTip = "New workspace or pane"
+    return b
+  }()
+
   private let titleLabel: TitleLabel = {
     let label = TitleLabel(labelWithString: SidebarHeaderView.displayTitle())
     label.translatesAutoresizingMaskIntoConstraints = false
@@ -71,6 +84,15 @@ final class SidebarHeaderView: NSView {
   /// Invoked when the user clicks the pin toggle. The view controller
   /// owns the state machine — this view only reports intent.
   var onTogglePin: (() -> Void)?
+
+  /// Invoked when the user picks an item from the + button menu.
+  /// The view controller routes each callback into the container's
+  /// existing workspace / column-creation paths.
+  var onCreateWorkspace: (() -> Void)?
+  var onCreatePrivateWorkspace: (() -> Void)?
+  var onCreateTerminalPane: (() -> Void)?
+  var onCreateBrowserPane: (() -> Void)?
+  var onCreateFinderPane: (() -> Void)?
 
   /// Drives the pin icon glyph and accessibility text. When `true`,
   /// the filled pin emphasises the "currently pinned" state; when
@@ -131,7 +153,10 @@ final class SidebarHeaderView: NSView {
   private func setupLayout() {
     pinButton.target = self
     pinButton.action = #selector(pinTapped(_:))
+    addButton.target = self
+    addButton.action = #selector(addTapped(_:))
     addSubview(pinButton)
+    addSubview(addButton)
     addSubview(titleLabel)
 
     let leading = titleLabel.leadingAnchor.constraint(
@@ -143,8 +168,12 @@ final class SidebarHeaderView: NSView {
       pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       pinButton.widthAnchor.constraint(equalToConstant: 22),
       pinButton.heightAnchor.constraint(equalToConstant: 22),
+      addButton.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -8),
+      addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      addButton.widthAnchor.constraint(equalToConstant: 22),
+      addButton.heightAnchor.constraint(equalToConstant: 22),
       leading,
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
+      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: addButton.leadingAnchor, constant: -8),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }
@@ -171,4 +200,42 @@ final class SidebarHeaderView: NSView {
   @objc private func pinTapped(_: NSButton) {
     onTogglePin?()
   }
+
+  /// Workspace-scoped items rendered at the top of the + menu.
+  private static let workspaceMenuItems: [(title: String, action: Selector)] = [
+    ("New Workspace", #selector(createWorkspaceSelected)),
+    ("New Private Workspace", #selector(createPrivateWorkspaceSelected)),
+  ]
+
+  /// Pane-scoped items rendered below the separator.
+  private static let paneMenuItems: [(title: String, action: Selector)] = [
+    ("New Terminal Pane", #selector(createTerminalPaneSelected)),
+    ("New Browser Pane", #selector(createBrowserPaneSelected)),
+    ("New Finder Pane", #selector(createFinderPaneSelected)),
+  ]
+
+  @objc private func addTapped(_ sender: NSButton) {
+    let menu = NSMenu()
+    for (title, action) in Self.workspaceMenuItems {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+    }
+    menu.addItem(NSMenuItem.separator())
+    for (title, action) in Self.paneMenuItems {
+      let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+    }
+    // Drop the menu directly below the button so its top-left
+    // aligns with the button's bottom-left edge.
+    let origin = NSPoint(x: 0, y: sender.bounds.height)
+    menu.popUp(positioning: nil, at: origin, in: sender)
+  }
+
+  @objc private func createWorkspaceSelected() { onCreateWorkspace?() }
+  @objc private func createPrivateWorkspaceSelected() { onCreatePrivateWorkspace?() }
+  @objc private func createTerminalPaneSelected() { onCreateTerminalPane?() }
+  @objc private func createBrowserPaneSelected() { onCreateBrowserPane?() }
+  @objc private func createFinderPaneSelected() { onCreateFinderPane?() }
 }
