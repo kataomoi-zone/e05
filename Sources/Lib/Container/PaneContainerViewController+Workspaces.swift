@@ -346,6 +346,61 @@ extension PaneContainerViewController {
     notifySidebarWorklaneDidChange()
   }
 
+  // MARK: - Reorder workspaces
+
+  /// Rewrite `workspaces` / `workspaceVCs` so they appear in the
+  /// order given by `orderedIds`. The focused workspace tracks its
+  /// own identity through the shuffle (the index moves to wherever
+  /// its id lands in the new order). Ids that don't currently
+  /// resolve to a workspace are silently skipped — a stale id from
+  /// a concurrent reload shouldn't error out the whole reorder.
+  ///
+  /// Used by the worklane sidebar's drag-reorder path. Accent
+  /// colors are derived from position, so callers see them swap to
+  /// match the new ordering on the next reload.
+  public func reorderWorkspaces(orderedIds: [ULID]) {
+    // Reject duplicate ids up front. The downstream compactMap would
+    // resolve a duplicate to the same workspace twice and silently
+    // drop a different one to keep `count` matching — `workspaces`
+    // and `workspaceVCs` stay in sync with each other but lose a
+    // workspace from the live tree.
+    guard Set(orderedIds).count == orderedIds.count else {
+      logger.warning(
+        "[workspaces/reorder] duplicate ids in input count=\(orderedIds.count, privacy: .public)")
+      return
+    }
+    let live = Dictionary(uniqueKeysWithValues: zip(workspaces.map(\.id), workspaces))
+    let liveVCs = Dictionary(uniqueKeysWithValues: zip(workspaces.map(\.id), workspaceVCs))
+    let resolved = orderedIds.compactMap { live[$0] }
+    // Defence-in-depth: if every id was unknown nothing happens.
+    // Bail before the parallel rewrite so the two arrays can't
+    // get out of sync with each other.
+    guard !resolved.isEmpty, resolved.count == workspaces.count else {
+      logger.warning(
+        """
+        [workspaces/reorder] count mismatch: \
+        ordered=\(orderedIds.count, privacy: .public) \
+        live=\(self.workspaces.count, privacy: .public) \
+        resolved=\(resolved.count, privacy: .public)
+        """)
+      return
+    }
+    // No-op when the order isn't actually changing — saves a
+    // pointless reload and lets the worklane diff fall through to
+    // its normal paths.
+    if resolved.map(\.id) == workspaces.map(\.id) { return }
+
+    let focusedId = workspaces[safe: focusedWorkspaceIndex]?.id
+    workspaces = resolved
+    workspaceVCs = orderedIds.compactMap { liveVCs[$0] }
+    if let focusedId,
+      let newIndex = workspaces.firstIndex(where: { $0.id == focusedId })
+    {
+      focusedWorkspaceIndex = newIndex
+    }
+    notifySidebarWorklaneDidChange()
+  }
+
   // MARK: - Move pane across workspaces
 
   /// Move the focused pane into the target workspace as a new single-pane

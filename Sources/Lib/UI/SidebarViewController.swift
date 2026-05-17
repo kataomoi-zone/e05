@@ -316,6 +316,9 @@ final class SidebarViewController: NSViewController {
         },
         onToggleCollapse: { [weak self] id in
           self?.toggleCollapsed(id)
+        },
+        onReorderWorkspaces: { [weak container] orderedIds in
+          container?.reorderWorkspaces(orderedIds: orderedIds)
         }
       ))
   }

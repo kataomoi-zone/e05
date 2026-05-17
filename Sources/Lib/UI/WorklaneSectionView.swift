@@ -115,6 +115,14 @@ final class WorklaneRowView: NSTableRowView {
 /// so the focused pane wears a calm translucent highlight.
 @MainActor
 final class WorklaneSectionView: NSView {
+  /// Pasteboard type for a workspace row dragged inside the
+  /// worklane. App-scoped so a stray drag from another `.string`
+  /// source doesn't trip the validate path; the payload is the
+  /// workspace's ULID string. Pane / column drag will land on
+  /// distinct types later so validateDrop can branch on item kind.
+  fileprivate static let workspaceDragType = NSPasteboard.PasteboardType(
+    "com.kawarimidoll.e05.worklane.workspace")
+
   private let scrollView = NSScrollView()
   private let outlineView = NSOutlineView()
 
@@ -140,6 +148,37 @@ final class WorklaneSectionView: NSView {
   /// Guards the selection-sync path so programmatic selection during
   /// reload doesn't fire `onPaneClick` and re-enter the focus flow.
   private var isSyncingSelection = false
+
+  /// True while a drag session originates from this outline view.
+  /// Used to suppress spring-loaded expansion of collapsed
+  /// workspaces during a workspace drag — auto-expand-on-hover is
+  /// the standard Finder folder behaviour, but here it surprises
+  /// the user (their collapse state silently flips while they're
+  /// just reordering workspaces) and also fires our
+  /// `outlineViewItemDidExpand` notification, polluting the
+  /// persisted collapse set.
+  private var isDragging = false
+
+  /// True while `applyPersistedCollapseState` is mid-walk. Lets the
+  /// bookkeeping `expandItem` calls through even when the drag
+  /// session is still technically open: AppKit fires
+  /// `draggingSession:endedAt:` *after* `acceptDrop` returns, so
+  /// the post-drop reload runs with `isDragging` still true and
+  /// would otherwise see every workspace forced collapsed.
+  ///
+  /// Assumes `expandItem` fires `outlineViewItemDidExpand`
+  /// synchronously — true for the un-animated form we use here.
+  /// Switch to `NSAnimationContext`-wrapped expansion and the flag
+  /// would need to live across the animation completion instead.
+  private var isApplyingPersistedCollapse = false
+
+  /// True after `acceptDrop` actually commits a reorder. Drives the
+  /// selection-restore branch of `endedAt`: a committed reorder
+  /// triggers a reload that re-runs `syncSelection` itself, so the
+  /// endedAt path skips it. A cancelled drag (no acceptDrop, or a
+  /// no-op drop that didn't change order) needs `endedAt` to
+  /// restore the highlight the willBeginAt path cleared.
+  private var didCommitReorderInLastDrag = false
 
   /// Snapshot of the previous reload's tree shape, used to compute
   /// the structural diff against the new input. `nil` before the
@@ -193,6 +232,13 @@ final class WorklaneSectionView: NSView {
     outlineView.floatsGroupRows = false
     outlineView.dataSource = self
     outlineView.delegate = self
+    outlineView.registerForDraggedTypes([Self.workspaceDragType])
+    // Internal-only drag: dragging a workspace row out of the app
+    // shouldn't synthesise anything for external receivers, and the
+    // local-only mask makes the source check in `acceptDrop`
+    // redundant rather than load-bearing.
+    outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
+    outlineView.setDraggingSourceOperationMask([], forLocal: false)
 
     scrollView.documentView = outlineView
     scrollView.hasVerticalScroller = true
@@ -242,6 +288,11 @@ final class WorklaneSectionView: NSView {
     /// Flip the persisted collapse state for the given item id
     /// (workspace or column).
     let onToggleCollapse: (ULID) -> Void
+    /// Commit a workspace reorder. The closure receives the new
+    /// ordering as workspace ULIDs in display order; the container
+    /// rewrites `workspaces` / `workspaceVCs` in parallel and
+    /// keeps `focusedWorkspaceIndex` pointing at the same identity.
+    let onReorderWorkspaces: ([ULID]) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -580,6 +631,8 @@ final class WorklaneSectionView: NSView {
   /// expansion state to the persisted set so a reload doesn't lose
   /// the user's collapse choices.
   private func applyPersistedCollapseState(input: ReloadInput) {
+    isApplyingPersistedCollapse = true
+    defer { isApplyingPersistedCollapse = false }
     for wsNode in workspaceNodes {
       applyCollapseState(wsNode, shouldBeCollapsed: input.isCollapsed(wsNode.id))
       for child in topLevelChildrenByWorkspaceId[wsNode.id] ?? [] {
@@ -671,6 +724,166 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
   func outlineView(_: NSOutlineView, isItemExpandable item: Any) -> Bool {
     (item is WorklaneWorkspaceNode) || (item is WorklaneColumnNode)
   }
+
+  // MARK: - Drag-drop (workspace reorder)
+
+  func outlineView(
+    _ outlineView: NSOutlineView, draggingSession _: NSDraggingSession,
+    willBeginAt _: NSPoint, forItems _: [Any]
+  ) {
+    isDragging = true
+    didCommitReorderInLastDrag = false
+    // Clear the focused-pane selection for the duration of the
+    // drag. AppKit's drop indicator composes on top of the
+    // selection highlight layer, and the overlap renders as a
+    // stray white halo around the blue insertion line. With
+    // selection cleared the indicator stands alone.
+    isSyncingSelection = true
+    outlineView.deselectAll(nil)
+    isSyncingSelection = false
+  }
+
+  func outlineView(
+    _: NSOutlineView, draggingSession _: NSDraggingSession,
+    endedAt _: NSPoint, operation _: NSDragOperation
+  ) {
+    isDragging = false
+    // A committed reorder triggers a reload whose own `syncSelection`
+    // restores the highlight. A cancelled or no-op drag never
+    // reaches that path, so endedAt is the only place that can
+    // undo the willBeginAt deselect.
+    if !didCommitReorderInLastDrag {
+      syncSelection(to: lastInput?.focusedPaneId)
+    }
+    didCommitReorderInLastDrag = false
+  }
+
+  func outlineView(
+    _: NSOutlineView, pasteboardWriterForItem item: Any
+  ) -> NSPasteboardWriting? {
+    // Phase 2 only drags workspaces. Pane / column rows aren't
+    // draggable yet — returning nil cancels the drag for those.
+    guard let ws = item as? WorklaneWorkspaceNode else { return nil }
+    let pb = NSPasteboardItem()
+    pb.setString(ws.id.string, forType: Self.workspaceDragType)
+    return pb
+  }
+
+  func outlineView(
+    _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo,
+    proposedItem item: Any?, proposedChildIndex index: Int
+  ) -> NSDragOperation {
+    guard draggedWorkspaceId(from: info) != nil else { return [] }
+    let retarget = retargetToRootGap(item: item, childIndex: index)
+    guard retarget.index != NSOutlineViewDropOnItemIndex else { return [] }
+    // Tell AppKit about the retarget so the gap indicator lands
+    // between workspace headers — without this, dropping in the
+    // area below an expanded workspace's panes gets reported as
+    // "child of that workspace" and AppKit refuses to draw an
+    // insertion indicator at the root level. `itemChanged` flips
+    // exactly when retarget hit (the same-item path returns the
+    // original index unchanged), so a single condition covers both
+    // pane / column / workspace drops.
+    if retarget.itemChanged {
+      outlineView.setDropItem(nil, dropChildIndex: retarget.index)
+    }
+    return .move
+  }
+
+  func outlineView(
+    _: NSOutlineView, acceptDrop info: NSDraggingInfo,
+    item: Any?, childIndex: Int
+  ) -> Bool {
+    guard let input = lastInput,
+      let draggedId = draggedWorkspaceId(from: info)
+    else { return false }
+    // Re-run the retarget so a drop landed via the cell area inside
+    // an expanded workspace still maps to a root-level insertion.
+    // `validateDrop` already calls `setDropItem`, so AppKit should
+    // hand us the retargeted index here — but the docs only promise
+    // that for "subsequent calls to validateDrop", leaving accept a
+    // grey area; matching the resolver in both paths is the same
+    // pattern the bookmarks sidebar uses.
+    let retarget = retargetToRootGap(item: item, childIndex: childIndex)
+    guard retarget.index != NSOutlineViewDropOnItemIndex else { return false }
+
+    let liveOrder = workspaceNodes.map(\.id)
+    // `draggedWorkspaceId` filters against live nodes already, so a
+    // missing id here means the snapshot drifted between
+    // `pasteboardWriterForItem` and the drop — surface it rather
+    // than silently treating the drop as "append at end".
+    guard let oldIndex = liveOrder.firstIndex(of: draggedId) else {
+      logger.error(
+        "[worklane/drag] drop with id no longer in liveOrder id=\(draggedId.string, privacy: .public)")
+      return false
+    }
+    var newOrder = liveOrder
+    newOrder.remove(at: oldIndex)
+    // `childIndex` from AppKit indexes into the current data model
+    // (where the dragged workspace still sits in its old slot). After
+    // filtering the dragged id out, an index past the old slot needs
+    // a -1 shift; an index before stays put.
+    let adjusted = oldIndex < retarget.index ? retarget.index - 1 : retarget.index
+    let clamped = min(max(adjusted, 0), newOrder.count)
+    newOrder.insert(draggedId, at: clamped)
+    if newOrder != liveOrder {
+      input.onReorderWorkspaces(newOrder)
+      didCommitReorderInLastDrag = true
+    }
+    return true
+  }
+
+  /// AppKit reports a drop inside an expanded workspace (between
+  /// its panes / on its column wrapper / on the workspace row
+  /// itself) with that workspace as the proposed parent. Phase 2
+  /// only supports root-level reorder, so any non-root proposal
+  /// retargets to the gap immediately after the containing
+  /// workspace — that's the visual position a user would expect
+  /// when they aim at the bottom of workspace N's children.
+  private func retargetToRootGap(
+    item: Any?, childIndex: Int
+  ) -> (index: Int, itemChanged: Bool) {
+    if item == nil { return (childIndex, false) }
+    guard let wsIdx = containingWorkspaceIndex(of: item) else {
+      return (NSOutlineViewDropOnItemIndex, true)
+    }
+    return (wsIdx + 1, true)
+  }
+
+  private func containingWorkspaceIndex(of item: Any?) -> Int? {
+    if let ws = item as? WorklaneWorkspaceNode { return ws.index }
+    if let column = item as? WorklaneColumnNode {
+      return column.workspaceNode?.index
+    }
+    if let pane = item as? WorklanePaneNode {
+      return pane.workspaceNode?.index
+    }
+    return nil
+  }
+
+  private func draggedWorkspaceId(from info: NSDraggingInfo) -> ULID? {
+    guard let items = info.draggingPasteboard.pasteboardItems else { return nil }
+    for item in items {
+      guard let raw = item.string(forType: Self.workspaceDragType)
+      else { continue }
+      // ULID's `init(_:)` doesn't validate, so check the canonical
+      // 26-char Crockford-Base32 length up front. The full
+      // alphabet check is implicit in the live-id filter below
+      // (no live workspace can have an off-spec id) but the
+      // length cheap-rejects bogus payloads and the warning makes
+      // a future foreign-source bug obvious in Console.app.
+      guard raw.count == 26 else {
+        logger.warning(
+          "[worklane/drag] reject ULID payload of length \(raw.count, privacy: .public)")
+        continue
+      }
+      let id = ULID(raw)
+      if workspaceNodes.contains(where: { $0.id == id }) {
+        return id
+      }
+    }
+    return nil
+  }
 }
 
 // MARK: - NSOutlineViewDelegate
@@ -684,6 +897,20 @@ extension WorklaneSectionView: NSOutlineViewDelegate {
 
   func outlineView(_: NSOutlineView, rowViewForItem _: Any) -> NSTableRowView? {
     WorklaneRowView()
+  }
+
+  func outlineView(_: NSOutlineView, shouldExpandItem _: Any) -> Bool {
+    // Reject spring-loaded auto-expansion during a drag session.
+    // The user is reordering workspaces, not drilling into them —
+    // silently flipping their collapse state on a drag-hover would
+    // surprise on completion and also fires our didExpand
+    // notification, which would write the change to session.json.
+    // The post-drop reload calls `expandItem` from our own
+    // bookkeeping path, which the `isApplyingPersistedCollapse`
+    // flag lets through: `draggingSession:endedAt:` fires after
+    // `acceptDrop`, so the reload happens with `isDragging` still
+    // true.
+    isApplyingPersistedCollapse || !isDragging
   }
 
   func outlineView(
