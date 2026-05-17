@@ -323,6 +323,9 @@ final class SidebarViewController: NSViewController {
         onMovePaneToWorkspace: { [weak container] paneId, wsId, position in
           container?.movePane(paneId, toWorkspaceId: wsId, position: position)
         },
+        onMovePaneToColumn: { [weak container] paneId, columnId, position in
+          container?.movePane(paneId, toColumnId: columnId, position: position)
+        },
         onCrossPrivateBoundaryAttempt: { [weak container] in
           container?.showCrossPrivateBoundaryToast()
         }

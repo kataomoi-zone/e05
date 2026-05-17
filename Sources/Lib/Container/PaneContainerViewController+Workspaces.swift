@@ -416,8 +416,7 @@ extension PaneContainerViewController {
   ) {
     logger.info("movePane(paneId:toWorkspaceId) entry")
     guard let loc = locatePane(id: paneId),
-      let target = workspaces.firstIndex(where: { $0.id == targetId }),
-      target != loc.workspaceIndex
+      let target = workspaces.firstIndex(where: { $0.id == targetId })
     else {
       logger.debug("movePane(paneId:) guard failed")
       return
@@ -441,7 +440,6 @@ extension PaneContainerViewController {
   public func movePane(toWorkspaceId id: ULID, position: Int? = nil) {
     logger.info("movePane(toWorkspaceId) entry: focused=\(self.focusedWorkspaceIndex)")
     guard let target = workspaces.firstIndex(where: { $0.id == id }),
-      target != focusedWorkspaceIndex,
       let column = columns[safe: focusedColumnIndex],
       let pane = column.focusedPane,
       let paneIndex = column.panes.firstIndex(where: { $0.id == pane.id })
@@ -519,6 +517,8 @@ extension PaneContainerViewController {
 
     var adjustedTarget = target
     var sourceDestroyed = false
+    let isSameWs = sourceIndex == target
+    let sourceColumnWasRemoved = column.panes.isEmpty
 
     if column.panes.isEmpty {
       // Source column empty → remove it (propagate to workspace removal)
@@ -526,10 +526,18 @@ extension PaneContainerViewController {
       sourceWs.columns.removeAll { $0 === column }
 
       if sourceWs.columns.isEmpty {
-        workspaces.remove(at: sourceIndex)
-        workspaceVCs.remove(at: sourceIndex)
-        sourceDestroyed = true
-        if adjustedTarget > sourceIndex { adjustedTarget -= 1 }
+        if isSameWs {
+          // Same-workspace move drained the workspace's only
+          // column. The new column we're about to insert keeps the
+          // workspace alive — tearing it down here and recreating
+          // would lose the array slot, so leave the workspace in
+          // place with `columns == []` until the insert reseeds it.
+        } else {
+          workspaces.remove(at: sourceIndex)
+          workspaceVCs.remove(at: sourceIndex)
+          sourceDestroyed = true
+          if adjustedTarget > sourceIndex { adjustedTarget -= 1 }
+        }
       } else {
         sourceWs.focusedColumnIndex = min(sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
         // Rebuild source VC's stackView to drop the removed column's handle.
@@ -556,17 +564,36 @@ extension PaneContainerViewController {
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]
-    let insertIndex = min(max(position ?? targetWs.columns.count, 0), targetWs.columns.count)
+    // Same-workspace splits where source column collapsed shrink
+    // the target columns array on the same axis the drop position
+    // refers to: AppKit gave us a child index computed against the
+    // pre-remove array, so a drop landing to the right of the
+    // departing column slot has to shift left by one to keep
+    // pointing at the same visual gap.
+    let adjustedPosition: Int?
+    if isSameWs, sourceColumnWasRemoved, let rawPos = position,
+      sourceColumnIndex < rawPos
+    {
+      adjustedPosition = rawPos - 1
+    } else {
+      adjustedPosition = position
+    }
+    let insertIndex = min(
+      max(adjustedPosition ?? targetWs.columns.count, 0),
+      targetWs.columns.count)
     targetWs.columns.insert(newColumn, at: insertIndex)
     targetWs.focusedColumnIndex = insertIndex
 
     rebuildStackView(in: targetVC)
 
-    let toastLabel = "Move Pane to Workspace \(adjustedTarget + 1)"
-    if sourceIndex == focusedWorkspaceIndex {
-      // Source was the currently visible workspace — run the same
-      // slide animation that the palette / IPC `Move Pane` action
-      // uses, and shift focus over to the new pane.
+    let toastLabel =
+      isSameWs
+      ? "Move Pane"
+      : "Move Pane to Workspace \(adjustedTarget + 1)"
+    if sourceIndex == focusedWorkspaceIndex, !isSameWs {
+      // Cross-workspace move from the currently visible workspace —
+      // run the slide animation that palette / IPC `Move Pane`
+      // actions use, then shift focus over to the new pane.
       focusedWorkspaceIndex = adjustedTarget
       restoreScroll(in: currentWorkspace)
       showToast(toastLabel)
@@ -581,6 +608,17 @@ extension PaneContainerViewController {
           sourceVC.removeFromParent()
         }
         self.setFocus(columnIndex: insertIndex, paneIndex: 0)
+      }
+    } else if isSameWs {
+      // Same-workspace move (in-place column split). No slide:
+      // source and target VCs are the same view, and the user's
+      // viewport isn't switching workspaces. Re-focus on the new
+      // column so the moved pane stays the active surface.
+      showToast(toastLabel)
+      if sourceIndex == focusedWorkspaceIndex {
+        setFocus(columnIndex: insertIndex, paneIndex: 0)
+      } else {
+        notifySidebarWorklaneDidChange()
       }
     } else {
       // Source was off-screen (sidebar drag from a background
@@ -612,6 +650,270 @@ extension PaneContainerViewController {
         notifySidebarWorklaneDidChange()
       }
       showToast(toastLabel)
+    }
+  }
+
+  // MARK: - Move pane into a specific column
+
+  /// Move a pane into the column identified by `targetColumnId`.
+  /// Covers three drop shapes the worklane drag-drop path resolves
+  /// the same way: in-column reorder (source column == target
+  /// column), cross-column move within the same workspace, and
+  /// cross-workspace column merge. `position` is the pane index
+  /// inside the target column where the moved pane should land
+  /// (`nil` = append at the trailing edge).
+  ///
+  /// Private boundary applies the same way as the workspace-level
+  /// variant — moves whose source and target workspaces disagree on
+  /// `isPrivate` are rejected with the shared toast, since the
+  /// pane's `WKWebsiteDataStore` is bound at construction time and
+  /// can't switch profiles mid-flight.
+  public func movePane(
+    _ paneId: ULID, toColumnId targetColumnId: ULID, position: Int? = nil
+  ) {
+    logger.info("movePane(paneId:toColumnId) entry")
+    guard let loc = locatePane(id: paneId) else {
+      logger.debug("movePane(toColumnId:) guard failed: pane not found")
+      return
+    }
+    var targetWsIdx: Int?
+    var targetColIdx: Int?
+    for (wsIdx, ws) in workspaces.enumerated() {
+      if let colIdx = ws.columns.firstIndex(where: { $0.id == targetColumnId }) {
+        targetWsIdx = wsIdx
+        targetColIdx = colIdx
+        break
+      }
+    }
+    guard let targetWsIdx, let targetColIdx else {
+      logger.debug("movePane(toColumnId:) guard failed: target column not found")
+      return
+    }
+
+    let sourceWs = workspaces[loc.workspaceIndex]
+    let sourceColumn = sourceWs.columns[loc.columnIndex]
+    let pane = sourceColumn.panes[loc.paneIndex]
+    let targetWs = workspaces[targetWsIdx]
+    let targetColumn = targetWs.columns[targetColIdx]
+
+    if sourceColumn === targetColumn {
+      reorderPaneWithinColumn(
+        pane: pane, column: sourceColumn,
+        sourceWsIndex: loc.workspaceIndex,
+        sourceColumnIndex: loc.columnIndex,
+        sourcePaneIndex: loc.paneIndex,
+        position: position)
+      return
+    }
+
+    mergePaneIntoColumn(
+      pane: pane,
+      sourceWs: sourceWs, sourceWsIndex: loc.workspaceIndex,
+      sourceColumn: sourceColumn, sourceColumnIndex: loc.columnIndex,
+      sourcePaneIndex: loc.paneIndex,
+      targetWs: targetWs, targetWsIndex: targetWsIdx,
+      targetColumn: targetColumn, targetColumnIndex: targetColIdx,
+      position: position)
+  }
+
+  /// In-column reorder branch of `movePane(_:toColumnId:position:)`.
+  /// `position` is the post-insert pane index the caller wants the
+  /// moved pane to land at; the actual array op happens
+  /// remove-then-insert, so we shift the index by one when the
+  /// source sits before the target slot.
+  private func reorderPaneWithinColumn(
+    pane: PaneModel, column: ColumnModel,
+    sourceWsIndex: Int, sourceColumnIndex: Int,
+    sourcePaneIndex: Int, position: Int?
+  ) {
+    let oldIdx = sourcePaneIndex
+    let rawPosition = position ?? column.panes.count
+    let adjusted = oldIdx < rawPosition ? rawPosition - 1 : rawPosition
+    let clamped = min(max(adjusted, 0), column.panes.count - 1)
+    if clamped == oldIdx {
+      // Drag callers route through `isNoOpAction` first, so a same-
+      // slot drop here implies a palette / IPC caller passed a
+      // position that resolves to the source's own index — likely a
+      // bug worth catching in Console.
+      logger.warning(
+        "[workspaces/move] reorderPaneWithinColumn no-op same-position drop")
+      return
+    }
+    // Dismiss find / URL bar suggestion popovers before the column
+    // rebuild. The pane stays attached but pane frames slide, and a
+    // popover anchored to the old slot would otherwise hover at a
+    // stale screen position.
+    if sourceWsIndex == focusedWorkspaceIndex {
+      dismissAllFindSessions(in: workspaces[sourceWsIndex])
+      focusedPane?.urlBar.dismissSuggestionDropdown()
+    }
+    column.panes.remove(at: oldIdx)
+    column.panes.insert(pane, at: clamped)
+    column.focusedPaneIndex = clamped
+    rebuildColumnView(column: column)
+    if sourceWsIndex == focusedWorkspaceIndex {
+      setFocus(columnIndex: sourceColumnIndex, paneIndex: clamped, scroll: false)
+    }
+    showToast("Move Pane")
+    notifySidebarWorklaneDidChange()
+  }
+
+  /// Cross-column branch of `movePane(_:toColumnId:position:)`.
+  /// Handles same-workspace column merge and cross-workspace
+  /// column merge identically; the only diverging behaviour is the
+  /// toast wording and whether the source workspace tears down
+  /// when it's left empty.
+  private func mergePaneIntoColumn(
+    pane: PaneModel,
+    sourceWs: WorkspaceModel, sourceWsIndex: Int,
+    sourceColumn: ColumnModel, sourceColumnIndex: Int,
+    sourcePaneIndex: Int,
+    targetWs: WorkspaceModel, targetWsIndex: Int,
+    targetColumn _: ColumnModel, targetColumnIndex: Int,
+    position: Int?
+  ) {
+    // Cross-private boundary guard — matches the diagnostic shape
+    // `performCrossWorkspaceMove` emits so source / target flags
+    // are readable side-by-side in Console.app.
+    if sourceWs.isPrivate != targetWs.isPrivate {
+      logger.error(
+        "movePane(toColumnId:) blocked: cross-private-boundary move (source=\(sourceWs.isPrivate ? "private" : "public", privacy: .public), target=\(targetWs.isPrivate ? "private" : "public", privacy: .public))")
+      showCrossPrivateBoundaryToast()
+      return
+    }
+
+    let sourceVC = workspaceVCs[sourceWsIndex]
+    // Snapshot the "source was visible at drop time" flag before
+    // any array mutation shifts indices around. Later branches use
+    // this to decide whether the user needs a slide animation: a
+    // background-source drop keeps the viewport still, while a
+    // current-source drop has to travel to the target workspace.
+    let sourceWasCurrent = sourceWsIndex == focusedWorkspaceIndex
+    if sourceWasCurrent {
+      dismissAllFindSessions(in: sourceWs)
+      focusedPane?.urlBar.dismissSuggestionDropdown()
+      sourceWs.scrollX =
+        sourceVC.scrollView.contentView.bounds.origin.x
+        - hoverPeekScrollCompensation
+    }
+    preserveSurfaces(in: sourceWs)
+    if targetWs.id != sourceWs.id {
+      preserveSurfaces(in: targetWs)
+    }
+    clearAllFocusBorders(in: sourceWs)
+    if targetWs.id != sourceWs.id {
+      clearAllFocusBorders(in: targetWs)
+    }
+
+    // Snapshot the focused workspace's identity so any source-side
+    // cleanup that shifts array indices doesn't leave the focus
+    // pointing at the wrong workspace.
+    let focusedWsId = workspaces[safe: focusedWorkspaceIndex]?.id
+
+    // 1. Detach pane from source column.
+    clearFocusBorder(pane)
+    pane.containerView.removeFromSuperview()
+    sourceColumn.panes.remove(at: sourcePaneIndex)
+
+    var adjustedTargetWsIdx = targetWsIndex
+    var adjustedTargetColIdx = targetColumnIndex
+    var sourceWsDestroyed = false
+
+    if sourceColumn.panes.isEmpty {
+      sourceColumn.containerView.removeFromSuperview()
+      sourceWs.columns.removeAll { $0 === sourceColumn }
+      // If target column lived in the same workspace and at a
+      // higher index than the just-removed source column, the
+      // target's array slot shifted left by one.
+      if targetWs.id == sourceWs.id, sourceColumnIndex < adjustedTargetColIdx {
+        adjustedTargetColIdx -= 1
+      }
+      if sourceWs.columns.isEmpty {
+        workspaces.remove(at: sourceWsIndex)
+        workspaceVCs.remove(at: sourceWsIndex)
+        sourceWsDestroyed = true
+        if adjustedTargetWsIdx > sourceWsIndex {
+          adjustedTargetWsIdx -= 1
+        }
+      } else {
+        sourceWs.focusedColumnIndex = min(
+          sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
+        rebuildStackView(in: sourceVC)
+      }
+    } else {
+      sourceColumn.focusedPaneIndex = min(
+        sourcePaneIndex, sourceColumn.panes.count - 1)
+      rebuildColumnView(column: sourceColumn)
+    }
+
+    // 2. Insert pane into target column. The moved pane's
+    // `containerView` keeps its leading/trailing constraints intact
+    // through `removeFromSuperview` because they reference the
+    // column's superview anchors — `rebuildColumnView` rebinds them
+    // to the new column's stackView when it re-inserts the pane.
+    let liveTargetWs = workspaces[adjustedTargetWsIdx]
+    let liveTargetColumn = liveTargetWs.columns[adjustedTargetColIdx]
+    let insertIndex = min(
+      max(position ?? liveTargetColumn.panes.count, 0),
+      liveTargetColumn.panes.count)
+    liveTargetColumn.panes.insert(pane, at: insertIndex)
+    liveTargetColumn.focusedPaneIndex = insertIndex
+    rebuildColumnView(column: liveTargetColumn)
+
+    // 3. Re-resolve the focused workspace's index after any array
+    // mutations and shift focus to the moved pane when the target
+    // workspace is current.
+    if let focusedWsId,
+      let liveIdx = workspaces.firstIndex(where: { $0.id == focusedWsId })
+    {
+      focusedWorkspaceIndex = liveIdx
+    } else {
+      // The previously focused workspace was destroyed (only path:
+      // source was current and source ws collapsed to empty).
+      focusedWorkspaceIndex = adjustedTargetWsIdx
+    }
+
+    let isCrossWs = targetWs.id != sourceWs.id
+    let toastLabel =
+      isCrossWs
+      ? "Move Pane to Workspace \(adjustedTargetWsIdx + 1)"
+      : "Move Pane"
+
+    let targetVC = workspaceVCs[adjustedTargetWsIdx]
+    if isCrossWs, sourceWasCurrent {
+      // Cross-workspace merge that originated from the visible
+      // workspace. Without a slide here the source VC's view
+      // would already be off-screen (or detached) while the
+      // target VC is still `isHidden = true` — Phase 3's
+      // new-column path goes through `animateSlide` for exactly
+      // this reason. Reuse the same animation so the user's
+      // viewport visibly travels to the destination workspace,
+      // and defer the VC tear-down to the completion handler so
+      // the from-side stays paintable for the duration.
+      restoreScroll(in: currentWorkspace)
+      showToast(toastLabel)
+      let slidingUp = targetWsIndex > sourceWsIndex
+      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) {
+        [weak self] in
+        guard let self else { return }
+        if sourceWsDestroyed {
+          sourceVC.view.removeFromSuperview()
+          sourceVC.removeFromParent()
+        }
+        self.setFocus(columnIndex: adjustedTargetColIdx, paneIndex: insertIndex)
+      }
+      return
+    }
+
+    if sourceWsDestroyed {
+      sourceVC.view.removeFromSuperview()
+      sourceVC.removeFromParent()
+    }
+    showToast(toastLabel)
+    if adjustedTargetWsIdx == focusedWorkspaceIndex {
+      setFocus(columnIndex: adjustedTargetColIdx, paneIndex: insertIndex)
+    } else {
+      notifySidebarWorklaneDidChange()
     }
   }
 
