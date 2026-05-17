@@ -350,6 +350,7 @@ extension PaneContainerViewController {
     if index < focusedWorkspaceIndex {
       focusedWorkspaceIndex -= 1
     }
+    showToast("Close Workspace")
     notifySidebarWorklaneDidChange()
   }
 

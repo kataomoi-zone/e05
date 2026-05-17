@@ -848,10 +848,15 @@ extension PaneContainerViewController {
     layer.add(animation, forKey: "paneLayerSwap")
   }
 
-  func removePane(columnIndex: Int, paneIndex: Int) {
+  /// Returns `true` when the removal cascaded into a workspace
+  /// close (last pane → empty column → empty workspace), so callers
+  /// can skip a follow-up pane-level toast in favour of the
+  /// workspace-level one that the cascade has already surfaced.
+  @discardableResult
+  func removePane(columnIndex: Int, paneIndex: Int, silent: Bool = false) -> Bool {
     guard let column = columns[safe: columnIndex],
       column.panes.indices.contains(paneIndex)
-    else { return }
+    else { return false }
 
     let pane = column.panes.remove(at: paneIndex)
     // The pane is being torn out of the view tree; dismiss its
@@ -880,7 +885,13 @@ extension PaneContainerViewController {
     pane.terminalView?.keepSurfaceAlive = true
 
     if wasOnlyPane {
-      animateRemoveColumn(column, at: columnIndex, pane: pane)
+      if animateRemoveColumn(column, at: columnIndex, pane: pane) {
+        // Cascaded into `closeCurrentWorkspace`, which surfaced its
+        // own toast and flushed the recently-closed stash. Adding
+        // either here would either double-toast the same gesture or
+        // leak a stash entry that the cascade just cleared.
+        return true
+      }
     } else {
       animateRemovePaneFromColumn(
         column, at: columnIndex, paneIndex: paneIndex, pane: pane)
@@ -897,7 +908,10 @@ extension PaneContainerViewController {
       pane, in: currentWorkspace,
       columnIndex: columnIndex, paneIndex: paneIndex,
       columnWidth: columnWidth, wasOnlyPaneInColumn: wasOnlyPane)
-    showToast("Close Pane")
+    if !silent {
+      showToast("Close Pane")
+    }
+    return false
   }
 
   /// Remove the column immediately but tween the remaining columns
@@ -908,7 +922,12 @@ extension PaneContainerViewController {
   /// position to the new one computed by `rebuildStackView`. Follows
   /// the same idiom as `animateSlide` in
   /// ``PaneContainerViewController+Workspaces``.
-  private func animateRemoveColumn(_ column: ColumnModel, at columnIndex: Int, pane: PaneModel) {
+  /// Returns `true` when the column removal emptied the workspace
+  /// and `closeCurrentWorkspace` was invoked as a cascade.
+  private func animateRemoveColumn(
+    _ column: ColumnModel, at columnIndex: Int, pane: PaneModel
+  ) -> Bool {
+    var cascadedToWorkspaceClose = false
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = Self.paneAnimationDuration
       ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -923,6 +942,7 @@ extension PaneContainerViewController {
         // supported: closeCurrentWorkspace flushes the undo stack).
         pane.terminalView?.keepSurfaceAlive = false
         for v in stackView.arrangedSubviews { v.removeFromSuperview() }
+        cascadedToWorkspaceClose = true
         closeCurrentWorkspace()
         return
       }
@@ -931,7 +951,7 @@ extension PaneContainerViewController {
       view.layoutSubtreeIfNeeded()
     }
 
-    if !columns.isEmpty {
+    if !cascadedToWorkspaceClose {
       // Focus move is deliberately outside the animation group:
       // `setFocus` invokes `scrollToColumn`, which runs its own
       // animation context, and letting the two overlap produces
@@ -939,6 +959,7 @@ extension PaneContainerViewController {
       let newColIndex = min(columnIndex, columns.count - 1)
       setFocus(columnIndex: newColIndex, paneIndex: 0)
     }
+    return cascadedToWorkspaceClose
   }
 
   /// Column-internal removal: detach the leaving pane and snap
@@ -1200,14 +1221,21 @@ extension PaneContainerViewController {
     }
   }
 
-  private func performBackgroundOrCurrentClose(at loc: PaneLocation) {
+  /// Returns `true` when the close cascaded into a workspace
+  /// removal (see `removePane` / `removePaneInBackgroundWorkspace`).
+  @discardableResult
+  private func performBackgroundOrCurrentClose(
+    at loc: PaneLocation, silent: Bool = false
+  ) -> Bool {
     if loc.workspaceIndex == focusedWorkspaceIndex {
-      removePane(columnIndex: loc.columnIndex, paneIndex: loc.paneIndex)
+      return removePane(
+        columnIndex: loc.columnIndex, paneIndex: loc.paneIndex, silent: silent)
     } else {
-      removePaneInBackgroundWorkspace(
+      return removePaneInBackgroundWorkspace(
         wsIndex: loc.workspaceIndex,
         columnIndex: loc.columnIndex,
-        paneIndex: loc.paneIndex)
+        paneIndex: loc.paneIndex,
+        silent: silent)
     }
   }
 
@@ -1244,13 +1272,28 @@ extension PaneContainerViewController {
         return
       }
       let paneIds = liveColumn.panes.map(\.id)
+      let count = paneIds.count
+      guard count > 0 else { return }
       // Re-resolve each pane by id inside the iteration: earlier
       // removals shift column indices, but ids are stable so
       // `locatePane` continues to land on the right slot until the
       // last pane's removal cascades into column / workspace cleanup.
+      // Silent per-pane closes so a single user gesture produces one
+      // toast rather than N stacked "Close Pane" lines.
+      var cascadedToWorkspaceClose = false
       for paneId in paneIds {
         guard let loc = self.locatePane(id: paneId) else { continue }
-        self.performBackgroundOrCurrentClose(at: loc)
+        if self.performBackgroundOrCurrentClose(at: loc, silent: true) {
+          // The final pane's removal cascaded into a workspace
+          // close, which has already shown "Close Workspace".
+          // Skip the bulk pane toast so the user sees one
+          // workspace-level notification rather than two stacked.
+          cascadedToWorkspaceClose = true
+          break
+        }
+      }
+      if !cascadedToWorkspaceClose {
+        self.showToast(count > 1 ? "Close \(count) Panes" : "Close Pane")
       }
     }
 
@@ -1390,15 +1433,18 @@ extension PaneContainerViewController {
   /// `flushRecentlyClosed(in:)` on the way out, releasing any *other*
   /// stash entries that were captured while this workspace was
   /// previously current.
+  /// Returns `true` when the removal cascaded into a workspace
+  /// close; mirrors the contract of `removePane`.
+  @discardableResult
   private func removePaneInBackgroundWorkspace(
-    wsIndex: Int, columnIndex: Int, paneIndex: Int
-  ) {
-    guard workspaces.indices.contains(wsIndex) else { return }
+    wsIndex: Int, columnIndex: Int, paneIndex: Int, silent: Bool = false
+  ) -> Bool {
+    guard workspaces.indices.contains(wsIndex) else { return false }
     let ws = workspaces[wsIndex]
     let vc = workspaceVCs[wsIndex]
     guard ws.columns.indices.contains(columnIndex),
       ws.columns[columnIndex].panes.indices.contains(paneIndex)
-    else { return }
+    else { return false }
 
     let column = ws.columns[columnIndex]
     let pane = column.panes.remove(at: paneIndex)
@@ -1415,10 +1461,11 @@ extension PaneContainerViewController {
       column.containerView.removeFromSuperview()
       if ws.columns.isEmpty {
         // Last pane in last column → workspace itself is empty;
-        // tear it down through the same path the × on the workspace
-        // header would take.
+        // tear it down through the workspace-close path. The
+        // cascade surfaces its own toast, so propagate that fact
+        // upward and let the caller skip the pane-level toast.
         closeWorkspace(at: wsIndex)
-        return
+        return true
       }
       ws.focusedColumnIndex = min(columnIndex, ws.columns.count - 1)
       rebuildStackView(in: vc)
@@ -1426,7 +1473,11 @@ extension PaneContainerViewController {
       column.focusedPaneIndex = min(paneIndex, column.panes.count - 1)
       rebuildColumnView(column: column)
     }
+    if !silent {
+      showToast("Close Pane")
+    }
     notifySidebarWorklaneDidChange()
+    return false
   }
 
   /// Close the focused pane. Shows a confirmation dialog if a process is running.
