@@ -319,6 +319,12 @@ final class SidebarViewController: NSViewController {
         },
         onReorderWorkspaces: { [weak container] orderedIds in
           container?.reorderWorkspaces(orderedIds: orderedIds)
+        },
+        onMovePaneToWorkspace: { [weak container] paneId, wsId, position in
+          container?.movePane(paneId, toWorkspaceId: wsId, position: position)
+        },
+        onCrossPrivateBoundaryAttempt: { [weak container] in
+          container?.showCrossPrivateBoundaryToast()
         }
       ))
   }

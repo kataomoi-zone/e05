@@ -118,10 +118,18 @@ final class WorklaneSectionView: NSView {
   /// Pasteboard type for a workspace row dragged inside the
   /// worklane. App-scoped so a stray drag from another `.string`
   /// source doesn't trip the validate path; the payload is the
-  /// workspace's ULID string. Pane / column drag will land on
-  /// distinct types later so validateDrop can branch on item kind.
+  /// workspace's ULID string.
   fileprivate static let workspaceDragType = NSPasteboard.PasteboardType(
     "com.kawarimidoll.e05.worklane.workspace")
+
+  /// Pasteboard type for a pane row dragged inside the worklane.
+  /// Cross-workspace drag only — same-workspace reorder is not
+  /// supported yet because the worklane's column dimension would
+  /// need column-aware drop semantics (insert into column vs new
+  /// column adjacent to it) that aren't fleshed out. Payload is
+  /// the pane's ULID string.
+  fileprivate static let paneDragType = NSPasteboard.PasteboardType(
+    "com.kawarimidoll.e05.worklane.pane")
 
   private let scrollView = NSScrollView()
   private let outlineView = NSOutlineView()
@@ -180,6 +188,12 @@ final class WorklaneSectionView: NSView {
   /// restore the highlight the willBeginAt path cleared.
   private var didCommitReorderInLastDrag = false
 
+  /// True once the current drag session has surfaced the
+  /// cross-private-boundary toast. `validateDrop` fires for every
+  /// cursor move, so the flag de-duplicates the notification down
+  /// to one toast per drag.
+  private var didNotifyPrivateBoundaryInLastDrag = false
+
   /// Snapshot of the previous reload's tree shape, used to compute
   /// the structural diff against the new input. `nil` before the
   /// first reload — the bootstrap reload uses `reloadData` since
@@ -232,7 +246,8 @@ final class WorklaneSectionView: NSView {
     outlineView.floatsGroupRows = false
     outlineView.dataSource = self
     outlineView.delegate = self
-    outlineView.registerForDraggedTypes([Self.workspaceDragType])
+    outlineView.registerForDraggedTypes(
+      [Self.workspaceDragType, Self.paneDragType])
     // Internal-only drag: dragging a workspace row out of the app
     // shouldn't synthesise anything for external receivers, and the
     // local-only mask makes the source check in `acceptDrop`
@@ -293,6 +308,22 @@ final class WorklaneSectionView: NSView {
     /// rewrites `workspaces` / `workspaceVCs` in parallel and
     /// keeps `focusedWorkspaceIndex` pointing at the same identity.
     let onReorderWorkspaces: ([ULID]) -> Void
+    /// Commit a cross-workspace pane move. `position` is the
+    /// column index in the target workspace where the moved pane
+    /// should land as a new single-pane column (`nil` = append at
+    /// the trailing edge). Same-workspace moves are rejected at
+    /// `validateDrop` and never reach this closure (Phase 4
+    /// territory).
+    let onMovePaneToWorkspace: (
+      _ paneId: ULID, _ workspaceId: ULID, _ position: Int?
+    ) -> Void
+    /// Fired once per drag session when the user hovers a pane
+    /// over a workspace whose private flag differs from the
+    /// source's. The container surfaces a toast explaining the
+    /// rejection — `validateDrop` itself returns `[]` (no
+    /// indicator), so the toast is the only feedback the user
+    /// gets about why their drop won't land.
+    let onCrossPrivateBoundaryAttempt: () -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -733,6 +764,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
   ) {
     isDragging = true
     didCommitReorderInLastDrag = false
+    didNotifyPrivateBoundaryInLastDrag = false
     // Clear the focused-pane selection for the duration of the
     // drag. AppKit's drop indicator composes on top of the
     // selection highlight layer, and the overlap renders as a
@@ -761,19 +793,58 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
   func outlineView(
     _: NSOutlineView, pasteboardWriterForItem item: Any
   ) -> NSPasteboardWriting? {
-    // Phase 2 only drags workspaces. Pane / column rows aren't
-    // draggable yet — returning nil cancels the drag for those.
-    guard let ws = item as? WorklaneWorkspaceNode else { return nil }
     let pb = NSPasteboardItem()
-    pb.setString(ws.id.string, forType: Self.workspaceDragType)
-    return pb
+    if let ws = item as? WorklaneWorkspaceNode {
+      pb.setString(ws.id.string, forType: Self.workspaceDragType)
+      return pb
+    }
+    if let pane = item as? WorklanePaneNode {
+      pb.setString(pane.id.string, forType: Self.paneDragType)
+      return pb
+    }
+    // Column wrapper rows aren't draggable yet — pane / workspace
+    // are the two units we support reordering for. Returning nil
+    // cancels the drag for everything else.
+    return nil
   }
 
   func outlineView(
     _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo,
     proposedItem item: Any?, proposedChildIndex index: Int
   ) -> NSDragOperation {
-    guard draggedWorkspaceId(from: info) != nil else { return [] }
+    if let workspaceDrag = validateWorkspaceDrop(
+      info: info, outlineView: outlineView, item: item, index: index)
+    {
+      return workspaceDrag
+    }
+    if let paneDrag = validatePaneDrop(
+      info: info, outlineView: outlineView, item: item, index: index)
+    {
+      return paneDrag
+    }
+    return []
+  }
+
+  func outlineView(
+    _: NSOutlineView, acceptDrop info: NSDraggingInfo,
+    item: Any?, childIndex: Int
+  ) -> Bool {
+    if draggedWorkspaceId(from: info) != nil {
+      return acceptWorkspaceDrop(info: info, item: item, childIndex: childIndex)
+    }
+    if draggedPaneId(from: info) != nil {
+      return acceptPaneDrop(info: info, item: item, childIndex: childIndex)
+    }
+    return false
+  }
+
+  // MARK: Workspace drag
+
+  private func validateWorkspaceDrop(
+    info: NSDraggingInfo, outlineView: NSOutlineView,
+    item: Any?, index: Int
+  ) -> NSDragOperation? {
+    guard draggedWorkspaceId(from: info) != nil else { return nil }
     let retarget = retargetToRootGap(item: item, childIndex: index)
     guard retarget.index != NSOutlineViewDropOnItemIndex else { return [] }
     // Tell AppKit about the retarget so the gap indicator lands
@@ -790,13 +861,20 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     return .move
   }
 
-  func outlineView(
-    _: NSOutlineView, acceptDrop info: NSDraggingInfo,
-    item: Any?, childIndex: Int
+  private func acceptWorkspaceDrop(
+    info: NSDraggingInfo, item: Any?, childIndex: Int
   ) -> Bool {
     guard let input = lastInput,
       let draggedId = draggedWorkspaceId(from: info)
-    else { return false }
+    else {
+      logger.warning(
+        """
+        [worklane/drag] workspace drop guard failed \
+        item=\(String(describing: item), privacy: .public) \
+        childIndex=\(childIndex, privacy: .public)
+        """)
+      return false
+    }
     // Re-run the retarget so a drop landed via the cell area inside
     // an expanded workspace still maps to a root-level insertion.
     // `validateDrop` already calls `setDropItem`, so AppKit should
@@ -833,6 +911,117 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     return true
   }
 
+  // MARK: Pane drag (cross-workspace only)
+
+  private func validatePaneDrop(
+    info: NSDraggingInfo, outlineView: NSOutlineView,
+    item: Any?, index: Int
+  ) -> NSDragOperation? {
+    guard let paneId = draggedPaneId(from: info),
+      let sourceWsNode = nodesByPaneId[paneId]?.workspaceNode,
+      let target = paneDropTarget(item: item, childIndex: index),
+      target.workspaceId != sourceWsNode.id,
+      let targetWsNode = nodesByWorkspaceId[target.workspaceId]
+    else { return nil }
+    // Cross-private-boundary block at validateDrop: returning []
+    // skips the gap indicator entirely, signalling the rejection
+    // visually. AppKit's "no drop" cursor isn't reachable through
+    // public API, so back the signal up with a one-shot toast
+    // (the container holds the alert; we just kick the closure
+    // once per drag session).
+    if sourceWsNode.model.isPrivate != targetWsNode.model.isPrivate {
+      if !didNotifyPrivateBoundaryInLastDrag,
+        let input = lastInput
+      {
+        didNotifyPrivateBoundaryInLastDrag = true
+        input.onCrossPrivateBoundaryAttempt()
+      }
+      return []
+    }
+    // Every cross-workspace drop commits a new column at the
+    // workspace's top level (column-merge / in-column insert is
+    // out of scope for the worklane's current drag model), so
+    // retarget any sub-row hit (column wrapper / pane inside a
+    // column / workspace direct child pane) to the workspace's
+    // top level at the resolved insertion index. Gives the user a
+    // clear "this will land as a new column between these two
+    // siblings" feedback line.
+    outlineView.setDropItem(targetWsNode, dropChildIndex: target.position)
+    return .move
+  }
+
+  private func acceptPaneDrop(
+    info: NSDraggingInfo, item: Any?, childIndex: Int
+  ) -> Bool {
+    guard let input = lastInput,
+      let paneId = draggedPaneId(from: info),
+      let sourceWsId = nodesByPaneId[paneId]?.workspaceNode?.id,
+      let target = paneDropTarget(item: item, childIndex: childIndex),
+      target.workspaceId != sourceWsId
+    else {
+      logger.warning(
+        """
+        [worklane/drag] pane drop guard failed \
+        item=\(String(describing: item), privacy: .public) \
+        childIndex=\(childIndex, privacy: .public)
+        """)
+      return false
+    }
+    input.onMovePaneToWorkspace(paneId, target.workspaceId, target.position)
+    didCommitReorderInLastDrag = true
+    return true
+  }
+
+  /// Resolve where a pane drop should land. Returns the target
+  /// workspace id and a column-index hint for the new single-pane
+  /// column. Root-level drops (between workspaces) are rejected —
+  /// the user must aim at a workspace's header, one of its
+  /// columns, or one of its panes to indicate which workspace
+  /// owns the move.
+  private func paneDropTarget(
+    item: Any?, childIndex: Int
+  ) -> (workspaceId: ULID, position: Int)? {
+    guard let item else { return nil }
+    if let ws = item as? WorklaneWorkspaceNode {
+      // Drop directly on the workspace header (childIndex == -1):
+      // insert at the leading edge so the moved pane lands as the
+      // workspace's first column. Reads more naturally than the
+      // trailing-edge default, where dropping on a workspace title
+      // would silently put the pane at the far right of an
+      // existing chain.
+      //
+      // Drop between top-level children (childIndex >= 0): the
+      // worklane's top-level child count matches
+      // `workspaces.columns.count` (single-pane columns surface
+      // their pane directly, multi-pane columns surface their
+      // `WorklaneColumnNode`), so the index passes through unchanged.
+      if childIndex == NSOutlineViewDropOnItemIndex {
+        return (ws.id, 0)
+      }
+      return (ws.id, childIndex)
+    }
+    // Column / inner-pane drop: land the new column right after
+    // the containing column. The drop location inside the column
+    // wrapper (`childIndex == 0` would suggest "before") is
+    // intentionally collapsed to "+1" for now; revisit if we ever
+    // want a "before this column" variant.
+    if let column = item as? WorklaneColumnNode,
+      let wsNode = column.workspaceNode,
+      let columnIdx = wsNode.model.columns.firstIndex(where: { $0.id == column.id })
+    {
+      return (wsNode.id, columnIdx + 1)
+    }
+    if let pane = item as? WorklanePaneNode,
+      let wsNode = pane.workspaceNode,
+      let columnIdx = wsNode.model.columns.firstIndex(where: { column in
+        column.panes.contains(where: { $0.id == pane.id })
+      })
+    {
+      return (wsNode.id, columnIdx + 1)
+    }
+    return nil
+  }
+
   /// AppKit reports a drop inside an expanded workspace (between
   /// its panes / on its column wrapper / on the workspace row
   /// itself) with that workspace as the proposed parent. Phase 2
@@ -857,6 +1046,21 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     }
     if let pane = item as? WorklanePaneNode {
       return pane.workspaceNode?.index
+    }
+    return nil
+  }
+
+  private func draggedPaneId(from info: NSDraggingInfo) -> ULID? {
+    guard let items = info.draggingPasteboard.pasteboardItems else { return nil }
+    for item in items {
+      guard let raw = item.string(forType: Self.paneDragType) else { continue }
+      guard raw.count == 26 else {
+        logger.warning(
+          "[worklane/drag] reject pane ULID payload of length \(raw.count, privacy: .public)")
+        continue
+      }
+      let id = ULID(raw)
+      if nodesByPaneId[id] != nil { return id }
     }
     return nil
   }

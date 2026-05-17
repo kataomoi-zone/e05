@@ -403,22 +403,83 @@ extension PaneContainerViewController {
 
   // MARK: - Move pane across workspaces
 
-  /// Move the focused pane into the target workspace as a new single-pane
-  /// column at its right edge, then slide to the target. The pane's
-  /// surface is preserved across the move. If the source column/workspace
-  /// is left empty, it collapses per the standard invariants.
-  public func movePane(toWorkspaceId id: ULID) {
+  /// Cross-workspace drag entry point. Resolves the pane by id —
+  /// importantly, does NOT call `focusPane(id:)` first. Going via
+  /// focusPane would start a `switchWorkspace` animation and then
+  /// our own slide animation immediately afterwards, and the two
+  /// races blank out the pane area when the source ws happens to
+  /// be off-screen at drop time. Used by the worklane sidebar's
+  /// pane drop handler; palette / IPC callers still go through
+  /// the focused-pane variant below.
+  public func movePane(
+    _ paneId: ULID, toWorkspaceId targetId: ULID, position: Int? = nil
+  ) {
+    logger.info("movePane(paneId:toWorkspaceId) entry")
+    guard let loc = locatePane(id: paneId),
+      let target = workspaces.firstIndex(where: { $0.id == targetId }),
+      target != loc.workspaceIndex
+    else {
+      logger.debug("movePane(paneId:) guard failed")
+      return
+    }
+    performCrossWorkspaceMove(
+      sourceIndex: loc.workspaceIndex,
+      sourceColumnIndex: loc.columnIndex,
+      sourcePaneIndex: loc.paneIndex,
+      target: target,
+      position: position)
+  }
+
+  /// Move the focused pane into the target workspace as a new
+  /// single-pane column. `position` chooses the insertion index in
+  /// the target's `columns` (`nil` = append at the trailing edge,
+  /// the historical behaviour palette / IPC callers rely on); the
+  /// worklane drag-drop path passes an explicit index resolved
+  /// from the drop target. The pane's surface is preserved across
+  /// the move; if the source column / workspace is left empty, it
+  /// collapses per the standard invariants.
+  public func movePane(toWorkspaceId id: ULID, position: Int? = nil) {
     logger.info("movePane(toWorkspaceId) entry: focused=\(self.focusedWorkspaceIndex)")
     guard let target = workspaces.firstIndex(where: { $0.id == id }),
       target != focusedWorkspaceIndex,
       let column = columns[safe: focusedColumnIndex],
-      let pane = column.focusedPane
+      let pane = column.focusedPane,
+      let paneIndex = column.panes.firstIndex(where: { $0.id == pane.id })
     else {
       logger.debug("movePane guard failed")
       return
     }
-    dismissAllFindSessions(in: currentWorkspace)
-    focusedPane?.urlBar.dismissSuggestionDropdown()
+    performCrossWorkspaceMove(
+      sourceIndex: focusedWorkspaceIndex,
+      sourceColumnIndex: focusedColumnIndex,
+      sourcePaneIndex: paneIndex,
+      target: target,
+      position: position)
+  }
+
+  /// Shared implementation for both focused-pane and id-based
+  /// cross-workspace moves. `sourceIndex` / `sourceColumnIndex` /
+  /// `sourcePaneIndex` identify the pane to relocate; `target`
+  /// identifies the destination workspace's array position and
+  /// `position` chooses the column-insert index inside it.
+  private func performCrossWorkspaceMove(
+    sourceIndex: Int,
+    sourceColumnIndex: Int,
+    sourcePaneIndex: Int,
+    target: Int,
+    position: Int?
+  ) {
+    let sourceWs = workspaces[sourceIndex]
+    let sourceVC = workspaceVCs[sourceIndex]
+    let column = sourceWs.columns[sourceColumnIndex]
+    let pane = column.panes[sourcePaneIndex]
+    // Dismissals only matter for the currently-visible workspace.
+    // For a sidebar drag where the dragged pane sits in a background
+    // workspace, there's no find bar / URL bar suggestion to chase.
+    if sourceIndex == focusedWorkspaceIndex {
+      dismissAllFindSessions(in: sourceWs)
+      focusedPane?.urlBar.dismissSuggestionDropdown()
+    }
     // Block cross-private-boundary moves: a `WKWebView`'s
     // `WKWebsiteDataStore` is bound at construction time, so
     // moving a pane across the boundary would either leak the
@@ -430,20 +491,19 @@ extension PaneContainerViewController {
     // than reconstructing the webView mid-move (which loses back/
     // forward and any in-flight state). Reopen the URL with
     // ⌘N / ⌘⇧N in the desired workspace instead.
-    let sourceIsPrivate = workspaces[focusedWorkspaceIndex].isPrivate
+    let sourceIsPrivate = sourceWs.isPrivate
     if sourceIsPrivate != workspaces[target].isPrivate {
       logger.error("movePane blocked: cross-private-boundary move (source=\(sourceIsPrivate ? "private" : "public", privacy: .public), target=\(self.workspaces[target].isPrivate ? "private" : "public", privacy: .public))")
-      showToast("Can't move pane across the private boundary", style: .error)
+      showCrossPrivateBoundaryToast()
       return
     }
-    let paneIndex = column.focusedPaneIndex
-    let sourceIndex = focusedWorkspaceIndex
-    let sourceWs = workspaces[sourceIndex]
-    let sourceVC = workspaceVCs[sourceIndex]
 
-    // Preserve surfaces on the outgoing side — both the pane being moved
-    // and any other panes left behind in source-workspace columns.
-    sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    // Snapshot the live scroll offset only when source is currently
+    // visible — for a background source the persisted `scrollX` is
+    // already accurate (last switch away captured it).
+    if sourceIndex == focusedWorkspaceIndex {
+      sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    }
     preserveSurfaces(in: sourceWs)
 
     // Blanket-clear focus borders on both sides so neither workspace's
@@ -455,7 +515,7 @@ extension PaneContainerViewController {
     // 1. Detach pane from source column.
     clearFocusBorder(pane)
     pane.containerView.removeFromSuperview()
-    column.panes.remove(at: paneIndex)
+    column.panes.remove(at: sourcePaneIndex)
 
     var adjustedTarget = target
     var sourceDestroyed = false
@@ -476,7 +536,7 @@ extension PaneContainerViewController {
         rebuildStackView(in: sourceVC)
       }
     } else {
-      column.focusedPaneIndex = min(paneIndex, column.panes.count - 1)
+      column.focusedPaneIndex = min(sourcePaneIndex, column.panes.count - 1)
       rebuildColumnView(column: column)
     }
 
@@ -496,27 +556,72 @@ extension PaneContainerViewController {
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]
-    targetWs.columns.append(newColumn)
-    let newIdx = targetWs.columns.count - 1
-    targetWs.focusedColumnIndex = newIdx
+    let insertIndex = min(max(position ?? targetWs.columns.count, 0), targetWs.columns.count)
+    targetWs.columns.insert(newColumn, at: insertIndex)
+    targetWs.focusedColumnIndex = insertIndex
 
     rebuildStackView(in: targetVC)
 
-    focusedWorkspaceIndex = adjustedTarget
-    restoreScroll(in: currentWorkspace)
-    showToast("Move Pane to Workspace \(adjustedTarget + 1)")
-
-    // Direction uses pre-adjustment target vs. sourceIndex — stable even
-    // when source was destroyed (its removal doesn't change this comparison).
-    let slidingUp = target > sourceIndex
-    animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) { [weak self] in
-      guard let self else { return }
+    let toastLabel = "Move Pane to Workspace \(adjustedTarget + 1)"
+    if sourceIndex == focusedWorkspaceIndex {
+      // Source was the currently visible workspace — run the same
+      // slide animation that the palette / IPC `Move Pane` action
+      // uses, and shift focus over to the new pane.
+      focusedWorkspaceIndex = adjustedTarget
+      restoreScroll(in: currentWorkspace)
+      showToast(toastLabel)
+      // Direction uses pre-adjustment target vs. sourceIndex — stable even
+      // when source was destroyed (its removal doesn't change this comparison).
+      let slidingUp = target > sourceIndex
+      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) {
+        [weak self] in
+        guard let self else { return }
+        if sourceDestroyed {
+          sourceVC.view.removeFromSuperview()
+          sourceVC.removeFromParent()
+        }
+        self.setFocus(columnIndex: insertIndex, paneIndex: 0)
+      }
+    } else {
+      // Source was off-screen (sidebar drag from a background
+      // workspace). Skip the slide animation entirely — sliding an
+      // off-screen source onto the visible workspace and back would
+      // blank the pane area, and the user's view isn't changing
+      // workspaces anyway. Keep focus on whatever workspace was
+      // already current. `restoreScroll` is intentionally skipped
+      // here: the visible workspace's live scroll offset is already
+      // the authoritative state.
+      let focusedWsId = workspaces[safe: focusedWorkspaceIndex]?.id
       if sourceDestroyed {
         sourceVC.view.removeFromSuperview()
         sourceVC.removeFromParent()
       }
-      self.setFocus(columnIndex: newIdx, paneIndex: 0)
+      if let focusedWsId,
+        let liveIndex = workspaces.firstIndex(where: { $0.id == focusedWsId })
+      {
+        focusedWorkspaceIndex = liveIndex
+      }
+      // When target = current, the new column is now sitting in the
+      // visible workspace. Refocus on it so the drop lands the user
+      // on the moved pane. When target != current, the new column
+      // lives in a background workspace; the next switch to it picks
+      // up the seeded focused index.
+      if adjustedTarget == focusedWorkspaceIndex {
+        setFocus(columnIndex: insertIndex, paneIndex: 0)
+      } else {
+        notifySidebarWorklaneDidChange()
+      }
+      showToast(toastLabel)
     }
+  }
+
+  /// Shared rejection toast for cross-private-boundary pane moves.
+  /// Both the drag-drop path (worklane sidebar fires this through
+  /// `onCrossPrivateBoundaryAttempt`) and the palette / IPC path
+  /// (`performCrossWorkspaceMove`) route through here so the
+  /// wording stays in one place.
+  public func showCrossPrivateBoundaryToast() {
+    showToast("Can't move pane across the private boundary", style: .error)
   }
 
   // MARK: - Helpers
