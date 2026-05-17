@@ -277,15 +277,22 @@ extension PaneContainerViewController {
 
     flushRecentlyClosed(in: closing)
 
-    workspaces.remove(at: closingIndex)
-    workspaceVCs.remove(at: closingIndex)
-
-    if workspaces.isEmpty {
-      closingVC.view.removeFromSuperview()
-      closingVC.removeFromParent()
+    if workspaces.count == 1 {
+      // Last workspace: close the window without mutating the
+      // arrays first. Going through `workspaces.remove(at:)` here
+      // empties the model, and any callback that lands between
+      // the remove and the application's actual termination —
+      // responder chain queries, menu validation, layout passes
+      // — reads through `currentWorkspace`, which trips its
+      // `precondition(!workspaces.isEmpty, …)` and crashes the
+      // dev build. Letting the arrays carry the (now-orphan)
+      // workspace until process exit keeps every getter valid.
       view.window?.close()
       return
     }
+
+    workspaces.remove(at: closingIndex)
+    workspaceVCs.remove(at: closingIndex)
 
     let newIndex = min(closingIndex, workspaces.count - 1)
     focusedWorkspaceIndex = newIndex
