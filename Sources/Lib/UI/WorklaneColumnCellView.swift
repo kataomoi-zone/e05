@@ -9,8 +9,10 @@ import AppKit
 /// Renders a vertical-split SF symbol + a pane count, deliberately
 /// without a `Column` / `Stack` literal so the visualisation doesn't
 /// commit to a terminology choice the user might want to revisit.
-/// AppKit's disclosure triangle on the leading indent handles
-/// expand / collapse.
+/// A hover-revealed × on the trailing edge closes every pane in the
+/// column in one gesture, routed through `onColumnClose` so the
+/// container can bulk-confirm any ghostty surfaces with running
+/// processes before tearing down.
 @MainActor
 final class WorklaneColumnCellView: NSTableCellView {
   static let height: CGFloat = 24
@@ -18,8 +20,26 @@ final class WorklaneColumnCellView: NSTableCellView {
 
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
+  private let closeButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "xmark",
+      accessibilityDescription: "Close every pane in this column")
+    b.toolTip = "Close every pane in this column"
+    b.isHidden = true
+    return b
+  }()
+
+  private var trackingArea: NSTrackingArea?
+  private var isHovered = false
 
   private weak var node: WorklaneColumnNode?
+  private var onCloseHandler: (() -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -29,6 +49,11 @@ final class WorklaneColumnCellView: NSTableCellView {
 
   @available(*, unavailable)
   required init?(coder _: NSCoder) { fatalError() }
+
+  override func prepareForReuse() {
+    super.prepareForReuse()
+    setHovered(false)
+  }
 
   private func setupLayout() {
     wantsLayer = true
@@ -52,6 +77,10 @@ final class WorklaneColumnCellView: NSTableCellView {
     titleLabel.textColor = .secondaryLabelColor
     addSubview(titleLabel)
 
+    closeButton.target = self
+    closeButton.action = #selector(closeTapped(_:))
+    addSubview(closeButton)
+
     NSLayoutConstraint.activate([
       iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -61,8 +90,13 @@ final class WorklaneColumnCellView: NSTableCellView {
       titleLabel.leadingAnchor.constraint(
         equalTo: iconView.trailingAnchor, constant: 6),
       titleLabel.trailingAnchor.constraint(
-        equalTo: trailingAnchor, constant: -6),
+        lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+      closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      closeButton.widthAnchor.constraint(equalToConstant: 16),
+      closeButton.heightAnchor.constraint(equalToConstant: 16),
     ])
   }
 
@@ -73,5 +107,49 @@ final class WorklaneColumnCellView: NSTableCellView {
     self.node = node
     let count = node.model.panes.count
     titleLabel.stringValue = count == 1 ? "1 pane" : "\(count) panes"
+    let columnId = node.id
+    onCloseHandler = {
+      [onClose = input.onColumnClose] in onClose(columnId)
+    }
+  }
+
+  override func updateTrackingAreas() {
+    super.updateTrackingAreas()
+    if let old = trackingArea { removeTrackingArea(old) }
+    let area = NSTrackingArea(
+      rect: bounds,
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+      owner: self
+    )
+    addTrackingArea(area)
+    trackingArea = area
+  }
+
+  override func mouseEntered(with _: NSEvent) {
+    setHovered(true)
+  }
+
+  override func mouseExited(with _: NSEvent) {
+    setHovered(false)
+  }
+
+  private func setHovered(_ hovered: Bool) {
+    guard hovered != isHovered else { return }
+    isHovered = hovered
+    closeButton.isHidden = !hovered
+    // Mirror the workspace header cell's hover treatment so the two
+    // group-style rows feel consistent — both surface a subtle fill
+    // when their hover-revealed close × appears.
+    layer?.backgroundColor =
+      hovered ? AppColors.hoverOverlay.cgColor : nil
+    layer?.cornerRadius = hovered ? 4 : 0
+  }
+
+  @objc private func closeTapped(_: NSButton) {
+    onCloseHandler?()
+  }
+
+  override func resetCursorRects() {
+    addCursorRect(bounds, cursor: .pointingHand)
   }
 }

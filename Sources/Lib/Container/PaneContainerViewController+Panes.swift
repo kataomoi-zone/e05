@@ -1211,6 +1211,85 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Close every pane inside a column at once. Routes through the
+  /// per-pane removal path so each pane still hits the standard
+  /// cleanup (audio stop, browser teardown, undo-close push,
+  /// extension `chrome.tabs.onRemoved`). When the column's the only
+  /// one left in its workspace, the last pane's removal cascades
+  /// into workspace close per the existing invariants.
+  ///
+  /// Confirmation is bulked: if any contained pane has a ghostty
+  /// surface flagged needs-confirm-quit, one "Close N panes?" sheet
+  /// fires up front rather than one per pane — column close is a
+  /// single user gesture so the confirmation should be too.
+  public func closeColumn(id columnId: ULID) {
+    guard let column = locateColumn(id: columnId) else {
+      logger.debug("[panes/close] closeColumn no-op: column not found id=\(columnId, privacy: .public)")
+      return
+    }
+    let surfaces = column.panes.compactMap { $0.terminalView?.surface }
+    let needsConfirm = surfaces.contains { surface in
+      ghostty_surface_needs_confirm_quit(surface)
+    }
+
+    let runClose: @MainActor () -> Void = { [weak self] in
+      guard let self else { return }
+      // Re-resolve the column inside the confirmation callback: the
+      // sheet is async, so a pane may have moved into / out of this
+      // column (or the column itself may have been closed) between
+      // presentation and answer. The captured `paneIds` from before
+      // the sheet would over- or under-close in those cases.
+      guard let liveColumn = self.locateColumn(id: columnId) else {
+        logger.debug("[panes/close] closeColumn post-confirm no-op: column gone id=\(columnId, privacy: .public)")
+        return
+      }
+      let paneIds = liveColumn.panes.map(\.id)
+      // Re-resolve each pane by id inside the iteration: earlier
+      // removals shift column indices, but ids are stable so
+      // `locatePane` continues to land on the right slot until the
+      // last pane's removal cascades into column / workspace cleanup.
+      for paneId in paneIds {
+        guard let loc = self.locatePane(id: paneId) else { continue }
+        self.performBackgroundOrCurrentClose(at: loc)
+      }
+    }
+
+    if needsConfirm {
+      confirmCloseColumn(count: column.panes.count, onConfirm: runClose)
+    } else {
+      runClose()
+    }
+  }
+
+  private func locateColumn(id columnId: ULID) -> ColumnModel? {
+    for ws in workspaces {
+      if let column = ws.columns.first(where: { $0.id == columnId }) {
+        return column
+      }
+    }
+    return nil
+  }
+
+  private func confirmCloseColumn(
+    count: Int, onConfirm: @escaping @MainActor () -> Void
+  ) {
+    guard let window = view.window else {
+      logger.error("[panes/close] no window for column-close confirmation")
+      return
+    }
+    let alert = NSAlert()
+    alert.messageText = "Close \(count) panes?"
+    alert.informativeText =
+      "One or more panes in this column have running processes."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Close All")
+    alert.addButton(withTitle: "Cancel")
+    alert.beginSheetModal(for: window) { response in
+      guard response == .alertFirstButtonReturn else { return }
+      MainActor.assumeIsolated { onConfirm() }
+    }
+  }
+
   /// If the terminal surface reports unsaved work, present the
   /// standard "Close this pane?" sheet on the main window and run
   /// `onConfirm` only when the user clicks Close. Otherwise (no

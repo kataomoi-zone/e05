@@ -308,6 +308,9 @@ final class SidebarViewController: NSViewController {
         onPaneClose: { [weak container] id in
           container?.closePane(id: id)
         },
+        onColumnClose: { [weak container] id in
+          container?.closeColumn(id: id)
+        },
         onPaneAudioToggle: { [weak container] id in
           container?.toggleMuteForPane(id: id)
         },

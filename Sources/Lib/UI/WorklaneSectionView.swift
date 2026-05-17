@@ -233,6 +233,11 @@ final class WorklaneSectionView: NSView {
     let onPaneClick: (ULID) -> Void
     let onWorkspaceClose: (Int) -> Void
     let onPaneClose: (ULID) -> Void
+    /// Close every pane in a multi-pane column at once. The cell
+    /// view's hover-revealed × button fires this; single-pane
+    /// columns expose their pane directly so they go through
+    /// `onPaneClose` instead.
+    let onColumnClose: (ULID) -> Void
     let onPaneAudioToggle: (ULID) -> Void
     /// Flip the persisted collapse state for the given item id
     /// (workspace or column).
