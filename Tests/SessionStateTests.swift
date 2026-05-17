@@ -321,8 +321,8 @@ struct SessionStateTests {
     }
   }
 
-  @Test("collapsedWorkspaceIndexes round-trips and is omitted when nil")
-  func collapsedIndexesRoundTrip() throws {
+  @Test("collapsedIds round-trips and is omitted when nil")
+  func collapsedIdsRoundTrip() throws {
     let base = SessionState.WorkspaceState(
       columns: [
         SessionState.ColumnState(
@@ -336,37 +336,67 @@ struct SessionStateTests {
       scrollX: 0
     )
 
-    // Encoding `nil` must omit the key from the JSON payload — empty
-    // workspaces shouldn't grow a dead field over the lifetime of
-    // a session that never collapses anything.
+    // Encoding `nil` must omit the key from the JSON payload — a
+    // session that never collapses anything shouldn't grow a dead
+    // field over its lifetime.
     let empty = SessionState(
       workspaces: [base], focusedWorkspaceIndex: 0,
-      collapsedWorkspaceIndexes: nil
+      collapsedIds: nil
     )
     let emptyData = try JSONEncoder().encode(empty)
     let emptyJSON = try #require(String(data: emptyData, encoding: .utf8))
-    #expect(!emptyJSON.contains("collapsedWorkspaceIndexes"))
+    #expect(!emptyJSON.contains("collapsedIds"))
     let emptyDecoded = try JSONDecoder().decode(SessionState.self, from: emptyData)
-    #expect(emptyDecoded.collapsedWorkspaceIndexes == nil)
+    #expect(emptyDecoded.collapsedIds == nil)
 
-    // Non-empty round-trip preserves the value order so callers can
-    // continue treating the array as a list of post-rebase indexes
-    // into the persisted workspace array.
+    // Non-empty round-trip preserves order so the restore path can
+    // rehydrate the in-memory set with one filter pass against the
+    // live workspace / column ids.
+    let ids = [ULID().string, ULID().string, ULID().string]
     let populated = SessionState(
-      workspaces: [base, base, base], focusedWorkspaceIndex: 0,
-      collapsedWorkspaceIndexes: [0, 2]
+      workspaces: [base], focusedWorkspaceIndex: 0,
+      collapsedIds: ids
     )
     let data = try JSONEncoder().encode(populated)
     let decoded = try JSONDecoder().decode(SessionState.self, from: data)
-    #expect(decoded.collapsedWorkspaceIndexes == [0, 2])
+    #expect(decoded.collapsedIds == ids)
   }
 
-  @Test("legacy session JSON without collapsedWorkspaceIndexes decodes as nil")
-  func legacyCollapsedIndexesMissing() throws {
-    // Pre-collapsed-persistence session payload (key absent). Guards
-    // against future hand-written `CodingKeys` breaking auto-synthesis'
-    // `decodeIfPresent`-for-Optional path on `collapsedWorkspaceIndexes`.
-    let legacy = """
+  @Test("workspace and column ids round-trip through encode/decode")
+  func idRoundTrip() throws {
+    let wsId = ULID().string
+    let colId = ULID().string
+    let session = SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          id: wsId,
+          columns: [
+            SessionState.ColumnState(
+              id: colId,
+              panes: [SessionState.PaneState(address: "e05://terminal")],
+              focusedPaneIndex: 0,
+              width: 640,
+              heightRatios: []
+            )
+          ],
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0
+    )
+    let data = try JSONEncoder().encode(session)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    #expect(decoded.workspaces.first?.id == wsId)
+    #expect(decoded.workspaces.first?.columns.first?.id == colId)
+  }
+
+  @Test("legacy session JSON without workspace / column ids decodes as nil")
+  func legacyMissingIds() throws {
+    // Payload predating id round-trip — the migration path generates
+    // fresh ULIDs at restore, which one-time drops any persisted
+    // `collapsedIds` entries that referenced the missing identities.
+    let payload = """
       {
         "focusedWorkspaceIndex": 0,
         "urlBarVisible": false,
@@ -387,8 +417,40 @@ struct SessionStateTests {
         ]
       }
       """
-    let data = Data(legacy.utf8)
+    let decoded = try JSONDecoder().decode(
+      SessionState.self, from: Data(payload.utf8))
+    #expect(decoded.workspaces.first?.id == nil)
+    #expect(decoded.workspaces.first?.columns.first?.id == nil)
+  }
+
+  @Test("session JSON without collapsedIds decodes as nil")
+  func missingCollapsedIdsDecodes() throws {
+    // Session payload with the key absent. Guards against future
+    // hand-written `CodingKeys` breaking auto-synthesis'
+    // `decodeIfPresent`-for-Optional path on `collapsedIds`.
+    let payload = """
+      {
+        "focusedWorkspaceIndex": 0,
+        "urlBarVisible": false,
+        "sidebarPinned": false,
+        "workspaces": [
+          {
+            "focusedColumnIndex": 0,
+            "scrollX": 0,
+            "columns": [
+              {
+                "focusedPaneIndex": 0,
+                "width": 640,
+                "heightRatios": [],
+                "panes": [{ "address": "e05://terminal" }]
+              }
+            ]
+          }
+        ]
+      }
+      """
+    let data = Data(payload.utf8)
     let decoded = try JSONDecoder().decode(SessionState.self, from: data)
-    #expect(decoded.collapsedWorkspaceIndexes == nil)
+    #expect(decoded.collapsedIds == nil)
   }
 }

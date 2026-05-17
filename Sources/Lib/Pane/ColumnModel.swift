@@ -3,7 +3,10 @@ import AppKit
 /// A column in the horizontal scroll container, holding one or more vertically-stacked panes.
 @MainActor
 public final class ColumnModel {
-  public let id = ULID()
+  /// Stable identity across reloads — also persisted through
+  /// `SessionState.ColumnState.id` so the sidebar's `collapsedIds`
+  /// set survives a save/restore round-trip.
+  public let id: ULID
   public var panes: [PaneModel]
   public var focusedPaneIndex: Int = 0
 
@@ -45,7 +48,8 @@ public final class ColumnModel {
     panes[safe: focusedPaneIndex]
   }
 
-  public init(pane: PaneModel) {
+  public init(pane: PaneModel, id: ULID = ULID()) {
+    self.id = id
     self.panes = [pane]
   }
 }

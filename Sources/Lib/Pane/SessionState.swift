@@ -16,16 +16,22 @@ public struct SessionState: Codable {
   /// restarts. `.hoverPeek` is ephemeral — only explicit pinning
   /// survives a session round-trip.
   public var sidebarPinned: Bool = false
-  /// Indexes into `workspaces` of the workspaces that were
-  /// collapsed in the sidebar worklane at save time. Stored by
-  /// index rather than `ULID` because workspaces are reconstructed
-  /// on restore and don't carry their IDs through session.json yet.
-  /// `Optional` so an old session.json without the key decodes
-  /// cleanly through Codable's `decodeIfPresent`-for-Optional path;
-  /// the in-code reader treats nil and empty as identical.
-  public var collapsedWorkspaceIndexes: [Int]?
+  /// ULID strings of the worklane items (workspaces and / or
+  /// columns) the user had collapsed at save time. Stored as a flat
+  /// list because ULID's random bits make workspace and column ids
+  /// collision-free, so the in-memory set on the sidebar VC can be
+  /// rehydrated with one filter pass at restore. `Optional` so the
+  /// on-disk payload omits the key entirely when nothing is
+  /// collapsed; the in-code reader treats nil and empty as identical.
+  public var collapsedIds: [String]?
 
   public struct WorkspaceState: Codable {
+    /// Workspace ULID at save time. `Optional` so a session.json
+    /// written before id round-trip existed decodes cleanly — the
+    /// restore path falls back to a fresh ULID, which one-time
+    /// drops any persisted `collapsedIds` entries that referenced
+    /// the missing workspace.
+    public var id: String?
     public var columns: [ColumnState]
     public var focusedColumnIndex: Int
     /// Horizontal scroll offset (in points) at the time of capture.
@@ -33,6 +39,9 @@ public struct SessionState: Codable {
   }
 
   public struct ColumnState: Codable {
+    /// Column ULID at save time. See `WorkspaceState.id` for the
+    /// optionality rationale.
+    public var id: String?
     public var panes: [PaneState]
     public var focusedPaneIndex: Int
     public var width: Double

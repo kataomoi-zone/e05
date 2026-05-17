@@ -24,7 +24,8 @@ extension PaneContainerViewController {
     initialTitle: String? = nil,
     initialBackHistory: [URL] = [],
     initialForwardHistory: [URL] = [],
-    focusOnInsert: Bool = true
+    focusOnInsert: Bool = true,
+    id: ULID = ULID()
   ) -> ColumnModel {
     insertColumn(
       with: makePane(
@@ -33,12 +34,15 @@ extension PaneContainerViewController {
         initialTitle: initialTitle,
         initialBackHistory: initialBackHistory,
         initialForwardHistory: initialForwardHistory),
-      focusOnInsert: focusOnInsert)
+      focusOnInsert: focusOnInsert,
+      id: id)
   }
 
   @discardableResult
-  func insertColumn(with pane: PaneModel, focusOnInsert: Bool = true) -> ColumnModel {
-    let column = ColumnModel(pane: pane)
+  func insertColumn(
+    with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
+  ) -> ColumnModel {
+    let column = ColumnModel(pane: pane, id: id)
 
     setupPaneCallbacks(pane: pane, column: column)
 

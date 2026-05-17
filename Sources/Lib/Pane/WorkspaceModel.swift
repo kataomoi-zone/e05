@@ -11,7 +11,10 @@ import WebKit
 /// even when workspaces are created or closed.
 @MainActor
 public final class WorkspaceModel {
-  public let id = ULID()
+  /// Stable identity across reloads — also persisted through
+  /// `SessionState.WorkspaceState.id` so the sidebar's
+  /// `collapsedIds` set survives a save/restore round-trip.
+  public let id: ULID
 
   public var columns: [ColumnModel] = []
   public var focusedColumnIndex: Int = 0
@@ -40,7 +43,8 @@ public final class WorkspaceModel {
     isPrivate ? WKWebsiteDataStore.nonPersistent() : nil
   }()
 
-  public init(isPrivate: Bool = false) {
+  public init(isPrivate: Bool = false, id: ULID = ULID()) {
+    self.id = id
     self.isPrivate = isPrivate
   }
 }

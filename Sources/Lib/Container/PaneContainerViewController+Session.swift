@@ -79,6 +79,7 @@ extension PaneContainerViewController {
         }
 
         return SessionState.ColumnState(
+          id: column.id.string,
           panes: paneStates,
           focusedPaneIndex: column.focusedPaneIndex,
           width: width,
@@ -86,29 +87,35 @@ extension PaneContainerViewController {
         )
       }
       return SessionState.WorkspaceState(
+        id: ws.id.string,
         columns: columnStates,
         focusedColumnIndex: ws.focusedColumnIndex,
         scrollX: Double(ws.scrollX)
       )
     }
 
-    // Walk the persisted (= non-private) workspaces and record the
-    // positions of the ones the sidebar currently has collapsed. The
-    // index is the post-rebase index inside `workspaceStates`, which
-    // is what session restore reads back. `nil` when nothing is
-    // collapsed so the on-disk payload omits the key entirely.
-    let collapsedIndexes: [Int] = persistedWorkspaces.enumerated()
-      .compactMap { rebasedIndex, entry in
-        let id = entry.element.id
-        return sidebarVC?.isWorkspaceCollapsed(id) == true ? rebasedIndex : nil
+    // Filter the in-memory collapsed set down to ids that belong to
+    // a persisted (= non-private) workspace or one of its columns.
+    // Private-workspace ids are skipped because the workspace itself
+    // isn't persisted; restoring such an id would be a dead entry.
+    var persistedIds = Set<ULID>()
+    for (_, ws) in persistedWorkspaces {
+      persistedIds.insert(ws.id)
+      for column in ws.columns {
+        persistedIds.insert(column.id)
       }
+    }
+    let collapsedIds: [String] = (sidebarVC?.collapsedItemIds() ?? [])
+      .filter(persistedIds.contains)
+      .map(\.string)
+      .sorted()
 
     return SessionState(
       workspaces: workspaceStates,
       focusedWorkspaceIndex: rebasedFocusedIndex,
       urlBarVisible: urlBarVisible,
       sidebarPinned: sidebarVC?.currentState == .pinnedOpen,
-      collapsedWorkspaceIndexes: collapsedIndexes.isEmpty ? nil : collapsedIndexes
+      collapsedIds: collapsedIds.isEmpty ? nil : collapsedIds
     )
   }
 
@@ -173,7 +180,13 @@ extension PaneContainerViewController {
       return (session.focusedWorkspaceIndex, colIdx, paneIdx)
     }()
     for (wsIdx, wsState) in session.workspaces.enumerated() {
-      let ws = WorkspaceModel()
+      // Carry the saved ULID through so the sidebar's `collapsedIds`
+      // set keeps matching the restored workspace; missing ids
+      // (older session.json) fall back to a fresh ULID, which
+      // drops any persisted collapse entry that referenced the
+      // gone identity.
+      let wsId = wsState.id.map(ULID.init) ?? ULID()
+      let ws = WorkspaceModel(id: wsId)
       ws.scrollX = CGFloat(wsState.scrollX)
       let vc = WorkspaceViewController(workspace: ws)
       addChild(vc)
@@ -193,13 +206,15 @@ extension PaneContainerViewController {
           liveTarget?.wsIdx == wsIdx
           && liveTarget?.colIdx == colIdx
           && liveTarget?.paneIdx == 0
+        let columnId = colState.id.map(ULID.init) ?? ULID()
         let column = addColumn(
           address: firstAddress,
           startSuspended: !firstIsLive,
           initialTitle: firstPaneState.title,
           initialBackHistory: Self.urls(from: firstPaneState.backHistory),
           initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory),
-          focusOnInsert: false
+          focusOnInsert: false,
+          id: columnId
         )
         column.widthConstraint?.constant = CGFloat(colState.width)
         // Direct assignment rather than `handleTitleChange`: restore

@@ -25,26 +25,32 @@ final class SidebarViewController: NSViewController {
   private(set) var currentMode: SidebarMode = .tabs
   private var downloadsListenerToken: DownloadsListenerToken?
 
-  /// Workspaces whose pane rows are hidden in the worklane. Persisted
-  /// across launches via `SessionState.collapsedWorkspaceIndexes`
-  /// (indexes are mapped to / from `ULID` here on either side of the
-  /// save/restore boundary). Survives sidebar mode switches and
-  /// sidebar state transitions because it lives on the VC, not the
-  /// worklane view.
-  private var collapsedWorkspaceIds: Set<ULID> = []
+  /// Outline-view items the user has collapsed in the worklane —
+  /// both `WorkspaceModel.id` and `ColumnModel.id` ULIDs share this
+  /// set. NSOutlineView treats expansion uniformly, so a single
+  /// merged set keeps persistence in lockstep with the AppKit
+  /// state. Persisted across launches via `SessionState.collapsedIds`.
+  /// Survives sidebar mode switches and sidebar state transitions
+  /// because it lives on the VC, not the worklane view.
+  private var collapsedIds: Set<ULID> = []
 
   /// Seed the initial collapsed-state from session restore. Must be
   /// called *before* the first `reloadWorklane`, otherwise the
-  /// initial render shows every workspace expanded.
-  func seedCollapsedWorkspaces(_ ids: Set<ULID>) {
-    collapsedWorkspaceIds = ids
+  /// initial render shows every collapsible item expanded.
+  func seedCollapsed(_ ids: Set<ULID>) {
+    collapsedIds = ids
   }
 
-  /// True when the workspace with `id` is currently collapsed in
-  /// the worklane. Container reads this at `captureSession()` time
-  /// to write the persisted list.
-  func isWorkspaceCollapsed(_ id: ULID) -> Bool {
-    collapsedWorkspaceIds.contains(id)
+  /// Snapshot for `captureSession()` to persist. Returns ULIDs of
+  /// every workspace or column the user has collapsed.
+  func collapsedItemIds() -> Set<ULID> {
+    collapsedIds
+  }
+
+  /// True when the item (workspace or column) with `id` is currently
+  /// collapsed in the worklane.
+  func isCollapsed(_ id: ULID) -> Bool {
+    collapsedIds.contains(id)
   }
 
   // MARK: - State machine
@@ -259,11 +265,18 @@ final class SidebarViewController: NSViewController {
       let ws = container.workspaces[container.focusedWorkspaceIndex]
       return ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
     }()
-    // Drop collapsed-state entries for workspaces that no longer
-    // exist (closed since last reload) so the set doesn't grow
-    // unbounded over the session's lifetime.
-    let liveIds = Set(container.workspaces.map(\.id))
-    collapsedWorkspaceIds.formIntersection(liveIds)
+    // Drop collapsed-state entries for items that no longer exist
+    // (workspaces / columns closed since last reload) so the set
+    // doesn't grow unbounded over the session's lifetime. Walks both
+    // workspaces and their columns since either kind of id can sit
+    // in the set.
+    var liveIds = Set(container.workspaces.map(\.id))
+    for ws in container.workspaces {
+      for column in ws.columns {
+        liveIds.insert(column.id)
+      }
+    }
+    collapsedIds.formIntersection(liveIds)
 
     overlay.worklane.reload(
       .init(
@@ -280,8 +293,8 @@ final class SidebarViewController: NSViewController {
         paneIsSuspended: { pane in
           pane.browserView?.isSuspended ?? false
         },
-        isWorkspaceCollapsed: { [weak self] id in
-          self?.collapsedWorkspaceIds.contains(id) ?? false
+        isCollapsed: { [weak self] id in
+          self?.collapsedIds.contains(id) ?? false
         },
         onWorkspaceClick: { [weak container] index in
           container?.switchWorkspace(to: index)
@@ -298,8 +311,8 @@ final class SidebarViewController: NSViewController {
         onPaneAudioToggle: { [weak container] id in
           container?.toggleMuteForPane(id: id)
         },
-        onWorkspaceToggleCollapse: { [weak self] id in
-          self?.toggleWorkspaceCollapsed(id)
+        onToggleCollapse: { [weak self] id in
+          self?.toggleCollapsed(id)
         }
       ))
   }
@@ -326,11 +339,11 @@ final class SidebarViewController: NSViewController {
       paneId: paneId, isSuspended: isSuspended)
   }
 
-  private func toggleWorkspaceCollapsed(_ id: ULID) {
-    if collapsedWorkspaceIds.contains(id) {
-      collapsedWorkspaceIds.remove(id)
+  private func toggleCollapsed(_ id: ULID) {
+    if collapsedIds.contains(id) {
+      collapsedIds.remove(id)
     } else {
-      collapsedWorkspaceIds.insert(id)
+      collapsedIds.insert(id)
     }
     reloadWorklane()
   }
