@@ -226,7 +226,7 @@ final class WorklanePaneCellView: NSTableCellView {
     labelLeadingToAudio?.isActive = active
     if active {
       let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-      let desc = isMuted ? "Unmute tab" : "Mute tab"
+      let desc = isMuted ? "Unmute pane" : "Mute pane"
       let config = NSImage.SymbolConfiguration(
         pointSize: 10, weight: .regular)
       audioIndicator.image = NSImage(

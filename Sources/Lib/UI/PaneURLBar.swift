@@ -331,7 +331,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     reloadButton.toolTip = "Reload"
     muteButton.target = self
     muteButton.action = #selector(muteAction)
-    muteButton.toolTip = "Mute tab"
+    muteButton.toolTip = "Mute pane"
     muteButton.isHidden = true
     // Right-click on the speaker opens a context menu with the
     // persistent "Mute this Site" toggle. The menu's items are
@@ -1187,11 +1187,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// accumulate UI noise. Visible when audio is actually emitting
   /// or when the pane is muted but a media element is still active
   /// — that second branch keeps the unmute affordance reachable
-  /// after the user mutes an audible tab. When visible:
+  /// after the user mutes an audible pane. When visible:
   ///   - `isMuted` shows `speaker.slash.fill` (struck-through), tip
-  ///     "Unmute tab".
+  ///     "Unmute pane".
   ///   - playing & not muted shows `speaker.wave.2.fill`, tip
-  ///     "Mute tab".
+  ///     "Mute pane".
   /// Toggles the URL field's leading anchor between reload / mute so
   /// the field reclaims the slot when the speaker disappears.
   public func setMuteState(isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool) {
@@ -1205,7 +1205,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       urlFieldLeadingToReload?.isActive = true
     }
     let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-    let accessibility = isMuted ? "Unmute tab" : "Mute tab"
+    let accessibility = isMuted ? "Unmute pane" : "Mute pane"
     if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
       .withSymbolConfiguration(Self.iconConfig)
     {
