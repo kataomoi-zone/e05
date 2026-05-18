@@ -115,6 +115,38 @@ final class WorklaneRowView: NSTableRowView {
   }
 }
 
+/// Outline view subclass that swallows clicks landing on the empty
+/// gutter below the last row (and the 2pt inter-row gap from
+/// `intercellSpacing`) so the focused-pane highlight survives stray
+/// clicks outside any row.
+///
+/// Why not `allowsEmptySelection = false`: that flag also turns
+/// `deselectAll(_:)` into a no-op (documented AppKit behaviour),
+/// which would defeat the drag-start path that clears the selection
+/// to keep the drop indicator from compositing under a gray
+/// selection halo. Keep empty selection allowed at the AppKit
+/// level and intercept the click here instead.
+///
+/// Skipping `super.mouseDown` also stops responder-chain
+/// propagation, so the swallowed click never reaches parent views
+/// and never triggers a first-responder transfer. Worklane rows
+/// route focus through `outlineViewSelectionDidChange`, so the
+/// outline view doesn't need to claim first responder on a gutter
+/// click anyway.
+@MainActor
+final class WorklaneOutlineView: NSOutlineView {
+  override func mouseDown(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    if row(at: point) < 0 {
+      // Empty gutter or inter-row gap click. Suppress so AppKit's
+      // default handler doesn't drop the selection; a real row's
+      // `mouseDown` forwards through `super` as usual.
+      return
+    }
+    super.mouseDown(with: event)
+  }
+}
+
 /// Sidebar worklane section: a three-level outline view listing every
 /// workspace, the columns inside it (only when they hold two or more
 /// panes), and the panes themselves. NSOutlineView realises only the
@@ -144,7 +176,7 @@ final class WorklaneSectionView: NSView {
     "com.kawarimidoll.e05.worklane.pane")
 
   private let scrollView = NSScrollView()
-  private let outlineView = NSOutlineView()
+  private let outlineView = WorklaneOutlineView()
 
   /// Top-level rows. Outline view asks for these when item is nil.
   private var workspaceNodes: [WorklaneWorkspaceNode] = []
@@ -249,6 +281,13 @@ final class WorklaneSectionView: NSView {
     // keeps the outline view's background transparent so the
     // Liquid Glass sidebar remains visible behind the rows.
     outlineView.selectionHighlightStyle = .regular
+    // Empty selection stays *allowed* at the AppKit level so
+    // `deselectAll(_:)` keeps working for the drag-start clear
+    // (see `willBeginAt`) and the `syncSelection` nil branch.
+    // Stray clicks in the empty gutter below the last row are
+    // intercepted by `WorklaneOutlineView.mouseDown` instead,
+    // which preserves the focused-pane highlight without
+    // crippling programmatic deselection.
     outlineView.allowsEmptySelection = true
     outlineView.allowsMultipleSelection = false
     outlineView.style = .plain
@@ -709,6 +748,15 @@ final class WorklaneSectionView: NSView {
   /// selection so the selection highlight stays in sync with focus
   /// changes driven from outside the worklane (palette, keyboard
   /// shortcuts, IPC).
+  ///
+  /// Cascade: when the focused pane lives inside a collapsed column
+  /// or workspace, its own row isn't realised in the outline view
+  /// (`row(forItem:) == -1`). Fall back to the nearest visible
+  /// ancestor so the highlight still tells the user where focus
+  /// lives instead of disappearing entirely. The selection is only
+  /// a visual indicator — `outlineViewSelectionDidChange` is gated
+  /// by `isSyncingSelection` so the cascade can't re-enter the
+  /// click handlers.
   private func syncSelection(to focusedPaneId: ULID?) {
     guard let focusedPaneId, let node = nodesByPaneId[focusedPaneId]
     else {
@@ -717,12 +765,33 @@ final class WorklaneSectionView: NSView {
       isSyncingSelection = false
       return
     }
-    let row = outlineView.row(forItem: node)
+    let targetItem: AnyObject = ancestorForCascade(of: node) ?? node
+    let row = outlineView.row(forItem: targetItem)
     guard row >= 0 else { return }
     isSyncingSelection = true
     outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     outlineView.scrollRowToVisible(row)
     isSyncingSelection = false
+  }
+
+  /// Pick the highlight target when `pane`'s own row is hidden.
+  /// Walks column → workspace and returns the first ancestor whose
+  /// row is currently realised in the outline view. Returns nil
+  /// when the pane itself is visible (caller uses the pane node
+  /// directly in that case).
+  private func ancestorForCascade(of pane: WorklanePaneNode) -> AnyObject? {
+    if outlineView.row(forItem: pane) >= 0 { return nil }
+    if let column = pane.columnNode,
+      outlineView.row(forItem: column) >= 0
+    {
+      return column
+    }
+    if let workspace = pane.workspaceNode,
+      outlineView.row(forItem: workspace) >= 0
+    {
+      return workspace
+    }
+    return nil
   }
 }
 
