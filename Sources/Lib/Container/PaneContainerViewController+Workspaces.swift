@@ -892,12 +892,11 @@ extension PaneContainerViewController {
       // Cross-workspace merge that originated from the visible
       // workspace. Without a slide here the source VC's view
       // would already be off-screen (or detached) while the
-      // target VC is still `isHidden = true` — Phase 3's
-      // new-column path goes through `animateSlide` for exactly
-      // this reason. Reuse the same animation so the user's
-      // viewport visibly travels to the destination workspace,
-      // and defer the VC tear-down to the completion handler so
-      // the from-side stays paintable for the duration.
+      // target VC is still `isHidden = true`. The new-column
+      // path runs `animateSlide` for the same reason. Reuse that
+      // animation so the user's viewport visibly travels to the
+      // destination workspace, and defer the VC tear-down to the
+      // completion handler so the from-side stays paintable.
       restoreScroll(in: currentWorkspace)
       showToast(toastLabel)
       let slidingUp = targetWsIndex > sourceWsIndex

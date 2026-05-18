@@ -1196,8 +1196,8 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
 
   /// AppKit reports a drop inside an expanded workspace (between
   /// its panes / on its column wrapper / on the workspace row
-  /// itself) with that workspace as the proposed parent. Phase 2
-  /// only supports root-level reorder, so any non-root proposal
+  /// itself) with that workspace as the proposed parent. Workspace
+  /// reorder only supports root-level moves, so any non-root proposal
   /// retargets to the gap immediately after the containing
   /// workspace — that's the visual position a user would expect
   /// when they aim at the bottom of workspace N's children.

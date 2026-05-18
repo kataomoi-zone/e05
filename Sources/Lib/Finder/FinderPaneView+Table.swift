@@ -166,10 +166,9 @@ extension FinderPaneView: NSTableViewDelegate {
     // callback can toggle visibility without rebuilding the view
     // hierarchy (or subclassing `NSTableCellView` just to track one
     // extra subview). `controlSize = .small` matches Finder's
-    // in-flight glyph size; spinning style stays — Phase 2 has no
-    // real progress source, a circular pie chart with `fraction`
-    // updates lands in a follow-up commit when zip(1) stderr
-    // parsing or chunked-copy bytesWritten counters arrive.
+    // in-flight glyph size; indeterminate spinning because no real
+    // progress fraction is available yet (zip(1) stderr / chunked-copy
+    // counters are future work).
     let spinner = NSProgressIndicator()
     spinner.identifier = Self.nameSpinnerIdentifier
     spinner.style = .spinning
