@@ -385,7 +385,19 @@ final class SidebarViewController: NSViewController {
     } else {
       collapsedIds.insert(id)
     }
-    reloadWorklane()
+    // Defer the reload past the current notification delivery.
+    // `toggleCollapsed` is invoked from inside AppKit's
+    // `outlineViewItemDidCollapse/Expand` dispatch; running
+    // `reloadWorklane` synchronously re-enters the outline view
+    // while its internal expand bookkeeping is still mid-update,
+    // and the follow-up `applyPersistedCollapseState` reads stale
+    // `isItemExpanded` values that stall the subsequent
+    // `expandItem` call in a reentrant hang. Both expand and
+    // collapse notifications funnel through here, so a single
+    // defer covers both directions.
+    DispatchQueue.main.async { [weak self] in
+      self?.reloadWorklane()
+    }
   }
 
   /// Switch the sidebar's mode area to show the given mode's content.
