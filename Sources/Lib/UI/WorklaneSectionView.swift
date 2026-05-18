@@ -90,6 +90,18 @@ final class WorklanePaneNode: NSObject {
   override var hash: Int { id.hashValue }
 }
 
+extension NSTableCellView {
+  /// True when the live cursor is still inside the cell's bounds.
+  /// AppKit fires a spurious `mouseExited` on the parent tracking
+  /// area when the cursor crosses into a subview's own tracking
+  /// area (e.g. a hover-revealed button); guard the cell-level
+  /// `mouseExited` with this check so the row hover only clears
+  /// when the cursor has actually left.
+  func cursorIsStillInside(_ event: NSEvent) -> Bool {
+    bounds.contains(convert(event.locationInWindow, from: nil))
+  }
+}
+
 /// Row view that pins `isEmphasized` to `false` so the selection
 /// highlight stays its calm translucent gray instead of flashing
 /// system blue whenever the sidebar holds first responder. Matches

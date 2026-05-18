@@ -31,7 +31,7 @@ final class WorklaneColumnCellView: NSTableCellView {
       systemSymbolName: "xmark",
       accessibilityDescription: "Close every pane in this column")
     b.toolTip = "Close every pane in this column"
-    b.isHidden = true
+    b.setRevealed(false)
     return b
   }()
 
@@ -129,17 +129,15 @@ final class WorklaneColumnCellView: NSTableCellView {
     setHovered(true)
   }
 
-  override func mouseExited(with _: NSEvent) {
+  override func mouseExited(with event: NSEvent) {
+    if cursorIsStillInside(event) { return }
     setHovered(false)
   }
 
   private func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
-    closeButton.isHidden = !hovered
-    // Mirror the workspace header cell's hover treatment so the two
-    // group-style rows feel consistent — both surface a subtle fill
-    // when their hover-revealed close × appears.
+    closeButton.setRevealed(hovered)
     layer?.backgroundColor =
       hovered ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = hovered ? 4 : 0

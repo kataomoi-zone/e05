@@ -29,7 +29,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.image = NSImage(
       systemSymbolName: "xmark", accessibilityDescription: "Close workspace")
     b.toolTip = "Close workspace"
-    b.isHidden = true
+    b.setRevealed(false)
     return b
   }()
   private let addButton: HoverIconButton = {
@@ -42,7 +42,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.image = NSImage(
       systemSymbolName: "plus", accessibilityDescription: "New browser pane in this workspace")
     b.toolTip = "New browser pane in this workspace"
-    b.isHidden = true
+    b.setRevealed(false)
     return b
   }()
 
@@ -156,15 +156,16 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     setHovered(true)
   }
 
-  override func mouseExited(with _: NSEvent) {
+  override func mouseExited(with event: NSEvent) {
+    if cursorIsStillInside(event) { return }
     setHovered(false)
   }
 
   private func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
-    closeButton.isHidden = !hovered
-    addButton.isHidden = !hovered
+    closeButton.setRevealed(hovered)
+    addButton.setRevealed(hovered)
     layer?.backgroundColor =
       hovered ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = hovered ? 4 : 0

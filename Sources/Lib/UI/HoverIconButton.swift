@@ -61,4 +61,14 @@ public final class HoverIconButton: NSButton {
       ? AppColors.buttonHoverOverlay.cgColor
       : nil
   }
+
+  /// Show / hide a hover-revealed button without using `isHidden`.
+  /// Flipping `isHidden` rebuilds the surrounding tracking areas,
+  /// which makes the cell-level `mouseExited` fire mid-rebuild and
+  /// drops the row hover before the cursor reaches the button.
+  /// Alpha + `isEnabled` keep geometry constant.
+  public func setRevealed(_ revealed: Bool) {
+    alphaValue = revealed ? 1 : 0
+    isEnabled = revealed
+  }
 }

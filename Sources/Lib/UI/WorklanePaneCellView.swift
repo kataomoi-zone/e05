@@ -44,7 +44,7 @@ final class WorklanePaneCellView: NSTableCellView {
     b.image = NSImage(
       systemSymbolName: "xmark", accessibilityDescription: "Close pane")
     b.toolTip = "Close pane"
-    b.isHidden = true
+    b.setRevealed(false)
     return b
   }()
 
@@ -309,14 +309,19 @@ final class WorklanePaneCellView: NSTableCellView {
     setHovered(true)
   }
 
-  override func mouseExited(with _: NSEvent) {
+  override func mouseExited(with event: NSEvent) {
+    if cursorIsStillInside(event) { return }
     setHovered(false)
   }
 
   private func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
-    closeButton.isHidden = !hovered
+    closeButton.setRevealed(hovered)
+    // Selection highlight still wins visually when both apply.
+    layer?.backgroundColor =
+      hovered ? AppColors.hoverOverlay.cgColor : nil
+    layer?.cornerRadius = hovered ? 4 : 0
   }
 
   @objc private func closeTapped(_: NSButton) {
