@@ -2,7 +2,7 @@ import AppKit
 import GhosttyKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Session")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Session")
 
 extension PaneContainerViewController {
   // MARK: - Session Save/Restore

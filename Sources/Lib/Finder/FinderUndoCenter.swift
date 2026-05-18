@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderUndo")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderUndo")
 
 /// App-global `NSUndoManager` for finder-pane filesystem operations.
 ///

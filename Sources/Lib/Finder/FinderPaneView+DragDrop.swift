@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 
 /// Drag source and drop destination for finder panes. Both list and
 /// icon modes share the validate / accept core via the helpers

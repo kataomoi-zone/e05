@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Bookmarks")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Bookmarks")
 
 /// Opaque handle returned by `Bookmarks.addListener(_:)`. Pass it back
 /// to `removeListener(_:)` to unregister a callback.

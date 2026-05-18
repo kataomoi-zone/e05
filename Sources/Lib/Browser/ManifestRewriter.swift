@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import os
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "ManifestRewriter")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "ManifestRewriter")
 
 /// In-place MV3 → MV2 manifest rewriter for unpacked extension trees.
 /// Apple WKWebExtension does not wake MV3 service-worker backgrounds,

@@ -2,7 +2,7 @@ import Foundation
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "BookmarksImport")
+  subsystem: LogSubsystem.app, category: "BookmarksImport")
 
 /// Apply a Netscape-formatted bookmarks document to a live
 /// `Bookmarks` store. Folders are recreated with `createFolder`,

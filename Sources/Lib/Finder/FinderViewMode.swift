@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderModeStore")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderModeStore")
 
 /// Visual presentation mode for a finder pane.
 public enum FinderViewMode: String, Codable, Sendable {

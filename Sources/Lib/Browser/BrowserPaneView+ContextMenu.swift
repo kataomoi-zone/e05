@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "BrowserContextMenu")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "BrowserContextMenu")
 
 /// Right-click context menu customisation for browser panes.
 ///

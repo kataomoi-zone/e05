@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DownloadsStore")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "DownloadsStore")
 
 /// Persistent download records stored in SQLite at
 /// `~/Library/Application Support/<bundle-id>/downloads.db` (resolved

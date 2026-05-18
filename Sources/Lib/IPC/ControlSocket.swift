@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "ControlSocket")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "ControlSocket")
 
 /// Single-line JSON request/response over an `AF_UNIX` socket. Each
 /// accepted connection serves one request and closes; the listener

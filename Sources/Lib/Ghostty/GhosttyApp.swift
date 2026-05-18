@@ -2,7 +2,7 @@ import AppKit
 import GhosttyKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "GhosttyApp")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "GhosttyApp")
 
 /// Manages the ghostty runtime lifecycle: init, config, app, tick.
 @MainActor

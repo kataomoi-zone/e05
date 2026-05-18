@@ -2,7 +2,7 @@ import AppKit
 import GhosttyKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Container")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Container")
 
 public final class PaneContainerViewController: NSViewController {
   let ghosttyApp: GhosttyApp

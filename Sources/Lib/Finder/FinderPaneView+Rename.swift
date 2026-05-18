@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 
 /// Captured state for an in-flight inline rename. The URL identifies
 /// the file under edit; `originalName` retains the on-disk name so

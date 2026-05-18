@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Workspaces")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Workspaces")
 
 extension PaneContainerViewController {
   // MARK: - Accent color palette

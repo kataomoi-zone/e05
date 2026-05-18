@@ -2,7 +2,7 @@ import AppKit
 import E05Lib
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "App")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "App")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {

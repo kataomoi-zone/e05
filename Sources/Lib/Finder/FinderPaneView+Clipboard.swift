@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 
 /// Pasteboard interop for the finder pane. Each selected entry is
 /// written as `NSURL`, which the AppKit pasteboard machinery

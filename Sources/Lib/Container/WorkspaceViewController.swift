@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Workspace")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Workspace")
 
 /// One workspace's horizontal column strip. Owns its own scrollView +
 /// stackView so that switching workspaces reduces to swapping the visible

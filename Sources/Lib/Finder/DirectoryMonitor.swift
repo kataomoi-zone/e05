@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DirectoryMonitor")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "DirectoryMonitor")
 
 /// Watches a single directory for contents changes via a kqueue-backed
 /// `DispatchSource`. The handler fires on main when the directory's

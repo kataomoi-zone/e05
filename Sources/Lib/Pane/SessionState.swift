@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Session")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Session")
 
 /// Serializable session layout state for save/restore.
 public struct SessionState: Codable {

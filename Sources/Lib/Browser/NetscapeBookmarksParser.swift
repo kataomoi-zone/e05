@@ -2,7 +2,7 @@ import Foundation
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "BookmarksImport")
+  subsystem: LogSubsystem.app, category: "BookmarksImport")
 
 /// Parsed entry from a Netscape Bookmark File Format document. The
 /// format is loosely-HTML and de-facto-shared by Chrome, Firefox,

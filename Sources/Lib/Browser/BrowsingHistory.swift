@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "BrowsingHistory")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "BrowsingHistory")
 
 /// Opaque handle returned by `BrowsingHistory.addListener(_:)`. Pass it
 /// back to `removeListener(_:)` to unregister a callback.

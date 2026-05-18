@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 
 /// Directory model concerns: navigation (back / forward / up),
 /// filesystem enumeration with the global hidden-files filter, the

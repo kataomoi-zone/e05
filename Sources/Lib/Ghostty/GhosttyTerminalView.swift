@@ -2,7 +2,7 @@ import AppKit
 import GhosttyKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "GhosttyFind")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "GhosttyFind")
 
 /// NSView that hosts a single ghostty terminal surface with Metal rendering.
 @MainActor

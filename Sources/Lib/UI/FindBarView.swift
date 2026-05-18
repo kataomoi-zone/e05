@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FindBar")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FindBar")
 
 /// Floating pill shown over the focused pane for incremental
 /// find-in-page. Hosted in a child NSPanel anchored to the pane's

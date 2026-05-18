@@ -3,7 +3,7 @@ import WebKit
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "BrowserPaneView+Permissions")
+  subsystem: LogSubsystem.app, category: "BrowserPaneView+Permissions")
 
 /// Wraps a WebKit `decisionHandler` so the prompt path and the
 /// detach-cleanup path can both attempt to resolve it without

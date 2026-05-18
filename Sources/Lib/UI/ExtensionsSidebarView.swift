@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import os.log
 
 private let extensionsCellLogger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "ExtensionsSidebar"
+  subsystem: LogSubsystem.app, category: "ExtensionsSidebar"
 )
 
 /// Extensions list rendered inside the sidebar's `extensions` mode.

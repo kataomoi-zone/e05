@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FaviconCache")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FaviconCache")
 
 /// Per-host favicon cache backed by a memory LRU and a PNG directory
 /// under `~/Library/Caches/<bundle-id>/favicons/` (resolved through

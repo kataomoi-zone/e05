@@ -4,7 +4,7 @@ import WebKit
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "Notifications"
+  subsystem: LogSubsystem.app, category: "Notifications"
 )
 
 /// Bridges Web Notifications fired through `WKWebsiteDataStore` into

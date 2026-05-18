@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PaneModel")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "PaneModel")
 
 /// Preset for pane width. Each cycle action defines an ordered list of these.
 public enum PaneWidthPreset: Equatable {

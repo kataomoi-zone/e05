@@ -3,7 +3,7 @@ import CryptoKit
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "AdBlocker")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "AdBlocker")
 
 /// Layer A of the e05 adblocker stack: a built-in content blocker that
 /// compiles a Safari Content Blocker rule list from an ABP/EasyList-format

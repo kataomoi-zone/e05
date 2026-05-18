@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "EdgeHover")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "EdgeHover")
 
 /// Thin transparent strip pinned to the window's leading edge. Fires
 /// hover-in / hover-out callbacks so the sidebar state machine can

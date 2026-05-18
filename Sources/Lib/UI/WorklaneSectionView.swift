@@ -2,7 +2,7 @@ import AppKit
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "Worklane")
+  subsystem: LogSubsystem.app, category: "Worklane")
 
 /// userInfo key AppKit ships in the
 /// `NSOutlineViewItemDidExpand/Collapse` notifications. Hard-coded as

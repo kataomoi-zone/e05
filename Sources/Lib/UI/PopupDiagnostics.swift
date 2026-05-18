@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PopupDiagnostics")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "PopupDiagnostics")
 
 /// Dump the panel state we'd need to classify a "stuck invisible-but-
 /// keyed" recurrence on a popup overlay (URL bar suggestion dropdown,

@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "DownloadsManager")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "DownloadsManager")
 
 /// Lifecycle state of a single download. Stored as raw Int in the DB.
 /// New cases must use fresh rawValues — existing rows carry historical

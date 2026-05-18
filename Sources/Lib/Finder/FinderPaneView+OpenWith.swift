@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "FinderPane")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 
 /// "Open With..." flow for the finder pane. Finder presents this as
 /// a submenu of recommended apps plus an "Other..." entry; e05

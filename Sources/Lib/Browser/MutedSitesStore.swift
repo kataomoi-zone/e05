@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "MutedSitesStore")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "MutedSitesStore")
 
 /// Per-host site mute preferences, mirrored to
 /// `~/Library/Application Support/<bundle-id>/muted-sites.json` (resolved

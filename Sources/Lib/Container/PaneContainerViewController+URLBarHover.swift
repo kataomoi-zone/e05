@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "URLBarHover")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "URLBarHover")
 
 extension PaneContainerViewController {
   /// Hover-in delay before a peek opens. Tight enough that a

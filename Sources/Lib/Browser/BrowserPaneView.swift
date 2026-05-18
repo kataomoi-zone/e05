@@ -3,7 +3,7 @@ import WebKit
 import os.log
 
 private let logger = Logger(
-  subsystem: "com.kawarimidoll.e05", category: "BrowserPaneView")
+  subsystem: LogSubsystem.app, category: "BrowserPaneView")
 
 /// WKWebView subclass that reports focus changes via callback.
 @MainActor

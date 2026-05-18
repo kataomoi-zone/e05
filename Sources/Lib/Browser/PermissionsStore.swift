@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "PermissionsStore")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "PermissionsStore")
 
 /// What kind of capability a host is asking for. Matches the four
 /// `WKUIDelegate` permission hooks the browser pane wires up:

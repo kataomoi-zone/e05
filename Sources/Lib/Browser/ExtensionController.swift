@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "Extensions")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Extensions")
 
 /// Owns the single shared `WKWebExtensionController` used by every browser
 /// pane. The controller must be attached to a `WKWebViewConfiguration`

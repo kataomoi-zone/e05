@@ -3,7 +3,7 @@ import Foundation
 import WebKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "CosmeticFilter")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "CosmeticFilter")
 
 /// Parsed representation of a single ABP cosmetic line. The parser
 /// recognises the three markers this engine cares about:

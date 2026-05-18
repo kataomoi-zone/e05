@@ -2,7 +2,7 @@ import Foundation
 import WebKit
 import os
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "NativeMessaging")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "NativeMessaging")
 
 /// Layout of a Chrome / Firefox / Edge native messaging host manifest.
 /// Each browser drops a JSON file under

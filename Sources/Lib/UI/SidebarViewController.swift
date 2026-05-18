@@ -1,7 +1,7 @@
 import AppKit
 import os.log
 
-private let logger = Logger(subsystem: "com.kawarimidoll.e05", category: "SidebarHover")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "SidebarHover")
 
 /// Sidebar view controller hosting the Liquid Glass overlay, the
 /// worklane / mode views, and the places section. Owns the three-state
