@@ -71,7 +71,7 @@ public struct SessionState: Codable {
   /// directory on demand — `Application Support/<bundle-id>/` is
   /// not guaranteed to exist on first launch.
   private static var sessionFilePath: URL {
-    E05Paths.default.dataDir.appendingPathComponent("session.json")
+    E05Paths.default.dataFile(E05Filenames.session)
   }
 
   // MARK: - Save

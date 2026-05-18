@@ -10,4 +10,5 @@ public enum E05Filenames {
   public static let mutedSites = "muted-sites.json"
   public static let permissions = "permissions.json"
   public static let finderModes = "finder-modes.json"
+  public static let session = "session.json"
 }
