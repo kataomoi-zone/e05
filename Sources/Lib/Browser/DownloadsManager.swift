@@ -301,7 +301,8 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
 
     let sanitized = Self.sanitize(filename: suggestedFilename)
     let destinationURL: URL
-    if let window = windowProvider?() {
+    let preferences = PreferencesStore.shared.preferences
+    if preferences.alwaysPromptDownload, let window = windowProvider?() {
       guard let chosen = await presentDestinationPrompt(
         suggested: sanitized, window: window
       ) else {
@@ -313,23 +314,22 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
       }
       destinationURL = chosen
     } else {
-      // Headless / pre-window paths still need a deterministic
-      // target so adopted downloads don't dangle. The dedup
-      // helper picks `~/Downloads/<name> (N).<ext>` when the
-      // unprompted name collides.
+      // `alwaysPromptDownload == false` or headless / pre-window:
+      // both paths route through the dedup helper, which lands a
+      // collision-free file inside the configured default directory
+      // (or `~/Downloads` when the preference is unset).
       //
-      // Why not just cancel: WKDownload is already in flight by
-      // the time `adopt` and this delegate fire, so refusing to
-      // pick a destination would leave the row stuck in
-      // `.downloading` until the failure timeout. The headless
-      // case only fires under tests or an early-launch race
-      // before the container's view attaches to the window —
-      // both contexts trade "no user confirmation" for "no
-      // dangling transfer". Production runs keep the single-
-      // window invariant and always resolve a real window.
-      logger.warning(
-        "[downloads/prompt] window unavailable; falling back to ~/Downloads"
-      )
+      // Why headless cannot just cancel: WKDownload is already in
+      // flight by the time `adopt` and this delegate fire, so
+      // refusing to pick a destination would leave the row stuck
+      // in `.downloading` until the failure timeout. The headless
+      // case only fires under tests or an early-launch race before
+      // the container's view attaches to the window.
+      if windowProvider?() == nil {
+        logger.warning(
+          "[downloads/prompt] window unavailable; falling back to default download directory"
+        )
+      }
       destinationURL = Self.destinationURL(for: sanitized)
     }
     // Surface the final on-disk name so what the user sees in the
@@ -654,18 +654,17 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     panel.nameFieldStringValue = request.suggested
     panel.canCreateDirectories = true
     panel.isExtensionHidden = false
-    let downloadsDir = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Downloads")
+    let initialDir = Self.resolveDownloadBaseDir()
     do {
       try FileManager.default.createDirectory(
-        at: downloadsDir, withIntermediateDirectories: true
+        at: initialDir, withIntermediateDirectories: true
       )
     } catch {
       logger.warning(
-        "[downloads/prompt] failed to ensure ~/Downloads exists: \(error.localizedDescription, privacy: .public)"
+        "[downloads/prompt] failed to ensure download dir exists: \(error.localizedDescription, privacy: .public)"
       )
     }
-    panel.directoryURL = downloadsDir
+    panel.directoryURL = initialDir
     // Constrain the type filter only when the suggested extension
     // resolves to a known UTType. Unknown / synthetic extensions
     // (custom installers, archive variants) would otherwise hide
@@ -709,18 +708,18 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     return cleaned
   }
 
-  /// Build a non-conflicting destination URL in `~/Downloads`. Adds
-  /// " (N)" suffix if the filename already exists.
+  /// Build a non-conflicting destination URL inside the configured
+  /// download directory (or `~/Downloads` when the preference is
+  /// unset). Adds " (N)" suffix if the filename already exists.
   static func destinationURL(for filename: String) -> URL {
-    let downloads = FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Downloads")
+    let downloads = resolveDownloadBaseDir()
     do {
       try FileManager.default.createDirectory(
         at: downloads, withIntermediateDirectories: true
       )
     } catch {
       logger.warning(
-        "[downloads/dest] failed to ensure ~/Downloads exists: \(error.localizedDescription, privacy: .public)"
+        "[downloads/dest] failed to ensure download dir exists: \(error.localizedDescription, privacy: .public)"
       )
     }
 
@@ -744,6 +743,26 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     }
     // Practically unreachable — return the last candidate anyway.
     return url
+  }
+
+  /// Configured default download directory. `defaultDownloadDir` is
+  /// stored as a plain path string in preferences (no security-scoped
+  /// bookmark) so a directory the user has since deleted falls back
+  /// to `~/Downloads` rather than failing the download — the dedup
+  /// helper guarantees the resolved URL points at a writable location.
+  static func resolveDownloadBaseDir() -> URL {
+    let path = PreferencesStore.shared.preferences.defaultDownloadDir ?? ""
+    let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty {
+      var isDir: ObjCBool = false
+      if FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDir),
+        isDir.boolValue
+      {
+        return URL(fileURLWithPath: trimmed, isDirectory: true)
+      }
+    }
+    return FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Downloads", isDirectory: true)
   }
 }
 

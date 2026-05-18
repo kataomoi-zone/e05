@@ -2572,7 +2572,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       )
       return
     }
-    let address: PaneAddress = url.map(PaneAddress.init) ?? .blankBrowser
+    let address: PaneAddress = url.map(PaneAddress.init) ?? .newPaneHome
     let column = container.addColumn(address: address)
     guard let pane = column.panes.first else {
       completionHandler(

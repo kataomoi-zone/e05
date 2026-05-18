@@ -411,8 +411,18 @@ struct PaneAddressTests {
 
   // MARK: - Search
 
+  // `searchURL` reads from the @MainActor `PreferencesStore.shared`,
+  // so these three exercises run on the main actor and reset the
+  // shared template back to the shipped default first. Without the
+  // reset, a developer who edits their local preferences (Google /
+  // Brave / Custom) would see assertions fail against an
+  // unrelated template — the file lives at
+  // `~/Library/Application Support/<bundle>/preferences.json` so
+  // `inMemory:` test instances do not isolate by themselves.
   @Test("searchURL builds DuckDuckGo URL with encoded query")
+  @MainActor
   func searchURLBasic() {
+    PreferencesStore.shared.update { $0 = .default }
     let addr = PaneAddress.searchURL(query: "swift concurrency")
     #expect(addr != nil)
     #expect(addr?.kind == .browser)
@@ -420,14 +430,18 @@ struct PaneAddressTests {
   }
 
   @Test("searchURL encodes special characters")
+  @MainActor
   func searchURLSpecialChars() {
+    PreferencesStore.shared.update { $0 = .default }
     let addr = PaneAddress.searchURL(query: "c++ templates")
     #expect(addr != nil)
     #expect(addr?.url.absoluteString.contains("c%2B%2B%20templates") == true)
   }
 
   @Test("searchURL handles Japanese input")
+  @MainActor
   func searchURLJapanese() {
+    PreferencesStore.shared.update { $0 = .default }
     let addr = PaneAddress.searchURL(query: "日本語検索")
     #expect(addr != nil)
     #expect(addr?.kind == .browser)

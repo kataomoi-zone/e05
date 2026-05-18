@@ -126,7 +126,7 @@ final class SidebarViewController: NSViewController {
     }
     overlay.header.onCreateBrowserPane = { [weak self] in
       guard let container = self?.container else { return }
-      container.addColumn(address: .blankBrowser)
+      container.addColumn(address: .newPaneHome)
       container.showToast("New Browser Pane")
     }
     overlay.header.onCreateFinderPane = { [weak self] in
@@ -351,7 +351,7 @@ final class SidebarViewController: NSViewController {
           container?.showCrossPrivateBoundaryToast()
         },
         onAddPaneToWorkspace: { [weak container] wsId in
-          container?.addColumn(.blankBrowser, toWorkspaceId: wsId)
+          container?.addColumn(.newPaneHome, toWorkspaceId: wsId)
           container?.showToast("New Browser Pane")
         }
       ))

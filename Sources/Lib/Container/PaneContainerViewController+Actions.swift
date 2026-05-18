@@ -358,7 +358,7 @@ extension PaneContainerViewController {
         title: "New Browser Pane",
         keyEquivalent: "t",
         handler: { [weak self] in
-          self?.addColumn(address: .blankBrowser)
+          self?.addColumn(address: .newPaneHome)
           self?.showToast("New Browser Pane")
         }
       ),

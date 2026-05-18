@@ -82,8 +82,27 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
 
   public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
   public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
-  /// Blank browser address (no page loaded).
+  /// Blank browser address (no page loaded). Kept as a sentinel so
+  /// `PaneModel.isBlank` comparisons stay stable independent of the
+  /// user's home URL preference; new-pane creation sites should
+  /// reach for ``newPaneHome`` instead so the preference is honoured.
   public static let blankBrowser = PaneAddress(URL(string: "about:blank")!)
+
+  /// Address used when a new browser pane is opened without a target
+  /// URL (sidebar `+`, palette `New Browser Pane`, extension fallback,
+  /// etc.). Resolves through `PreferencesStore.shared.preferences.homeURL`
+  /// at call time so toggling the setting in the Settings window takes
+  /// effect on the next new pane without a relaunch. Falls back to
+  /// ``blankBrowser`` when the preference is unset or fails to parse.
+  @MainActor
+  public static var newPaneHome: PaneAddress {
+    let home = PreferencesStore.shared.preferences.homeURL ?? ""
+    let trimmed = home.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty, let url = URL(string: trimmed) {
+      return PaneAddress(url)
+    }
+    return .blankBrowser
+  }
 
   // MARK: - Finder
 
@@ -262,31 +281,43 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
 
   // MARK: - Search
 
-  /// Default search engine URL template. `%s` is replaced with the percent-encoded query.
-  // TODO: make configurable via user config
-  private static let searchTemplate = "https://duckduckgo.com/?q=%s"
+  /// Placeholder substituted with the percent-encoded query when
+  /// resolving the user's `searchTemplate` preference. Kept as a
+  /// separate constant so the URL bar's "this row is a search"
+  /// detection (`isSearchQuery`) and the address builder
+  /// (`searchURL`) stay in sync — changing the marker only needs
+  /// one edit here.
+  private static let searchPlaceholder = "{query}"
 
-  /// Whether `urlString` was produced by `searchURL(query:)`. URL-bar
+  /// Whether `urlString` was produced by ``searchURL(query:)``. URL-bar
   /// UI branches on this to render a magnifying-glass icon for search
   /// rows instead of the search engine's own favicon — so the row
   /// reads as "run a search" rather than "navigate to duckduckgo.com".
-  /// Derived from `searchTemplate` so it tracks template changes
-  /// automatically.
+  /// Derived from the current `searchTemplate` preference so the
+  /// detection tracks template changes without a restart.
   ///
-  /// The walk relies on the placeholder starting with `%` (printf
-  /// `%s` convention). If the template is ever rewritten with a
-  /// different sentinel (`{query}`, `$QUERY`, …), this would walk
-  /// the entire template and match no URL — a safe degradation
-  /// relative to the dangerous failure mode of matching every URL,
-  /// which is blocked by the `!prefix.isEmpty` guard. Either way,
-  /// rework this alongside any template syntax change.
+  /// `!prefix.isEmpty` blocks the catastrophic "match every URL"
+  /// failure mode that would happen if the template happens to start
+  /// with the placeholder.
+  @MainActor
   public static func isSearchQuery(urlString: String) -> Bool {
-    let prefix = searchTemplate.prefix(while: { $0 != "%" })
+    let template = PreferencesStore.shared.preferences.searchTemplate
+    guard let placeholderRange = template.range(of: searchPlaceholder) else {
+      return false
+    }
+    let prefix = template[..<placeholderRange.lowerBound]
     return !prefix.isEmpty && urlString.hasPrefix(prefix)
   }
 
-  /// Build a browser address for a search query using the default search engine.
+  /// Build a browser address for a search query using the current
+  /// `searchTemplate` preference. Returns `nil` when the template is
+  /// malformed (no `{query}` placeholder) or the encoded query fails,
+  /// so callers see the same "no search" signal as before regardless
+  /// of which engine the user picked.
+  @MainActor
   public static func searchURL(query: String) -> PaneAddress? {
+    let template = PreferencesStore.shared.preferences.searchTemplate
+    guard template.contains(searchPlaceholder) else { return nil }
     // .urlQueryAllowed keeps `+` unencoded, but servers may interpret it as
     // a space (form encoding). Remove `+` so "C++" encodes to "C%2B%2B".
     var allowed = CharacterSet.urlQueryAllowed
@@ -294,7 +325,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     guard let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) else {
       return nil
     }
-    let urlString = searchTemplate.replacingOccurrences(of: "%s", with: encoded)
+    let urlString = template.replacingOccurrences(of: searchPlaceholder, with: encoded)
     return PaneAddress(urlString)
   }
 }
