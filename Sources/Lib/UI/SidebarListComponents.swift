@@ -44,6 +44,23 @@ final class SidebarListRowView: NSTableRowView {
     guard row >= 0, tableView.selectedRow != row else { return }
     tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
   }
+
+  override func mouseExited(with _: NSEvent) {
+    // Drop the hover-driven selection so the gray highlight doesn't
+    // linger on the last hovered row after the pointer leaves the
+    // list (out of the sidebar, into the mode bar, into a scroll
+    // gutter, etc.). Crossing into an adjacent row fires that row's
+    // `mouseEntered` immediately, so the highlight migrates rather
+    // than blinking off.
+    //
+    // `cursorIsStillInsideBounds()` filters spurious exits when the
+    // pointer crosses into a subview's own tracking area (a
+    // HoverIconButton in the trailing slot, etc.) so hover-revealed
+    // buttons stay clickable. Same pattern as `SidebarListCellView`.
+    guard let tableView = superview as? NSTableView else { return }
+    if cursorIsStillInsideBounds() { return }
+    tableView.deselectAll(nil)
+  }
 }
 
 /// Cell view base class that encapsulates the hover-tracking
