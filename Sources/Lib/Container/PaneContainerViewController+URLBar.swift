@@ -508,10 +508,10 @@ extension PaneContainerViewController {
     focusedPane?.browserView?.webView.reload()
   }
 
-  /// Manually suspend the focused browser pane through the
-  /// memory-saver path. Mirrors what the 1 Hz tick and the
-  /// memory-pressure handler do, just kicked from a user-driven
-  /// trigger (palette / IPC) instead of an idle / pressure event.
+  /// Manually suspend the focused browser pane. Mirrors what the 1
+  /// Hz tick and the memory-pressure handler do, just kicked from a
+  /// user-driven trigger (palette / IPC) instead of an idle /
+  /// pressure event.
   /// Returns the underlying `suspend()` result so callers that
   /// reach the helper without going through `canSuspendFocusedBrowser`
   /// can react to a refused suspend instead of silently dropping it.
@@ -521,7 +521,7 @@ extension PaneContainerViewController {
   }
 
   /// True when the focused pane is a browser whose `WKWebView` can
-  /// currently accept a memory-saver suspend. Single source of truth
+  /// currently accept a suspend. Single source of truth
   /// for both the palette action's `validate` (decides enabled-ness)
   /// and its `handler` (gates the actual call), so the two stay in
   /// lock-step when the underlying conditions evolve.

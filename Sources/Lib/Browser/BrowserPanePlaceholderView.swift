@@ -2,7 +2,7 @@ import AppKit
 
 /// Stand-in shown by ``BrowserPaneView`` while its `WKWebView` is
 /// detached by `suspend()`. Renders the captured title and URL plus
-/// a "memory saved" affordance so the user knows the pane is alive
+/// a "suspended" affordance so the user knows the pane is alive
 /// but unloaded; clicking anywhere on the placeholder fires
 /// ``onClick`` so the host can route the click through the normal
 /// focus handler and trigger a `restore()`.
@@ -16,14 +16,14 @@ final class BrowserPanePlaceholderView: NSView {
     let v = NSImageView()
     let config = NSImage.SymbolConfiguration(pointSize: 40, weight: .light)
     v.image = NSImage(
-      systemSymbolName: "face.dashed", accessibilityDescription: "Memory saved"
+      systemSymbolName: "face.dashed", accessibilityDescription: "Suspended"
     )?.withSymbolConfiguration(config)
     v.contentTintColor = .tertiaryLabelColor
     return v
   }()
   private let titleLabel = NSTextField(labelWithString: "")
   private let urlLabel = NSTextField(labelWithString: "")
-  private let savedLabel = NSTextField(labelWithString: "Memory saved · Focus to load")
+  private let suspendedLabel = NSTextField(labelWithString: "Suspended · Focus to load")
 
   /// Fired by a click anywhere on the placeholder's bounds. The host
   /// wires this to its focus handler so the pane lands in the normal
@@ -62,11 +62,11 @@ final class BrowserPanePlaceholderView: NSView {
     urlLabel.maximumNumberOfLines = 1
     addSubview(urlLabel)
 
-    savedLabel.translatesAutoresizingMaskIntoConstraints = false
-    savedLabel.font = .systemFont(ofSize: 11, weight: .medium)
-    savedLabel.textColor = .tertiaryLabelColor
-    savedLabel.alignment = .center
-    addSubview(savedLabel)
+    suspendedLabel.translatesAutoresizingMaskIntoConstraints = false
+    suspendedLabel.font = .systemFont(ofSize: 11, weight: .medium)
+    suspendedLabel.textColor = .tertiaryLabelColor
+    suspendedLabel.alignment = .center
+    addSubview(suspendedLabel)
 
     NSLayoutConstraint.activate([
       iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -84,8 +84,8 @@ final class BrowserPanePlaceholderView: NSView {
       urlLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 20),
       urlLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
 
-      savedLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-      savedLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 12),
+      suspendedLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+      suspendedLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 12),
     ])
   }
 

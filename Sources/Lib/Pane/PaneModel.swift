@@ -82,7 +82,7 @@ public final class PaneModel {
   /// Wall-clock instant of the most recent user-visible activity on
   /// this pane. Seed value is the pane's construction time so a
   /// freshly-created pane has a fresh idle clock. The container's
-  /// 1 Hz tick reads this to decide whether to auto-suspend the pane's
+  /// 1 Hz tick reads this to decide whether to suspend the pane's
   /// `WKWebView` when it has stayed quiet past the idle threshold.
   /// "Activity" is anything that could indicate the user still cares
   /// about the page: focus (mouse / keyboard / palette / sidebar) and
@@ -93,7 +93,7 @@ public final class PaneModel {
   ///
   /// Not persisted across session restore: a relaunched pane gets
   /// its clock reset to the relaunch time, which doubles as a
-  /// grace period before the auto-suspend sweep starts reclaiming
+  /// grace period before the suspend sweep starts reclaiming
   /// freshly-restored panes.
   public var lastActiveAt: Date = .init()
 

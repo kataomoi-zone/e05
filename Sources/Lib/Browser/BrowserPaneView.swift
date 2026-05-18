@@ -87,7 +87,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Called when either ``isMuted`` or ``isPlayingAudio`` changes.
   public var onAudioStateChanged: (() -> Void)?
   /// Called after ``suspend()`` detaches the web view, or ``restore()``
-  /// rebuilds it. Lets the sidebar swap its per-row "memory saved"
+  /// rebuilds it. Lets the sidebar swap its per-row "suspended"
   /// affordance without a full worklane rebuild — the same targeted-
   /// update pattern as ``onAudioStateChanged``.
   public var onSuspendedStateChanged: (() -> Void)?
@@ -827,8 +827,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   /// View that should receive first-responder status when the host
   /// focuses this pane. Returns the live `WKWebView` for a normal
-  /// pane and the placeholder while the pane is memory-saver-
-  /// suspended. Handing back a detached `WKWebView` here would make
+  /// pane and the placeholder while the pane is suspended. Handing
+  /// back a detached `WKWebView` here would make
   /// `makeFirstResponder` refuse the change (it rejects views with
   /// no `window`), leaving the host window's responder stranded on
   /// itself; routing through the placeholder lets the responder
@@ -842,10 +842,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   /// Whether ``suspend()`` would currently make progress (= would
   /// return `true`). Mirrors the three guards in ``suspend()`` so
-  /// sweep loops (memory-saver auto-suspend, future manual triggers)
-  /// can pre-filter the call and treat the subsequent ``suspend()``
-  /// as guaranteed to succeed instead of swallowing a `Bool` return
-  /// they have no way to act on.
+  /// sweep loops (idle tick / memory-pressure handler / manual
+  /// triggers) can pre-filter the call and treat the subsequent
+  /// ``suspend()`` as guaranteed to succeed instead of swallowing a
+  /// `Bool` return they have no way to act on.
   public var canSuspend: Bool {
     if isSuspended { return false }
     if isExtensionHosted { return false }
@@ -972,7 +972,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Unlike ``suspend()`` this path does not fire
   /// ``onSuspendedStateChanged``. The callback exists to flip
   /// pre-built sidebar rows from live to suspended (or back) during
-  /// the auto-suspend sweep; at the moment `suspendInitially` runs,
+  /// the suspend sweep; at the moment `suspendInitially` runs,
   /// `setupPaneCallbacks` hasn't wired the callback yet and the
   /// sidebar reads the row's initial state synchronously through
   /// `ReloadInput.paneIsSuspended` instead. Inverting that order

@@ -4,8 +4,8 @@ import AppKit
 /// terminal SF symbol) followed by the pane title, with three layered
 /// affordances: a small "focus would land here" dot in the leading
 /// inset for the would-be focused pane of a non-current workspace, a
-/// dashed circle around the favicon while the pane is memory-saver
-/// suspended, and a hover-revealed × on the trailing edge for close.
+/// dashed circle around the favicon while the pane is suspended, and
+/// a hover-revealed × on the trailing edge for close.
 /// An audio speaker glyph slips between favicon and title whenever
 /// the pane is emitting or muting active audio.
 ///
@@ -239,7 +239,7 @@ final class WorklanePaneCellView: NSTableCellView {
     }
   }
 
-  /// Toggle the "memory saved" affordance: dashed ring around the
+  /// Toggle the "suspended" affordance: dashed ring around the
   /// favicon plus reduced alpha on icon and title. Alpha is computed
   /// absolutely (`base * mul`) so repeated calls stay idempotent.
   func applySuspendedState(_ isSuspended: Bool) {

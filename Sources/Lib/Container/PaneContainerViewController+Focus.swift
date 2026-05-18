@@ -9,8 +9,8 @@ extension PaneContainerViewController {
 
   /// Move the focused pane to `(columnIndex, paneIndex)`.
   ///
-  /// `restoreSuspended` decides whether a memory-saver-suspended
-  /// incoming pane is woken up before responder routing. Default
+  /// `restoreSuspended` decides whether a suspended incoming pane
+  /// is woken up before responder routing. Default
   /// `true` is correct for direct user navigation (arrow keys,
   /// sidebar click, palette `Focus: <other>` action) — a detached
   /// `WKWebView` rejects `makeFirstResponder` so the suspended

@@ -372,8 +372,8 @@ final class SidebarViewController: NSViewController {
 
   /// Per-pane suspended-state flip without rebuilding the whole
   /// worklane. Hosts call this from `onSuspendedStateChanged` so the
-  /// memory-saver sweep can flip dozens of rows per tick at most
-  /// without driving a full worklane reload.
+  /// suspend sweep can flip dozens of rows per tick at most without
+  /// driving a full worklane reload.
   func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
     overlay.worklane.updatePaneSuspendedState(
       paneId: paneId, isSuspended: isSuspended)

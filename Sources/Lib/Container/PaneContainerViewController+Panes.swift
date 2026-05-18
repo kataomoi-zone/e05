@@ -343,9 +343,9 @@ extension PaneContainerViewController {
       }
       bv.onSuspendedStateChanged = { [weak self, weak pane, weak bv] in
         guard let pane, let bv else { return }
-        // Targeted row update so memory-saver suspend/restore flips
-        // a single dashed-circle affordance rather than rebuilding
-        // the worklane each time the 1 Hz sweep claims a tab.
+        // Targeted row update so suspend / restore flips a single
+        // dashed-circle affordance rather than rebuilding the worklane
+        // each time the 1 Hz sweep claims a pane.
         self?.sidebarVC?.updatePaneSuspendedState(
           paneId: pane.id, isSuspended: bv.isSuspended)
       }

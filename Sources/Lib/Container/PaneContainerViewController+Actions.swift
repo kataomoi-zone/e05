@@ -309,11 +309,11 @@ extension PaneContainerViewController {
       Action(
         id: "browser_suspend",
         title: "Suspend Pane",
-        // No default keyEquivalent: the memory-saver path is usually
-        // invoked automatically (idle threshold / pressure event)
-        // and the manual trigger is meant for IPC and palette users
-        // who want to reclaim a specific tab on demand. A binding
-        // can land later through the customisation phase.
+        // No default keyEquivalent: suspend is usually invoked
+        // automatically (idle threshold / pressure event) and the
+        // manual trigger is meant for IPC and palette users who
+        // want to reclaim a specific pane on demand. A binding can
+        // land later through the customisation phase.
         handler: { [weak self] in
           guard let self, self.canSuspendFocusedBrowser else { return }
           self.suspendFocusedBrowser()

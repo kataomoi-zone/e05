@@ -136,9 +136,9 @@ public final class PaneContainerViewController: NSViewController {
   private var mediaTickTask: Task<Void, Never>?
 
   /// Dispatch source subscribed to system memory-pressure events.
-  /// Fires on `.warning` / `.critical` transitions so the memory-
-  /// saver auto-suspend sweep can run immediately under heap
-  /// pressure instead of waiting for the next idle-threshold tick.
+  /// Fires on `.warning` / `.critical` transitions so the suspend
+  /// sweep can run immediately under heap pressure instead of
+  /// waiting for the next idle-threshold tick.
   /// Lives for the lifetime of the container; cancelled in the
   /// teardown path alongside `mediaTickTask`.
   private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -271,8 +271,8 @@ public final class PaneContainerViewController: NSViewController {
   }
 
   /// Idle threshold (in minutes) past which a non-focused browser
-  /// pane gets auto-suspended by the 1 Hz tick. Half of Chrome /
-  /// Edge's 2 h default and more aggressive than Safari / Firefox's
+  /// pane gets suspended by the 1 Hz tick. Half of Chrome / Edge's
+  /// 2 h default and more aggressive than Safari / Firefox's
   /// pressure-only stance — long enough that flipping between panes
   /// mid-research doesn't reload the one you just glanced at, short
   /// enough that a pane left from this morning is reclaimed by the
@@ -280,7 +280,7 @@ public final class PaneContainerViewController: NSViewController {
   /// future config surface can expose the value in user-friendly
   /// units without a second conversion pass; the 1 Hz tick multiplies
   /// by 60 at the comparison site.
-  private static let autoSuspendIdleMinutes: Int = 60
+  private static let suspendIdleMinutes: Int = 60
 
   /// Kick off the shared 1 Hz audio-state probe loop. Each tick walks
   /// every browser pane in the container and asks it to refresh its
@@ -292,10 +292,10 @@ public final class PaneContainerViewController: NSViewController {
   /// region-based isolation friction a `TaskGroup` would introduce.
   ///
   /// Once every pane has a fresh `isPlayingAudio` reading the tick
-  /// runs `autoSuspendBrowserPanes(force: false)` so the same walk
-  /// also drives the memory-saver idle sweep. Piggy-backing keeps
-  /// the runloop wake-up count at "one timer total" rather than
-  /// adding a dedicated auto-suspend timer.
+  /// runs `suspendSweep(force: false)` so the same walk also
+  /// drives the idle suspend sweep. Piggy-backing keeps the runloop
+  /// wake-up count at "one timer total" rather than adding a
+  /// dedicated suspend timer.
   private func startMediaAudibleTick() {
     mediaTickTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
@@ -312,14 +312,14 @@ public final class PaneContainerViewController: NSViewController {
             }
           }
         }
-        self.autoSuspendBrowserPanes(force: false)
+        self.suspendSweep(force: false)
       }
     }
   }
 
   /// Subscribe to the system memory-pressure dispatch source so the
-  /// memory-saver auto-suspend can react to actual heap pressure
-  /// rather than waiting for the next idle-threshold tick. On a
+  /// suspend sweep can react to actual heap pressure rather than
+  /// waiting for the next idle-threshold tick. On a
   /// `.warning` or `.critical` event the same sweep that the 1 Hz
   /// tick drives runs with the idle-age gate bypassed: every non-
   /// focused pane that isn't emitting audio gets reclaimed
@@ -359,14 +359,14 @@ public final class PaneContainerViewController: NSViewController {
     if level.contains(.warning) { parts.append("warning") }
     let name = parts.isEmpty ? "normal" : parts.joined(separator: "+")
     logger.warning(
-      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing auto-suspend sweep")
-    autoSuspendBrowserPanes(force: true)
+      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing suspend sweep")
+    suspendSweep(force: true)
   }
 
   /// Walk every browser pane and suspend any that isn't currently
   /// focused, isn't emitting audio, and (unless `force == true`) has
-  /// been idle past `autoSuspendIdleMinutes`. Shared by the 1 Hz
-  /// idle tick (`force: false`) and the memory-pressure handler
+  /// been idle past `suspendIdleMinutes`. Shared by the 1 Hz idle
+  /// tick (`force: false`) and the memory-pressure handler
   /// (`force: true`) so both paths apply the same focused / audio /
   /// canSuspend guard set — the only difference is whether the
   /// idle-age gate participates.
@@ -378,13 +378,13 @@ public final class PaneContainerViewController: NSViewController {
   /// grows an `await` the handler will need a re-entrancy guard
   /// (an `isSweeping` flag, or moving sweeps onto a single serial
   /// async queue).
-  private func autoSuspendBrowserPanes(force: Bool) {
+  private func suspendSweep(force: Bool) {
     // Snapshot the cutoff once at sweep start instead of recomputing
     // per pane. The sweep visits a handful of panes at most, and
     // anything that slips through because the cutoff was captured a
     // few ms before the per-pane check will be caught by the next
     // sweep — latency is bounded by the loop interval anyway.
-    let cutoff = Date().addingTimeInterval(-TimeInterval(Self.autoSuspendIdleMinutes * 60))
+    let cutoff = Date().addingTimeInterval(-TimeInterval(Self.suspendIdleMinutes * 60))
     // Protect the focused pane in *every* workspace, not just the
     // current one: a user reading a long article on a non-current
     // workspace doesn't move focus or change URL, so its
