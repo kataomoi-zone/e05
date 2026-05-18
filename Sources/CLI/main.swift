@@ -59,7 +59,7 @@ func runOpen(_ args: [String]) {
 
 func runAction(_ args: [String]) {
   guard let id = args.first else {
-    errln("e05 action: missing action id (e.g. focus_right, new_browser)")
+    errln("e05 action: missing action id (e.g. focus_right, new_browser_pane)")
     exit(2)
   }
   exitFromReply(sendRequest(["op": "action", "id": id]), prefix: "e05 action")

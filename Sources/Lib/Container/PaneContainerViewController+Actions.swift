@@ -24,15 +24,16 @@ extension PaneContainerViewController {
   public func actions() -> [Action] {
     var result: [Action] = [
       Action(
-        id: "new_column",
-        title: "New Terminal Column",
-        // No keyboard shortcut: ⌘T is now claimed by `new_browser`
-        // because the browser column is the more common new-tab
-        // gesture. Terminal columns are still creatable from the
-        // palette and can be re-bound during the customisation phase.
+        id: "new_terminal_pane",
+        title: "New Terminal Pane",
+        // No keyboard shortcut: ⌘T is now claimed by
+        // `new_browser_pane` because a browser pane is the more
+        // common new-tab gesture. Terminal panes are still
+        // creatable from the palette and can be re-bound during
+        // the customisation phase.
         handler: { [weak self] in
           self?.addColumn()
-          self?.showToast("New Terminal Column")
+          self?.showToast("New Terminal Pane")
         }
       ),
       Action(
@@ -346,24 +347,24 @@ extension PaneContainerViewController {
         validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) }
       ),
       Action(
-        id: "new_browser",
-        title: "New Browser Column",
+        id: "new_browser_pane",
+        title: "New Browser Pane",
         keyEquivalent: "t",
         handler: { [weak self] in
           self?.addColumn(address: .blankBrowser)
-          self?.showToast("New Browser Column")
+          self?.showToast("New Browser Pane")
         }
       ),
       Action(
-        id: "new_finder",
-        title: "New Finder Column",
+        id: "new_finder_pane",
+        title: "New Finder Pane",
         // No keyboard shortcut: ⌥⌃F is taken by Toggle Fold and ⌘F by
         // Find in Page. The palette is the discovery surface for now;
         // a binding can be added once the customisation phase exposes
         // a way for users to claim a free chord.
         handler: { [weak self] in
           self?.addColumn(address: PaneAddress.finder(path: ""))
-          self?.showToast("New Finder Column")
+          self?.showToast("New Finder Pane")
         }
       ),
       Action(
