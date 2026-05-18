@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 import os.log
 
@@ -79,6 +80,23 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   /// Registered mutation observers, keyed by token id. Insertion order
   /// isn't guaranteed on dispatch since listeners should be independent.
   private var listeners: [UUID: () -> Void] = [:]
+
+  /// Resolves the host `NSWindow` the destination prompt sheet should
+  /// attach to. Single-window invariant guarantees one valid target
+  /// when the prompt fires; the closure is queried lazily because the
+  /// window isn't attached at `init` time. nil-result causes the
+  /// manager to fall back to a deterministic `~/Downloads` path so
+  /// tests and headless launch paths still complete.
+  public var windowProvider: (@MainActor () -> NSWindow?)?
+
+  /// FIFO of pending destination prompts. `WKWebView` can issue
+  /// `decideDestinationUsing` for several downloads concurrently
+  /// (Cmd-clicking a list of links, a page that triggers multiple
+  /// blob downloads, etc.), but `NSWindow.beginSheet` accepts a
+  /// single sheet at a time. Serialise here so each user choice is
+  /// resolved against a fresh sheet.
+  private var pendingDestinationPrompts: [DestinationPromptRequest] = []
+  private var isPresentingDestinationPrompt = false
 
   /// Headless WKWebView used solely as the entry point for
   /// `resumeDownload(fromResumeData:)`. It's never attached to a
@@ -282,10 +300,40 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     }
 
     let sanitized = Self.sanitize(filename: suggestedFilename)
-    let destinationURL = Self.destinationURL(for: sanitized)
-    // Surface the final on-disk name (including " (1)" dedup suffix)
-    // so what the user sees in the downloads pane matches what
-    // Show in Finder reveals.
+    let destinationURL: URL
+    if let window = windowProvider?() {
+      guard let chosen = await presentDestinationPrompt(
+        suggested: sanitized, window: window
+      ) else {
+        // User dismissed the sheet. Returning nil cancels the
+        // download — WebKit fires `didFailWithError` with
+        // `NSURLErrorCancelled`, which the existing failure
+        // branch flips to `.cancelled` for the row.
+        return nil
+      }
+      destinationURL = chosen
+    } else {
+      // Headless / pre-window paths still need a deterministic
+      // target so adopted downloads don't dangle. The dedup
+      // helper picks `~/Downloads/<name> (N).<ext>` when the
+      // unprompted name collides.
+      //
+      // Why not just cancel: WKDownload is already in flight by
+      // the time `adopt` and this delegate fire, so refusing to
+      // pick a destination would leave the row stuck in
+      // `.downloading` until the failure timeout. The headless
+      // case only fires under tests or an early-launch race
+      // before the container's view attaches to the window —
+      // both contexts trade "no user confirmation" for "no
+      // dangling transfer". Production runs keep the single-
+      // window invariant and always resolve a real window.
+      logger.warning(
+        "[downloads/prompt] window unavailable; falling back to ~/Downloads"
+      )
+      destinationURL = Self.destinationURL(for: sanitized)
+    }
+    // Surface the final on-disk name so what the user sees in the
+    // downloads pane matches what Show in Finder reveals.
     let filename = destinationURL.lastPathComponent
     entry.filename = filename
     entry.destination = destinationURL.path
@@ -570,6 +618,79 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     fireListeners()
   }
 
+  // MARK: - Destination prompt
+
+  /// Present an `NSSavePanel` sheet asking the user to confirm the
+  /// destination URL for a fresh download. Returns the chosen URL,
+  /// or nil if the user cancelled. Subsequent calls queue behind
+  /// the currently visible sheet — only one prompt is on screen at
+  /// any time, matching the AppKit single-sheet-per-window rule.
+  ///
+  /// The caller (`decideDestinationUsing`) is suspended on
+  /// `withCheckedContinuation` until the panel resolves, so an
+  /// unanswered prompt parks the WKDownload indefinitely. That
+  /// matches Safari / Firefox behaviour: the byte transfer never
+  /// begins until a destination is committed.
+  private func presentDestinationPrompt(
+    suggested: String, window: NSWindow
+  ) async -> URL? {
+    await withCheckedContinuation { continuation in
+      let request = DestinationPromptRequest(
+        suggested: suggested, window: window,
+        continuation: continuation
+      )
+      pendingDestinationPrompts.append(request)
+      drainDestinationPromptQueue()
+    }
+  }
+
+  private func drainDestinationPromptQueue() {
+    guard !isPresentingDestinationPrompt else { return }
+    guard !pendingDestinationPrompts.isEmpty else { return }
+    let request = pendingDestinationPrompts.removeFirst()
+    isPresentingDestinationPrompt = true
+
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = request.suggested
+    panel.canCreateDirectories = true
+    panel.isExtensionHidden = false
+    let downloadsDir = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Downloads")
+    do {
+      try FileManager.default.createDirectory(
+        at: downloadsDir, withIntermediateDirectories: true
+      )
+    } catch {
+      logger.warning(
+        "[downloads/prompt] failed to ensure ~/Downloads exists: \(error.localizedDescription, privacy: .public)"
+      )
+    }
+    panel.directoryURL = downloadsDir
+    // Constrain the type filter only when the suggested extension
+    // resolves to a known UTType. Unknown / synthetic extensions
+    // (custom installers, archive variants) would otherwise hide
+    // their own kind from the user.
+    let ext = (request.suggested as NSString).pathExtension
+    if !ext.isEmpty, let type = UTType(filenameExtension: ext) {
+      panel.allowedContentTypes = [type]
+    }
+
+    panel.beginSheetModal(for: request.window) { [weak self] response in
+      // AppKit fires the completion on the main queue but the
+      // closure type isn't `@MainActor`, so re-assert isolation
+      // before touching `request` or `self`. The panel is
+      // dismissed by AppKit before this callback fires, so the
+      // next prompt is free to attach.
+      MainActor.assumeIsolated {
+        let resolved: URL? = response == .OK ? panel.url : nil
+        request.resolve(with: resolved)
+        guard let self else { return }
+        self.isPresentingDestinationPrompt = false
+        self.drainDestinationPromptQueue()
+      }
+    }
+  }
+
   // MARK: - Helpers
 
   /// Strip path separators and null bytes from a server-supplied
@@ -593,9 +714,15 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   static func destinationURL(for filename: String) -> URL {
     let downloads = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent("Downloads")
-    try? FileManager.default.createDirectory(
-      at: downloads, withIntermediateDirectories: true
-    )
+    do {
+      try FileManager.default.createDirectory(
+        at: downloads, withIntermediateDirectories: true
+      )
+    } catch {
+      logger.warning(
+        "[downloads/dest] failed to ensure ~/Downloads exists: \(error.localizedDescription, privacy: .public)"
+      )
+    }
 
     let url = downloads.appendingPathComponent(filename)
     if !FileManager.default.fileExists(atPath: url.path) {
@@ -617,5 +744,35 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     }
     // Practically unreachable — return the last candidate anyway.
     return url
+  }
+}
+
+/// One-shot continuation holder for a destination prompt. `resolve`
+/// is idempotent so multiple resume paths can race without violating
+/// Swift's continuation contract of "must be called exactly once".
+/// A drain-on-detach hook is intentionally not wired today — the
+/// single-window invariant means there is no window-disposal event
+/// to react to, and the only failure mode (process exit) tears the
+/// continuation down with the runtime. Add a drainer alongside any
+/// future change that introduces transient host windows.
+@MainActor
+private final class DestinationPromptRequest {
+  let suggested: String
+  let window: NSWindow
+  private var continuation: CheckedContinuation<URL?, Never>?
+
+  init(
+    suggested: String, window: NSWindow,
+    continuation: CheckedContinuation<URL?, Never>
+  ) {
+    self.suggested = suggested
+    self.window = window
+    self.continuation = continuation
+  }
+
+  func resolve(with url: URL?) {
+    guard let cont = continuation else { return }
+    continuation = nil
+    cont.resume(returning: url)
   }
 }

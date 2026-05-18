@@ -518,6 +518,13 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
   private static func statusLine(for entry: Download) -> String {
     switch entry.state {
     case .downloading:
+      // Fresh downloads carry an empty destination until the user
+      // commits the NSSavePanel sheet. The transfer hasn't started
+      // yet, so progress / byte counts are still zero — make the
+      // wait state explicit instead of showing a misleading 0%.
+      if entry.destination.isEmpty {
+        return "Waiting for save location…"
+      }
       if entry.totalBytes > 0 {
         let percent = Int((Double(entry.bytesWritten) / Double(entry.totalBytes)) * 100)
         return "\(percent)% · \(formatBytes(entry.bytesWritten)) / \(formatBytes(entry.totalBytes))"

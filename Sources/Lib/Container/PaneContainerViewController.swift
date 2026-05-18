@@ -216,6 +216,10 @@ public final class PaneContainerViewController: NSViewController {
     self.downloadsStore = store
     self.downloadsManager = DownloadsManager(store: store)
     super.init(nibName: nil, bundle: nil)
+    // Hand the manager a lazy way to find the host window. The
+    // container is installed long before AppKit attaches a window
+    // to its root view, so resolution has to defer to call time.
+    downloadsManager.windowProvider = { [weak self] in self?.view.window }
   }
 
   @available(*, unavailable)
