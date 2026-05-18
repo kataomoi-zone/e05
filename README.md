@@ -86,7 +86,7 @@ Drag a pane edge to resize to an arbitrary width.
 
 ## Configuration
 
-If `~/.config/e05/config` exists it is loaded into ghostty's config parser at startup, so any ghostty config key (theme, font, keybindings, …) takes effect. There are no e05-specific config keys yet — a customisation phase is planned, and the path will start honouring `E05_CONFIG_DIR` / `XDG_CONFIG_HOME` once it does.
+If `~/.config/e05/config.ghostty` exists it is loaded into ghostty's config parser at startup, so any ghostty config key (theme, font, keybindings, …) takes effect. The `.ghostty` extension follows the convention ghostty itself adopted in 1.3.0 so the same file can be fed to `ghostty --config-file=...`. Note that some ghostty options (window decoration, app-lifecycle flags) are app-only and have no effect inside libghostty; e05-specific preferences live separately and are edited through Settings (`⌘,`).
 
 ## Data layout
 
