@@ -156,8 +156,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     setHovered(true)
   }
 
-  override func mouseExited(with event: NSEvent) {
-    if cursorIsStillInside(event) { return }
+  override func mouseExited(with _: NSEvent) {
+    if cursorIsStillInsideBounds() { return }
     setHovered(false)
   }
 
