@@ -390,10 +390,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private func setupMenuKeyBindings() {
     let mainMenu = NSMenu()
 
-    // App menu (required for ⌘+Q) — not Action-driven because
-    // NSApplication.terminate is a framework selector, not a pane op.
+    self.actions = paneContainer?.actions() ?? []
+
+    // App menu (required for ⌘+Q). `Settings…` lives here for HIG
+    // parity — every native macOS app routes ⌘, through the
+    // Application menu — and is sourced from the action registry by
+    // id so the palette / IPC dispatch and the menu share one
+    // handler. `Quit` stays a framework selector since
+    // `NSApplication.terminate` is not a pane op.
     let appMenuItem = NSMenuItem()
     let appMenu = NSMenu()
+    if let settingsIndex = actions.firstIndex(where: { $0.id == "open_settings" }) {
+      let action = actions[settingsIndex]
+      let item = NSMenuItem(
+        title: action.title,
+        action: #selector(performAction(_:)),
+        keyEquivalent: action.keyEquivalent ?? ""
+      )
+      item.keyEquivalentModifierMask = action.modifierMask
+      item.tag = settingsIndex
+      appMenu.addItem(item)
+      appMenu.addItem(.separator())
+    }
     appMenu.addItem(
       withTitle: "Quit e05",
       action: #selector(NSApplication.terminate(_:)),
@@ -402,12 +420,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     appMenuItem.submenu = appMenu
     mainMenu.addItem(appMenuItem)
 
-    // Pane menu — built from the Action registry.
+    // Pane menu — built from the Action registry. The `open_settings`
+    // entry is rendered in the App menu above; skipping it here keeps
+    // ⌘, off the Pane menu list while the underlying action stays
+    // discoverable through the palette and IPC.
     let paneMenuItem = NSMenuItem()
     let paneMenu = NSMenu(title: "Pane")
 
-    self.actions = paneContainer?.actions() ?? []
     for (index, action) in actions.enumerated() {
+      if action.id == "open_settings" { continue }
       if action.separatorBefore {
         paneMenu.addItem(.separator())
       }

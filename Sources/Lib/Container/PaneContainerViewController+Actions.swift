@@ -324,6 +324,13 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "open_settings",
+        title: "Settings…",
+        keyEquivalent: ",",
+        handler: { SettingsWindowController.shared.show() },
+        separatorBefore: true
+      ),
+      Action(
         id: "pane_find",
         title: "Find in Page",
         keyEquivalent: "f",
