@@ -67,6 +67,25 @@ public struct E05Paths: Sendable {
     }
   }
 
+  /// Returns the full filesystem path to a SQLite database file inside
+  /// `dataDir`, creating the parent directory if it does not yet exist.
+  /// `String` return type matches what SQLite open APIs want and lets
+  /// the `:memory:` sentinel flow through callers that share a single
+  /// internal initialiser.
+  public func databasePath(_ filename: String) -> String {
+    try? FileManager.default.createDirectory(
+      at: dataDir, withIntermediateDirectories: true)
+    return dataDir.appendingPathComponent(filename).path
+  }
+
+  /// Returns a `URL` for a Codable on-disk store inside `dataDir`. The
+  /// parent directory is not created here — Codable store implementations
+  /// handle that at first save so the inMemory variant stays a pure value
+  /// type with no filesystem side effects.
+  public func dataFile(_ filename: String) -> URL {
+    dataDir.appendingPathComponent(filename)
+  }
+
   static func resolveConfigDir(env: [String: String], home: URL) -> URL {
     if let custom = env["E05_CONFIG_DIR"], Self.isAbsolute(custom) {
       return Self.expand(custom, home: home)

@@ -57,8 +57,7 @@ public final class FinderModeStore {
       self.init(storeURL: nil)
       return
     }
-    let dir = E05Paths.default.dataDir
-    self.init(storeURL: dir.appendingPathComponent("finder-modes.json"))
+    self.init(storeURL: E05Paths.default.dataFile(E05Filenames.finderModes))
   }
 
   /// Internal initialiser that drives the same on-disk format against

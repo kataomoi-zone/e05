@@ -46,10 +46,7 @@ public final class DownloadsStore {
       self.init(databasePath: ":memory:")
       return
     }
-    let dir = E05Paths.default.dataDir
-    try? FileManager.default.createDirectory(
-      at: dir, withIntermediateDirectories: true)
-    self.init(databasePath: dir.appendingPathComponent("downloads.db").path)
+    self.init(databasePath: E05Paths.default.databasePath(E05Filenames.downloads))
   }
 
   /// Internal initialiser that opens the SQLite database at an

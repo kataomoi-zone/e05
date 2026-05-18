@@ -81,10 +81,7 @@ public final class Bookmarks {
       self.init(databasePath: ":memory:")
       return
     }
-    let dir = E05Paths.default.dataDir
-    try? FileManager.default.createDirectory(
-      at: dir, withIntermediateDirectories: true)
-    self.init(databasePath: dir.appendingPathComponent("bookmarks.db").path)
+    self.init(databasePath: E05Paths.default.databasePath(E05Filenames.bookmarks))
   }
 
   /// Internal initialiser that opens the SQLite database at an

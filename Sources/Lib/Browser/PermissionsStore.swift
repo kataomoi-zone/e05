@@ -103,8 +103,7 @@ public final class PermissionsStore {
       self.init(storeURL: nil)
       return
     }
-    let dir = E05Paths.default.dataDir
-    self.init(storeURL: dir.appendingPathComponent("permissions.json"))
+    self.init(storeURL: E05Paths.default.dataFile(E05Filenames.permissions))
   }
 
   /// Internal initialiser that drives the same on-disk format

@@ -38,8 +38,7 @@ public final class MutedSitesStore {
       self.init(storeURL: nil)
       return
     }
-    let dir = E05Paths.default.dataDir
-    self.init(storeURL: dir.appendingPathComponent("muted-sites.json"))
+    self.init(storeURL: E05Paths.default.dataFile(E05Filenames.mutedSites))
   }
 
   /// Internal initialiser that drives the same on-disk format
