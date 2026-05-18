@@ -1,5 +1,3 @@
-import Foundation
-
 /// Content mode of the sidebar's mutable top area. Each mode maps to
 /// a dedicated view slot in the overlay — `.tabs` shows the worklane
 /// tree; the others host their respective list views. The sidebar is

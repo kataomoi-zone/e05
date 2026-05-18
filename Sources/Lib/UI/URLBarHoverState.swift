@@ -1,5 +1,3 @@
-import Foundation
-
 /// Three-state machine that governs the URL bar's visibility on a
 /// single pane.
 ///
