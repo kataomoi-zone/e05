@@ -11,4 +11,5 @@ public enum E05Filenames {
   public static let permissions = "permissions.json"
   public static let finderModes = "finder-modes.json"
   public static let session = "session.json"
+  public static let preferences = "preferences.json"
 }
