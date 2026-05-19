@@ -15,6 +15,9 @@ struct PreferencesStoreTests {
     #expect(store.preferences.alwaysPromptDownload == true)
     #expect(store.preferences.defaultDownloadDir == nil)
     #expect(store.preferences.suspendIdleMinutes == nil)
+    #expect(store.preferences.accentPalette == nil)
+    #expect(store.preferences.surfaceCornerRadius == nil)
+    #expect(store.preferences.paneBorderWidth == nil)
   }
 
   @Test("update mutates the stored value and notifies listeners")

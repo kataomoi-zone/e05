@@ -42,18 +42,41 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// per-tick idle gate.
   public var suspendIdleMinutes: Int?
 
+  /// Identifier of the workspace accent palette preset. `nil` keeps
+  /// the historical four-colour default (pink / yellow-green /
+  /// coral / blue). Unknown or hand-edited values resolve back to
+  /// the default at the call site so a typo in `preferences.json`
+  /// doesn't quarantine the file.
+  public var accentPalette: String?
+
+  /// Identifier of the surface corner-radius preset. `nil` keeps
+  /// the historical 12pt default. Same unknown-value tolerance as
+  /// ``accentPalette``.
+  public var surfaceCornerRadius: String?
+
+  /// Identifier of the pane border width preset. `nil` keeps the
+  /// historical 2pt focused-pane border. Same unknown-value
+  /// tolerance as ``accentPalette``.
+  public var paneBorderWidth: String?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
     alwaysPromptDownload: Bool = true,
     defaultDownloadDir: String? = nil,
-    suspendIdleMinutes: Int? = nil
+    suspendIdleMinutes: Int? = nil,
+    accentPalette: String? = nil,
+    surfaceCornerRadius: String? = nil,
+    paneBorderWidth: String? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
     self.alwaysPromptDownload = alwaysPromptDownload
     self.defaultDownloadDir = defaultDownloadDir
     self.suspendIdleMinutes = suspendIdleMinutes
+    self.accentPalette = accentPalette
+    self.surfaceCornerRadius = surfaceCornerRadius
+    self.paneBorderWidth = paneBorderWidth
   }
 
   /// Factory used when the on-disk file is missing or quarantined.
