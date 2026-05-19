@@ -9,6 +9,7 @@ public enum E05Filenames {
   public static let history = "history.db"
   public static let mutedSites = "muted-sites.json"
   public static let permissions = "permissions.json"
+  public static let suspendExempt = "suspend-exempt.json"
   public static let finderModes = "finder-modes.json"
   public static let session = "session.json"
   public static let preferences = "preferences.json"
