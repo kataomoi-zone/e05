@@ -34,6 +34,13 @@ public final class BookmarksListenerToken {
 /// having to poll.
 @MainActor
 public final class Bookmarks {
+  /// Process-wide singleton. `PaneContainerViewController` and the
+  /// Settings tab share this instance so a Reset from About is
+  /// observed by the live sidebar listeners without a relaunch. The
+  /// init signature stays on the public surface so tests keep
+  /// reaching for `inMemory: true` instances.
+  public static let shared = Bookmarks()
+
   // nonisolated(unsafe): accessed in deinit which is nonisolated
   nonisolated(unsafe) private var db: OpaquePointer?
 

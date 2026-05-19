@@ -24,6 +24,12 @@ public final class BrowsingHistoryListenerToken {
 /// the process without having to poll.
 @MainActor
 public final class BrowsingHistory {
+  /// Process-wide singleton, shared by `PaneContainerViewController`
+  /// and the Settings tab so a Reset from About reaches the same
+  /// SQLite handle the live sidebar reads. Tests still construct
+  /// `inMemory: true` instances directly.
+  public static let shared = BrowsingHistory()
+
   // nonisolated(unsafe): accessed in deinit which is nonisolated
   nonisolated(unsafe) private var db: OpaquePointer?
 

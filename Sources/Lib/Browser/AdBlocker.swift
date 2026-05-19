@@ -113,6 +113,29 @@ public final class AdBlocker {
       "adblocker", isDirectory: true)
   }
 
+  /// Drop the on-disk filterlist cache. The compiled
+  /// `WKContentRuleList` objects already attached to live web views
+  /// stay active for the rest of the session — the next launch goes
+  /// through `start()` which re-downloads, re-converts, and re-
+  /// compiles. Used by the Settings Reset "Clear Cache" action;
+  /// matches `FaviconCache.shared.clearAll` as an instance API on
+  /// the shared singleton so call sites stay symmetric.
+  public func clearCache() {
+    let dir = Self.cacheRoot
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: dir.path) else { return }
+    do {
+      let entries = try fm.contentsOfDirectory(
+        at: dir, includingPropertiesForKeys: nil)
+      for entry in entries {
+        try fm.removeItem(at: entry)
+      }
+    } catch {
+      logger.error(
+        "Failed to clear adblocker cache: \(error.localizedDescription, privacy: .public)")
+    }
+  }
+
   /// Ensure a compiled ``WKContentRuleList`` is available. Fast path
   /// (all sources cached and fresh) hits the precompiled binary that
   /// ``WKContentRuleListStore`` keeps around; slow path downloads,

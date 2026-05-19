@@ -169,6 +169,33 @@ public final class FaviconCache {
     memoryCache.removeValue(forKey: Self.normalize(host))
   }
 
+  /// Wipe both the in-memory LRU and the on-disk PNG directory.
+  /// Used by the Settings Reset "Clear Cache" action. The next
+  /// favicon lookup for any host re-fetches from
+  /// `https://<host>/favicon.ico`, so missing-dir write failures
+  /// stay silently degrade-safe in the read path. Posts
+  /// ``didChangeNotification`` with `nil` object so subscribers
+  /// (sidebar / URL bar) can full-reload.
+  public func clearAll() {
+    memoryCache.removeAll()
+    inFlight.removeAll()
+    negativeCache.removeAll()
+    if let cacheDir {
+      do {
+        let entries = try FileManager.default.contentsOfDirectory(
+          at: cacheDir, includingPropertiesForKeys: nil)
+        for entry in entries {
+          try FileManager.default.removeItem(at: entry)
+        }
+      } catch {
+        logger.error(
+          "Failed to clear favicons dir: \(error.localizedDescription, privacy: .public)")
+      }
+    }
+    NotificationCenter.default.post(
+      name: Self.didChangeNotification, object: nil)
+  }
+
   // MARK: - Internals
 
   /// Folded-lowercase host with characters that aren't safe on the

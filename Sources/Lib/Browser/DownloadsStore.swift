@@ -15,6 +15,12 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "DownloadsSto
 /// finished downloads; state (see `DownloadState`) distinguishes them.
 @MainActor
 public final class DownloadsStore {
+  /// Process-wide singleton. `PaneContainerViewController`
+  /// constructs `DownloadsManager` against this instance, and the
+  /// Settings Reset hits the same SQLite file. Tests construct
+  /// `inMemory: true` instances locally.
+  public static let shared = DownloadsStore()
+
   // nonisolated(unsafe): accessed in deinit which is nonisolated
   nonisolated(unsafe) private var db: OpaquePointer?
 

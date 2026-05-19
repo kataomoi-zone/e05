@@ -6,9 +6,9 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Container")
 
 public final class PaneContainerViewController: NSViewController {
   let ghosttyApp: GhosttyApp
-  public let browsingHistory = BrowsingHistory()
-  public let bookmarks = Bookmarks()
-  public let downloadsStore: DownloadsStore
+  public let browsingHistory = BrowsingHistory.shared
+  public let bookmarks = Bookmarks.shared
+  public let downloadsStore = DownloadsStore.shared
   public let downloadsManager: DownloadsManager
 
   public internal(set) var workspaces: [WorkspaceModel] = [WorkspaceModel()]
@@ -212,9 +212,7 @@ public final class PaneContainerViewController: NSViewController {
 
   public init(ghosttyApp: GhosttyApp) {
     self.ghosttyApp = ghosttyApp
-    let store = DownloadsStore()
-    self.downloadsStore = store
-    self.downloadsManager = DownloadsManager(store: store)
+    self.downloadsManager = DownloadsManager.shared
     super.init(nibName: nil, bundle: nil)
     // Hand the manager a lazy way to find the host window. The
     // container is installed long before AppKit attaches a window

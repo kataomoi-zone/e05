@@ -70,6 +70,13 @@ public final class DownloadsListenerToken {
 /// `addListener`/`removeListener` — there is no single-slot property.
 @MainActor
 public final class DownloadsManager: NSObject, WKDownloadDelegate {
+  /// Process-wide singleton. `PaneContainerViewController` wires the
+  /// host-window provider on init; Settings reaches this directly
+  /// for the Reset "Clear Downloads list" action so the in-memory
+  /// downloads array and the SQLite store stay in lock-step. Tests
+  /// construct local instances against an in-memory store.
+  public static let shared = DownloadsManager(store: DownloadsStore.shared)
+
   private let store: DownloadsStore
   private var downloads: [Download] = []
   /// Maps live WKDownload to its DB id so delegate callbacks can
@@ -615,6 +622,37 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     let retainedStates: Set<DownloadState> = [.downloading, .paused]
     downloads.removeAll { !retainedStates.contains($0.state) }
     store.deleteCompleted()
+    fireListeners()
+  }
+
+  /// Wipe the entire downloads list (SQLite rows + in-memory entries
+  /// + KVO observations + resume sidecars + WKDownload references) and
+  /// fan out to listeners so the sidebar empties without a relaunch.
+  /// Active transfers are cancelled before the row vanishes so KVO
+  /// callbacks don't fire against a freed entry.
+  public func clearAll() {
+    // Cancel each live transfer through its own `WKDownload`. The
+    // delegate callback (`download(_:didFailWithError:)`) fires on a
+    // later runloop turn; by then `activeByWKDownload` is empty and
+    // its guard short-circuits before touching a freed `Download`.
+    for entry in downloads where entry.state == .downloading {
+      entry.wkDownload?.cancel(nil)
+    }
+    // Drop every KVO observation so progress callbacks against soon-
+    // to-be-freed `Download` instances can't fire mid-clear.
+    for observation in progressObservations.values {
+      observation.invalidate()
+    }
+    progressObservations.removeAll()
+    activeByWKDownload.removeAll()
+    // Best-effort sidecar cleanup; a missing dir is not an error
+    // because paused-then-completed transfers already removed theirs.
+    let resumeDir = Self.resumeDir
+    if FileManager.default.fileExists(atPath: resumeDir.path) {
+      try? FileManager.default.removeItem(at: resumeDir)
+    }
+    downloads.removeAll()
+    store.deleteAll()
     fireListeners()
   }
 
