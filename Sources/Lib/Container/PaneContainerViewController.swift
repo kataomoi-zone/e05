@@ -401,6 +401,9 @@ public final class PaneContainerViewController: NSViewController {
           // caller can act on.
           if !bv.canSuspend { continue }
           if focusedPaneIds.contains(pane.id) { continue }
+          if pane.isSuspendExempt { continue }
+          if let host = bv.webView.url?.host,
+             SuspendHostExemptStore.shared.isExempt(host: host) { continue }
           if bv.isPlayingAudio { continue }
           if !force, pane.lastActiveAt > cutoff { continue }
           bv.suspend()

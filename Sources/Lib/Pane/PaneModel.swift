@@ -97,6 +97,18 @@ public final class PaneModel {
   /// freshly-restored panes.
   public var lastActiveAt: Date = .init()
 
+  /// Per-pane opt-out of the automatic suspend sweep. The host-keyed
+  /// `SuspendHostExemptStore` covers the "always keep this site live"
+  /// case; this flag is the finer-grained "keep this specific pane
+  /// instance live" alongside it. Manual `browser_suspend` still
+  /// applies — only the sweep is bypassed.
+  ///
+  /// Not persisted across session restore: a relaunched pane starts
+  /// at `false`, matching the implicit reset of `lastActiveAt`. A
+  /// user who wants the keep-active intent to survive a restart
+  /// should reach for the host-keyed store instead.
+  public var isSuspendExempt: Bool = false
+
   // TODO: wire this into vertical drag resize.
   public var heightConstraint: NSLayoutConstraint?
 

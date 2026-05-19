@@ -324,6 +324,32 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "browser_keep_active",
+        title: "Don't Auto-Suspend",
+        // Toggles `PaneModel.isSuspendExempt` on the focused pane.
+        // The validator flips both the enable state and the title so
+        // the menu / palette label reflects what the next invocation
+        // will do — same pattern as a soft toggle without a separate
+        // "allow_suspension" action.
+        handler: { [weak self] in
+          guard let self, let pane = self.focusedPane,
+            pane.browserView != nil
+          else { return }
+          pane.isSuspendExempt.toggle()
+          self.showToast(
+            pane.isSuspendExempt ? "Don't Auto-Suspend" : "Allow Auto-Suspend")
+        },
+        validate: { [weak self] in
+          guard let self, let pane = self.focusedPane,
+            pane.browserView != nil
+          else { return (false, nil) }
+          return (
+            true,
+            pane.isSuspendExempt ? "Allow Auto-Suspend" : "Don't Auto-Suspend"
+          )
+        }
+      ),
+      Action(
         id: "open_settings",
         title: "Settings…",
         keyEquivalent: ",",
