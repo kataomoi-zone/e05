@@ -50,6 +50,7 @@ public final class SuggestionListView: NSView {
   /// `useGlass`. Hosts that already provide their own popover surface
   /// leave this nil and fall back to a flat translucent fill.
   private let glass: NSGlassEffectView?
+  private var cornerObserver: SurfaceCornerObserver?
 
   public init(useGlass: Bool = false) {
     self.glass = useGlass ? NSGlassEffectView() : nil
@@ -81,13 +82,12 @@ public final class SuggestionListView: NSView {
       let content = NSView()
       content.translatesAutoresizingMaskIntoConstraints = false
       glass.contentView = content
-      glass.wantsLayer = true
       // Match `SidebarOverlayView` and `PaneModel.containerView` so the
       // dropdown reads as the same material tier as the rest of the
       // window chrome (lessons.md "NSGlassEffectView の cornerRadius").
-      glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
       glass.layer?.cornerCurve = .continuous
       glass.layer?.masksToBounds = true
+      cornerObserver = SurfaceCornerObserver(applyingTo: glass)
       addSubview(glass)
       NSLayoutConstraint.activate([
         glass.topAnchor.constraint(equalTo: topAnchor),

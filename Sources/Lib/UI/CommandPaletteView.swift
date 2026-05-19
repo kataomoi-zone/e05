@@ -28,6 +28,7 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private let divider = NSBox()
   private let suggestionList = SuggestionListView()
   private let glass = NSGlassEffectView()
+  private var cornerObserver: SurfaceCornerObserver?
   /// `card.isFlipped = true` so the frame-based layout below can keep
   /// using top-down y coordinates after the subview tree moved inside
   /// the glass effect view (an ordinary, non-flipped NSView).
@@ -97,16 +98,16 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private func setup() {
     appearance = NSAppearance(named: .darkAqua)
 
-    // Glass surface with rounded clip. The 12pt radius matches the
-    // sidebar / pane chrome so the palette reads as the same material
-    // tier when it overlaps them.
+    // Glass surface with rounded clip. The active corner radius
+    // matches the sidebar / pane chrome (both reach the same
+    // `SurfaceCornerObserver`) so the palette reads as the same
+    // material tier when it overlaps them.
     glass.translatesAutoresizingMaskIntoConstraints = false
     card.translatesAutoresizingMaskIntoConstraints = false
     glass.contentView = card
-    glass.wantsLayer = true
-    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
+    cornerObserver = SurfaceCornerObserver(applyingTo: glass)
     addSubview(glass)
     NSLayoutConstraint.activate([
       glass.topAnchor.constraint(equalTo: topAnchor),

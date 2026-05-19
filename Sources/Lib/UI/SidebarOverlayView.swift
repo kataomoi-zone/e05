@@ -61,6 +61,7 @@ final class SidebarOverlayView: NSView {
   private(set) var extensionsView: NSView?
 
   private let glass = NSGlassEffectView()
+  private var cornerObserver: SurfaceCornerObserver?
   private let content = NSView()
 
   init() {
@@ -91,10 +92,9 @@ final class SidebarOverlayView: NSView {
       glass.trailingAnchor.constraint(equalTo: trailingAnchor),
       glass.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
-    glass.wantsLayer = true
-    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
+    cornerObserver = SurfaceCornerObserver(applyingTo: glass)
     applyGlassTint()
   }
 

@@ -42,6 +42,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   private let nextButton: HoverIconButton
   private let closeButton: HoverIconButton
   private let glass = NSGlassEffectView()
+  private var cornerObserver: SurfaceCornerObserver?
   /// Wrapper that fills `glass.contentView` so the fixed-size card
   /// can sit inside it at an offset. Required because
   /// `NSGlassEffectView` auto-pins its `contentView` to its bounds —
@@ -166,10 +167,9 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     inner.translatesAutoresizingMaskIntoConstraints = false
     card.translatesAutoresizingMaskIntoConstraints = false
     glass.contentView = inner
-    glass.wantsLayer = true
-    glass.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     glass.layer?.cornerCurve = .continuous
     glass.layer?.masksToBounds = true
+    cornerObserver = SurfaceCornerObserver(applyingTo: glass)
     addSubview(glass)
     inner.addSubview(card)
     let cardLeading = card.leadingAnchor.constraint(

@@ -190,6 +190,7 @@ public final class PaneModel {
   }
 
   private var urlBarTopConstraint: NSLayoutConstraint?
+  private var cornerObserver: SurfaceCornerObserver?
 
   /// Create a pane from a PaneAddress. Routes to the appropriate content type.
   ///
@@ -444,10 +445,9 @@ public final class PaneModel {
       headerView.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
     ])
 
-    containerView.wantsLayer = true
-    containerView.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     containerView.layer?.cornerCurve = .continuous
     containerView.layer?.masksToBounds = true
+    cornerObserver = SurfaceCornerObserver(applyingTo: containerView)
 
     applyURLBarVisibility(animated: false)
     urlBar.setDisplayURL(isBlankBrowser ? "" : address.displayString)

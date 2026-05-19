@@ -124,6 +124,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// is removed in `deinit`.
   nonisolated(unsafe) private var extensionsObserver: NSObjectProtocol?
 
+  /// Keeps the dropdown clipping wrapper's corner radius in sync
+  /// with `AppMetrics.surfaceCornerRadius`. Recreated each time the
+  /// dropdown is rebuilt; the previous observer's deinit removes
+  /// the listener it registered.
+  private var dropdownCornerObserver: SurfaceCornerObserver?
+
   /// Whether the reload button currently shows the stop affordance.
   /// Owned by `setReloadButtonLoading(_:)` so the click handler can
   /// dispatch to either `onReload` or `onStop` without consulting
@@ -795,7 +801,6 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // without losing information that wasn't already lost.
     let wrapper = NSView()
     wrapper.wantsLayer = true
-    wrapper.layer?.cornerRadius = AppMetrics.surfaceCornerRadius
     wrapper.layer?.cornerCurve = .continuous
     wrapper.layer?.masksToBounds = true
     // NSWindow auto-resizes its contentView via the autoresizing
@@ -803,6 +808,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // bounds stay locked to `panel.contentLayoutRect` whenever
     // `positionSuggestionList` reframes the panel.
     wrapper.autoresizingMask = [.width, .height]
+    dropdownCornerObserver = SurfaceCornerObserver(applyingTo: wrapper)
     panel.contentView = wrapper
 
     suggestionList.translatesAutoresizingMaskIntoConstraints = false
