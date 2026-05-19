@@ -136,4 +136,72 @@ struct PreferencesStoreTests {
       #expect(json.contains("\"homeURL\""))
     }
   }
+
+  // MARK: - Export / Import
+
+  @Test("exportTo writes the same Stored wrapper as the production save")
+  func exportRoundTrip() throws {
+    try withTempDir { dir in
+      let exportURL = dir.appendingPathComponent("export.json")
+      let store = PreferencesStore(inMemory: true)
+      store.update {
+        $0.homeURL = "https://example.com"
+        $0.searchTemplate = "https://kagi.com/search?q={query}"
+        $0.alwaysPromptDownload = false
+      }
+
+      try store.exportTo(exportURL)
+
+      // A second store reading the exported file recovers the same
+      // values — the export format is identical to the production
+      // file format, no separate decoder branch.
+      let reader = PreferencesStore(storeURL: exportURL)
+      #expect(reader.preferences == store.preferences)
+    }
+  }
+
+  @Test("importFrom applies the file contents and notifies listeners")
+  func importFiresListener() throws {
+    try withTempDir { dir in
+      let snapshotURL = dir.appendingPathComponent("snapshot.json")
+      let writer = PreferencesStore(storeURL: snapshotURL)
+      writer.update {
+        $0.homeURL = "https://example.com"
+        $0.searchTemplate = "https://kagi.com/search?q={query}"
+      }
+
+      let target = PreferencesStore(inMemory: true)
+      var fireCount = 0
+      var lastSeen: E05Preferences?
+      let token = target.addListener {
+        fireCount += 1
+        lastSeen = $0
+      }
+      defer { target.removeListener(token) }
+
+      try target.importFrom(snapshotURL)
+
+      #expect(target.preferences.homeURL == "https://example.com")
+      #expect(
+        target.preferences.searchTemplate == "https://kagi.com/search?q={query}")
+      #expect(fireCount == 1)
+      #expect(lastSeen?.homeURL == "https://example.com")
+    }
+  }
+
+  @Test("importFrom throws on malformed JSON and leaves preferences untouched")
+  func importMalformedThrows() throws {
+    try withTempDir { dir in
+      let snapshotURL = dir.appendingPathComponent("garbage.json")
+      try Data("not a preferences file".utf8).write(to: snapshotURL)
+
+      let store = PreferencesStore(inMemory: true)
+      let before = store.preferences
+
+      #expect(throws: (any Error).self) {
+        try store.importFrom(snapshotURL)
+      }
+      #expect(store.preferences == before)
+    }
+  }
 }
