@@ -277,36 +277,20 @@ struct SitesSettingsView: View {
   // MARK: - Hosts
 
   /// Current category's host list, sorted for stable rendering. The
-  /// underlying stores all return sorted arrays so this is just a
-  /// dispatch table.
+  /// dispatch lives on `Category.Kind` so adding a new category is
+  /// one new `Kind` case (or a new static `Category` constant for
+  /// an existing kind) instead of two parallel switches here.
   private var currentHosts: [String] {
     // Touch `revision` so the dependency tracker re-runs the
     // computation after every mutation. Without the read SwiftUI
     // would memoise the previous list and the new entry would not
     // surface until the picker triggers a separate render.
     _ = revision
-    switch category {
-    case .mute: return MutedSitesStore.shared.allHosts
-    case .camera, .microphone, .location, .notifications:
-      guard let kind = category.permissionKind else { return [] }
-      return PermissionsStore.shared.allHosts.filter {
-        PermissionsStore.shared.state(for: $0, kind: kind) != nil
-      }
-    case .suspend: return SuspendHostExemptStore.shared.allHosts
-    }
+    return category.currentHosts()
   }
 
   private func removeHost(_ host: String) {
-    switch category {
-    case .mute:
-      MutedSitesStore.shared.setMuted(false, host: host)
-    case .camera, .microphone, .location, .notifications:
-      if let kind = category.permissionKind {
-        PermissionsStore.shared.clear(host: host, kind: kind)
-      }
-    case .suspend:
-      SuspendHostExemptStore.shared.remove(host: host)
-    }
+    category.remove(host: host)
     revision += 1
   }
 
@@ -339,111 +323,149 @@ struct SitesSettingsView: View {
 
 // MARK: - Category metadata
 
-/// Master-view categories driven by the sub-sidebar. Permission
-/// categories map to a ``PermissionKind`` so the row builder can
-/// read and write the right key without a per-category switch. New
-/// permission kinds (autoplay, clipboard, screen-sharing, pop-ups,
-/// ad-blocker) land here by adding a case + a metadata row each.
-private enum Category: String, CaseIterable, Identifiable {
-  case mute
-  case camera
-  case microphone
-  case location
-  case notifications
-  case suspend
+/// Master-view category descriptor. Each entry is a `static let`
+/// constant carrying metadata (title / symbol / headers / messages)
+/// plus a `Kind` that owns the host-store dispatch. Adding a new
+/// category (autoplay, clipboard, screen-sharing, pop-ups,
+/// ad-blocker) is one new `Category` constant plus — when its state
+/// model differs from mute / permission / suspend — at most one new
+/// `Kind` case. The view never switches on the category itself; it
+/// only asks `currentHosts()` / `remove(host:)`.
+private struct Category: Identifiable, Hashable {
+  let id: String
+  let title: String
+  let symbol: String
+  let listHeader: String
+  let footerHint: String
+  let emptyMessage: String
+  let removeAllTitle: String
+  let removeAllMessage: String
+  let kind: Kind
 
-  var id: String { rawValue }
-
-  var title: String {
-    switch self {
-    case .mute: "Mute"
-    case .camera: "Camera"
-    case .microphone: "Microphone"
-    case .location: "Location"
-    case .notifications: "Notifications"
-    case .suspend: "Suspend"
-    }
+  /// State-model dispatch. Each variant maps to one host-keyed
+  /// store. Binary stores (mute, suspend-exempt) have no associated
+  /// value; permission categories carry the ``PermissionKind`` they
+  /// query so the four permission entries share one variant.
+  enum Kind: Hashable {
+    case mute
+    case permission(PermissionKind)
+    case suspend
   }
 
-  /// SF Symbol shown next to the title in the sub-sidebar. Picked
-  /// so the symbol vocabulary tracks Apple's own privacy / power
-  /// surfaces (speaker.slash for mute, video for camera, etc.).
-  var symbol: String {
-    switch self {
-    case .mute: "speaker.slash"
-    case .camera: "video"
-    case .microphone: "mic"
-    case .location: "location"
-    case .notifications: "bell"
-    case .suspend: "moon.zzz"
-    }
-  }
-
-  var listHeader: String {
-    switch self {
-    case .mute: "Muted Sites"
-    case .camera: "Camera Access"
-    case .microphone: "Microphone Access"
-    case .location: "Location Access"
-    case .notifications: "Notifications"
-    case .suspend: "Never Suspend"
-    }
-  }
-
-  var footerHint: String {
-    switch self {
-    case .mute:
-      "Listed hosts are muted on every page load."
-    case .camera, .microphone, .location, .notifications:
-      "Hosts choose between Allow and Deny. Remove a host to be prompted again on its next request."
-    case .suspend:
-      "Listed hosts skip the automatic idle suspend sweep."
-    }
-  }
-
-  var emptyMessage: String {
-    switch self {
-    case .mute: "No muted sites yet."
-    case .camera: "No camera decisions recorded yet."
-    case .microphone: "No microphone decisions recorded yet."
-    case .location: "No location decisions recorded yet."
-    case .notifications: "No notification decisions recorded yet."
-    case .suspend: "No sites are excluded from auto-suspend."
-    }
-  }
-
-  var removeAllTitle: String {
-    switch self {
-    case .mute: "Remove all muted sites?"
-    case .camera: "Clear all camera decisions?"
-    case .microphone: "Clear all microphone decisions?"
-    case .location: "Clear all location decisions?"
-    case .notifications: "Clear all notification decisions?"
-    case .suspend: "Remove all never-suspend sites?"
-    }
-  }
-
-  var removeAllMessage: String {
-    switch self {
-    case .mute:
-      "Every muted site returns to its default audio behaviour."
-    case .camera, .microphone, .location, .notifications:
-      "Every host in this list is forgotten. The next request from any of them prompts you again."
-    case .suspend:
-      "Every host in this list returns to the default suspend behaviour."
-    }
-  }
-
-  /// `nil` for the binary categories (mute, suspend) — only the
-  /// permission categories have a tri-state grant/deny/ask
-  /// dimension to expose.
+  /// `nil` for the binary categories — only the permission variants
+  /// have a tri-state grant/deny/ask dimension that warrants a
+  /// per-row Allow/Deny picker.
   var permissionKind: PermissionKind? {
-    switch self {
-    case .camera: .camera
-    case .microphone: .microphone
-    case .location: .geolocation
-    case .notifications: .notification
-    case .mute, .suspend: nil
+    if case .permission(let pk) = kind { return pk }
+    return nil
+  }
+
+  @MainActor
+  func currentHosts() -> [String] {
+    switch kind {
+    case .mute:
+      return MutedSitesStore.shared.allHosts
+    case .permission(let pk):
+      return PermissionsStore.shared.allHosts.filter {
+        PermissionsStore.shared.state(for: $0, kind: pk) != nil
+      }
+    case .suspend:
+      return SuspendHostExemptStore.shared.allHosts
     }
   }
+
+  @MainActor
+  func remove(host: String) {
+    switch kind {
+    case .mute:
+      MutedSitesStore.shared.setMuted(false, host: host)
+    case .permission(let pk):
+      PermissionsStore.shared.clear(host: host, kind: pk)
+    case .suspend:
+      SuspendHostExemptStore.shared.remove(host: host)
+    }
+  }
+
+  // MARK: - Constants
+
+  static let mute = Category(
+    id: "mute",
+    title: "Mute",
+    symbol: "speaker.slash",
+    listHeader: "Muted Sites",
+    footerHint: "Listed hosts are muted on every page load.",
+    emptyMessage: "No muted sites yet.",
+    removeAllTitle: "Remove all muted sites?",
+    removeAllMessage:
+      "Every muted site returns to its default audio behaviour.",
+    kind: .mute)
+
+  static let camera = Category(
+    id: "camera",
+    title: "Camera",
+    symbol: "video",
+    listHeader: "Camera Access",
+    footerHint:
+      "Hosts choose between Allow and Deny. Remove a host to be prompted again on its next request.",
+    emptyMessage: "No camera decisions recorded yet.",
+    removeAllTitle: "Clear all camera decisions?",
+    removeAllMessage:
+      "Every host in this list is forgotten. The next request from any of them prompts you again.",
+    kind: .permission(.camera))
+
+  static let microphone = Category(
+    id: "microphone",
+    title: "Microphone",
+    symbol: "mic",
+    listHeader: "Microphone Access",
+    footerHint:
+      "Hosts choose between Allow and Deny. Remove a host to be prompted again on its next request.",
+    emptyMessage: "No microphone decisions recorded yet.",
+    removeAllTitle: "Clear all microphone decisions?",
+    removeAllMessage:
+      "Every host in this list is forgotten. The next request from any of them prompts you again.",
+    kind: .permission(.microphone))
+
+  static let location = Category(
+    id: "location",
+    title: "Location",
+    symbol: "location",
+    listHeader: "Location Access",
+    footerHint:
+      "Hosts choose between Allow and Deny. Remove a host to be prompted again on its next request.",
+    emptyMessage: "No location decisions recorded yet.",
+    removeAllTitle: "Clear all location decisions?",
+    removeAllMessage:
+      "Every host in this list is forgotten. The next request from any of them prompts you again.",
+    kind: .permission(.geolocation))
+
+  static let notifications = Category(
+    id: "notifications",
+    title: "Notifications",
+    symbol: "bell",
+    listHeader: "Notifications",
+    footerHint:
+      "Hosts choose between Allow and Deny. Remove a host to be prompted again on its next request.",
+    emptyMessage: "No notification decisions recorded yet.",
+    removeAllTitle: "Clear all notification decisions?",
+    removeAllMessage:
+      "Every host in this list is forgotten. The next request from any of them prompts you again.",
+    kind: .permission(.notification))
+
+  static let suspend = Category(
+    id: "suspend",
+    title: "Suspend",
+    symbol: "moon.zzz",
+    listHeader: "Never Suspend",
+    footerHint:
+      "Listed hosts skip the automatic idle suspend sweep.",
+    emptyMessage: "No sites are excluded from auto-suspend.",
+    removeAllTitle: "Remove all never-suspend sites?",
+    removeAllMessage:
+      "Every host in this list returns to the default suspend behaviour.",
+    kind: .suspend)
+
+  static let allCases: [Category] = [
+    .mute, .camera, .microphone, .location, .notifications, .suspend,
+  ]
 }
