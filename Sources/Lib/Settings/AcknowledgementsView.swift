@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// Open-source dependency credits. Linked from the About tab's app
-/// info row; the body is intentionally placeholder in this scaffold
-/// commit so the link/sheet plumbing lands first, and the actual
-/// dependency entries arrive in a follow-up commit.
+/// info row through a sheet so the user can scan the list without
+/// losing their place in the rest of Settings.
 @MainActor
 struct AcknowledgementsView: View {
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.openURL) private var openURL
 
   var body: some View {
     VStack(spacing: 0) {
@@ -22,9 +22,27 @@ struct AcknowledgementsView: View {
 
       Divider()
 
-      List {
-        Text("Coming soon")
-          .foregroundStyle(.tertiary)
+      List(Acknowledgements.all) { credit in
+        VStack(alignment: .leading, spacing: 4) {
+          HStack(alignment: .firstTextBaseline) {
+            Text(credit.name)
+              .font(.headline)
+            Spacer()
+            Text(credit.license)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          Text(credit.description)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+          Button("Project page") {
+            openURL(credit.url)
+          }
+          .buttonStyle(.link)
+          .font(.subheadline)
+          .help(credit.url.absoluteString)
+        }
+        .padding(.vertical, 4)
       }
     }
     .frame(minWidth: 480, minHeight: 360)
