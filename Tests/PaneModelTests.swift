@@ -115,4 +115,14 @@ struct PaneModelTests {
     // pinned alongside every other pane.
     #expect(pane.urlBarHoverState == .pinned)
   }
+
+  @Test("isSuspendExempt defaults to false and is independently mutable")
+  func suspendExemptDefaultAndToggle() {
+    let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
+    #expect(!pane.isSuspendExempt)
+    pane.isSuspendExempt = true
+    #expect(pane.isSuspendExempt)
+    pane.isSuspendExempt = false
+    #expect(!pane.isSuspendExempt)
+  }
 }
