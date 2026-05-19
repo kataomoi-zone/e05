@@ -55,9 +55,12 @@ extension PaneContainerViewController {
     // entries for `duckduckgo.com/?q=foo` and
     // `duckduckgo.com/?q=foo&ia=web` both surface and crowd out
     // genuinely distinct candidates.
+    let activeSearchHosts = Self.currentSearchEngineHosts()
     var seenSearchKeys: Set<String> = []
     results = results.filter { suggestion in
-      guard let key = Self.searchEngineQueryKey(for: suggestion.url) else {
+      guard let key = Self.searchEngineQueryKey(
+        for: suggestion.url, hosts: activeSearchHosts)
+      else {
         return true
       }
       return seenSearchKeys.insert(key).inserted
@@ -80,9 +83,13 @@ extension PaneContainerViewController {
     // when history/bookmarks match (Brave-style). Placed after the top
     // few strong matches but before weaker tail results.
     if let searchAddr = PaneAddress.searchURL(query: query) {
+      // Engine-agnostic label so the row stays correct regardless of
+      // which search template the preferences point at. Spelling out
+      // the engine name would either hard-code DuckDuckGo or require
+      // a per-preset display table at every URL bar interaction.
       let searchEntry = Suggestion(
         url: searchAddr.url.absoluteString,
-        title: "\(query) \u{2014} DuckDuckGo Search",
+        title: "\(query) \u{2014} Search",
         isBookmark: false
       )
       let insertAt = min(Self.searchEntryInsertOffset, results.count)
@@ -193,17 +200,40 @@ extension PaneContainerViewController {
   /// by ↓-Enter without skipping a search affordance underneath.
   static let searchEntryInsertOffset = 3
 
-  /// Hosts whose `?q=` parameter is the canonical identity of the
-  /// page. Two visits to such a host with different peripheral
-  /// query params (`&ia=web`, `&prevq=…`) are visits to the same
-  /// search and should collapse to a single suggestion. Non-search
-  /// hosts return nil so their suggestions are never collapsed.
-  static let searchEngineHosts: Set<String> = [
+  /// Built-in search engines whose `?q=` parameter is the canonical
+  /// identity of the page. Two visits to such a host with different
+  /// peripheral query params (`&ia=web`, `&prevq=…`) are visits to
+  /// the same search and should collapse to a single suggestion;
+  /// non-search hosts return nil so their suggestions are never
+  /// collapsed. Augmented at call time with the user's current
+  /// custom template host via ``currentSearchEngineHosts()``.
+  ///
+  /// `nonisolated` so the `Set<String>` literal can be reached as a
+  /// default-argument value from the nonisolated `searchEngineQueryKey`;
+  /// the class's MainActor isolation would otherwise capture it.
+  nonisolated static let searchEngineHosts: Set<String> = [
     "duckduckgo.com", "www.duckduckgo.com",
     "google.com", "www.google.com",
     "bing.com", "www.bing.com",
     "search.brave.com",
   ]
+
+  /// Built-in set unioned with the host of the user's configured
+  /// search template, so a Custom engine still benefits from
+  /// suggestion-row collapsing. Live read each call to follow
+  /// preferences changes without restart.
+  @MainActor
+  static func currentSearchEngineHosts() -> Set<String> {
+    var hosts = searchEngineHosts
+    let template = PreferencesStore.shared.preferences.searchTemplate
+    if let url = URL(string: template),
+      let host = url.host(percentEncoded: false)?.lowercased(),
+      !host.isEmpty
+    {
+      hosts.insert(host)
+    }
+    return hosts
+  }
 
   /// Canonical "this is the same search" key for `urlString`, or
   /// nil when the URL doesn't belong to a recognised search engine.
@@ -217,10 +247,18 @@ extension PaneContainerViewController {
   /// propagates to its subclass, and the Swift 6 runtime traps when a
   /// non-MainActor caller (the suggestion-filter unit tests) invokes
   /// the closure off the main queue.
-  nonisolated static func searchEngineQueryKey(for urlString: String) -> String? {
+  ///
+  /// The `hosts:` parameter lets MainActor callers pass
+  /// ``currentSearchEngineHosts()`` so a Custom template host gets
+  /// collapsed too. Defaulting to the static set keeps the existing
+  /// nonisolated test callers working unchanged.
+  nonisolated static func searchEngineQueryKey(
+    for urlString: String,
+    hosts: Set<String> = searchEngineHosts
+  ) -> String? {
     guard let url = URL(string: urlString),
       let host = url.host(percentEncoded: false)?.lowercased(),
-      Self.searchEngineHosts.contains(host)
+      hosts.contains(host)
     else {
       return nil
     }
