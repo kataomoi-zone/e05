@@ -268,17 +268,16 @@ public final class PaneContainerViewController: NSViewController {
     startMemoryPressureMonitor()
   }
 
-  /// Idle threshold (in minutes) past which a non-focused browser
-  /// pane gets suspended by the 1 Hz tick. Half of Chrome / Edge's
-  /// 2 h default and more aggressive than Safari / Firefox's
+  /// Fallback idle threshold (in minutes) past which a non-focused
+  /// browser pane gets suspended by the 1 Hz tick. Half of Chrome /
+  /// Edge's 2 h default and more aggressive than Safari / Firefox's
   /// pressure-only stance — long enough that flipping between panes
   /// mid-research doesn't reload the one you just glanced at, short
   /// enough that a pane left from this morning is reclaimed by the
-  /// afternoon. Stored as `Int` minutes (rather than seconds) so a
-  /// future config surface can expose the value in user-friendly
-  /// units without a second conversion pass; the 1 Hz tick multiplies
-  /// by 60 at the comparison site.
-  private static let suspendIdleMinutes: Int = 60
+  /// afternoon. Used when ``E05Preferences/suspendIdleMinutes`` is
+  /// `nil`; the 1 Hz tick reads the override on every pass so
+  /// changes from the Settings tab take effect without a restart.
+  private static let defaultSuspendIdleMinutes: Int = 60
 
   /// Kick off the shared 1 Hz audio-state probe loop. Each tick walks
   /// every browser pane in the container and asks it to refresh its
@@ -363,7 +362,7 @@ public final class PaneContainerViewController: NSViewController {
 
   /// Walk every browser pane and suspend any that isn't currently
   /// focused, isn't emitting audio, and (unless `force == true`) has
-  /// been idle past `suspendIdleMinutes`. Shared by the 1 Hz idle
+  /// been idle past the configured threshold. Shared by the 1 Hz idle
   /// tick (`force: false`) and the memory-pressure handler
   /// (`force: true`) so both paths apply the same focused / audio /
   /// canSuspend guard set — the only difference is whether the
@@ -377,12 +376,21 @@ public final class PaneContainerViewController: NSViewController {
   /// (an `isSweeping` flag, or moving sweeps onto a single serial
   /// async queue).
   private func suspendSweep(force: Bool) {
+    // Read the preference on every sweep so a Settings tab change
+    // takes effect on the next 1 Hz tick. Non-positive `idleMinutes`
+    // disables the idle sweep — memory-pressure callers still pass
+    // `force: true` and bypass both this early return and the
+    // per-pane `lastActiveAt > cutoff` check below.
+    let idleMinutes =
+      PreferencesStore.shared.preferences.suspendIdleMinutes
+      ?? Self.defaultSuspendIdleMinutes
+    if !force, idleMinutes <= 0 { return }
     // Snapshot the cutoff once at sweep start instead of recomputing
     // per pane. The sweep visits a handful of panes at most, and
     // anything that slips through because the cutoff was captured a
     // few ms before the per-pane check will be caught by the next
     // sweep — latency is bounded by the loop interval anyway.
-    let cutoff = Date().addingTimeInterval(-TimeInterval(Self.suspendIdleMinutes * 60))
+    let cutoff = Date().addingTimeInterval(-TimeInterval(idleMinutes * 60))
     // Protect the focused pane in *every* workspace, not just the
     // current one: a user reading a long article on a non-current
     // workspace doesn't move focus or change URL, so its

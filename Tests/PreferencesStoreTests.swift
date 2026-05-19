@@ -14,6 +14,7 @@ struct PreferencesStoreTests {
     #expect(store.preferences.searchTemplate == "https://duckduckgo.com/?q={query}")
     #expect(store.preferences.alwaysPromptDownload == true)
     #expect(store.preferences.defaultDownloadDir == nil)
+    #expect(store.preferences.suspendIdleMinutes == nil)
   }
 
   @Test("update mutates the stored value and notifies listeners")

@@ -33,16 +33,27 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// sensible default.
   public var defaultDownloadDir: String?
 
+  /// Minutes a browser pane can sit idle before the automatic
+  /// suspend sweep reclaims its `WKWebView`. `nil` keeps the
+  /// historical 60-minute default. Non-positive values (`0` and
+  /// any negative ints a hand-edited file might leave behind)
+  /// disable the idle sweep entirely — memory-pressure-driven
+  /// suspends still run because those come from the OS, not the
+  /// per-tick idle gate.
+  public var suspendIdleMinutes: Int?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
     alwaysPromptDownload: Bool = true,
-    defaultDownloadDir: String? = nil
+    defaultDownloadDir: String? = nil,
+    suspendIdleMinutes: Int? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
     self.alwaysPromptDownload = alwaysPromptDownload
     self.defaultDownloadDir = defaultDownloadDir
+    self.suspendIdleMinutes = suspendIdleMinutes
   }
 
   /// Factory used when the on-disk file is missing or quarantined.
