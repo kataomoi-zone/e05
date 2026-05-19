@@ -27,6 +27,8 @@ struct SettingsRootView: View {
       switch selected {
       case .general:
         GeneralSettingsView()
+      case .sites:
+        SitesSettingsView()
       case .about:
         AboutSettingsView()
       }
@@ -37,9 +39,11 @@ struct SettingsRootView: View {
 
 /// `allCases` order drives the sidebar row order. About sits at the
 /// bottom by convention so the most-edited tabs (General first,
-/// future Sites / Appearance / Shortcuts above) stay near the top.
+/// Sites next, future Appearance / Shortcuts above About) stay near
+/// the top.
 private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   case general
+  case sites
   case about
 
   var id: Self { self }
@@ -47,6 +51,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   var title: String {
     switch self {
     case .general: "General"
+    case .sites: "Sites"
     case .about: "About"
     }
   }
@@ -56,6 +61,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   var symbol: String {
     switch self {
     case .general: "gearshape"
+    case .sites: "globe"
     case .about: "info.circle"
     }
   }
