@@ -6,28 +6,32 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Workspaces")
 extension PaneContainerViewController {
   // MARK: - Accent color palette
 
-  /// Fixed palette mapped positionally: `palette[i % palette.count]` is the
-  /// color for the workspace displayed as "Workspace \(i + 1)". Because it
-  /// tracks array position — not an id baked into the workspace itself —
-  /// number and color stay aligned when workspaces are added or removed.
-  /// Workspaces beyond the palette length cycle back to the first color;
-  /// a later config plumbing pass can expose this list to the user.
-  public static let accentColorPalette: [NSColor] = [
-    NSColor(srgbRed: 0xce / 255, green: 0x05 / 255, blue: 0x5b / 255, alpha: 1),
-    NSColor(srgbRed: 0xb0 / 255, green: 0xbf / 255, blue: 0x1f / 255, alpha: 1),
-    NSColor(srgbRed: 0xec / 255, green: 0x6e / 255, blue: 0x65 / 255, alpha: 1),
-    NSColor(srgbRed: 0x02 / 255, green: 0x79 / 255, blue: 0xc2 / 255, alpha: 1),
-  ]
+  /// Palette mapped positionally: `palette[i % palette.count]` is the
+  /// color for the workspace displayed as "Workspace \(i + 1)". Because
+  /// it tracks array position — not an id baked into the workspace
+  /// itself — number and color stay aligned when workspaces are added
+  /// or removed. Resolved from
+  /// ``E05Preferences/accentPalette`` on every read so a Settings tab
+  /// change takes effect on the next paint without a restart; unknown
+  /// identifiers fall back to ``AccentPalettePreset/subway``.
+  @MainActor
+  public static var accentColorPalette: [NSColor] {
+    AccentPalettePreset.resolve(
+      PreferencesStore.shared.preferences.accentPalette
+    ).colors
+  }
 
   /// Accent color for the workspace at `position`. Wraps via modulo so any
   /// non-negative index resolves to a palette entry, keeping this function
   /// total even when the workspace count exceeds the palette length.
   /// Falls back to `.systemBlue` if the palette itself is empty (a
   /// theoretically impossible state, guarded for safety).
+  @MainActor
   public static func accentColor(forWorkspaceAt position: Int) -> NSColor {
-    guard !accentColorPalette.isEmpty else { return .systemBlue }
+    let palette = accentColorPalette
+    guard !palette.isEmpty else { return .systemBlue }
     let safePosition = max(position, 0)
-    return accentColorPalette[safePosition % accentColorPalette.count]
+    return palette[safePosition % palette.count]
   }
 
   // MARK: - Switching
