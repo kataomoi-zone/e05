@@ -83,6 +83,31 @@ public final class PreferencesStore {
     listeners.removeValue(forKey: token)
   }
 
+  // MARK: - Backup
+
+  /// Write the current preferences to an arbitrary URL using the
+  /// same `Stored` wrapper as the production file. The export is a
+  /// snapshot — the store's own `storeURL` is untouched, so a
+  /// failed write does not invalidate the live on-disk state.
+  public func exportTo(_ url: URL) throws {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let stored = Stored(version: 1, preferences: preferences)
+    let data = try encoder.encode(stored)
+    try data.write(to: url, options: .atomic)
+  }
+
+  /// Read a snapshot from an arbitrary URL and apply it via
+  /// ``update(_:)``. Listeners fire and the production store is
+  /// written exactly as if the user had edited Settings by hand.
+  /// A decode failure throws so the caller can surface a parsable
+  /// error message to the user.
+  public func importFrom(_ url: URL) throws {
+    let data = try Data(contentsOf: url)
+    let stored = try JSONDecoder().decode(Stored.self, from: data)
+    update { $0 = stored.preferences }
+  }
+
   // MARK: - Private
 
   /// On-disk wrapper. The `version` field gives future schema bumps

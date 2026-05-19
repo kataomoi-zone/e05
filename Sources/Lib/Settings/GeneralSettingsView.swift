@@ -27,6 +27,10 @@ struct GeneralSettingsView: View {
   /// a built-in preset, so the choice has to live in view state
   /// rather than be re-derived from preferences on every render.
   @State private var selectedSearchPreset: SearchEnginePreset
+  /// Store-listener handle. Held in state so `.onDisappear` can
+  /// unsubscribe, preventing the listener from outliving the view
+  /// when the tab is swapped out.
+  @State private var listenerToken: UUID?
 
   init() {
     let current = PreferencesStore.shared.preferences
@@ -121,6 +125,30 @@ struct GeneralSettingsView: View {
     }
     .formStyle(.grouped)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onAppear { subscribeToStore() }
+    .onDisappear { unsubscribeFromStore() }
+  }
+
+  // MARK: - Store subscription
+
+  /// Pull external mutations (Import / Reset / future tabs) into the
+  /// view-local copy. Without this, the view shows the stale
+  /// snapshot captured at `init` until the user re-opens Settings.
+  private func subscribeToStore() {
+    if listenerToken != nil { return }
+    listenerToken = PreferencesStore.shared.addListener { new in
+      preferences = new
+      homeURLInput = new.homeURL ?? ""
+      homeOption = new.homeURL == nil ? .blank : .custom
+      selectedSearchPreset = SearchEnginePreset.matching(template: new.searchTemplate)
+    }
+  }
+
+  private func unsubscribeFromStore() {
+    if let token = listenerToken {
+      PreferencesStore.shared.removeListener(token)
+      listenerToken = nil
+    }
   }
 
   // MARK: - Helpers

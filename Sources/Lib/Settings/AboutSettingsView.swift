@@ -13,12 +13,82 @@ struct AboutSettingsView: View {
       Section {
         appInfoRow
       }
+
+      Section("Backup") {
+        HStack {
+          Text("Preferences")
+          Spacer()
+          Button("Export…") { exportPreferences() }
+          Button("Import…") { importPreferences() }
+        }
+      }
     }
     .formStyle(.grouped)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .sheet(isPresented: $showingAcknowledgements) {
       AcknowledgementsView()
     }
+  }
+
+  // MARK: - Backup
+
+  private func exportPreferences() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "e05-preferences.json"
+    panel.canCreateDirectories = true
+    panel.allowedContentTypes = [.json]
+    guard let parent = SettingsWindowController.shared.window else { return }
+    panel.beginSheetModal(for: parent) { response in
+      MainActor.assumeIsolated {
+        guard response == .OK, let url = panel.url else { return }
+        do {
+          try PreferencesStore.shared.exportTo(url)
+        } catch {
+          presentError(
+            title: "Couldn't export preferences",
+            message: error.localizedDescription)
+        }
+      }
+    }
+  }
+
+  private func importPreferences() {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = [.json]
+    panel.message = "Choose a preferences file to import"
+    panel.prompt = "Import"
+    guard let parent = SettingsWindowController.shared.window else { return }
+    panel.beginSheetModal(for: parent) { response in
+      MainActor.assumeIsolated {
+        guard response == .OK, let url = panel.url else { return }
+        do {
+          try PreferencesStore.shared.importFrom(url)
+        } catch {
+          presentError(
+            title: "Couldn't import preferences",
+            message: error.localizedDescription)
+        }
+      }
+    }
+  }
+
+  /// Sheet-attached error alert. The Settings panel is the parent so
+  /// the modal hold lands on it and Cancel returns focus to Settings
+  /// — same pattern as the directory picker in General.
+  private func presentError(title: String, message: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    guard let parent = SettingsWindowController.shared.window else {
+      alert.runModal()
+      return
+    }
+    alert.beginSheetModal(for: parent) { _ in }
   }
 
   // MARK: - App info
