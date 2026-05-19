@@ -62,6 +62,13 @@ public final class MutedSitesStore {
     hosts.contains(host.lowercased())
   }
 
+  /// Every host on the always-mute list. Sorted for deterministic
+  /// UI ordering. Mirrors `PermissionsStore.allHosts` so iterators
+  /// can use one pattern across host-keyed stores.
+  public var allHosts: [String] {
+    hosts.sorted()
+  }
+
   // MARK: - Write
 
   /// Add or remove `host` from the always-mute list and persist.
