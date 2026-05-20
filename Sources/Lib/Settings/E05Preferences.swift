@@ -64,6 +64,14 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// unknown-value tolerance as ``accentPalette``.
   public var theme: String?
 
+  /// User-defined overrides for ``Action`` key chords, keyed by the
+  /// action's stable `id`. `nil` (or an absent key) keeps the static
+  /// default baked into the registry; a present ``ShortcutBinding``
+  /// with `keyEquivalent: nil` is the explicit "unbound" form.
+  /// Unknown ids (e.g. an action removed in a later release) sit
+  /// dormant until the entry is rewritten or the file is reset.
+  public var keyboardShortcuts: [String: ShortcutBinding]?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -73,7 +81,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     accentPalette: String? = nil,
     surfaceCornerRadius: String? = nil,
     paneBorderWidth: String? = nil,
-    theme: String? = nil
+    theme: String? = nil,
+    keyboardShortcuts: [String: ShortcutBinding]? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -84,6 +93,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.surfaceCornerRadius = surfaceCornerRadius
     self.paneBorderWidth = paneBorderWidth
     self.theme = theme
+    self.keyboardShortcuts = keyboardShortcuts
   }
 
   /// Factory used when the on-disk file is missing or quarantined.
