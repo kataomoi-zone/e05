@@ -88,4 +88,30 @@ public struct Action {
     "\r": "⏎",
     " ": "␣",
   ]
+
+  // MARK: - Overrides
+
+  /// Return a copy of this action with the binding replaced by
+  /// `override`. `nil` leaves the static default in place so the
+  /// resolver can route every action through the same `.map`
+  /// regardless of whether the user has customised it.
+  ///
+  /// The handler, validator and `separatorBefore` flag carry over
+  /// unchanged so dispatch identity and menu layout stay locked to
+  /// the registry; only the key chord (and the derived `keyLabel`,
+  /// rebuilt by the regular initialiser) differ.
+  public func applyingOverride(_ override: ShortcutBinding?) -> Action {
+    guard let override else { return self }
+    let mask = NSEvent.ModifierFlags(rawValue: override.modifierMask)
+      .intersection(.deviceIndependentFlagsMask)
+    return Action(
+      id: id,
+      title: title,
+      keyEquivalent: override.keyEquivalent,
+      modifierMask: mask,
+      handler: handler,
+      validate: validate,
+      separatorBefore: separatorBefore
+    )
+  }
 }

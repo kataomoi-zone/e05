@@ -601,7 +601,8 @@ extension PaneContainerViewController {
       }
     }
 
-    return result
+    let overrides = PreferencesStore.shared.preferences.keyboardShortcuts ?? [:]
+    return result.map { $0.applyingOverride(overrides[$0.id]) }
   }
 
   static let defaultWidthCycle: [PaneWidthPreset] = [
