@@ -54,36 +54,64 @@ public final class AdBlocker {
   /// returned by `cacheRoot` (see class doc for the
   /// `Caches`-vs-`Application Support` rationale), converted to
   /// Safari JSON, and merged before compilation.
-  private struct FilterSource {
-    let name: String
-    /// Short identifier-safe token used as part of the compiled
-    /// rule list's store key (`e05-adblocker-v1-<slug>-<hash>`).
-    let slug: String
+  ///
+  /// `homepage` is the project page surfaced in the Settings Content
+  /// Blocker tab so users can read the upstream filterlist's terms
+  /// before relying on it. The raw `url` itself points at the
+  /// filterlist text and is unsuited for a credit link.
+  public struct FilterSource: Identifiable, Sendable {
+    /// Identifier-safe token used as part of the compiled rule
+    /// list's store key (`e05-adblocker-v1-<id>-<hash>`) and as the
+    /// per-source enable flag persisted in preferences.
+    public let id: String
+    public let name: String
+    /// Upstream filterlist URL and the on-disk cache filename are
+    /// internal-only — UI callers should never need either, and
+    /// keeping them out of the public surface keeps a future
+    /// schema change cheap.
     let url: URL
     let cacheFilename: String
+    public let homepage: URL?
+
+    init(
+      id: String,
+      name: String,
+      url: URL,
+      cacheFilename: String,
+      homepage: URL?
+    ) {
+      self.id = id
+      self.name = name
+      self.url = url
+      self.cacheFilename = cacheFilename
+      self.homepage = homepage
+    }
   }
 
   /// The filterlist bundle. EasyList + EasyPrivacy give broad coverage
   /// of global ad networks and trackers; AdGuard Japanese layers in
   /// local networks that the English lists miss.
-  private static let sources: [FilterSource] = [
+  public static let allSources: [FilterSource] = [
     FilterSource(
+      id: "easylist",
       name: "EasyList",
-      slug: "easylist",
       url: URL(string: "https://easylist.to/easylist/easylist.txt")!,
-      cacheFilename: "easylist.txt"
+      cacheFilename: "easylist.txt",
+      homepage: URL(string: "https://easylist.to/")
     ),
     FilterSource(
+      id: "easyprivacy",
       name: "EasyPrivacy",
-      slug: "easyprivacy",
       url: URL(string: "https://easylist.to/easylist/easyprivacy.txt")!,
-      cacheFilename: "easyprivacy.txt"
+      cacheFilename: "easyprivacy.txt",
+      homepage: URL(string: "https://easylist.to/")
     ),
     FilterSource(
-      name: "AdGuard Japanese",
-      slug: "adguard-japanese",
+      id: "adguard-japanese",
+      name: "AdGuard Japanese Filter",
       url: URL(string: "https://filters.adtidy.org/extension/safari/filters/7.txt")!,
-      cacheFilename: "adguard-japanese.txt"
+      cacheFilename: "adguard-japanese.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/")
     ),
   ]
 
@@ -173,10 +201,10 @@ public final class AdBlocker {
     // `WKUserContentController.add(_:)` accepts multiple rule lists
     // per web view, so the natural fix is one list per source.
     var compiledIdentifiers: [String] = []
-    for source in Self.sources {
+    for source in Self.allSources {
       guard let text = await loadFilterText(source: source) else { continue }
       let hash = Self.shortHash(for: [text])
-      let identifier = "\(Self.ruleListIdentifierPrefix)\(source.slug)-\(hash)"
+      let identifier = "\(Self.ruleListIdentifierPrefix)\(source.id)-\(hash)"
       compiledIdentifiers.append(identifier)
 
       if let cached = try? await store.contentRuleList(forIdentifier: identifier) {
@@ -239,7 +267,7 @@ public final class AdBlocker {
       return
     }
     logger.info(
-      "Installed \(self.ruleLists.count) rule lists across \(Self.sources.count) sources"
+      "Installed \(self.ruleLists.count) rule lists across \(Self.allSources.count) sources"
     )
     broadcastRuleListChange()
     Task {
