@@ -313,6 +313,20 @@ public final class AdBlocker {
     await CosmeticFilterEngine.shared.start()
   }
 
+  /// Force a fresh download of every enabled filterlist source by
+  /// dropping the on-disk cache first, then re-running the compile
+  /// path. The disk wipe means ``loadFilterText`` cannot fall back
+  /// to a stale cached copy, so the refresh genuinely fetches from
+  /// upstream regardless of the 7-day staleness window. Failure to
+  /// reach the upstream still leaves the user covered: the previous
+  /// compiled binary lives in ``WKContentRuleListStore`` keyed by
+  /// content hash, and ``start()`` re-attaches it when the converter
+  /// produces no rules.
+  public func refreshFilterlists() async {
+    clearCache()
+    await reload()
+  }
+
   /// Short hex digest used to key compiled rule lists. Changing the
   /// converter or any source text flips this, which makes WebKit
   /// recompile on the next launch without a manual identifier bump.
