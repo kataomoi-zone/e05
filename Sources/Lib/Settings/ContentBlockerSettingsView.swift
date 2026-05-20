@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+import os.log
+
+private let logger = Logger(subsystem: LogSubsystem.app, category: "ContentBlockerSettings")
 
 /// Content Blocker settings tab — lets the user toggle individual
 /// filter sources, maintain a per-host whitelist, and inspect / kick
@@ -68,23 +71,152 @@ struct ContentBlockerSettingsView: View {
 
   // MARK: - Detail
 
+  @ViewBuilder
   private var detail: some View {
+    switch category {
+    case .filterLists: filterListsForm
+    default: placeholderForm
+    }
+  }
+
+  private var placeholderForm: some View {
     Form {
       Section {
         Text("Per-category controls land in the next commit.")
           .foregroundStyle(.secondary)
       } header: {
         Text(category.title)
-      } footer: {
-        Text(
-          "Lists are downloaded under \(AdBlocker.cacheRoot.lastPathComponent)/ and refreshed on the schedule set above."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
       }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
+  }
+
+  // MARK: - Filter Lists
+
+  private var filterListsForm: some View {
+    Form {
+      Section {
+        ForEach(AdBlocker.allSources) { source in
+          filterListRow(source)
+        }
+      } header: {
+        HStack {
+          Text(category.title)
+          Spacer()
+          Button("Refresh Now") {
+            Task { await AdBlocker.shared.refreshFilterlists() }
+          }
+          .controlSize(.small)
+        }
+      } footer: {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(lastUpdatedSummary)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(
+            "Disabling a list removes its rules on the next compile. The compiled binaries already attached to open tabs swap atomically — no reload is needed."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private func filterListRow(_ source: AdBlocker.FilterSource) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      Toggle(
+        isOn: Binding(
+          get: { isEnabled(source) },
+          set: { setEnabled($0, for: source) }
+        )
+      ) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(source.name)
+          if let homepage = source.homepage {
+            Button {
+              openInPane(homepage)
+            } label: {
+              Text(homepage.host ?? homepage.absoluteString)
+                .font(.caption)
+            }
+            .buttonStyle(.link)
+          }
+        }
+      }
+      .toggleStyle(.switch)
+    }
+  }
+
+  /// Open `url` in a fresh e05 browser column rather than handing
+  /// it off to the user's default browser. The Settings panel is
+  /// left visible — the user can dismiss it manually after reading
+  /// the linked page — but the main window is brought forward so
+  /// the new column is actually in view.
+  private func openInPane(_ url: URL) {
+    guard let container = SettingsWindowController.shared.paneContainer else {
+      logger.warning(
+        "[settings/contentblocker] openInPane dropped: pane container not bound (url=\(url.absoluteString, privacy: .public))"
+      )
+      return
+    }
+    container.addColumn(address: PaneAddress(url))
+    container.view.window?.makeKeyAndOrderFront(nil)
+    NSApp.activate()
+  }
+
+  // MARK: - Helpers
+
+  /// Shared formatter — allocating a new instance on every body
+  /// recomposition is expensive enough to be worth caching.
+  private static let relativeFormatter: RelativeDateTimeFormatter = {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    return formatter
+  }()
+
+  private var lastUpdatedSummary: String {
+    _ = revision
+    guard let date = PreferencesStore.shared.preferences.adblockerLastRefreshedAt
+    else {
+      return "Last updated: never (filterlists download on first launch)."
+    }
+    return
+      "Last updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))."
+  }
+
+  private func isEnabled(_ source: AdBlocker.FilterSource) -> Bool {
+    _ = revision
+    if let enabled = PreferencesStore.shared.preferences.adblockerEnabledSources {
+      return enabled.contains(source.id)
+    }
+    return true
+  }
+
+  private func setEnabled(_ enabled: Bool, for source: AdBlocker.FilterSource) {
+    PreferencesStore.shared.update { prefs in
+      var list = prefs.adblockerEnabledSources
+        ?? AdBlocker.allSources.map(\.id)
+      if enabled {
+        if !list.contains(source.id) {
+          list.append(source.id)
+        }
+      } else {
+        list.removeAll { $0 == source.id }
+      }
+      // Collapse back to `nil` when every shipped source is enabled
+      // so the preferences.json stays small for the common case.
+      let allIds = Set(AdBlocker.allSources.map(\.id))
+      if Set(list) == allIds {
+        prefs.adblockerEnabledSources = nil
+      } else {
+        prefs.adblockerEnabledSources = list
+      }
+    }
+    Task { await AdBlocker.shared.reload() }
   }
 
   // MARK: - Subscription
