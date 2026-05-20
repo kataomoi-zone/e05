@@ -61,6 +61,18 @@ public final class FoldedLabelView: NSView {
     fatalError()
   }
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // `NSColor.cgColor` resolves against `NSAppearance.current`,
+    // which is not always synced with the view's `effectiveAppearance`
+    // at callback time. `performAsCurrent` pins evaluation so the
+    // dynamic colour returns the value for the new appearance, not
+    // the previous one.
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.popoverSurface.cgColor
+    }
+  }
+
   private func setup() {
     wantsLayer = true
     layer?.backgroundColor = AppColors.popoverSurface.cgColor

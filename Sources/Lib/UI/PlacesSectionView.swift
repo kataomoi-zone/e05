@@ -282,6 +282,13 @@ private final class SelectionIndicator: NSView {
     layer?.cornerRadius = 6
   }
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.activeOverlay.cgColor
+    }
+  }
+
   @available(*, unavailable)
   required init?(coder _: NSCoder) { fatalError() }
 

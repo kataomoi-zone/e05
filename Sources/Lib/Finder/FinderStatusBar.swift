@@ -8,6 +8,13 @@ final class FinderStatusBar: NSView {
   private let label = NSTextField(labelWithString: "")
   private let freeSpaceLabel = NSTextField(labelWithString: "")
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.statusBarSurface.cgColor
+    }
+  }
+
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true

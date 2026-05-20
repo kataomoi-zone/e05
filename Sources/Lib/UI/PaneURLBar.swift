@@ -276,6 +276,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     setupLayout()
   }
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.popoverSurface.cgColor
+    }
+  }
+
   @available(*, unavailable)
   required init?(coder _: NSCoder) {
     fatalError()

@@ -161,6 +161,14 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
 
   // MARK: - Glass surface
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // Sync the host child NSPanel with the app-level appearance —
+    // macOS doesn't propagate `NSApp.appearance` automatically into
+    // child windows whose `appearance` is left at the default.
+    window?.appearance = NSApp.appearance
+  }
+
   private func setupGlass() {
     glass.translatesAutoresizingMaskIntoConstraints = false
     inner.translatesAutoresizingMaskIntoConstraints = false

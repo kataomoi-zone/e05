@@ -52,6 +52,26 @@ public final class SuggestionListView: NSView {
   private let glass: NSGlassEffectView?
   private var cornerObserver: SurfaceCornerObserver?
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // Sync any host child NSPanel with the app-level appearance —
+    // the suggestion list runs inside the URL bar dropdown panel,
+    // which doesn't follow `NSApp.appearance` automatically.
+    window?.appearance = NSApp.appearance
+    // Glass-backed path lets `NSGlassEffectView` track the
+    // appearance itself; the non-glass path uses `NSColor.cgColor`
+    // which is snapshotted at assignment, so we re-apply.
+    guard glass == nil else { return }
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      applyNonGlassChromeColors()
+    }
+  }
+
+  private func applyNonGlassChromeColors() {
+    layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
+    layer?.borderColor = AppColors.popoverBorder.cgColor
+  }
+
   public init(useGlass: Bool = false) {
     self.glass = useGlass ? NSGlassEffectView() : nil
     super.init(frame: .zero)
@@ -101,9 +121,8 @@ public final class SuggestionListView: NSView {
       // double the rounded clip. Hold a fixed small inset radius
       // instead — the suggestion list is the inner nested box.
       wantsLayer = true
-      layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
+      applyNonGlassChromeColors()
       layer?.cornerRadius = 4
-      layer?.borderColor = AppColors.popoverBorder.cgColor
       layer?.borderWidth = 1
       surface = self
     }

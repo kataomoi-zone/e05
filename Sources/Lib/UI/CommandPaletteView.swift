@@ -93,6 +93,16 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     // hook on the owning controller.
   }
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    // Sync the child NSPanel's appearance with the app-level one so
+    // the palette tracks a Theme picker swap. macOS doesn't
+    // automatically propagate `NSApp.appearance` into child windows
+    // whose own `appearance` is left at the default — the panel
+    // captured the value at creation and stayed there.
+    window?.appearance = NSApp.appearance
+  }
+
   // MARK: - Setup
 
   private func setup() {

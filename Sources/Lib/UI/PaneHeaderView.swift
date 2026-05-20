@@ -30,6 +30,13 @@ public final class PaneHeaderView: NSView {
     fatalError()
   }
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneHeaderSurface.cgColor
+    }
+  }
+
   private func setup() {
     wantsLayer = true
     layer?.backgroundColor = AppColors.paneHeaderSurface.cgColor

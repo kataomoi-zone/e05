@@ -38,6 +38,13 @@ final class BrowserPanePlaceholderView: NSView {
   /// route for keystrokes).
   override var acceptsFirstResponder: Bool { true }
 
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneSurface.cgColor
+    }
+  }
+
   init() {
     super.init(frame: .zero)
     wantsLayer = true

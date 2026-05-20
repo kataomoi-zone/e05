@@ -445,6 +445,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     browserHostView.addSubview(webView)
   }
 
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneSurface.cgColor
+      webView.underPageBackgroundColor = AppColors.paneSurface
+    }
+  }
+
   public override func layout() {
     super.layout()
     // Only update webView frame when Inspector is NOT attached.
