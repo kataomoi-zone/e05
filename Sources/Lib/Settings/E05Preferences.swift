@@ -72,6 +72,13 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// dormant until the entry is rewritten or the file is reset.
   public var keyboardShortcuts: [String: ShortcutBinding]?
 
+  /// Identifiers of the ``AdBlocker/FilterSource`` entries the user
+  /// wants active. `nil` keeps every shipped source enabled (the
+  /// historical default); an explicit list opts in only to the named
+  /// ids. Unknown ids are ignored at apply time so a removed source
+  /// does not quarantine the preferences file.
+  public var adblockerEnabledSources: [String]?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -82,7 +89,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     surfaceCornerRadius: String? = nil,
     paneBorderWidth: String? = nil,
     theme: String? = nil,
-    keyboardShortcuts: [String: ShortcutBinding]? = nil
+    keyboardShortcuts: [String: ShortcutBinding]? = nil,
+    adblockerEnabledSources: [String]? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -94,6 +102,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.paneBorderWidth = paneBorderWidth
     self.theme = theme
     self.keyboardShortcuts = keyboardShortcuts
+    self.adblockerEnabledSources = adblockerEnabledSources
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

@@ -438,10 +438,16 @@ public final class CosmeticFilterEngine {
       '\(AdBlocker.cacheRoot.path, privacy: .public)'
       """
     )
-    let sources = Self.cosmeticSources
+    let enabledIds = PreferencesStore.shared.preferences.adblockerEnabledSources
     var parsedRules: [ABPCosmeticParser.ParsedRule] = []
-    for source in sources {
-      guard let text = await readCached(source) else {
+    for source in AdBlocker.allSources {
+      if let enabledIds, !enabledIds.contains(source.id) {
+        logger.info(
+          "skipping disabled source '\(source.id, privacy: .public)'"
+        )
+        continue
+      }
+      guard let text = await readCached(filename: source.cacheFilename) else {
         logger.warning(
           """
           cache miss for '\(source.name, privacy: .public)' \
@@ -518,22 +524,8 @@ public final class CosmeticFilterEngine {
 
   // MARK: - Filter source IO
 
-  private struct CosmeticSource {
-    let name: String
-    let cacheFilename: String
-  }
-
-  /// Filter sources whose cosmetic rules feed the index. Must stay
-  /// aligned with ``AdBlocker.sources`` cache filenames — the cache
-  /// is the hand-off channel between the two engines.
-  private static let cosmeticSources: [CosmeticSource] = [
-    CosmeticSource(name: "EasyList", cacheFilename: "easylist.txt"),
-    CosmeticSource(name: "EasyPrivacy", cacheFilename: "easyprivacy.txt"),
-    CosmeticSource(name: "AdGuard Japanese", cacheFilename: "adguard-japanese.txt"),
-  ]
-
-  private func readCached(_ source: CosmeticSource) async -> String? {
-    let url = AdBlocker.cacheRoot.appendingPathComponent(source.cacheFilename)
+  private func readCached(filename: String) async -> String? {
+    let url = AdBlocker.cacheRoot.appendingPathComponent(filename)
     guard FileManager.default.fileExists(atPath: url.path) else {
       return nil
     }

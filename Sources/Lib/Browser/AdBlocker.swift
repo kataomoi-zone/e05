@@ -201,7 +201,14 @@ public final class AdBlocker {
     // `WKUserContentController.add(_:)` accepts multiple rule lists
     // per web view, so the natural fix is one list per source.
     var compiledIdentifiers: [String] = []
+    let enabledIds = PreferencesStore.shared.preferences.adblockerEnabledSources
     for source in Self.allSources {
+      if let enabledIds, !enabledIds.contains(source.id) {
+        logger.info(
+          "Skipping disabled source '\(source.id, privacy: .public)'"
+        )
+        continue
+      }
       guard let text = await loadFilterText(source: source) else { continue }
       let hash = Self.shortHash(for: [text])
       let identifier = "\(Self.ruleListIdentifierPrefix)\(source.id)-\(hash)"
