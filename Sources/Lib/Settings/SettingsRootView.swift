@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Top-level Settings view. The sidebar selects which tab renders in
-/// the detail pane; future tabs (Sites / Appearance / Shortcuts /
-/// Content Blocker / Terminal) land as additional ``SettingsTab``
-/// cases without restructuring the container.
+/// the detail pane; future tabs (Content Blocker / Terminal) land as
+/// additional ``SettingsTab`` cases without restructuring the
+/// container.
 @MainActor
 struct SettingsRootView: View {
   @State private var selected: SettingsTab = .general
@@ -31,6 +31,8 @@ struct SettingsRootView: View {
         SitesSettingsView()
       case .appearance:
         AppearanceSettingsView()
+      case .shortcuts:
+        ShortcutsSettingsView()
       case .about:
         AboutSettingsView()
       }
@@ -41,12 +43,12 @@ struct SettingsRootView: View {
 
 /// `allCases` order drives the sidebar row order. About sits at the
 /// bottom by convention so the most-edited tabs (General first,
-/// Sites and Appearance above About, future Shortcuts above About)
-/// stay near the top.
+/// Sites / Appearance / Shortcuts above About) stay near the top.
 private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   case general
   case sites
   case appearance
+  case shortcuts
   case about
 
   var id: Self { self }
@@ -56,6 +58,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
     case .general: "General"
     case .sites: "Sites"
     case .appearance: "Appearance"
+    case .shortcuts: "Shortcuts"
     case .about: "About"
     }
   }
@@ -67,6 +70,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
     case .general: "gearshape"
     case .sites: "globe"
     case .appearance: "paintbrush.fill"
+    case .shortcuts: "keyboard"
     case .about: "info.circle"
     }
   }
