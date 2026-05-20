@@ -64,8 +64,18 @@ public struct Action {
 
   // MARK: - Key Label
 
-  private static func buildKeyLabel(key: String?, mask: NSEvent.ModifierFlags) -> String? {
-    guard let key else { return nil }
+  /// Render `key` + `mask` as the `⌃⌥⇧⌘<KEY>` glyph string the
+  /// menu bar already draws. Exposed so the Shortcuts tab can label
+  /// recorded overrides through the same path the registry uses for
+  /// its baked-in defaults. `nonisolated` because the body touches
+  /// only the immutable `specialKeyGlyphs` table — callers in plain
+  /// `struct` contexts (SwiftUI Row helpers) need this to be
+  /// reachable without an actor hop.
+  public nonisolated static func buildKeyLabel(key: String?, mask: NSEvent.ModifierFlags) -> String? {
+    // Treat empty string as unbound. A stray "" can land here if a
+    // recorder ever persists a blank chord; without this guard the
+    // joined label collapses to "" and the row renders empty.
+    guard let key, !key.isEmpty else { return nil }
     var parts: [String] = []
     if mask.contains(.control) { parts.append("⌃") }
     if mask.contains(.option) { parts.append("⌥") }
@@ -79,8 +89,10 @@ public struct Action {
   /// glyphs they represent. Without this, a palette row bound to
   /// `"\u{8}"` (NSBackspaceCharacter) would render as `⌘` followed by
   /// an invisible BS byte; with the map it reads as `⌘⌫` — the same
-  /// label NSMenu draws in the Pane menu.
-  private static let specialKeyGlyphs: [String: String] = [
+  /// label NSMenu draws in the Pane menu. `nonisolated` so
+  /// ``buildKeyLabel(key:mask:)`` can read it from a plain
+  /// non-MainActor caller (SwiftUI row helpers, see Shortcuts tab).
+  private nonisolated static let specialKeyGlyphs: [String: String] = [
     "\u{8}": "⌫",
     "\u{7F}": "⌦",
     "\u{1B}": "⎋",
