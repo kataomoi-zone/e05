@@ -253,7 +253,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       }
     }
     wantsLayer = true
-    appearance = NSAppearance(named: .darkAqua)
     layer?.backgroundColor = AppColors.paneSurface.cgColor
 
     built.webView.onFocusGained = { [weak self] in

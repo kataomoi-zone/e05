@@ -135,7 +135,6 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     )
 
     super.init(frame: frame)
-    appearance = NSAppearance(named: .darkAqua)
     setupGlass()
     setupField()
     setupMatchCountLabel()

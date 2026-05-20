@@ -70,8 +70,6 @@ public final class SuggestionListView: NSView {
   }
 
   private func setup() {
-    appearance = NSAppearance(named: .darkAqua)
-
     // The "surface" hosts the scrollView. With Liquid Glass it is the
     // glass's contentView (so blur + tint + corner clip live on the
     // glass backing layer); without it, the surface is `self` and the

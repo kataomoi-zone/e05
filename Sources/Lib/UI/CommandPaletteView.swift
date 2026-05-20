@@ -96,8 +96,6 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   // MARK: - Setup
 
   private func setup() {
-    appearance = NSAppearance(named: .darkAqua)
-
     // Glass surface with rounded clip. The active corner radius
     // matches the sidebar / pane chrome (both reach the same
     // `SurfaceCornerObserver`) so the palette reads as the same
