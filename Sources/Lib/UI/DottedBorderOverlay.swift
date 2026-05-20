@@ -20,8 +20,12 @@ final class DottedBorderOverlay: NSView {
     didSet { needsDisplay = true }
   }
 
-  /// Stroke width. 2pt matches the existing `focusBorderWidth` so
-  /// the swap from solid to dotted preserves the layout footprint.
+  /// Stroke width. The default 2pt matches the historical
+  /// `focusBorderWidth` so the initial dotted-vs-solid swap
+  /// preserves the layout footprint; in practice the focus apply
+  /// path overwrites this with `AppMetrics.focusedPaneBorderWidth`
+  /// so the dotted private-pane border tracks the same Appearance
+  /// preset as the solid border.
   var borderWidth: CGFloat = 2 {
     didSet { needsDisplay = true }
   }

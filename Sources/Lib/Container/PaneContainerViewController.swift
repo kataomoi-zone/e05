@@ -110,7 +110,7 @@ public final class PaneContainerViewController: NSViewController {
   let defaultPaneWidth: CGFloat = 640
   let minPaneWidth: CGFloat = 100
   let minPaneHeight: CGFloat = 50
-  let focusBorderWidth: CGFloat = 2
+  var focusBorderWidth: CGFloat { AppMetrics.focusedPaneBorderWidth }
   var focusBorderColor: NSColor {
     Self.accentColor(forWorkspaceAt: focusedWorkspaceIndex)
   }

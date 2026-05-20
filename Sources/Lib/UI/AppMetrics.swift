@@ -27,4 +27,16 @@ enum AppMetrics {
       PreferencesStore.shared.preferences.surfaceCornerRadius
     ).value
   }
+
+  /// Width in points of the focused-pane border (also used for the
+  /// folded-column label outline and the dotted private-pane
+  /// border). Resolved through ``PaneBorderWidthPreset`` and read on
+  /// every focus apply, so a preset change takes effect on the next
+  /// focus paint without a restart.
+  @MainActor
+  static var focusedPaneBorderWidth: CGFloat {
+    PaneBorderWidthPreset.resolve(
+      PreferencesStore.shared.preferences.paneBorderWidth
+    ).value
+  }
 }
