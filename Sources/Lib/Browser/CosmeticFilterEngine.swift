@@ -633,6 +633,29 @@ final class CosmeticMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
         replyHandler(["ready": false], nil)
         return
       }
+      if AdBlockerWhitelistStore.shared.isWhitelisted(host: hostname) {
+        // Cosmetic suppression applies to rules requested *after*
+        // this point. CSS hides the content script already added
+        // to `document.adoptedStyleSheets` on a previous page
+        // commit stay attached until the next navigation, so
+        // adding a host to the whitelist while a page is open
+        // bypasses network blocking immediately but cosmetic
+        // hides only clear after a reload.
+        logger.info(
+          """
+          ipc queryHostname hostname='\(hostname, privacy: .public)' \
+          → whitelisted (cosmetic suppressed)
+          """
+        )
+        replyHandler(
+          [
+            "ready": true,
+            "hostnameHide": [String](),
+            "misc": [String](),
+            "procedural": [String](),
+          ], nil)
+        return
+      }
       let result = engine.index.queryHostname(hostname)
       logger.info(
         """
@@ -652,6 +675,10 @@ final class CosmeticMessageHandler: NSObject, WKScriptMessageHandlerWithReply {
       let hostname = (body["hostname"] as? String) ?? ""
       let classes = (body["classes"] as? [String]) ?? []
       let ids = (body["ids"] as? [String]) ?? []
+      if AdBlockerWhitelistStore.shared.isWhitelisted(host: hostname) {
+        replyHandler(["hideSelectors": [String]()], nil)
+        return
+      }
       let hide = engine.index.queryClassesAndIds(
         hostname: hostname,
         classes: classes,
