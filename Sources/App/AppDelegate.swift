@@ -54,6 +54,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// here without a relaunch.
   private var themeListenerToken: UUID?
 
+  /// `PreferencesStore` subscription that rebuilds the main menu so
+  /// a Shortcuts edit takes effect without a relaunch. The palette
+  /// re-queries `actions()` on every show so it picks up the new
+  /// chord automatically; only NSMenu caches its key equivalents.
+  private var shortcutListenerToken: UUID?
+
+  /// Snapshot of the override dict used to gate menu rebuilds. The
+  /// listener fan-out fires for every preferences write (theme,
+  /// accent, etc.), and NSMenu construction touches the whole pane
+  /// VC graph; rebuilding only when the override dict actually
+  /// changed keeps the unrelated tabs free.
+  private var lastShortcutOverrides: [String: ShortcutBinding]?
+
   /// KVO observer on `NSApp.effectiveAppearance`. The OS's
   /// Light / Dark auto-switch (e.g. sunset / sunrise schedule
   /// under "Auto" in System Settings) bypasses the
@@ -119,6 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       \.effectiveAppearance, options: [.new]
     ) { [weak self] _, _ in
       MainActor.assumeIsolated { self?.applyTheme() }
+    }
+
+    lastShortcutOverrides = PreferencesStore.shared.preferences.keyboardShortcuts
+    shortcutListenerToken = PreferencesStore.shared.addListener { [weak self] prefs in
+      guard let self else { return }
+      let next = prefs.keyboardShortcuts
+      if next == self.lastShortcutOverrides { return }
+      self.lastShortcutOverrides = next
+      self.setupMenuKeyBindings()
     }
 
     let screen = NSScreen.main ?? NSScreen.screens.first
