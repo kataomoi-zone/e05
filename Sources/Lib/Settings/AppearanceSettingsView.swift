@@ -7,6 +7,7 @@ import SwiftUI
 /// applies live across every chrome surface.
 @MainActor
 struct AppearanceSettingsView: View {
+  @State private var themePreset: ThemePreset
   @State private var accentPreset: AccentPalettePreset
   @State private var paneBorderWidthPreset: PaneBorderWidthPreset
   @State private var cornerPreset: CornerRadiusPreset
@@ -14,6 +15,7 @@ struct AppearanceSettingsView: View {
 
   init() {
     let prefs = PreferencesStore.shared.preferences
+    _themePreset = State(initialValue: ThemePreset.resolve(prefs.theme))
     _accentPreset = State(
       initialValue: AccentPalettePreset.resolve(prefs.accentPalette))
     _paneBorderWidthPreset = State(
@@ -24,6 +26,7 @@ struct AppearanceSettingsView: View {
 
   var body: some View {
     Form {
+      themeSection
       workspaceAccentSection
       paneBorderSection
       surfaceCornersSection
@@ -33,6 +36,31 @@ struct AppearanceSettingsView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear { subscribeToStore() }
     .onDisappear { unsubscribeFromStore() }
+  }
+
+  // MARK: - Theme
+
+  private var themeSection: some View {
+    Section {
+      Picker("Theme", selection: $themePreset) {
+        ForEach(ThemePreset.allCases) { preset in
+          Label(preset.displayName, systemImage: preset.symbol).tag(preset)
+        }
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .onChange(of: themePreset) { _, preset in
+        PreferencesStore.shared.update { $0.theme = preset.rawValue }
+      }
+    } header: {
+      Text("Theme")
+    } footer: {
+      Text(
+        "System follows the macOS Appearance preference; Light and Dark override it."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
   }
 
   // MARK: - Workspace Accent
@@ -141,6 +169,7 @@ struct AppearanceSettingsView: View {
   private func subscribeToStore() {
     if listenerToken != nil { return }
     listenerToken = PreferencesStore.shared.addListener { new in
+      themePreset = ThemePreset.resolve(new.theme)
       accentPreset = AccentPalettePreset.resolve(new.accentPalette)
       paneBorderWidthPreset = PaneBorderWidthPreset.resolve(
         new.paneBorderWidth)
