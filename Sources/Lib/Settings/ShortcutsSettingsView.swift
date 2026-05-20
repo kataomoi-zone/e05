@@ -84,7 +84,14 @@ struct ShortcutsSettingsView: View {
           }
         }
       } header: {
-        Text(category.title)
+        HStack {
+          Text(category.title)
+          Spacer()
+          if hasAnyOverrides {
+            Button("Reset All") { confirmResetAll() }
+              .controlSize(.small)
+          }
+        }
       } footer: {
         Text(
           "Press Esc to cancel a recording, or Delete to clear the binding. Terminal panes use ghostty's own key handling."
@@ -92,18 +99,56 @@ struct ShortcutsSettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
       }
+
+      if !conflicts.isEmpty {
+        Section {
+          ForEach(conflicts) { c in
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+              VStack(alignment: .leading, spacing: 1) {
+                Text(c.chord)
+                  .font(.system(size: 12, design: .monospaced))
+                Text(c.actionTitles.joined(separator: " · "))
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+        } header: {
+          Text("Conflicts")
+        } footer: {
+          Text(
+            "Two or more actions share the same chord. The first one in the menu wins; rebind the others to make them reachable."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
   }
 
   private func shortcutRow(_ row: ShortcutRow) -> some View {
-    HStack {
+    HStack(spacing: 6) {
       Text(row.title)
         .lineLimit(1)
         .truncationMode(.tail)
+      if conflictingIds.contains(row.id) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundStyle(.orange)
+          .help("Shares this chord with another action.")
+      }
       Spacer()
       recorderButton(row)
+    }
+    .contentShape(Rectangle())
+    .contextMenu {
+      Button("Reset to Default") {
+        clearOverride(id: row.id)
+      }
+      .disabled(!row.hasOverride)
     }
   }
 
@@ -165,6 +210,35 @@ struct ShortcutsSettingsView: View {
     }
   }
 
+  private func clearOverride(id: String) {
+    PreferencesStore.shared.update { prefs in
+      var dict = prefs.keyboardShortcuts ?? [:]
+      dict.removeValue(forKey: id)
+      prefs.keyboardShortcuts = dict.isEmpty ? nil : dict
+    }
+  }
+
+  private func confirmResetAll() {
+    let alert = NSAlert()
+    alert.messageText = "Reset all shortcuts?"
+    alert.informativeText =
+      "Every customised shortcut returns to its default. Unbound entries are restored too."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Reset All")
+    alert.addButton(withTitle: "Cancel")
+    // First button is destructive; demote default to Cancel so a
+    // stray Return aborts (matches Sites tab + About tab resets).
+    alert.buttons.first?.keyEquivalent = ""
+    alert.buttons.last?.keyEquivalent = "\r"
+    guard let parent = SettingsWindowController.shared.window else { return }
+    alert.beginSheetModal(for: parent) { response in
+      MainActor.assumeIsolated {
+        guard response == .alertFirstButtonReturn else { return }
+        PreferencesStore.shared.update { $0.keyboardShortcuts = nil }
+      }
+    }
+  }
+
   // MARK: - Subscription
 
   private func subscribe() {
@@ -203,6 +277,55 @@ struct ShortcutsSettingsView: View {
       )
     }
   }
+
+  // MARK: - Conflicts
+
+  /// All static actions currently sharing a chord with another
+  /// static action. Dynamic registry entries (`workspace_switch_*`,
+  /// `focus_pane_*`) are intentionally skipped — they are runtime
+  /// generated and cannot be customised, so a "conflict" with them
+  /// would never have a resolution.
+  private var conflicts: [ConflictGroup] {
+    _ = revision
+    guard let pc = SettingsWindowController.shared.paneContainer else { return [] }
+    var buckets: [String: [(id: String, title: String, label: String)]] = [:]
+    for action in pc.actions() {
+      guard ShortcutCategory.category(for: action.id) != nil else { continue }
+      guard let key = action.keyEquivalent else { continue }
+      let bucket = "\(action.modifierMask.rawValue):\(key)"
+      let label = Action.buildKeyLabel(key: key, mask: action.modifierMask) ?? key
+      buckets[bucket, default: []].append((action.id, action.title, label))
+    }
+    return
+      buckets
+      .compactMap { (bucket, entries) -> ConflictGroup? in
+        guard entries.count > 1 else { return nil }
+        return ConflictGroup(
+          id: bucket,
+          chord: entries[0].label,
+          actionIds: entries.map(\.id),
+          actionTitles: entries.map(\.title)
+        )
+      }
+      .sorted { $0.chord < $1.chord }
+  }
+
+  private var conflictingIds: Set<String> {
+    Set(conflicts.flatMap { $0.actionIds })
+  }
+
+  private var hasAnyOverrides: Bool {
+    !(PreferencesStore.shared.preferences.keyboardShortcuts?.isEmpty ?? true)
+  }
+}
+
+// MARK: - Conflict
+
+private struct ConflictGroup: Identifiable {
+  let id: String
+  let chord: String
+  let actionIds: [String]
+  let actionTitles: [String]
 }
 
 // MARK: - Recorder
