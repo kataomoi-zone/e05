@@ -18,6 +18,7 @@ struct PreferencesStoreTests {
     #expect(store.preferences.accentPalette == nil)
     #expect(store.preferences.surfaceCornerRadius == nil)
     #expect(store.preferences.paneBorderWidth == nil)
+    #expect(store.preferences.theme == nil)
   }
 
   @Test("update mutates the stored value and notifies listeners")

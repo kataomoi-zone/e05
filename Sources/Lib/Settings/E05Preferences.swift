@@ -59,6 +59,11 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// tolerance as ``accentPalette``.
   public var paneBorderWidth: String?
 
+  /// Identifier of the app-wide theme preset (System / Light /
+  /// Dark). `nil` defers to the macOS Appearance preference. Same
+  /// unknown-value tolerance as ``accentPalette``.
+  public var theme: String?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -67,7 +72,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     suspendIdleMinutes: Int? = nil,
     accentPalette: String? = nil,
     surfaceCornerRadius: String? = nil,
-    paneBorderWidth: String? = nil
+    paneBorderWidth: String? = nil,
+    theme: String? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -77,6 +83,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.accentPalette = accentPalette
     self.surfaceCornerRadius = surfaceCornerRadius
     self.paneBorderWidth = paneBorderWidth
+    self.theme = theme
   }
 
   /// Factory used when the on-disk file is missing or quarantined.
