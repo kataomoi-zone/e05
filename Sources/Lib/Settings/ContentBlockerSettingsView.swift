@@ -75,21 +75,9 @@ struct ContentBlockerSettingsView: View {
   private var detail: some View {
     switch category {
     case .filterLists: filterListsForm
-    default: placeholderForm
+    case .whitelist: whitelistForm
+    case .autoUpdate: autoUpdateForm
     }
-  }
-
-  private var placeholderForm: some View {
-    Form {
-      Section {
-        Text("Per-category controls land in the next commit.")
-          .foregroundStyle(.secondary)
-      } header: {
-        Text(category.title)
-      }
-    }
-    .formStyle(.grouped)
-    .scrollContentBackground(.hidden)
   }
 
   // MARK: - Filter Lists
@@ -219,6 +207,209 @@ struct ContentBlockerSettingsView: View {
     Task { await AdBlocker.shared.reload() }
   }
 
+  // MARK: - Whitelist
+
+  /// New-host TextField buffer. The store does not own this — it
+  /// commits on Add only, so a half-typed entry never reaches disk.
+  @State private var pendingHost: String = ""
+
+  private var whitelistForm: some View {
+    Form {
+      Section {
+        addRow
+      } header: {
+        Text("Add a Site")
+      } footer: {
+        Text(
+          "Entries match the host and its subdomains. The same rules still apply on every other site."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
+      Section {
+        whitelistList
+      } header: {
+        HStack {
+          Text("Whitelisted Sites")
+          Spacer()
+          if !whitelistHosts.isEmpty {
+            Button("Remove All") { confirmRemoveAll() }
+              .controlSize(.small)
+          }
+        }
+      } footer: {
+        Text(
+          "Whitelisted hosts skip both the declarative rule list and the procedural cosmetic engine."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private var addRow: some View {
+    HStack {
+      TextField("host (e.g. example.com)", text: $pendingHost)
+        .textFieldStyle(.roundedBorder)
+        .onSubmit { commitPendingHost() }
+      Button("Add") { commitPendingHost() }
+        .disabled(normalizedPendingHost.isEmpty)
+    }
+  }
+
+  @ViewBuilder
+  private var whitelistList: some View {
+    if whitelistHosts.isEmpty {
+      Text("No whitelisted sites yet.")
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      ForEach(whitelistHosts, id: \.self) { host in
+        HStack {
+          Text(host)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Spacer()
+          Button {
+            removeHost(host)
+          } label: {
+            Image(systemName: "xmark.circle.fill")
+              .foregroundStyle(.secondary)
+          }
+          .buttonStyle(.borderless)
+          .help("Remove")
+        }
+      }
+    }
+  }
+
+  private var whitelistHosts: [String] {
+    _ = whitelistRevision
+    return AdBlockerWhitelistStore.shared.allHosts
+  }
+
+  private var normalizedPendingHost: String {
+    pendingHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+
+  // Whitelist edits do not trigger `AdBlocker.reload()`: enforcement
+  // runs per-pane through the `WKUserContentController` attach /
+  // detach the live browser panes do on
+  // ``AdBlockerWhitelistStore/didChangeNotification``, and the
+  // procedural cosmetic engine checks the same store on every IPC.
+  // Recompiling the rule list set would be wasted work.
+
+  private func commitPendingHost() {
+    let host = normalizedPendingHost
+    guard !host.isEmpty else { return }
+    AdBlockerWhitelistStore.shared.setWhitelisted(true, host: host)
+    pendingHost = ""
+    whitelistRevision &+= 1
+  }
+
+  private func removeHost(_ host: String) {
+    AdBlockerWhitelistStore.shared.setWhitelisted(false, host: host)
+    whitelistRevision &+= 1
+  }
+
+  private func confirmRemoveAll() {
+    let alert = NSAlert()
+    alert.messageText = "Remove all whitelisted sites?"
+    alert.informativeText =
+      "Every host on the list is forgotten. Block rules apply on those hosts again."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove All")
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.keyEquivalent = ""
+    alert.buttons.last?.keyEquivalent = "\r"
+    guard let parent = SettingsWindowController.shared.window else { return }
+    alert.beginSheetModal(for: parent) { response in
+      MainActor.assumeIsolated {
+        guard response == .alertFirstButtonReturn else { return }
+        AdBlockerWhitelistStore.shared.replaceAll(with: [])
+        whitelistRevision &+= 1
+      }
+    }
+  }
+
+  // MARK: - Auto-Update
+
+  private var autoUpdateForm: some View {
+    Form {
+      Section {
+        Toggle(
+          "Refresh filter lists automatically",
+          isOn: Binding(
+            get: { autoUpdateEnabled },
+            set: { setAutoUpdate(enabled: $0) }
+          )
+        )
+        if autoUpdateEnabled {
+          Picker(
+            "Frequency",
+            selection: Binding(
+              get: { currentInterval },
+              set: { setInterval($0) }
+            )
+          ) {
+            ForEach(UpdateInterval.allCases) { option in
+              Text(option.displayName).tag(option)
+            }
+          }
+        }
+      } header: {
+        Text("Schedule")
+      } footer: {
+        Text(lastUpdatedSummary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Section {
+        Button("Refresh Now") {
+          Task { await AdBlocker.shared.refreshFilterlists() }
+        }
+      } footer: {
+        Text(
+          "A manual refresh resets the cache and re-downloads every enabled list."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private var autoUpdateEnabled: Bool {
+    _ = revision
+    let stored = PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
+    return (stored ?? AdBlocker.defaultAutoUpdateIntervalHours) > 0
+  }
+
+  private var currentInterval: UpdateInterval {
+    _ = revision
+    let stored = PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
+      ?? AdBlocker.defaultAutoUpdateIntervalHours
+    return UpdateInterval.allCases.first { $0.rawValue == stored } ?? .weekly
+  }
+
+  private func setAutoUpdate(enabled: Bool) {
+    PreferencesStore.shared.update { prefs in
+      prefs.adblockerAutoUpdateIntervalHours =
+        enabled ? AdBlocker.defaultAutoUpdateIntervalHours : 0
+    }
+  }
+
+  private func setInterval(_ interval: UpdateInterval) {
+    PreferencesStore.shared.update { prefs in
+      prefs.adblockerAutoUpdateIntervalHours = interval.rawValue
+    }
+  }
+
   // MARK: - Subscription
 
   private func subscribe() {
@@ -232,6 +423,24 @@ struct ContentBlockerSettingsView: View {
     if let token = prefsListenerToken {
       PreferencesStore.shared.removeListener(token)
       prefsListenerToken = nil
+    }
+  }
+}
+
+// MARK: - Update interval
+
+private enum UpdateInterval: Int, CaseIterable, Identifiable, Hashable {
+  case daily = 24
+  case weekly = 168
+  case monthly = 720
+
+  var id: Int { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .daily: return "Every day"
+    case .weekly: return "Every week"
+    case .monthly: return "Every month"
     }
   }
 }
