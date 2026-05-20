@@ -132,6 +132,39 @@ struct PaneBorderWidthPresetTests {
   }
 }
 
+@Suite("ThemePreset")
+@MainActor
+struct ThemePresetTests {
+  @Test("resolve nil falls back to system")
+  func resolveNil() {
+    #expect(ThemePreset.resolve(nil) == .system)
+  }
+
+  @Test("resolve unknown identifier falls back to system")
+  func resolveUnknown() {
+    #expect(ThemePreset.resolve("unknown") == .system)
+    #expect(ThemePreset.resolve("") == .system)
+  }
+
+  @Test("resolve known identifier returns the matching case")
+  func resolveKnown() {
+    #expect(ThemePreset.resolve("system") == .system)
+    #expect(ThemePreset.resolve("light") == .light)
+    #expect(ThemePreset.resolve("dark") == .dark)
+  }
+
+  @Test("system maps to nil appearance (defer to OS)")
+  func systemAppearanceIsNil() {
+    #expect(ThemePreset.system.appearance == nil)
+  }
+
+  @Test("light and dark map to the corresponding named appearances")
+  func namedAppearances() {
+    #expect(ThemePreset.light.appearance?.name == .aqua)
+    #expect(ThemePreset.dark.appearance?.name == .darkAqua)
+  }
+}
+
 @Suite("Appearance preferences fan-out")
 @MainActor
 struct AppearancePreferencesTests {
@@ -152,12 +185,14 @@ struct AppearancePreferencesTests {
         $0.accentPalette = "metro"
         $0.surfaceCornerRadius = "soft"
         $0.paneBorderWidth = "bold"
+        $0.theme = "light"
       }
 
       let reader = PreferencesStore(storeURL: storeURL)
       #expect(reader.preferences.accentPalette == "metro")
       #expect(reader.preferences.surfaceCornerRadius == "soft")
       #expect(reader.preferences.paneBorderWidth == "bold")
+      #expect(reader.preferences.theme == "light")
     }
   }
 
@@ -165,7 +200,8 @@ struct AppearancePreferencesTests {
   func legacyDecodeCompatibility() throws {
     try withTempStoreURL { storeURL in
       // Hand-written JSON omitting every appearance field, matching
-      // what a pre-Phase-4 preferences.json on disk looks like.
+      // a preferences.json written before the Appearance settings
+      // landed.
       let legacy = """
         {
           "version": 1,
@@ -181,6 +217,7 @@ struct AppearancePreferencesTests {
       #expect(store.preferences.accentPalette == nil)
       #expect(store.preferences.surfaceCornerRadius == nil)
       #expect(store.preferences.paneBorderWidth == nil)
+      #expect(store.preferences.theme == nil)
     }
   }
 }
