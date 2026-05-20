@@ -95,6 +95,11 @@ public final class SuggestionListView: NSView {
       ])
       surface = content
     } else {
+      // Non-glass path: the host (command palette) already owns a
+      // preset-tracked glass surface around this view, so a second
+      // preset-tracked radius here would chase the outer one and
+      // double the rounded clip. Hold a fixed small inset radius
+      // instead — the suggestion list is the inner nested box.
       wantsLayer = true
       layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
       layer?.cornerRadius = 4
