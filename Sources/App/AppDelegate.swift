@@ -54,6 +54,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// here without a relaunch.
   private var themeListenerToken: UUID?
 
+  /// KVO observer on `NSApp.effectiveAppearance`. The OS's
+  /// Light / Dark auto-switch (e.g. sunset / sunrise schedule
+  /// under "Auto" in System Settings) bypasses the
+  /// `PreferencesStore` path because `theme` stays at `system`, so
+  /// the panel-appearance cache flush wouldn't run. KVO catches the
+  /// change and re-applies the theme so child panels follow the
+  /// system swap.
+  private var effectiveAppearanceObserver: NSKeyValueObservation?
+
+  /// Re-entry guard for ``applyTheme``. Setting
+  /// `NSApp.appearance` triggers another `effectiveAppearance`
+  /// change, and the KVO observer would otherwise recurse into
+  /// `applyTheme` indefinitely.
+  private var isApplyingTheme = false
+
   func applicationDidFinishLaunching(_: Notification) {
     // Prepend the bundled `Contents/Resources/bin` to PATH so every
     // ghostty surface inherits the e05-aware shims (the `open`
@@ -99,6 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     applyTheme()
     themeListenerToken = PreferencesStore.shared.addListener { [weak self] _ in
       self?.applyTheme()
+    }
+    effectiveAppearanceObserver = NSApp.observe(
+      \.effectiveAppearance, options: [.new]
+    ) { [weak self] _, _ in
+      MainActor.assumeIsolated { self?.applyTheme() }
     }
 
     let screen = NSScreen.main ?? NSScreen.screens.first
@@ -199,16 +219,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// route CLI clients to a phantom window. Other start failures are
   /// logged and tolerated — IPC is a convenience surface, not a
   /// launch prerequisite.
-  /// Apply the active theme preset to `NSApp.appearance`. Called at
-  /// launch and again on every preferences mutation so a Theme
-  /// picker change reaches every NSView through the standard
-  /// appearance-inheritance chain. `ThemePreset.system` maps to
-  /// `nil`, the explicit opt-out value that defers to the OS
-  /// Appearance preference.
+  /// Apply the active theme preset to `NSApp.appearance` and every
+  /// existing `NSWindow`. Called at launch and again on every
+  /// preferences mutation so a Theme picker change reaches every
+  /// NSView through the standard appearance-inheritance chain.
+  ///
+  /// Setting `NSApp.appearance` alone is not enough: child panels
+  /// that host transient chrome (command palette, find bar, URL bar
+  /// dropdown) capture their `appearance` at creation and don't
+  /// re-read `NSApp.appearance` on later swaps. Pushing the value
+  /// into every existing window kicks each panel's
+  /// `effectiveAppearance` so the chrome inside also flips.
+  ///
+  /// `ThemePreset.system` maps to `nil`, the explicit opt-out value
+  /// that defers to the OS Appearance preference.
   private func applyTheme() {
+    guard !isApplyingTheme else { return }
+    isApplyingTheme = true
+    defer { isApplyingTheme = false }
     let preset = ThemePreset.resolve(
       PreferencesStore.shared.preferences.theme)
-    NSApp.appearance = preset.appearance
+    let appearance = preset.appearance
+    NSApp.appearance = appearance
+    for window in NSApp.windows {
+      window.appearance = appearance
+    }
   }
 
   private func installControlSocket() {
