@@ -13,4 +13,5 @@ public enum E05Filenames {
   public static let finderModes = "finder-modes.json"
   public static let session = "session.json"
   public static let preferences = "preferences.json"
+  public static let adblockerWhitelist = "adblocker-whitelist.json"
 }
