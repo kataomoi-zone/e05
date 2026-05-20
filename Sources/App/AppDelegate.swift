@@ -49,6 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// running for the host process lifetime.
   private var controlSocket: ControlSocket?
 
+  /// `PreferencesStore` subscription that drives `NSApp.appearance`.
+  /// Held for the app's lifetime so Theme picker writes flow back
+  /// here without a relaunch.
+  private var themeListenerToken: UUID?
+
   func applicationDidFinishLaunching(_: Notification) {
     // Prepend the bundled `Contents/Resources/bin` to PATH so every
     // ghostty surface inherits the e05-aware shims (the `open`
@@ -85,14 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       await CosmeticFilterEngine.shared.start()
     }
 
-    // Lock the app to dark aqua so every NSView inherits a dark
-    // effective appearance regardless of the system setting. The
-    // browser panes render dark content anyway, so a light chrome
-    // around them looks out of place. A future preference (follow
-    // system / force light / force dark) can replace this line; the
-    // sidebar's `viewDidChangeEffectiveAppearance` path already
-    // tracks appearance changes.
-    NSApp.appearance = NSAppearance(named: .darkAqua)
+    // Drive `NSApp.appearance` from `ThemePreset` so the Appearance
+    // tab's Theme picker (System / Light / Dark) reaches every NSView
+    // through the standard inheritance chain. The listener fan-out
+    // re-applies on every preferences write so a Theme change
+    // propagates live; `nil` (system) is the explicit opt-out value
+    // that defers to the OS Appearance preference.
+    applyTheme()
+    themeListenerToken = PreferencesStore.shared.addListener { [weak self] _ in
+      self?.applyTheme()
+    }
 
     let screen = NSScreen.main ?? NSScreen.screens.first
     let initialSize: NSSize = {
@@ -192,6 +199,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// route CLI clients to a phantom window. Other start failures are
   /// logged and tolerated — IPC is a convenience surface, not a
   /// launch prerequisite.
+  /// Apply the active theme preset to `NSApp.appearance`. Called at
+  /// launch and again on every preferences mutation so a Theme
+  /// picker change reaches every NSView through the standard
+  /// appearance-inheritance chain. `ThemePreset.system` maps to
+  /// `nil`, the explicit opt-out value that defers to the OS
+  /// Appearance preference.
+  private func applyTheme() {
+    let preset = ThemePreset.resolve(
+      PreferencesStore.shared.preferences.theme)
+    NSApp.appearance = preset.appearance
+  }
+
   private func installControlSocket() {
     let path = E05Paths.default.dataDir
       .appendingPathComponent("control.sock").path
