@@ -15,6 +15,14 @@ import SwiftUI
 public final class SettingsWindowController: NSWindowController {
   public static let shared = SettingsWindowController()
 
+  /// Live pane container — the Shortcuts tab reads `actions()` from
+  /// here to enumerate the registered key chords. The pane container
+  /// VC lives in the same target as Settings (`E05Lib`), so wiring
+  /// it through this controller keeps the AppKit target free from a
+  /// reverse dependency. Seeded by the host app on launch; left
+  /// `nil` in unit tests where Settings is constructed in isolation.
+  public weak var paneContainer: PaneContainerViewController?
+
   /// Strong-typed init that builds the panel once. Subsequent
   /// ``show()`` calls reuse the same window instance so user-resized
   /// geometry persists for the rest of the process lifetime.

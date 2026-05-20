@@ -353,7 +353,10 @@ extension PaneContainerViewController {
         id: "open_settings",
         title: "Settings…",
         keyEquivalent: ",",
-        handler: { SettingsWindowController.shared.show() },
+        handler: { [weak self] in
+          SettingsWindowController.shared.paneContainer = self
+          SettingsWindowController.shared.show()
+        },
         separatorBefore: true
       ),
       Action(

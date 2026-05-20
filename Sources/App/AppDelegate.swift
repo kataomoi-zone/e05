@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private let ghosttyApp = GhosttyApp()
   private var paneContainer: PaneContainerViewController?
 
+
   /// Strong reference for the WKWebsiteDataStore + UNUserNotificationCenter
   /// delegate. `WKWebsiteDataStore._delegate` is `weak`, so the delegate
   /// would be deallocated immediately if we let it go out of scope. Only
@@ -171,6 +172,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
     window.contentViewController = container
     self.paneContainer = container
+    // Seed the Settings host so the Shortcuts tab can resolve
+    // `actions()` even before the user invokes `open_settings` —
+    // matters for tests that exercise Settings in isolation, and
+    // keeps the wiring symmetric with the live launch path.
+    SettingsWindowController.shared.paneContainer = container
 
     // Assigning `contentViewController` resets the window's content
     // size to the VC's `preferredContentSize` (zero), which the

@@ -1,14 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// Shortcuts settings tab — lets the user override the static key
-/// chord for any registered ``Action``. The sub-sidebar selects a
-/// ``ShortcutCategory`` and the detail lists every action assigned
-/// to it; later commits will turn each row into a key-recorder
-/// control and surface conflict warnings + a reset affordance.
+/// Shortcuts settings tab — lists every static action that lives in
+/// the registry, grouped by ``ShortcutCategory``. Each row surfaces
+/// the action's current effective key chord (override or default);
+/// later commits attach the recorder + reset affordances + conflict
+/// warnings.
 @MainActor
 struct ShortcutsSettingsView: View {
   @State private var category: ShortcutCategory = .panes
+  /// Bumped on every preferences write so the detail re-resolves
+  /// `actions()` against the new override dict.
+  @State private var revision: Int = 0
+  @State private var prefsListenerToken: UUID?
 
   var body: some View {
     HStack(spacing: 0) {
@@ -17,14 +21,12 @@ struct ShortcutsSettingsView: View {
       detail
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .onAppear { subscribe() }
+    .onDisappear { unsubscribe() }
   }
 
   // MARK: - Sub-sidebar
 
-  /// Mirrors `SitesSettingsView`'s sub-sidebar so the two host-list
-  /// tabs paint identically regardless of which side has keyboard
-  /// focus. Native `List(.sidebar)` would swap selection colour with
-  /// the outer settings sidebar, leaving the surfaces inconsistent.
   private var sidebar: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 2) {
@@ -64,8 +66,14 @@ struct ShortcutsSettingsView: View {
   private var detail: some View {
     Form {
       Section {
-        Text("Per-row controls land in the next commit.")
-          .foregroundStyle(.secondary)
+        if currentRows.isEmpty {
+          Text("No customisable actions in this category yet.")
+            .foregroundStyle(.secondary)
+        } else {
+          ForEach(currentRows, id: \.id) { row in
+            shortcutRow(row)
+          }
+        }
       } header: {
         Text(category.title)
       } footer: {
@@ -79,4 +87,62 @@ struct ShortcutsSettingsView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
   }
+
+  private func shortcutRow(_ row: ShortcutRow) -> some View {
+    HStack {
+      Text(row.title)
+        .lineLimit(1)
+        .truncationMode(.tail)
+      Spacer()
+      Text(row.keyLabel ?? "—")
+        .foregroundStyle(row.keyLabel == nil ? .tertiary : .secondary)
+        .monospaced()
+    }
+  }
+
+  // MARK: - Subscription
+
+  private func subscribe() {
+    if prefsListenerToken != nil { return }
+    prefsListenerToken = PreferencesStore.shared.addListener { _ in
+      revision &+= 1
+    }
+  }
+
+  private func unsubscribe() {
+    if let token = prefsListenerToken {
+      PreferencesStore.shared.removeListener(token)
+      prefsListenerToken = nil
+    }
+  }
+
+  // MARK: - Rows
+
+  /// Rows for the currently selected category, in the order pinned by
+  /// ``ShortcutCategory/staticOrder``. Actions missing from the live
+  /// registry (e.g. dynamically gated by feature flags later) drop
+  /// silently rather than surface as ghost rows.
+  private var currentRows: [ShortcutRow] {
+    _ = revision  // touch dependency so the listener bump re-renders
+    guard let pc = SettingsWindowController.shared.paneContainer else { return [] }
+    let registry = Dictionary(
+      uniqueKeysWithValues: pc.actions().map { ($0.id, $0) })
+    let ids =
+      ShortcutCategory.staticOrder
+      .first(where: { $0.0 == category })?.1 ?? []
+    return ids.compactMap { id -> ShortcutRow? in
+      guard let action = registry[id] else { return nil }
+      return ShortcutRow(
+        id: id,
+        title: action.title,
+        keyLabel: action.keyLabel
+      )
+    }
+  }
+}
+
+private struct ShortcutRow: Identifiable {
+  let id: String
+  let title: String
+  let keyLabel: String?
 }
