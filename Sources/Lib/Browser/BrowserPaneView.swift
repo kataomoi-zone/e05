@@ -98,6 +98,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var canGoForwardObservation: NSKeyValueObservation?
   private var isLoadingObservation: NSKeyValueObservation?
   private var adblockerObserverTask: Task<Void, Never>?
+  private var adblockerWhitelistObserverTask: Task<Void, Never>?
 
   /// Per-pane mute state. Mutated through ``setMuted(_:)`` /
   /// ``toggleMute()``. The actual audio suppression is performed by
@@ -345,42 +346,70 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     return (webView, hoverHandler, channelId, extensionConfig != nil)
   }
 
-  /// When the pane is built before ``AdBlocker.shared`` finishes its
-  /// first-run compile, subscribe to the global ready notification and
-  /// attach the rule lists to the live ``WKUserContentController``
-  /// exactly once. ``WKUserContentController`` accepts post-init
-  /// ``add(_:)`` calls for rule lists (unlike the configuration, which
-  /// is snapshotted at web view init).
+  /// Subscribe to ``AdBlocker/ruleListDidChangeNotification`` and
+  /// ``AdBlockerWhitelistStore/didChangeNotification`` for the
+  /// pane's lifetime. Each event triggers a recomputation that
+  /// drops the previous rule lists and re-attaches the current set
+  /// when the live host is not whitelisted, or leaves the
+  /// controller empty when it is. ``WKUserContentController``
+  /// accepts post-init `add(_:)` and `removeAllContentRuleLists()`
+  /// calls; the configuration is snapshotted at web view init, so
+  /// the controller is the right surface for the live mutation.
+  ///
+  /// Per-host enforcement runs through the user content controller
+  /// rather than baking the whitelist into the compiled rule list,
+  /// because injecting a per-host bypass into every rule's
+  /// `unless-domain` blows up WebKit's NFA-to-DFA conversion on
+  /// any non-trivial whitelist + filterlist combination.
   ///
   /// Skipped for extension-hosted panes: the extension context owns
   /// its `WKUserContentController` and post-init mutation could trip
   /// `webkit-extension://` resource resolution.
   private func observeAdBlockerReady() {
     if isExtensionHosted { return }
-    if !AdBlocker.shared.ruleLists.isEmpty { return }
-    let ucc = webView.configuration.userContentController
     adblockerObserverTask = Task { @MainActor [weak self] in
       let stream = NotificationCenter.default.notifications(
         named: AdBlocker.ruleListDidChangeNotification,
         object: nil
       )
       for await _ in stream {
-        // If the pane has been released, abandon the stream
-        // rather than wait for further notifications that will
-        // never matter.
-        guard self != nil else { return }
-        let lists = AdBlocker.shared.ruleLists
-        guard !lists.isEmpty else { continue }
-        for list in lists {
-          ucc.add(list)
-        }
-        return
+        guard let self else { return }
+        self.applyAdblockerRuleListsForCurrentHost()
       }
+    }
+    adblockerWhitelistObserverTask = Task { @MainActor [weak self] in
+      let stream = NotificationCenter.default.notifications(
+        named: AdBlockerWhitelistStore.didChangeNotification,
+        object: nil
+      )
+      for await _ in stream {
+        guard let self else { return }
+        self.applyAdblockerRuleListsForCurrentHost()
+      }
+    }
+  }
+
+  /// Re-evaluate the live URL's host against the whitelist and
+  /// install or detach the adblocker rule lists. Called from the
+  /// observer streams above and from ``webView(_:didCommit:)`` so
+  /// both Settings edits and navigations reach the right state.
+  func applyAdblockerRuleListsForCurrentHost() {
+    if isExtensionHosted { return }
+    let ucc = webView.configuration.userContentController
+    ucc.removeAllContentRuleLists()
+    if let host = webView.url?.host?.lowercased(),
+      AdBlockerWhitelistStore.shared.isWhitelisted(host: host)
+    {
+      return
+    }
+    for list in AdBlocker.shared.ruleLists {
+      ucc.add(list)
     }
   }
 
   deinit {
     adblockerObserverTask?.cancel()
+    adblockerWhitelistObserverTask?.cancel()
   }
 
   @available(*, unavailable)
@@ -1015,6 +1044,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     isLoadingObservation = nil
     adblockerObserverTask?.cancel()
     adblockerObserverTask = nil
+    adblockerWhitelistObserverTask?.cancel()
+    adblockerWhitelistObserverTask = nil
   }
 
   private func showPlaceholder(title: String?, url: URL) {
@@ -1631,6 +1662,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // `decidePolicyFor` — it just takes one commit per leak
     // instead of one commit for the whole queue.
     inShadowStackNavigationCount = max(0, inShadowStackNavigationCount - 1)
+    // The committed URL determines whether the adblocker rule
+    // lists belong on this pane. A subsequent commit (link click,
+    // history navigation) re-evaluates the host so a whitelisted
+    // entry only suppresses blocking while the user is actually on
+    // that host.
+    applyAdblockerRuleListsForCurrentHost()
   }
 
   public func webView(_: WKWebView, didFinish _: WKNavigation!) {

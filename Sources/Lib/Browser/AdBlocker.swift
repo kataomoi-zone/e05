@@ -285,15 +285,32 @@ public final class AdBlocker {
     }
   }
 
-  // Posted exactly once per launch today. A future hot-reload flow
-  // (user-triggered "Refresh filter lists") must remove the previous
-  // rule lists from every pane's userContentController before adding
-  // the new ones to avoid doubled blocking.
+  /// Notify every observer that the rule list set has changed.
+  /// Browser panes observe this once at first compile and re-observe
+  /// on every reload (e.g. whitelist edit), each time removing the
+  /// previous lists from their `WKUserContentController` before
+  /// adding the current `ruleLists`.
   private func broadcastRuleListChange() {
     NotificationCenter.default.post(
       name: Self.ruleListDidChangeNotification,
       object: self
     )
+  }
+
+  /// Re-run the compile path so the live web views pick up a
+  /// per-source enable change. The previously installed
+  /// ``WKContentRuleList`` objects are dropped from this store's
+  /// `ruleLists` array; the per-pane observer rebuilds the user
+  /// content controller's rule list set from the new array on the
+  /// `ruleListDidChange` notification that `start()` re-posts at
+  /// the end. The procedural cosmetic engine is rebuilt against
+  /// the same per-source enable state in lock-step — a disabled
+  /// source has to drop both its declarative and its cosmetic
+  /// contributions for the user to see a change.
+  public func reload() async {
+    ruleLists = []
+    await start()
+    await CosmeticFilterEngine.shared.start()
   }
 
   /// Short hex digest used to key compiled rule lists. Changing the
