@@ -68,6 +68,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// changed keeps the unrelated tabs free.
   private var lastShortcutOverrides: [String: ShortcutBinding]?
 
+  /// Background loop that runs the periodic adblocker filterlist
+  /// refresh. Reads the interval from `PreferencesStore` each
+  /// iteration; held so a Settings edit can cancel the previous
+  /// run via the `adblockerScheduleListenerToken` listener before
+  /// starting a fresh scheduler.
+  private var adblockerScheduleTask: Task<Void, Never>?
+
+  /// `PreferencesStore` subscription that reschedules
+  /// ``adblockerScheduleTask`` whenever the user changes the
+  /// auto-update interval, so a flip from Weekly to Daily (or off)
+  /// takes effect immediately rather than after the previous sleep
+  /// resolves.
+  private var adblockerScheduleListenerToken: UUID?
+
+  /// Last observed interval; the listener uses this to gate
+  /// reschedules so unrelated preference writes (theme, accent,
+  /// shortcuts, etc.) do not bounce the scheduler.
+  private var lastAdblockerInterval: Int?
+
   /// KVO observer on `NSApp.effectiveAppearance`. The OS's
   /// Light / Dark auto-switch (e.g. sunset / sunrise schedule
   /// under "Auto" in System Settings) bypasses the
@@ -117,6 +136,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     Task {
       await AdBlocker.shared.start()
       await CosmeticFilterEngine.shared.start()
+    }
+    startAdblockerAutoUpdateSchedule()
+    lastAdblockerInterval = PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
+    adblockerScheduleListenerToken = PreferencesStore.shared.addListener { [weak self] prefs in
+      guard let self else { return }
+      let next = prefs.adblockerAutoUpdateIntervalHours
+      if next == self.lastAdblockerInterval { return }
+      self.lastAdblockerInterval = next
+      self.startAdblockerAutoUpdateSchedule()
     }
 
     // Drive `NSApp.appearance` from `ThemePreset` so the Appearance
@@ -271,6 +299,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     NSApp.appearance = appearance
     for window in NSApp.windows {
       window.appearance = appearance
+    }
+  }
+
+  /// Periodic refresh loop for the adblocker filterlists. Reads the
+  /// interval from `PreferencesStore` at the top of each iteration
+  /// (and via the listener that calls back here on Settings edits).
+  /// `nil` interval falls back to the engine's default (weekly);
+  /// `0` (or negative) disables the loop until the next reschedule.
+  /// The first iteration honours the existing
+  /// `adblockerLastRefreshedAt` timestamp, so a hot restart inside
+  /// the interval window does not double-fetch upstream.
+  private func startAdblockerAutoUpdateSchedule() {
+    adblockerScheduleTask?.cancel()
+    adblockerScheduleTask = Task { @MainActor [weak self] in
+      while let self, !Task.isCancelled {
+        let prefs = PreferencesStore.shared.preferences
+        let configured = prefs.adblockerAutoUpdateIntervalHours
+          ?? AdBlocker.defaultAutoUpdateIntervalHours
+        guard configured > 0 else { return }
+        let interval = TimeInterval(configured) * 3600
+        let last = prefs.adblockerLastRefreshedAt ?? .distantPast
+        let elapsed = Date().timeIntervalSince(last)
+        let delay = max(0, interval - elapsed)
+        if delay > 0 {
+          let ns = UInt64(delay * 1_000_000_000)
+          try? await Task.sleep(nanoseconds: ns)
+          if Task.isCancelled { return }
+        }
+        logger.info("[adblocker/schedule] auto-update fired")
+        await AdBlocker.shared.refreshFilterlists()
+      }
     }
   }
 

@@ -79,6 +79,20 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// does not quarantine the preferences file.
   public var adblockerEnabledSources: [String]?
 
+  /// Interval, in hours, between automatic filterlist refreshes.
+  /// `nil` keeps the historical weekly default; `0` disables the
+  /// automatic refresh entirely (the user can still run a manual
+  /// refresh from the Settings tab); positive values run on that
+  /// cadence. Sane upper bound is enforced at the input site.
+  public var adblockerAutoUpdateIntervalHours: Int?
+
+  /// Wall-clock timestamp of the most recent successful filterlist
+  /// refresh. `nil` indicates "never refreshed yet" and triggers the
+  /// auto-update scheduler on the next launch. Updated by
+  /// ``AdBlocker.refreshFilterlists()`` and surfaced in the Settings
+  /// tab as a "Last updated" label.
+  public var adblockerLastRefreshedAt: Date?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -90,7 +104,9 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     paneBorderWidth: String? = nil,
     theme: String? = nil,
     keyboardShortcuts: [String: ShortcutBinding]? = nil,
-    adblockerEnabledSources: [String]? = nil
+    adblockerEnabledSources: [String]? = nil,
+    adblockerAutoUpdateIntervalHours: Int? = nil,
+    adblockerLastRefreshedAt: Date? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -103,6 +119,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.theme = theme
     self.keyboardShortcuts = keyboardShortcuts
     self.adblockerEnabledSources = adblockerEnabledSources
+    self.adblockerAutoUpdateIntervalHours = adblockerAutoUpdateIntervalHours
+    self.adblockerLastRefreshedAt = adblockerLastRefreshedAt
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

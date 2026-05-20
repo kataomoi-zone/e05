@@ -325,7 +325,17 @@ public final class AdBlocker {
   public func refreshFilterlists() async {
     clearCache()
     await reload()
+    PreferencesStore.shared.update {
+      $0.adblockerLastRefreshedAt = Date()
+    }
   }
+
+  /// Default cadence between automatic filterlist refreshes, in
+  /// hours. EasyList publishes daily; weekly keeps the install
+  /// fresh enough for rule rot to stay bounded while leaving room
+  /// for outage tolerance via the existing 7-day cache staleness
+  /// window in ``loadFilterText``.
+  public static let defaultAutoUpdateIntervalHours: Int = 168
 
   /// Short hex digest used to key compiled rule lists. Changing the
   /// converter or any source text flips this, which makes WebKit
