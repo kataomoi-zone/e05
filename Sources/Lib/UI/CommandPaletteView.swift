@@ -118,7 +118,7 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
     inputField.placeholderString = "Execute a command\u{2026}"
     inputField.font = .systemFont(ofSize: 16, weight: .light)
-    inputField.textColor = .white
+    inputField.textColor = .labelColor
     inputField.backgroundColor = .clear
     inputField.isBordered = false
     inputField.focusRingType = .none

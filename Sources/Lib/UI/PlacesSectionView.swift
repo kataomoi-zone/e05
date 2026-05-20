@@ -321,7 +321,7 @@ private final class DownloadsBadgeView: NSView {
     // Monospaced digits keep the pill width stable as the count
     // changes (1 → 10 → 99+) without snap-resizing on every tick.
     label.font = .monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
-    label.textColor = .white
+    label.textColor = .labelColor
     label.drawsBackground = false
     label.alignment = .center
     addSubview(label)

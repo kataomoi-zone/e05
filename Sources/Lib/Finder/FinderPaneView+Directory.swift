@@ -494,7 +494,8 @@ extension FinderPaneView {
       systemSymbolName: "arrow.up.right.circle.fill",
       accessibilityDescription: "Alias"
     )?.withSymbolConfiguration(
-      NSImage.SymbolConfiguration(paletteColors: [.black, .white]))
+      NSImage.SymbolConfiguration(
+        paletteColors: [.controlBackgroundColor, .labelColor]))
     badge?.draw(
       in: NSRect(x: 0, y: 0, width: size.width * 0.5, height: size.height * 0.5),
       from: .zero, operation: .sourceOver, fraction: 1.0)

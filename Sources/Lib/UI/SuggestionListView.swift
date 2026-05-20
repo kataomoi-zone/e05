@@ -448,7 +448,7 @@ private final class SuggestionCellView: NSView {
       to: primaryLabel,
       text: model.primary,
       font: Self.primaryFont,
-      color: .white,
+      color: .labelColor,
       highlights: model.primaryHighlights
     )
     Self.applyText(
@@ -487,7 +487,7 @@ private final class SuggestionCellView: NSView {
     iconView.translatesAutoresizingMaskIntoConstraints = false
 
     primaryLabel.font = Self.primaryFont
-    primaryLabel.textColor = .white
+    primaryLabel.textColor = .labelColor
     primaryLabel.lineBreakMode = .byTruncatingTail
     primaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
