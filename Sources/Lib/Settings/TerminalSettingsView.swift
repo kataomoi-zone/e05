@@ -109,11 +109,7 @@ struct TerminalSettingsView: View {
   }
 
   private var editor: some View {
-    TextEditor(text: $bufferText)
-      .font(.system(.body, design: .monospaced))
-      .autocorrectionDisabled(true)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 8)
+    GhosttyConfigEditor(text: $bufferText)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
