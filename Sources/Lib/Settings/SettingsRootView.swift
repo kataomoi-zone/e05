@@ -78,6 +78,8 @@ struct SettingsRootView: View {
     switch selected {
     case .general:
       GeneralSettingsView()
+    case .terminal:
+      TerminalSettingsView()
     case .sites:
       SitesSettingsView()
     case .appearance:
@@ -94,10 +96,14 @@ struct SettingsRootView: View {
 
 /// `allCases` order drives the sidebar row order. About sits at the
 /// bottom by convention so the most-edited tabs (General first,
-/// Sites / Appearance / Shortcuts / Content Blocker above About)
-/// stay near the top.
+/// Terminal / Sites / Appearance / Shortcuts / Content Blocker
+/// above About) stay near the top. Terminal sits right after General
+/// because the terminal pane is e05's founding feature and the
+/// `config.ghostty` it edits is shared with the libghostty runtime
+/// rather than being a downstream feature toggle.
 private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   case general
+  case terminal
   case sites
   case appearance
   case shortcuts
@@ -109,6 +115,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   var title: String {
     switch self {
     case .general: "General"
+    case .terminal: "Terminal"
     case .sites: "Sites"
     case .appearance: "Appearance"
     case .shortcuts: "Shortcuts"
@@ -122,6 +129,7 @@ private enum SettingsTab: CaseIterable, Hashable, Identifiable {
   var symbol: String {
     switch self {
     case .general: "gearshape"
+    case .terminal: "terminal"
     case .sites: "globe"
     case .appearance: "paintbrush.fill"
     case .shortcuts: "keyboard"
