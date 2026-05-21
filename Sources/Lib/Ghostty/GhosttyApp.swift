@@ -4,6 +4,32 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "GhosttyApp")
 
+/// Light / dark hint forwarded to libghostty so a
+/// `theme = light:X,dark:Y` config swaps the color scheme without an
+/// app restart. The host owns the appearance observer because
+/// libghostty does not link AppKit; the official ghostty macOS app
+/// uses the same NSApp.effectiveAppearance KVO → C API hop.
+public enum GhosttyColorScheme: Sendable, Equatable {
+  case light
+  case dark
+
+  /// Resolve a system `NSAppearance` to the light/dark axis the
+  /// terminal cares about. `bestMatch` collapses high-contrast
+  /// accessibility variants (`accessibilityHighContrastDarkAqua`
+  /// etc.) to their closest standard form.
+  public init(_ appearance: NSAppearance) {
+    let match = appearance.bestMatch(from: [.aqua, .darkAqua])
+    self = (match == .darkAqua) ? .dark : .light
+  }
+
+  var cValue: ghostty_color_scheme_e {
+    switch self {
+    case .light: GHOSTTY_COLOR_SCHEME_LIGHT
+    case .dark: GHOSTTY_COLOR_SCHEME_DARK
+    }
+  }
+}
+
 /// Manages the ghostty runtime lifecycle: init, config, app, tick.
 @MainActor
 public final class GhosttyApp {
@@ -130,6 +156,34 @@ public final class GhosttyApp {
     ghostty_app_tick(app)
   }
 
+  /// Forward the host's resolved light/dark appearance to libghostty.
+  /// Stored on the runtime even before any surface exists, so the
+  /// first ghostty surface created after launch picks up the correct
+  /// `light:` / `dark:` branch of a conditional `theme` config.
+  ///
+  /// The app-level state alone is not enough to repaint existing
+  /// surfaces: each surface keeps its own `config_conditional_state`
+  /// that was seeded at creation. Call
+  /// ``setSurfaceColorScheme(surface:scheme:)`` on every live surface
+  /// so the surface's derived config re-resolves the conditional
+  /// `theme` branch.
+  public func setColorScheme(_ scheme: GhosttyColorScheme) {
+    guard let app else { return }
+    ghostty_app_set_color_scheme(app, scheme.cValue)
+  }
+
+  /// Update a single surface's conditional `theme` state. libghostty
+  /// will bounce a `reload_config` action back to the host with the
+  /// surface target, which ``handleAction`` resolves through
+  /// ``reloadSurfaceConfig`` to actually re-derive the surface's
+  /// colors.
+  public func setSurfaceColorScheme(
+    surface: ghostty_surface_t,
+    scheme: GhosttyColorScheme
+  ) {
+    ghostty_surface_set_color_scheme(surface, scheme.cValue)
+  }
+
   private func handleAction(
     _ target: ghostty_target_s,
     _ action: ghostty_action_s
@@ -166,6 +220,23 @@ public final class GhosttyApp {
       let raw = action.action.search_selected.selected
       view.handleSearchSelected(raw >= 0 ? Int(raw) : nil)
       return true
+    case GHOSTTY_ACTION_RELOAD_CONFIG:
+      let soft = action.action.reload_config.soft
+      switch target.tag {
+      case GHOSTTY_TARGET_APP:
+        return reloadAppConfig(soft: soft)
+      case GHOSTTY_TARGET_SURFACE:
+        guard let surface = target.target.surface else {
+          logger.error("[ghostty/reload-config] surface target had nil surface")
+          return false
+        }
+        return reloadSurfaceConfig(surface: surface, soft: soft)
+      default:
+        logger.error(
+          "[ghostty/reload-config] unknown target tag rawValue=\(target.tag.rawValue, privacy: .public)"
+        )
+        return false
+      }
     case GHOSTTY_ACTION_OPEN_URL:
       guard let view = terminalView(for: target) else {
         logger.error("[ghostty/open-url] no terminal view for target")
@@ -193,6 +264,83 @@ public final class GhosttyApp {
     default:
       return false
     }
+  }
+
+  /// Pump a new configuration through libghostty so every existing
+  /// surface re-derives its colors. Triggered by libghostty itself
+  /// after `ghostty_app_set_color_scheme` or the `reload_config`
+  /// keybind: the runtime stages the conditional state change and
+  /// then bounces a `reload_config` action back to the host, expecting
+  /// the host to do the actual `ghostty_app_update_config` fan-out.
+  ///
+  /// A `soft` reload re-passes the in-memory config (cheap, used for
+  /// the light/dark flip). A non-soft reload re-reads
+  /// `config.ghostty` from disk, finalises a fresh config, hands it
+  /// to libghostty, and frees the previous one — `updateConfig` only
+  /// reads the pointer for the duration of the call, so transferring
+  /// ownership is safe.
+  private func reloadAppConfig(soft: Bool) -> Bool {
+    guard let app else {
+      logger.error("[ghostty/reload-config] app handle is nil")
+      return false
+    }
+    if soft {
+      guard let config else {
+        logger.error("[ghostty/reload-config] soft reload requested with nil config")
+        return false
+      }
+      ghostty_app_update_config(app, config)
+      return true
+    }
+    guard let next = loadConfigFromDisk() else { return false }
+    ghostty_app_update_config(app, next)
+    if let old = self.config {
+      ghostty_config_free(old)
+    }
+    self.config = next
+    return true
+  }
+
+  /// Surface-scoped variant. Re-derives only the targeted surface's
+  /// colors. Fires when `ghostty_surface_set_color_scheme` bounces a
+  /// `reload_config` (target=surface) back to the host, which is how
+  /// per-surface conditional state — seeded at surface creation and
+  /// not touched by app-level color scheme updates — gets refreshed.
+  private func reloadSurfaceConfig(
+    surface: ghostty_surface_t,
+    soft: Bool
+  ) -> Bool {
+    if soft {
+      guard let config else {
+        logger.error("[ghostty/reload-config] surface soft reload requested with nil config")
+        return false
+      }
+      ghostty_surface_update_config(surface, config)
+      return true
+    }
+    guard let next = loadConfigFromDisk() else { return false }
+    ghostty_surface_update_config(surface, next)
+    ghostty_config_free(next)
+    return true
+  }
+
+  /// Build a freshly parsed `ghostty_config_t` from the on-disk
+  /// `config.ghostty`. Returns `nil` if libghostty refused to
+  /// allocate; an absent or unreadable file is tolerated and yields
+  /// a finalised default config so the host can recover from a hand
+  /// edit that introduced a syntax error.
+  private func loadConfigFromDisk() -> ghostty_config_t? {
+    guard let next = ghostty_config_new() else {
+      logger.error("[ghostty/reload-config] ghostty_config_new failed")
+      return nil
+    }
+    let configPath = E05Paths.default.configDir
+      .appendingPathComponent("config.ghostty").path
+    if FileManager.default.fileExists(atPath: configPath) {
+      configPath.withCString { ghostty_config_load_file(next, $0) }
+    }
+    ghostty_config_finalize(next)
+    return next
   }
 
   /// Resolve the `GhosttyTerminalView` that owns the surface referenced

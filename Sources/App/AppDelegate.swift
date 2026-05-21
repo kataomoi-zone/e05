@@ -300,6 +300,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     for window in NSApp.windows {
       window.appearance = appearance
     }
+    // Tell libghostty which side of the light/dark axis the host is
+    // on so a `theme = light:X,dark:Y` config swaps colors without a
+    // restart. Reading `effectiveAppearance` (rather than `preset
+    // .appearance`) lets `ThemePreset.system` resolve through the OS
+    // preference, including auto-switch by schedule.
+    //
+    // Existing surfaces won't repaint from the app-level update
+    // alone: every surface carries its own conditional state seeded
+    // at creation. The container fan-out walks each terminal surface
+    // and pushes the scheme so the surface re-derives its theme
+    // branch — matching how the official ghostty macOS app pairs
+    // `ghostty_app_set_color_scheme` with a per-surface call.
+    let scheme = GhosttyColorScheme(NSApp.effectiveAppearance)
+    ghosttyApp.setColorScheme(scheme)
+    paneContainer?.applyTerminalColorScheme(scheme)
   }
 
   /// Periodic refresh loop for the adblocker filterlists. Reads the
