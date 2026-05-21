@@ -41,6 +41,17 @@ struct AcknowledgementsView: View {
           .buttonStyle(.link)
           .font(.subheadline)
           .help(credit.url.absoluteString)
+          DisclosureGroup("View license") {
+            ScrollView {
+              Text(credit.licenseBody)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            }
+            .frame(maxHeight: 240)
+          }
+          .font(.subheadline)
         }
         .padding(.vertical, 4)
       }
