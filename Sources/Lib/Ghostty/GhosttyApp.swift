@@ -184,6 +184,17 @@ public final class GhosttyApp {
     ghostty_surface_set_color_scheme(surface, scheme.cValue)
   }
 
+  /// Force libghostty to re-read `config.ghostty` from disk and fan
+  /// the resulting config out to every live surface. Triggered by
+  /// the Terminal settings tab after a Save so an edit takes effect
+  /// without an app restart. Returns whether the reload succeeded;
+  /// `false` is logged at the failure site so callers do not need
+  /// to surface the error themselves.
+  @discardableResult
+  public func reloadConfigFromDisk() -> Bool {
+    reloadAppConfig(soft: false)
+  }
+
   private func handleAction(
     _ target: ghostty_target_s,
     _ action: ghostty_action_s
