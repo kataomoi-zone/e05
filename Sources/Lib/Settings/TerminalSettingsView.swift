@@ -14,6 +14,14 @@ struct TerminalSettingsView: View {
   @State private var savedSnapshot: String = ""
   @State private var observerToken: NSObjectProtocol?
   @State private var showResetConfirm = false
+  @State private var diagnostics: [GhosttyConfigDiagnostic] = []
+  @State private var incompatibleHits: [GhosttyIncompatibleKeyHit] = []
+  @State private var validateTask: Task<Void, Never>?
+  /// `true` when the most recent validator run could not be attempted
+  /// (libghostty refused to allocate, tempfile write failed, etc.).
+  /// The diagnostics panel surfaces this distinctly so the user does
+  /// not read an empty diagnostics list as "config is clean".
+  @State private var validatorUnavailable: Bool = false
   /// Last `store.write` error, surfaced inline next to Save so a
   /// failed persist does not look like a successful one. Cleared on
   /// the next successful save.
@@ -26,10 +34,15 @@ struct TerminalSettingsView: View {
       header
       Divider()
       editor
+      Divider()
+      diagnosticsPanel
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear { attach() }
     .onDisappear { detach() }
+    .onChange(of: bufferText) { _, newValue in
+      scheduleValidate(newValue)
+    }
   }
 
   private var isDirty: Bool { bufferText != savedSnapshot }
@@ -104,10 +117,60 @@ struct TerminalSettingsView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  private var diagnosticsPanel: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 4) {
+        if validatorUnavailable {
+          Label("Validator unavailable", systemImage: "questionmark.diamond.fill")
+            .foregroundStyle(.secondary)
+            .font(.callout)
+            .help(
+              "libghostty could not parse the buffer. The on-screen text was not validated."
+            )
+        } else if diagnostics.isEmpty && incompatibleHits.isEmpty {
+          Label("No issues detected", systemImage: "checkmark.seal.fill")
+            .foregroundStyle(.secondary)
+            .font(.callout)
+        } else {
+          ForEach(diagnostics, id: \.self) { diag in
+            Label {
+              Text(diag.message)
+                .font(.callout)
+                .textSelection(.enabled)
+            } icon: {
+              Image(systemName: "xmark.octagon.fill")
+                .foregroundStyle(.red)
+            }
+          }
+          ForEach(incompatibleHits, id: \.self) { hit in
+            Label {
+              VStack(alignment: .leading, spacing: 2) {
+                Text("Line \(hit.lineNumber): `\(hit.key)`")
+                  .font(.callout)
+                Text(hit.reason)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            }
+          }
+        }
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 10)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .frame(maxHeight: 180)
+    .background(Color(nsColor: .underPageBackgroundColor))
+  }
+
   private func attach() {
     let initial = store.read()
     bufferText = initial
     savedSnapshot = initial
+    runValidate(initial)
     observerToken = NotificationCenter.default.addObserver(
       forName: GhosttyConfigFileStore.didChangeNotification,
       object: store,
@@ -122,6 +185,32 @@ struct TerminalSettingsView: View {
       NotificationCenter.default.removeObserver(token)
       observerToken = nil
     }
+    validateTask?.cancel()
+    validateTask = nil
+  }
+
+  /// Debounced revalidation. Each keystroke cancels the in-flight
+  /// task so the libghostty parser only runs after the user pauses;
+  /// 300 ms keeps the editor responsive while a long config (hundreds
+  /// of lines) is being edited.
+  private func scheduleValidate(_ text: String) {
+    validateTask?.cancel()
+    validateTask = Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 300_000_000)
+      if Task.isCancelled { return }
+      runValidate(text)
+    }
+  }
+
+  private func runValidate(_ text: String) {
+    if let parsed = GhosttyConfigValidator.validate(text) {
+      diagnostics = parsed
+      validatorUnavailable = false
+    } else {
+      diagnostics = []
+      validatorUnavailable = true
+    }
+    incompatibleHits = GhosttyIncompatibleKeys.scan(text)
   }
 
   /// Adopt a fresh on-disk read into the buffer, but only when the
