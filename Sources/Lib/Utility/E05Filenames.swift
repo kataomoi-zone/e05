@@ -14,4 +14,7 @@ public enum E05Filenames {
   public static let session = "session.json"
   public static let preferences = "preferences.json"
   public static let adblockerWhitelist = "adblocker-whitelist.json"
+  /// User-editable ghostty config inside `configDir` (XDG). Used by
+  /// the Terminal settings tab and the libghostty runtime at launch.
+  public static let terminalConfig = "config.ghostty"
 }

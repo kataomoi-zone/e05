@@ -47,7 +47,7 @@ public final class GhosttyApp {
       logger.error("ghostty_config_new failed")
       return
     }
-    let configPath = E05Paths.default.configDir.appendingPathComponent("config.ghostty").path
+    let configPath = E05Paths.default.configFile(E05Filenames.terminalConfig).path
     if FileManager.default.fileExists(atPath: configPath) {
       configPath.withCString { ghostty_config_load_file(cfg, $0) }
     }
@@ -334,8 +334,7 @@ public final class GhosttyApp {
       logger.error("[ghostty/reload-config] ghostty_config_new failed")
       return nil
     }
-    let configPath = E05Paths.default.configDir
-      .appendingPathComponent("config.ghostty").path
+    let configPath = E05Paths.default.configFile(E05Filenames.terminalConfig).path
     if FileManager.default.fileExists(atPath: configPath) {
       configPath.withCString { ghostty_config_load_file(next, $0) }
     }

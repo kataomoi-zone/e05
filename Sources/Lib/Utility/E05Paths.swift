@@ -86,6 +86,14 @@ public struct E05Paths: Sendable {
     dataDir.appendingPathComponent(filename)
   }
 
+  /// Returns a `URL` for a user-editable file inside `configDir`. The
+  /// parent directory is not created here; the writer creates it lazily
+  /// so a read-only consumer (e.g. the libghostty bootstrap) leaves the
+  /// XDG dir untouched when no edits have happened yet.
+  public func configFile(_ filename: String) -> URL {
+    configDir.appendingPathComponent(filename)
+  }
+
   static func resolveConfigDir(env: [String: String], home: URL) -> URL {
     if let custom = env["E05_CONFIG_DIR"], Self.isAbsolute(custom) {
       return Self.expand(custom, home: home)
