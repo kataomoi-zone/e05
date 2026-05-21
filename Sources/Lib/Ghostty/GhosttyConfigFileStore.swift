@@ -35,6 +35,13 @@ public final class GhosttyConfigFileStore {
     self.url = E05Paths.default.configFile(E05Filenames.terminalConfig)
   }
 
+  /// Test seam: build a store backed by an arbitrary URL so test
+  /// cases get filesystem isolation without polluting the user's
+  /// real `~/.config/e05/config.ghostty`.
+  init(testURL: URL) {
+    self.url = testURL
+  }
+
   /// Read the on-disk text. A missing file returns an empty string so
   /// a fresh install sees a clean editor surface; an unreadable file
   /// (permission denied / IO error) also returns empty after logging
