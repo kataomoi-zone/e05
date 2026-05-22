@@ -620,7 +620,17 @@ final class WorklaneSectionView: NSView {
   }
 
   private func visibleCell(forPaneId paneId: ULID) -> WorklanePaneCellView? {
-    guard let node = nodesByPaneId[paneId] else { return nil }
+    guard let node = nodesByPaneId[paneId] else {
+      // The node tree should always know about every live pane id. A
+      // miss means a state-change callback fired for a pane that was
+      // already removed (or never registered) — likely a torn-down
+      // pane racing with a probe tick. Log so the divergence is
+      // visible; returning nil keeps the call site a no-op.
+      logger.warning(
+        "[worklane] no node for pane id \(paneId.description, privacy: .public)"
+      )
+      return nil
+    }
     let row = outlineView.row(forItem: node)
     guard row >= 0 else { return nil }
     return outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
