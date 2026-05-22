@@ -12,6 +12,13 @@ public final class ColumnModel {
 
   /// Width constraint for the column's container view.
   public var widthConstraint: NSLayoutConstraint?
+  /// Height constraint pinning the column to its hosting workspace's
+  /// stack view, with the constant set to `-(outerMargin * 2)` so the
+  /// outer perimeter reserves room on top and bottom. Held weakly
+  /// because the constraint is owned by the active layout, not by
+  /// this model. Live-updating the gap rewrites `constant` through
+  /// this reference.
+  public weak var heightPin: NSLayoutConstraint?
   /// Currently applied width preset. nil = default fixed width.
   public var currentPreset: PaneWidthPreset?
 

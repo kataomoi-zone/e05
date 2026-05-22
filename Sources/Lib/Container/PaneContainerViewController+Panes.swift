@@ -140,12 +140,12 @@ extension PaneContainerViewController {
     // `rebuildStackView()` so both views share a common ancestor —
     // activating against `stackView.heightAnchor` before that throws
     // `NSInternalInconsistencyException` and kills the startup path.
-    column.containerView.heightAnchor
-      .constraint(
-        equalTo: currentWorkspaceVC.stackView.heightAnchor,
-        constant: -(WorkspaceViewController.outerMargin * 2)
-      )
-      .isActive = true
+    let heightPin = column.containerView.heightAnchor.constraint(
+      equalTo: currentWorkspaceVC.stackView.heightAnchor,
+      constant: -(WorkspaceViewController.outerMargin * 2)
+    )
+    heightPin.isActive = true
+    column.heightPin = heightPin
 
     view.layoutSubtreeIfNeeded()
 
@@ -1152,6 +1152,19 @@ extension PaneContainerViewController {
       }
       columns.insert(column, at: insertIndex)
       rebuildStackView()
+      // Match `addColumn`: pin the restored column's height to the
+      // workspace stack so the layout is never ambiguous, and store
+      // the constraint on the model so the gap preset can rewrite it
+      // live. The constraint can only be activated after
+      // `rebuildStackView()` because both views need a common
+      // ancestor first; activating earlier throws
+      // `NSInternalInconsistencyException`.
+      let heightPin = column.containerView.heightAnchor.constraint(
+        equalTo: currentWorkspaceVC.stackView.heightAnchor,
+        constant: -(WorkspaceViewController.outerMargin * 2)
+      )
+      heightPin.isActive = true
+      column.heightPin = heightPin
       view.layoutSubtreeIfNeeded()
 
       // Capture scroll target while the layout reflects the

@@ -576,6 +576,18 @@ extension PaneContainerViewController {
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]
+    // Match `addColumn`: pin the new column's height to the target
+    // workspace stack so the layout is never ambiguous, and store the
+    // constraint on the column model so the gap preset can rewrite it
+    // live. Skipping this leaves the height up to AppKit's
+    // ambiguity-resolution fallback and produces an arbitrary value
+    // on mid-session moves.
+    let heightPin = newColumn.containerView.heightAnchor.constraint(
+      equalTo: targetVC.stackView.heightAnchor,
+      constant: -(WorkspaceViewController.outerMargin * 2)
+    )
+    heightPin.isActive = true
+    newColumn.heightPin = heightPin
     // Same-workspace splits where source column collapsed shrink
     // the target columns array on the same axis the drop position
     // refers to: AppKit gave us a child index computed against the

@@ -13,6 +13,12 @@ public final class PaneResizeHandle: NSView {
 
   public let orientation: Orientation
 
+  /// Active width (`.horizontal`) or height (`.vertical`) constraint
+  /// for this handle. Held weakly because the constraint is owned by
+  /// the layout; the gap preset rewrites `.constant` through this
+  /// reference to drive a live update without rebuilding the handle.
+  public weak var sizeConstraint: NSLayoutConstraint?
+
   /// Called during drag with the delta along the resize axis.
   public var onDrag: ((_ delta: CGFloat) -> Void)?
 
@@ -119,11 +125,14 @@ public final class PaneResizeHandle: NSView {
 
   public static func makeConstraints(for handle: PaneResizeHandle) -> [NSLayoutConstraint] {
     handle.translatesAutoresizingMaskIntoConstraints = false
-    return switch handle.orientation {
-    case .horizontal:
-      [handle.widthAnchor.constraint(equalToConstant: handleSize)]
-    case .vertical:
-      [handle.heightAnchor.constraint(equalToConstant: handleSize)]
-    }
+    let sizeConstraint: NSLayoutConstraint =
+      switch handle.orientation {
+      case .horizontal:
+        handle.widthAnchor.constraint(equalToConstant: handleSize)
+      case .vertical:
+        handle.heightAnchor.constraint(equalToConstant: handleSize)
+      }
+    handle.sizeConstraint = sizeConstraint
+    return [sizeConstraint]
   }
 }
