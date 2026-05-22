@@ -1801,28 +1801,46 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
   }
 
-  /// Pick the highest-resolution `<link rel="icon">` href on the
-  /// page. Matches `icon`, `shortcut icon`, and `apple-touch-icon`.
-  /// When no tag carries a `sizes` attribute the first hit wins —
-  /// the same heuristic Safari uses as a tiebreaker.
+  /// Pick the active `<link rel="icon">` href on the page. Matches
+  /// `icon`, `shortcut icon`, and `apple-touch-icon`. Prefers the
+  /// first `icon` (or `shortcut icon`) link without a `sizes`
+  /// attribute — that's the canonical "default" icon under the HTML
+  /// spec, and pages that rotate their favicon over time tend to
+  /// keep updating the unsized default while leaving any larger
+  /// sized variants stale. `apple-touch-icon` is held out of the
+  /// default pool: it's typically a high-res home-screen artwork
+  /// (often unsized but implicitly 180×180) and would otherwise
+  /// hijack the tab favicon on pages whose touch icon appears
+  /// before their regular icon in document order. Falls back to
+  /// the largest sized link (including apple-touch-icon) when no
+  /// canonical default is present.
   private static let faviconScanScript: String = """
     (function() {
       const links = document.querySelectorAll(
         'link[rel~="icon"], link[rel~="shortcut"], link[rel~="apple-touch-icon"]'
       );
-      let best = null, bestArea = 0;
+      let defaultHref = null;
+      let bestSizedHref = null, bestSizedArea = 0;
       for (const l of links) {
         const href = l.href;
         if (!href) continue;
+        const rel = (l.getAttribute('rel') || '').toLowerCase().split(/\\s+/);
+        const isCanonical = rel.includes('icon') || rel.includes('shortcut');
         const sizes = (l.getAttribute('sizes') || '').toLowerCase();
         const m = sizes.match(/(\\d+)x(\\d+)/);
-        const area = m ? (parseInt(m[1], 10) * parseInt(m[2], 10)) : 0;
-        if (!best || area > bestArea) {
-          best = href;
-          bestArea = area;
+        if (m) {
+          const area = parseInt(m[1], 10) * parseInt(m[2], 10);
+          if (!bestSizedHref || area > bestSizedArea) {
+            bestSizedHref = href;
+            bestSizedArea = area;
+          }
+        } else if (isCanonical && !defaultHref) {
+          defaultHref = href;
+        } else if (!bestSizedHref) {
+          bestSizedHref = href;
         }
       }
-      return best || '';
+      return defaultHref || bestSizedHref || '';
     })();
     """
 
