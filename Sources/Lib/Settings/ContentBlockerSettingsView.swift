@@ -82,39 +82,113 @@ struct ContentBlockerSettingsView: View {
 
   // MARK: - Filter Lists
 
+  @State private var showAddRow = false
+  @State private var newSourceName = ""
+  @State private var newSourceURL = ""
+  @State private var newSourceHomepage = ""
+
   private var filterListsForm: some View {
     Form {
-      Section {
-        ForEach(AdBlocker.allSources) { source in
-          filterListRow(source)
-        }
-      } header: {
-        HStack {
-          Text(category.title)
-          Spacer()
-          Button("Refresh Now") {
-            Task { await AdBlocker.shared.refreshFilterlists() }
-          }
-          .controlSize(.small)
-        }
-      } footer: {
-        VStack(alignment: .leading, spacing: 4) {
-          Text(lastUpdatedSummary)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-          Text(
-            "Disabling a list removes its rules on the next compile. The compiled binaries already attached to open tabs swap atomically — no reload is needed."
-          )
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        }
-      }
+      defaultListsSection
+      optionalListsSection
+      customListsSection
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
   }
 
-  private func filterListRow(_ source: AdBlocker.FilterSource) -> some View {
+  private var defaultListsSection: some View {
+    Section {
+      ForEach(coreBuiltInSources) { source in
+        filterListRow(source, removable: false)
+      }
+    } header: {
+      HStack {
+        Text("Default Lists")
+        Spacer()
+        Button("Refresh Now") {
+          Task { await AdBlocker.shared.refreshFilterlists() }
+        }
+        .controlSize(.small)
+      }
+    } footer: {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(lastUpdatedSummary)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Text(
+          "Disabling a list removes its rules on the next compile. The compiled binaries already attached to open tabs swap atomically — no reload is needed."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+    }
+  }
+
+  private var optionalListsSection: some View {
+    Section {
+      ForEach(optionalBuiltInSources) { source in
+        filterListRow(source, removable: false)
+      }
+    } header: {
+      Text("Optional Lists")
+    } footer: {
+      Text(
+        "Off by default. Enabling a list fetches and compiles it on the next reload."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  @ViewBuilder
+  private var customListsSection: some View {
+    Section {
+      let rows = customRows
+      if rows.isEmpty && !showAddRow {
+        Text("No custom lists yet.")
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        ForEach(rows) { source in
+          filterListRow(source, removable: true)
+        }
+      }
+      if showAddRow { addCustomRow }
+    } header: {
+      HStack {
+        Text("Custom Filter URLs")
+        Spacer()
+        if !showAddRow {
+          Button("Add…") { showAddRow = true }
+            .controlSize(.small)
+        }
+      }
+    } footer: {
+      Text(
+        "Add lists from sources you trust. URLs fetch directly; e05 does not verify content."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private var coreBuiltInSources: [AdBlocker.FilterSource] {
+    AdBlocker.builtInSources.filter { $0.category == .core }
+  }
+
+  private var optionalBuiltInSources: [AdBlocker.FilterSource] {
+    AdBlocker.builtInSources.filter { $0.category == .optional }
+  }
+
+  private var customRows: [AdBlocker.FilterSource] {
+    _ = revision
+    return AdBlocker.customSources()
+  }
+
+  private func filterListRow(
+    _ source: AdBlocker.FilterSource, removable: Bool
+  ) -> some View {
     HStack(alignment: .firstTextBaseline) {
       Toggle(
         isOn: Binding(
@@ -136,7 +210,149 @@ struct ContentBlockerSettingsView: View {
         }
       }
       .toggleStyle(.switch)
+      if removable {
+        Button {
+          confirmRemoveCustom(source)
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help("Remove")
+      }
     }
+  }
+
+  // MARK: - Custom Source Add Row
+
+  /// Inline expansion shown when the user clicks "Add…". Avoids
+  /// SwiftUI `.sheet` on the Settings NSPanel — that combination
+  /// leaves the second presentation as a transparent grey overlay
+  /// with no visible content on macOS 26.
+  private var addCustomRow: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      TextField("Name", text: $newSourceName)
+        .textFieldStyle(.roundedBorder)
+      TextField("URL (https://...)", text: $newSourceURL)
+        .textFieldStyle(.roundedBorder)
+      TextField("Homepage (optional)", text: $newSourceHomepage)
+        .textFieldStyle(.roundedBorder)
+      if let message = addValidation.1 {
+        Text(message)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+      HStack {
+        Spacer()
+        Button("Cancel") { closeAddRow() }
+          .keyboardShortcut(.cancelAction)
+        Button("Add") { commitNewCustomSource() }
+          .keyboardShortcut(.defaultAction)
+          .disabled(!addValidation.0)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  /// (canAdd, errorMessage) — empty inputs return `(false, nil)` so the
+  /// sheet does not shout at the user before they have typed anything.
+  private var addValidation: (Bool, String?) {
+    let name = newSourceName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let urlString = newSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !urlString.isEmpty else { return (false, nil) }
+    guard let url = URL(string: urlString),
+      let scheme = url.scheme?.lowercased(),
+      scheme == "http" || scheme == "https",
+      let host = url.host, !host.isEmpty
+    else {
+      return (false, "URL must start with http:// or https:// and include a host.")
+    }
+    let existing = PreferencesStore.shared.preferences.adblockerCustomSources ?? []
+    if existing.contains(where: { $0.url == urlString }) {
+      return (false, "This URL is already in the list.")
+    }
+    return (true, nil)
+  }
+
+  private func commitNewCustomSource() {
+    let name = newSourceName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let urlString = newSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    let homepageRaw = newSourceHomepage.trimmingCharacters(in: .whitespacesAndNewlines)
+    let homepage = homepageRaw.isEmpty ? nil : homepageRaw
+    let entry = AdblockerCustomSource(
+      id: ULID().string,
+      name: name,
+      url: urlString,
+      homepage: homepage
+    )
+    let entryRuntimeID = "\(AdBlocker.customSourceIdPrefix)\(entry.id)"
+    PreferencesStore.shared.update { prefs in
+      var customs = prefs.adblockerCustomSources ?? []
+      customs.append(entry)
+      prefs.adblockerCustomSources = customs
+      // When the user already has an explicit enable list, append the
+      // new id so the just-added list starts on. With the implicit
+      // (nil) set, customs default-enable for free.
+      if var enabled = prefs.adblockerEnabledSources {
+        enabled.append(entryRuntimeID)
+        prefs.adblockerEnabledSources = enabled
+      }
+    }
+    closeAddRow()
+    Task { await AdBlocker.shared.reload() }
+  }
+
+  private func closeAddRow() {
+    showAddRow = false
+    newSourceName = ""
+    newSourceURL = ""
+    newSourceHomepage = ""
+  }
+
+  private func confirmRemoveCustom(_ source: AdBlocker.FilterSource) {
+    let alert = NSAlert()
+    alert.messageText = "Remove “\(source.name)” from custom filter lists?"
+    alert.informativeText =
+      "Block rules from this list stop applying on the next reload."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove")
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.keyEquivalent = ""
+    alert.buttons.last?.keyEquivalent = "\r"
+    guard let parent = SettingsWindowController.shared.window else { return }
+    alert.beginSheetModal(for: parent) { response in
+      MainActor.assumeIsolated {
+        guard response == .alertFirstButtonReturn else { return }
+        removeCustom(source)
+      }
+    }
+  }
+
+  private func removeCustom(_ source: AdBlocker.FilterSource) {
+    let customID = String(source.id.dropFirst(AdBlocker.customSourceIdPrefix.count))
+    PreferencesStore.shared.update { prefs in
+      var customs = prefs.adblockerCustomSources ?? []
+      customs.removeAll { $0.id == customID }
+      prefs.adblockerCustomSources = customs.isEmpty ? nil : customs
+      if var enabled = prefs.adblockerEnabledSources {
+        enabled.removeAll { $0 == source.id }
+        prefs.adblockerEnabledSources = enabled
+      }
+    }
+    // Drop the orphan cache file so the cache dir does not accumulate
+    // text from sources the user has removed.
+    let cacheURL = AdBlocker.cacheRoot.appendingPathComponent(source.cacheFilename)
+    do {
+      try FileManager.default.removeItem(at: cacheURL)
+    } catch CocoaError.fileNoSuchFile {
+      // The cache may legitimately be absent if the source was added
+      // but never compiled (e.g. removed before the first reload).
+    } catch {
+      logger.warning(
+        "[settings/contentblocker] failed to drop custom cache \(cacheURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+    }
+    Task { await AdBlocker.shared.reload() }
   }
 
   /// Open `url` in a fresh e05 browser column rather than handing
