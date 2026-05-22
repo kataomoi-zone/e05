@@ -9,7 +9,14 @@ public final class PaneResizeHandle: NSView {
     case vertical  // between panes within a column (up-down drag)
   }
 
-  static let handleSize: CGFloat = 6
+  /// Current handle thickness, driven by the ``PaneGapPreset`` the
+  /// user has selected. Read at handle-creation time and re-read on
+  /// the live-update fan-out (see ``PaneContainerViewController``
+  /// `applyPaneGap`). Defaults to the historical 6pt when no
+  /// preference is set.
+  static var handleSize: CGFloat {
+    PaneGapPreset.resolve(PreferencesStore.shared.preferences.paneGap).value
+  }
 
   public let orientation: Orientation
 

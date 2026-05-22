@@ -68,6 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// changed keeps the unrelated tabs free.
   private var lastShortcutOverrides: [String: ShortcutBinding]?
 
+  /// `PreferencesStore` subscription that walks every workspace,
+  /// column, and resize handle to push the new ``PaneGapPreset``
+  /// constants through the live layout. Held for the app lifetime
+  /// so the Appearance picker takes effect without a relaunch.
+  private var paneGapListenerToken: UUID?
+
+  /// Snapshot of the gap identifier used to gate the layout walk.
+  /// The listener fans out for every preferences write; comparing
+  /// against the last applied value skips the walk when an unrelated
+  /// field flipped.
+  private var lastPaneGap: String?
+
   /// Background loop that runs the periodic adblocker filterlist
   /// refresh. Reads the interval from `PreferencesStore` each
   /// iteration; held so a Settings edit can cancel the previous
@@ -170,6 +182,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       if next == self.lastShortcutOverrides { return }
       self.lastShortcutOverrides = next
       self.setupMenuKeyBindings()
+    }
+
+    lastPaneGap = PreferencesStore.shared.preferences.paneGap
+    paneGapListenerToken = PreferencesStore.shared.addListener { [weak self] prefs in
+      guard let self else { return }
+      let next = prefs.paneGap
+      if next == self.lastPaneGap { return }
+      self.lastPaneGap = next
+      self.paneContainer?.applyPaneGap()
     }
 
     let screen = NSScreen.main ?? NSScreen.screens.first

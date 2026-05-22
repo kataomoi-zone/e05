@@ -22,9 +22,9 @@ public final class WorkspaceViewController: NSViewController {
   /// this value from the column-height constraint: each column is
   /// pinned to `stackView.heightAnchor`, and an exact equal-height
   /// pin would crush the top/bottom inset that this margin reserves.
-  /// Likely to become user-configurable later; until then the literal
-  /// stays here as a single source paired with the handle size.
-  static let outerMargin: CGFloat = PaneResizeHandle.handleSize
+  /// Reads through `PaneResizeHandle.handleSize` so the two values
+  /// move together when the user picks a different ``PaneGapPreset``.
+  static var outerMargin: CGFloat { PaneResizeHandle.handleSize }
 
   public let workspace: WorkspaceModel
   let scrollView = OverlayScrollView()
