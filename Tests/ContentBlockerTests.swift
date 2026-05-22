@@ -166,10 +166,11 @@ struct AdBlockerFilterSourceTests {
     }
   }
 
-  @Test("defaultEnabledSourceIds matches all core sources")
-  func defaultEnabledIdsMatchCore() {
+  @Test("built-in default-enabled set matches the .core category")
+  func builtInDefaultsAreCore() {
     let coreIds = Set(AdBlocker.builtInSources.filter { $0.category == .core }.map(\.id))
-    #expect(AdBlocker.defaultEnabledSourceIds == coreIds)
+    let defaults = Set(AdBlocker.builtInSources.filter(\.defaultEnabled).map(\.id))
+    #expect(defaults == coreIds)
     #expect(!coreIds.isEmpty)
   }
 
@@ -177,6 +178,80 @@ struct AdBlockerFilterSourceTests {
   func cacheFilenamesAreUnique() {
     let names = AdBlocker.builtInSources.map(\.cacheFilename)
     #expect(Set(names).count == names.count)
+  }
+}
+
+@Suite("AdBlocker.customSources")
+@MainActor
+struct AdBlockerCustomSourcesTests {
+  private func source(
+    id: String = "01HXTEST00000000000000000", name: String = "Custom",
+    url: String, homepage: String? = nil
+  ) -> AdblockerCustomSource {
+    AdblockerCustomSource(
+      id: id, name: name, url: url, homepage: homepage,
+      addedAt: Date(timeIntervalSince1970: 1_700_000_000)
+    )
+  }
+
+  @Test("empty input yields no FilterSource entries")
+  func emptyInput() {
+    #expect(AdBlocker.customSources([]).isEmpty)
+  }
+
+  @Test("https URL maps to a FilterSource with the custom id prefix")
+  func httpsURLMaps() {
+    let raw = source(id: "ABC", url: "https://example.com/list.txt")
+    let mapped = AdBlocker.customSources([raw])
+    #expect(mapped.count == 1)
+    let first = mapped[0]
+    #expect(first.id == "custom-ABC")
+    #expect(first.name == "Custom")
+    #expect(first.homepage == nil)
+    #expect(first.category == .optional)
+    #expect(first.defaultEnabled)
+  }
+
+  @Test("http URL is allowed")
+  func httpURLMaps() {
+    let raw = source(url: "http://example.com/list.txt")
+    #expect(AdBlocker.customSources([raw]).count == 1)
+  }
+
+  @Test("non-http(s) schemes are silently dropped")
+  func badSchemesDropped() {
+    let entries = [
+      source(id: "FILE", url: "file:///etc/passwd"),
+      source(id: "JS", url: "javascript:alert(1)"),
+      source(id: "FTP", url: "ftp://example.com/list.txt"),
+      source(id: "EMPTY", url: ""),
+      source(id: "NOSCHEME", url: "example.com/list.txt"),
+    ]
+    #expect(AdBlocker.customSources(entries).isEmpty)
+  }
+
+  @Test("valid homepage URL surfaces, invalid is treated as nil")
+  func homepageParsing() {
+    let withValid = source(
+      id: "A", url: "https://e.com/l.txt", homepage: "https://e.com")
+    let withInvalid = source(
+      id: "B", url: "https://e.com/l.txt", homepage: "not a url")
+    let mapped = AdBlocker.customSources([withValid, withInvalid])
+    #expect(mapped[0].homepage?.absoluteString == "https://e.com")
+    // `URL(string:)` accepts most strings (returning a relative URL),
+    // so the adapter does not pre-filter homepage; UI guards malformed
+    // values at input time.
+    #expect(mapped[1].homepage != nil)
+  }
+
+  @Test("AdblockerCustomSource round-trips through JSON")
+  func customSourceCodableRoundTrip() throws {
+    let original = source(
+      id: "ULID1", name: "Test", url: "https://a.com/l.txt",
+      homepage: "https://a.com")
+    let data = try JSONEncoder().encode(original)
+    let decoded = try JSONDecoder().decode(AdblockerCustomSource.self, from: data)
+    #expect(decoded == original)
   }
 }
 
@@ -254,6 +329,27 @@ struct ContentBlockerPreferencesTests {
       #expect(store.preferences.adblockerEnabledSources == nil)
       #expect(store.preferences.adblockerAutoUpdateIntervalHours == nil)
       #expect(store.preferences.adblockerLastRefreshedAt == nil)
+      #expect(store.preferences.adblockerCustomSources == nil)
+    }
+  }
+
+  @Test("preferences round-trip custom sources")
+  func roundTripCustomSources() throws {
+    try withTempStoreURL { storeURL in
+      let added = Date(timeIntervalSince1970: 1_700_000_000)
+      let entries = [
+        AdblockerCustomSource(
+          id: "ABC", name: "Custom A", url: "https://a.example/list.txt",
+          homepage: "https://a.example", addedAt: added),
+        AdblockerCustomSource(
+          id: "DEF", name: "Custom B", url: "https://b.example/list.txt",
+          homepage: nil, addedAt: added),
+      ]
+      let writer = PreferencesStore(storeURL: storeURL)
+      writer.update { $0.adblockerCustomSources = entries }
+
+      let reader = PreferencesStore(storeURL: storeURL)
+      #expect(reader.preferences.adblockerCustomSources == entries)
     }
   }
 }

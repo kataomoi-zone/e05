@@ -94,6 +94,12 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// tab as a "Last updated" label.
   public var adblockerLastRefreshedAt: Date?
 
+  /// User-defined filterlist URLs concatenated onto the shipped
+  /// catalog at runtime. Entries whose `url` does not parse to a
+  /// `http`/`https` URL are silently dropped by the adapter so a
+  /// hand-edited preferences file with a typo does not quarantine.
+  public var adblockerCustomSources: [AdblockerCustomSource]?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -107,7 +113,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     keyboardShortcuts: [String: ShortcutBinding]? = nil,
     adblockerEnabledSources: [String]? = nil,
     adblockerAutoUpdateIntervalHours: Int? = nil,
-    adblockerLastRefreshedAt: Date? = nil
+    adblockerLastRefreshedAt: Date? = nil,
+    adblockerCustomSources: [AdblockerCustomSource]? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -122,6 +129,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.adblockerEnabledSources = adblockerEnabledSources
     self.adblockerAutoUpdateIntervalHours = adblockerAutoUpdateIntervalHours
     self.adblockerLastRefreshedAt = adblockerLastRefreshedAt
+    self.adblockerCustomSources = adblockerCustomSources
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

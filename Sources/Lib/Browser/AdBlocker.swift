@@ -242,17 +242,61 @@ public final class AdBlocker {
     ),
   ]
 
-  /// Sources visible to the rest of the app. Today this just exposes
-  /// the built-in catalog; user-defined custom URLs concat in later.
-  public static var allSources: [FilterSource] { builtInSources }
+  /// Prefix applied to the `id` and `cacheFilename` of every
+  /// user-defined source so the namespace stays disjoint from the
+  /// shipped catalog. Stripping the prefix recovers the underlying
+  /// ``AdblockerCustomSource.id``.
+  public static let customSourceIdPrefix = "custom-"
+
+  /// Sources visible to the rest of the app: shipped catalog first,
+  /// then user-defined custom URLs in addition order. Order matters
+  /// because rule lists are attached to ``WKWebView`` in this order
+  /// and a `@@`-exception in an earlier list cannot cancel a block in
+  /// a later one (and vice versa).
+  public static var allSources: [FilterSource] {
+    builtInSources + customSources()
+  }
+
+  /// Adapter from the preferences-side ``AdblockerCustomSource`` shape
+  /// to runtime ``FilterSource`` entries. Entries with an invalid URL
+  /// (unparseable or non-http(s) scheme) are silently dropped so a
+  /// hand-edited preferences file does not quarantine.
+  static func customSources(
+    _ raw: [AdblockerCustomSource]? = nil
+  ) -> [FilterSource] {
+    let entries =
+      raw
+      ?? PreferencesStore.shared.preferences.adblockerCustomSources
+      ?? []
+    return entries.compactMap { custom -> FilterSource? in
+      guard let url = URL(string: custom.url),
+        let scheme = url.scheme?.lowercased(),
+        scheme == "http" || scheme == "https"
+      else { return nil }
+      let homepage = custom.homepage.flatMap(URL.init(string:))
+      return FilterSource(
+        id: "\(customSourceIdPrefix)\(custom.id)",
+        name: custom.name,
+        url: url,
+        cacheFilename: "\(customSourceIdPrefix)\(custom.id).txt",
+        homepage: homepage,
+        // Treat customs as `.optional` so the Settings UI groups them
+        // alongside other opt-in sources; the per-source toggle still
+        // honours `defaultEnabled` for the implicit-nil branch.
+        category: .optional,
+        defaultEnabled: true
+      )
+    }
+  }
 
   /// Set of source ids enabled when the user has not made a per-source
   /// choice yet (i.e. ``E05Preferences/adblockerEnabledSources`` is
   /// `nil`). Used both at compile time and as the collapse target for
   /// the Settings toggle so a user who lands on the default set ends
-  /// up with `nil` persisted (a smaller preferences.json).
+  /// up with `nil` persisted (a smaller preferences.json). Includes
+  /// custom sources because customs default-enable when added.
   public static var defaultEnabledSourceIds: Set<String> {
-    Set(builtInSources.filter(\.defaultEnabled).map(\.id))
+    Set(allSources.filter(\.defaultEnabled).map(\.id))
   }
 
   /// Whether the given source should be loaded at compile time given
