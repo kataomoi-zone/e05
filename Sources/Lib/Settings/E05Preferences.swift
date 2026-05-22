@@ -73,10 +73,11 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   public var keyboardShortcuts: [String: ShortcutBinding]?
 
   /// Identifiers of the ``AdBlocker/FilterSource`` entries the user
-  /// wants active. `nil` keeps every shipped source enabled (the
-  /// historical default); an explicit list opts in only to the named
-  /// ids. Unknown ids are ignored at apply time so a removed source
-  /// does not quarantine the preferences file.
+  /// wants active. `nil` enables the catalog's default-enabled subset
+  /// (i.e. every `.core` source); an explicit list opts in only to the
+  /// named ids and ignores `defaultEnabled` entirely. Unknown ids are
+  /// dropped at apply time so a removed source does not quarantine the
+  /// preferences file.
   public var adblockerEnabledSources: [String]?
 
   /// Interval, in hours, between automatic filterlist refreshes.

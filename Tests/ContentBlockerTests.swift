@@ -153,6 +153,57 @@ struct AdBlockerFilterSourceTests {
       #expect(source.homepage != nil, "\(source.id) missing homepage")
     }
   }
+
+  @Test("core category sources are default-enabled, optional are not")
+  func categoryMatchesDefaultEnabled() {
+    for source in AdBlocker.builtInSources {
+      switch source.category {
+      case .core:
+        #expect(source.defaultEnabled, "\(source.id) is .core but not defaultEnabled")
+      case .optional:
+        #expect(!source.defaultEnabled, "\(source.id) is .optional but defaultEnabled")
+      }
+    }
+  }
+
+  @Test("defaultEnabledSourceIds matches all core sources")
+  func defaultEnabledIdsMatchCore() {
+    let coreIds = Set(AdBlocker.builtInSources.filter { $0.category == .core }.map(\.id))
+    #expect(AdBlocker.defaultEnabledSourceIds == coreIds)
+    #expect(!coreIds.isEmpty)
+  }
+
+  @Test("cache filenames are unique across the catalog")
+  func cacheFilenamesAreUnique() {
+    let names = AdBlocker.builtInSources.map(\.cacheFilename)
+    #expect(Set(names).count == names.count)
+  }
+}
+
+@Suite("AdBlocker.isSourceEnabled")
+@MainActor
+struct AdBlockerIsSourceEnabledTests {
+  @Test("nil enabled list falls back to per-source defaultEnabled")
+  func nilFallsBackToDefault() {
+    for source in AdBlocker.builtInSources {
+      #expect(
+        AdBlocker.isSourceEnabled(source, enabledIds: nil)
+          == source.defaultEnabled
+      )
+    }
+  }
+
+  @Test("explicit list overrides defaultEnabled in both directions")
+  func explicitListOverrides() {
+    let easylist = AdBlocker.builtInSources.first { $0.id == "easylist" }!
+    let japanese = AdBlocker.builtInSources.first { $0.id == "adguard-japanese" }!
+    // Listed → enabled even though Japanese is .optional.
+    #expect(AdBlocker.isSourceEnabled(japanese, enabledIds: ["adguard-japanese"]))
+    // Unlisted → disabled even though EasyList is .core.
+    #expect(!AdBlocker.isSourceEnabled(easylist, enabledIds: ["adguard-japanese"]))
+    // Empty explicit list disables everything.
+    #expect(!AdBlocker.isSourceEnabled(easylist, enabledIds: []))
+  }
 }
 
 @Suite("Content Blocker preferences fan-out")

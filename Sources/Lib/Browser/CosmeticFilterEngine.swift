@@ -438,10 +438,9 @@ public final class CosmeticFilterEngine {
       '\(AdBlocker.cacheRoot.path, privacy: .public)'
       """
     )
-    let enabledIds = PreferencesStore.shared.preferences.adblockerEnabledSources
     var parsedRules: [ABPCosmeticParser.ParsedRule] = []
     for source in AdBlocker.allSources {
-      if let enabledIds, !enabledIds.contains(source.id) {
+      if !AdBlocker.isSourceEnabled(source) {
         logger.info(
           "skipping disabled source '\(source.id, privacy: .public)'"
         )

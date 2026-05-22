@@ -178,16 +178,17 @@ struct ContentBlockerSettingsView: View {
 
   private func isEnabled(_ source: AdBlocker.FilterSource) -> Bool {
     _ = revision
-    if let enabled = PreferencesStore.shared.preferences.adblockerEnabledSources {
-      return enabled.contains(source.id)
-    }
-    return true
+    return AdBlocker.isSourceEnabled(source)
   }
 
   private func setEnabled(_ enabled: Bool, for source: AdBlocker.FilterSource) {
     PreferencesStore.shared.update { prefs in
-      var list = prefs.adblockerEnabledSources
-        ?? AdBlocker.allSources.map(\.id)
+      // Materialise the implicit-default set so the toggle becomes
+      // explicit on every change. The collapse below converts it back
+      // to `nil` whenever the result happens to match the default set.
+      var list =
+        prefs.adblockerEnabledSources
+        ?? AdBlocker.allSources.filter(\.defaultEnabled).map(\.id)
       if enabled {
         if !list.contains(source.id) {
           list.append(source.id)
@@ -195,10 +196,9 @@ struct ContentBlockerSettingsView: View {
       } else {
         list.removeAll { $0 == source.id }
       }
-      // Collapse back to `nil` when every shipped source is enabled
-      // so the preferences.json stays small for the common case.
-      let allIds = Set(AdBlocker.allSources.map(\.id))
-      if Set(list) == allIds {
+      // Collapse back to `nil` when the chosen set matches the default
+      // set so the preferences.json stays small for the common case.
+      if Set(list) == AdBlocker.defaultEnabledSourceIds {
         prefs.adblockerEnabledSources = nil
       } else {
         prefs.adblockerEnabledSources = list

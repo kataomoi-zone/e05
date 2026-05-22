@@ -49,6 +49,20 @@ public final class AdBlocker {
     "e05.AdBlocker.ruleListDidChange"
   )
 
+  /// Coarse grouping a ``FilterSource`` falls into. Drives both the
+  /// Settings UI sectioning (Default vs Optional) and the
+  /// initial-enable computation when the user has not made an explicit
+  /// per-source choice yet.
+  public enum SourceCategory: String, Sendable {
+    /// Default-enabled global coverage (ads + privacy + cookie banners).
+    /// Removing one of these noticeably degrades blocking on most sites.
+    case core
+    /// Default-disabled built-in source. Mostly regional filters and
+    /// niche categories (mobile-app promo, malware) the user opts in
+    /// to from the Settings tab.
+    case optional
+  }
+
   /// A filterlist source used to build the combined rule list. Each
   /// source is downloaded on first run, cached under the directory
   /// returned by `cacheRoot` (see class doc for the
@@ -72,48 +86,197 @@ public final class AdBlocker {
     let url: URL
     let cacheFilename: String
     public let homepage: URL?
+    public let category: SourceCategory
+    /// Initial enable state when the user has not made a choice yet
+    /// (i.e. `adblockerEnabledSources == nil`). Almost always tracks
+    /// `category` (`.core` true, `.optional` false) but the two stay
+    /// decoupled so a future category can pick its own default.
+    public let defaultEnabled: Bool
 
     init(
       id: String,
       name: String,
       url: URL,
       cacheFilename: String,
-      homepage: URL?
+      homepage: URL?,
+      category: SourceCategory,
+      defaultEnabled: Bool
     ) {
       self.id = id
       self.name = name
       self.url = url
       self.cacheFilename = cacheFilename
       self.homepage = homepage
+      self.category = category
+      self.defaultEnabled = defaultEnabled
     }
   }
 
-  /// The filterlist bundle. EasyList + EasyPrivacy give broad coverage
-  /// of global ad networks and trackers; AdGuard Japanese layers in
-  /// local networks that the English lists miss.
-  public static let allSources: [FilterSource] = [
+  /// The shipped catalog. Default sources cover global ads + privacy +
+  /// cookie banners with no locale bias; optional sources expose
+  /// regional and niche lists the user opts in to from Settings.
+  ///
+  /// Curation references Brave's `brave/adblock-resources` (MPL 2.0)
+  /// `filter_lists/list_catalog.json`. Each list's text content stays
+  /// under its upstream license — e05 ships no filterlist bytes, only
+  /// URLs the user agrees to fetch.
+  public static let builtInSources: [FilterSource] = [
+    // MARK: Core (default enabled)
     FilterSource(
       id: "easylist",
       name: "EasyList",
       url: URL(string: "https://easylist.to/easylist/easylist.txt")!,
       cacheFilename: "easylist.txt",
-      homepage: URL(string: "https://easylist.to/")
+      homepage: URL(string: "https://easylist.to/"),
+      category: .core, defaultEnabled: true
     ),
     FilterSource(
       id: "easyprivacy",
       name: "EasyPrivacy",
       url: URL(string: "https://easylist.to/easylist/easyprivacy.txt")!,
       cacheFilename: "easyprivacy.txt",
-      homepage: URL(string: "https://easylist.to/")
+      homepage: URL(string: "https://easylist.to/"),
+      category: .core, defaultEnabled: true
+    ),
+    FilterSource(
+      id: "ubo-filters",
+      name: "uBlock Origin Filters",
+      url: URL(
+        string:
+          "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt"
+      )!,
+      cacheFilename: "ubo-filters.txt",
+      homepage: URL(string: "https://github.com/uBlockOrigin/uAssets"),
+      category: .core, defaultEnabled: true
+    ),
+    FilterSource(
+      id: "ubo-privacy",
+      name: "uBlock Origin Privacy",
+      url: URL(
+        string:
+          "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt"
+      )!,
+      cacheFilename: "ubo-privacy.txt",
+      homepage: URL(string: "https://github.com/uBlockOrigin/uAssets"),
+      category: .core, defaultEnabled: true
+    ),
+    FilterSource(
+      id: "fanboy-cookie",
+      name: "EasyList Cookie",
+      url: URL(string: "https://secure.fanboy.co.nz/fanboy-cookiemonster_ubo.txt")!,
+      cacheFilename: "fanboy-cookie.txt",
+      homepage: URL(string: "https://www.fanboy.co.nz/"),
+      category: .core, defaultEnabled: true
+    ),
+    // MARK: Optional (off by default)
+    FilterSource(
+      id: "fanboy-mobile",
+      name: "Mobile App Promo Blocker",
+      url: URL(string: "https://secure.fanboy.co.nz/fanboy-mobile-notifications.txt")!,
+      cacheFilename: "fanboy-mobile.txt",
+      homepage: URL(string: "https://www.fanboy.co.nz/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "fanboy-annoyances",
+      name: "Fanboy's Annoyances",
+      url: URL(string: "https://secure.fanboy.co.nz/fanboy-annoyance.txt")!,
+      cacheFilename: "fanboy-annoyances.txt",
+      homepage: URL(string: "https://www.fanboy.co.nz/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "urlhaus-malware",
+      name: "URLhaus Malware",
+      url: URL(
+        string:
+          "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-agh-online.txt"
+      )!,
+      cacheFilename: "urlhaus-malware.txt",
+      homepage: URL(string: "https://urlhaus.abuse.ch/"),
+      category: .optional, defaultEnabled: false
     ),
     FilterSource(
       id: "adguard-japanese",
-      name: "AdGuard Japanese Filter",
-      url: URL(string: "https://filters.adtidy.org/extension/safari/filters/7.txt")!,
-      cacheFilename: "adguard-japanese.txt",
-      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/")
+      name: "Japanese (AdGuard)",
+      url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/7.txt")!,
+      // Renamed from `adguard-japanese.txt` when the URL moved from the
+      // safari/ to the ublock/ variant — keeping the filename invalidates
+      // any pre-existing on-disk cache so the next launch fetches the
+      // fresh ublock variant rather than re-using stale text.
+      cacheFilename: "adguard-japanese-ubo.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "adguard-german",
+      name: "German (AdGuard)",
+      url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/6.txt")!,
+      cacheFilename: "adguard-german.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "adguard-russian",
+      name: "Russian (AdGuard)",
+      url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/1.txt")!,
+      cacheFilename: "adguard-russian.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "adguard-chinese",
+      name: "Chinese (AdGuard)",
+      url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/224.txt")!,
+      cacheFilename: "adguard-chinese.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
+      category: .optional, defaultEnabled: false
+    ),
+    FilterSource(
+      id: "adguard-spanish",
+      name: "Spanish/Portuguese (AdGuard)",
+      url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/9.txt")!,
+      cacheFilename: "adguard-spanish.txt",
+      homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
+      category: .optional, defaultEnabled: false
     ),
   ]
+
+  /// Sources visible to the rest of the app. Today this just exposes
+  /// the built-in catalog; user-defined custom URLs concat in later.
+  public static var allSources: [FilterSource] { builtInSources }
+
+  /// Set of source ids enabled when the user has not made a per-source
+  /// choice yet (i.e. ``E05Preferences/adblockerEnabledSources`` is
+  /// `nil`). Used both at compile time and as the collapse target for
+  /// the Settings toggle so a user who lands on the default set ends
+  /// up with `nil` persisted (a smaller preferences.json).
+  public static var defaultEnabledSourceIds: Set<String> {
+    Set(builtInSources.filter(\.defaultEnabled).map(\.id))
+  }
+
+  /// Whether the given source should be loaded at compile time given
+  /// the current preferences snapshot. Centralises the
+  /// nil-enabled-set fallback so `AdBlocker.start()` and
+  /// `CosmeticFilterEngine.start()` stay in lock-step.
+  public static func isSourceEnabled(_ source: FilterSource) -> Bool {
+    isSourceEnabled(
+      source,
+      enabledIds: PreferencesStore.shared.preferences.adblockerEnabledSources
+    )
+  }
+
+  /// Pure overload that takes the enabled set explicitly. Lets tests
+  /// exercise the fallback / explicit-list branches without racing on
+  /// the shared `PreferencesStore`.
+  static func isSourceEnabled(
+    _ source: FilterSource, enabledIds: [String]?
+  ) -> Bool {
+    if let enabledIds {
+      return enabledIds.contains(source.id)
+    }
+    return source.defaultEnabled
+  }
 
   /// Re-download a cached filterlist when its on-disk copy is older
   /// than this. EasyList publishes daily; a week is generous enough to
@@ -201,9 +364,8 @@ public final class AdBlocker {
     // `WKUserContentController.add(_:)` accepts multiple rule lists
     // per web view, so the natural fix is one list per source.
     var compiledIdentifiers: [String] = []
-    let enabledIds = PreferencesStore.shared.preferences.adblockerEnabledSources
     for source in Self.allSources {
-      if let enabledIds, !enabledIds.contains(source.id) {
+      if !Self.isSourceEnabled(source) {
         logger.info(
           "Skipping disabled source '\(source.id, privacy: .public)'"
         )
@@ -274,7 +436,11 @@ public final class AdBlocker {
       return
     }
     logger.info(
-      "Installed \(self.ruleLists.count) rule lists across \(Self.allSources.count) sources"
+      """
+      Installed \(self.ruleLists.count) rule lists \
+      (\(compiledIdentifiers.count) enabled / \
+      \(Self.allSources.count) catalog)
+      """
     )
     broadcastRuleListChange()
     Task {
