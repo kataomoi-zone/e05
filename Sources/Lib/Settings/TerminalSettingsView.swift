@@ -69,6 +69,13 @@ struct TerminalSettingsView: View {
         Label("Reveal in Finder", systemImage: "folder")
       }
 
+      Button {
+        openGhosttyDocs()
+      } label: {
+        Label("Ghostty Docs", systemImage: "book")
+      }
+      .help("Open the upstream ghostty configuration reference in a new browser column.")
+
       Spacer()
 
       if let error = saveError {
@@ -254,6 +261,20 @@ struct TerminalSettingsView: View {
   private func resetToDefaults() {
     bufferText = ""
     save()
+  }
+
+  /// Open the upstream ghostty configuration reference in a new
+  /// browser column. Falls back to a logger.warning when the pane
+  /// container is not yet bound (test harness path).
+  private func openGhosttyDocs() {
+    guard let container = SettingsWindowController.shared.paneContainer else {
+      logger.warning("[terminal-settings] openGhosttyDocs dropped: paneContainer is nil")
+      return
+    }
+    let url = URL(string: "https://ghostty.org/docs/config")!
+    container.addColumn(address: PaneAddress(url))
+    container.view.window?.makeKeyAndOrderFront(nil)
+    NSApp.activate()
   }
 
   /// Drive libghostty to re-read the file we just wrote, so every
