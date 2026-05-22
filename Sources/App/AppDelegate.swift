@@ -94,6 +94,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private var paneBorderWidthListenerToken: UUID?
   private var lastPaneBorderWidth: String?
 
+  /// Last effective appearance ``applyTheme`` saw, used to detect
+  /// light ↔ dark transitions and drop the favicon memory cache.
+  /// `prefers-color-scheme`-aware SVG favicons are cached as
+  /// `NSImage` instances decoded under the appearance in effect at
+  /// fetch time; a later flip without an eviction leaves a now-
+  /// mismatched glyph (e.g. white on white in light theme) until
+  /// the next cold reload.
+  private var lastEffectiveAppearance: NSAppearance.Name?
+
   /// Background loop that runs the periodic adblocker filterlist
   /// refresh. Reads the interval from `PreferencesStore` each
   /// iteration; held so a Settings edit can cancel the previous
@@ -370,6 +379,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let scheme = GhosttyColorScheme(NSApp.effectiveAppearance)
     ghosttyApp.setColorScheme(scheme)
     paneContainer?.applyTerminalColorScheme(scheme)
+
+    // Evict in-memory favicons on actual light ↔ dark transitions so
+    // theme-aware SVGs re-decode under the new appearance on the
+    // next sidebar / URL bar draw. The on-disk raw bytes are
+    // appearance-neutral, so disk is left intact. The first apply
+    // only seeds `lastEffectiveAppearance` so cold launch is a no-op.
+    // A spurious KVO bounce across the same appearance pair would
+    // be filtered by the equality check; one that briefly reports a
+    // different `bestMatch` value can fire a redundant drop, which
+    // costs a re-decode on the next draw — acceptable since the
+    // disk side carries over.
+    let currentAppearance = NSApp.effectiveAppearance.bestMatch(
+      from: [.aqua, .darkAqua])
+    if let last = lastEffectiveAppearance, last != currentAppearance {
+      FaviconCache.shared.dropMemoryCache()
+    }
+    lastEffectiveAppearance = currentAppearance
   }
 
   /// Periodic refresh loop for the adblocker filterlists. Reads the

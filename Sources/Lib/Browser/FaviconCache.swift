@@ -4,13 +4,20 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "FaviconCache")
 
-/// Per-host favicon cache backed by a memory LRU and a PNG directory
-/// under `~/Library/Caches/<bundle-id>/favicons/` (resolved through
-/// `E05Paths.default.cacheDir` — `Caches`, not `Application Support`,
-/// because the disk entries are regenerable). Disk entries are
-/// host-keyed (`<host>.png`); a wipe just means the next visit
-/// re-fetches from `https://<host>/favicon.ico`, which is also why
-/// missing-dir write failures degrade silently rather than erroring.
+/// Per-host favicon cache backed by a memory LRU and a raw-bytes
+/// directory under `~/Library/Caches/<bundle-id>/favicons/` (resolved
+/// through `E05Paths.default.cacheDir` — `Caches`, not `Application
+/// Support`, because the disk entries are regenerable). Disk entries
+/// are host-keyed (`<host>.bin`) and hold the original HTTP response
+/// body, so `NSImage(data:)` re-decodes on each cold lookup under the
+/// current `NSAppearance`. That property is load-bearing: sites that
+/// serve a `prefers-color-scheme`-aware SVG would otherwise stay
+/// frozen in whichever variant was cached at fetch time, leaving a
+/// mismatched (e.g. white-on-white) glyph after a light↔dark flip
+/// until the next cold reload. A wipe just means
+/// the next visit re-fetches from `https://<host>/favicon.ico`,
+/// which is also why missing-dir write failures degrade silently
+/// rather than erroring.
 ///
 /// Lookup is synchronous: the UI calls ``image(for:)`` for every row
 /// it draws, and ``prefetch(for:)`` enqueues a network fetch when the
@@ -39,6 +46,16 @@ public final class FaviconCache {
   /// explicit bookkeeping. A failed fetch here prevents us from
   /// hammering the network every time a sidebar row rebuilds.
   private var negativeCache: Set<String> = []
+  /// Last `<link rel="icon">` URL ``ingest(host:from:)`` accepted for
+  /// each host. Compared against the next ingest URL so a page that
+  /// embeds time-varying state in its icon href rotates the icon on
+  /// every URL change instead of being trapped on the first hit by
+  /// a sticky memory entry. Cleared from ``dropMemoryCache`` together
+  /// with the memory cache so a host whose disk write happened to
+  /// fail can recover on the next ingest instead of staying frozen
+  /// behind a now-stale gate. Internal rather than private so
+  /// `@testable` callers can assert the gate state directly.
+  var lastIngestedURL: [String: URL] = [:]
   private let cacheDir: URL?
 
   /// Create a cache pointing at the production directory under
@@ -69,8 +86,8 @@ public final class FaviconCache {
   /// shape (no SQLite-native marker is in play here), and `nil`
   /// keeps the cache memory-only. Callers passing a non-`nil` URL
   /// should ensure the directory already exists if they expect the
-  /// PNG persistence path to actually write — `image(for:)` reads
-  /// gracefully against a missing dir, but the fetch-completion
+  /// raw-bytes persistence path to actually write — `image(for:)`
+  /// reads gracefully against a missing dir, but the fetch-completion
   /// write fails silently otherwise.
   init(cacheDir: URL?) {
     self.cacheDir = cacheDir
@@ -89,7 +106,7 @@ public final class FaviconCache {
     guard !key.isEmpty else { return nil }
     if let img = memoryCache[key] { return img }
     guard let dir = cacheDir else { return nil }
-    let file = dir.appendingPathComponent("\(key).png")
+    let file = dir.appendingPathComponent("\(key).bin")
     guard let data = try? Data(contentsOf: file) else { return nil }
     if let img = NSImage(data: data), img.size.width > 0 {
       memoryCache[key] = img
@@ -116,7 +133,7 @@ public final class FaviconCache {
     if inFlight.contains(key) { return }
     if negativeCache.contains(key) { return }
     if let dir = cacheDir {
-      let file = dir.appendingPathComponent("\(key).png")
+      let file = dir.appendingPathComponent("\(key).bin")
       if FileManager.default.fileExists(atPath: file.path) {
         // Disk hit — leave warming to the next `image(for:)` call so
         // we don't double-read the file when the view hasn't asked
@@ -138,6 +155,13 @@ public final class FaviconCache {
   /// path we first tried, and the original failure may have been
   /// against a non-existent `/favicon.ico`.
   ///
+  /// The re-fetch gate is the **URL** rather than the presence of an
+  /// in-memory entry. A page that embeds time-varying state in its
+  /// `<link rel="icon">` href rotates the URL when the icon changes;
+  /// checking memory presence would trap us on the first hit
+  /// forever, while comparing URLs lets each new href reach the
+  /// fetch path. Same URL repeats are still coalesced.
+  ///
   /// Only `http` / `https` are accepted. `file:` / `javascript:` /
   /// `data:` / `about:` links scraped from a page's DOM are
   /// silently dropped so a malicious page can't push us into the
@@ -155,8 +179,9 @@ public final class FaviconCache {
     let key = Self.normalize(host)
     guard !key.isEmpty else { return }
     guard !Self.isPrivateHost(key) else { return }
-    if memoryCache[key] != nil { return }
+    if lastIngestedURL[key] == url { return }
     if inFlight.contains(key) { return }
+    lastIngestedURL[key] = url
     inFlight.insert(key)
     negativeCache.remove(key)
     fetch(host: key, url: url)
@@ -169,7 +194,7 @@ public final class FaviconCache {
     memoryCache.removeValue(forKey: Self.normalize(host))
   }
 
-  /// Wipe both the in-memory LRU and the on-disk PNG directory.
+  /// Wipe both the in-memory LRU and the on-disk raw-bytes directory.
   /// Used by the Settings Reset "Clear Cache" action. The next
   /// favicon lookup for any host re-fetches from
   /// `https://<host>/favicon.ico`, so missing-dir write failures
@@ -180,6 +205,7 @@ public final class FaviconCache {
     memoryCache.removeAll()
     inFlight.removeAll()
     negativeCache.removeAll()
+    lastIngestedURL.removeAll()
     if let cacheDir {
       do {
         let entries = try FileManager.default.contentsOfDirectory(
@@ -192,6 +218,25 @@ public final class FaviconCache {
           "Failed to clear favicons dir: \(error.localizedDescription, privacy: .public)")
       }
     }
+    NotificationCenter.default.post(
+      name: Self.didChangeNotification, object: nil)
+  }
+
+  /// Drop the in-memory `NSImage` cache and the per-host ingest URL
+  /// gate, leaving disk entries in place. Called from ``AppDelegate``
+  /// on a light↔dark `NSAppearance` flip: the on-disk raw bytes are
+  /// appearance-neutral, but the cached `NSImage` was decoded under
+  /// the previous appearance and would keep rendering the wrong
+  /// variant for theme-aware SVG favicons until evicted. The URL
+  /// gate is reset alongside memory so a host whose disk write
+  /// previously failed can recover from the resulting (memory empty,
+  /// disk empty, gate frozen) dead state on the next ingest. Posts
+  /// ``didChangeNotification`` with `nil` object so sidebar / URL
+  /// bar observers re-`image(for:)` and pick up a freshly decoded
+  /// copy on the next draw.
+  public func dropMemoryCache() {
+    memoryCache.removeAll()
+    lastIngestedURL.removeAll()
     NotificationCenter.default.post(
       name: Self.didChangeNotification, object: nil)
   }
@@ -290,22 +335,17 @@ public final class FaviconCache {
     memoryCache[host] = image
     NotificationCenter.default.post(name: Self.didChangeNotification, object: host as NSString)
 
-    // Persist the PNG to disk off the main actor so ICO → PNG
-    // re-encoding doesn't block the UI when a burst of favicon
-    // fetches lands during a cold sidebar reload. TIFF is taken on
-    // the main actor (NSImage is not Sendable); the downstream
-    // NSBitmapImageRep / write happens on a utility queue.
-    guard let dir = cacheDir, let tiff = image.tiffRepresentation else { return }
-    let file = dir.appendingPathComponent("\(host).png")
+    // Persist the raw response bytes off the main actor. Keeping the
+    // original payload lets `image(for:)` re-decode via
+    // `NSImage(data:)` on every cold lookup, so a theme-aware SVG
+    // renders under whichever appearance is current at draw time
+    // instead of the appearance that was active at fetch time.
+    guard let dir = cacheDir else { return }
+    let file = dir.appendingPathComponent("\(host).bin")
     let hostForLog = host
     DispatchQueue.global(qos: .utility).async {
-      guard let rep = NSBitmapImageRep(data: tiff),
-        let png = rep.representation(using: .png, properties: [:])
-      else {
-        return
-      }
       do {
-        try png.write(to: file, options: .atomic)
+        try data.write(to: file, options: .atomic)
       } catch {
         logger.warning(
           "Favicon disk write failed for \(hostForLog, privacy: .public): \(error.localizedDescription, privacy: .public)"
