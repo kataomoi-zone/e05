@@ -189,7 +189,8 @@ struct ContentBlockerSettingsView: View {
   private func filterListRow(
     _ source: AdBlocker.FilterSource, removable: Bool
   ) -> some View {
-    HStack(alignment: .firstTextBaseline) {
+    let isCustom = source.id.hasPrefix(AdBlocker.customSourceIdPrefix)
+    return HStack(alignment: .firstTextBaseline) {
       Toggle(
         isOn: Binding(
           get: { isEnabled(source) },
@@ -198,6 +199,22 @@ struct ContentBlockerSettingsView: View {
       ) {
         VStack(alignment: .leading, spacing: 2) {
           Text(source.name)
+          // Built-in rows surface only the homepage (the upstream
+          // project page is the right credit link). Custom rows also
+          // show the filterlist URL itself so the user can audit
+          // exactly what was added — homepage is optional and the URL
+          // is the actual fetched bytes.
+          if isCustom {
+            Button {
+              openInPane(source.url)
+            } label: {
+              Text(source.url.absoluteString)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
+            .buttonStyle(.link)
+          }
           if let homepage = source.homepage {
             Button {
               openInPane(homepage)
