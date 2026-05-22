@@ -343,8 +343,52 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         Self.makeMuteUserScript(channelId: channelId))
     }
     let webView = FocusReportingWebView(frame: .zero, configuration: config)
+    // WKWebView's default UA on macOS 26 omits both `Version/<n>` and
+    // `Safari/<rev>`, leaving sites that key off those tokens unable
+    // to identify a Safari-equivalent and falling back to "unknown
+    // browser" warnings or feature gates. Override with a Safari-
+    // suffixed UA so the tokens are present. Extension-hosted panes
+    // keep the host controller's UA — extension popup pages don't
+    // visit the ecosystem of sites that trigger the warning.
+    if extensionConfig == nil {
+      webView.customUserAgent = Self.safariUserAgent
+    }
     return (webView, hoverHandler, channelId, extensionConfig != nil)
   }
+
+  /// Safari-equivalent UA stamped onto every non-extension pane's
+  /// `WKWebView.customUserAgent`. WKWebView's default UA on macOS
+  /// 26 drops the `Version/<n>` and `Safari/<rev>` tokens, so sites
+  /// that gate on them treat the pane as an unknown browser; this
+  /// suffix patches both tokens back in while keeping the
+  /// `AppleWebKit/605.1.15 (KHTML, like Gecko)` prefix the default
+  /// already emits. `Version/` is sourced from the running OS major
+  /// so the value follows the macOS-major-equals-Safari-major
+  /// convention introduced in macOS 26 without manual bumps. The
+  /// `AppleWebKit/` and `Safari/` revisions are hard-coded against
+  /// the value the WKWebView default has been emitting for years —
+  /// they would only need an update if WebKit itself moves off
+  /// `605.1.15`, in which case the failure mode is a slightly
+  /// outdated revision (not a missing token), which sites tolerate.
+  ///
+  /// `Intel Mac OS X 10_15_7` is kept verbatim on Apple Silicon —
+  /// Safari itself emits this frozen string for fingerprint surface
+  /// minimisation, so matching it is what most server-side parsers
+  /// expect when classifying the client as Safari. Don't "fix" it
+  /// to report the running CPU architecture.
+  ///
+  /// Only the `User-Agent` header is patched. WKWebView's default
+  /// `Sec-CH-UA*` headers stay as-is, so a site that cross-checks
+  /// the UA against UA Client Hints can still detect the mismatch.
+  /// No real-world site is known to fail on this today; the day a
+  /// site does, a host-keyed override store (see backlog) will be
+  /// the better surface to plug Sec-CH-UA spoofing into.
+  private static let safariUserAgent: String = {
+    let major = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+      + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+      + "Version/\(major).0 Safari/605.1.15"
+  }()
 
   /// Subscribe to ``AdBlocker/ruleListDidChangeNotification`` and
   /// ``AdBlockerWhitelistStore/didChangeNotification`` for the
