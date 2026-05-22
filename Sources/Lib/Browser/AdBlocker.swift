@@ -261,6 +261,11 @@ public final class AdBlocker {
   /// to runtime ``FilterSource`` entries. Entries with an invalid URL
   /// (unparseable or non-http(s) scheme) are silently dropped so a
   /// hand-edited preferences file does not quarantine.
+  ///
+  /// The `raw` parameter is a test seam: production callers pass
+  /// `nil` and the adapter reads the live ``PreferencesStore``. Tests
+  /// pass an explicit array to exercise the mapping without touching
+  /// the shared store.
   static func customSources(
     _ raw: [AdblockerCustomSource]? = nil
   ) -> [FilterSource] {
