@@ -21,6 +21,39 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Re-apply the workspace accent palette: reload the worklane so
+  /// the sidebar stripes / pane row colors paint with the new colors,
+  /// and refresh the focused-pane border on every workspace because
+  /// its colour is keyed to the workspace accent. The value itself
+  /// comes from ``accentColor(forWorkspaceAt:)``, which re-reads
+  /// ``PreferencesStore`` on every call, so this fan-out is the only
+  /// seam where the chrome actually picks up the new palette.
+  public func applyAccentPalette() {
+    sidebarVC?.reloadWorklane()
+    applyFocusBorderToAllWorkspaces()
+  }
+
+  /// Re-apply the focused-pane border width. The reader
+  /// (``focusBorderWidth``) already returns the live preset value,
+  /// but unchanged focus state means ``applyFocusBorder`` does not
+  /// otherwise re-fire — this fan-out walks every workspace's
+  /// focused pane and re-applies so the new thickness shows up
+  /// without the user moving focus first. Unfocused panes have
+  /// `borderWidth = 0` and need no touch.
+  public func applyPaneBorderWidth() {
+    applyFocusBorderToAllWorkspaces()
+  }
+
+  private func applyFocusBorderToAllWorkspaces() {
+    for workspace in workspaces {
+      if let pane = workspace.columns[safe: workspace.focusedColumnIndex]?
+        .focusedPane
+      {
+        applyFocusBorder(pane, in: workspace)
+      }
+    }
+  }
+
   /// Re-apply the current ``PaneGapPreset`` value across every live
   /// layout slot that depends on it: each workspace's outer edge
   /// inset, each column's height pin (which reserves the perimeter),

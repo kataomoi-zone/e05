@@ -80,6 +80,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// field flipped.
   private var lastPaneGap: String?
 
+  /// `PreferencesStore` subscription that reloads the worklane and
+  /// re-applies the focused-pane border on every workspace whenever
+  /// the accent palette flips. The accent reader is computed-on-read
+  /// already; this listener is what triggers the repaint.
+  private var accentPaletteListenerToken: UUID?
+  private var lastAccentPalette: String?
+
+  /// `PreferencesStore` subscription that re-applies the focused-pane
+  /// border on every workspace whenever the pane border width flips.
+  /// Same shape as the accent listener; kept separate so the
+  /// snapshot diff gate fires for each field independently.
+  private var paneBorderWidthListenerToken: UUID?
+  private var lastPaneBorderWidth: String?
+
   /// Background loop that runs the periodic adblocker filterlist
   /// refresh. Reads the interval from `PreferencesStore` each
   /// iteration; held so a Settings edit can cancel the previous
@@ -191,6 +205,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       if next == self.lastPaneGap { return }
       self.lastPaneGap = next
       self.paneContainer?.applyPaneGap()
+    }
+
+    lastAccentPalette = PreferencesStore.shared.preferences.accentPalette
+    accentPaletteListenerToken = PreferencesStore.shared.addListener {
+      [weak self] prefs in
+      guard let self else { return }
+      let next = prefs.accentPalette
+      if next == self.lastAccentPalette { return }
+      self.lastAccentPalette = next
+      self.paneContainer?.applyAccentPalette()
+    }
+
+    lastPaneBorderWidth = PreferencesStore.shared.preferences.paneBorderWidth
+    paneBorderWidthListenerToken = PreferencesStore.shared.addListener {
+      [weak self] prefs in
+      guard let self else { return }
+      let next = prefs.paneBorderWidth
+      if next == self.lastPaneBorderWidth { return }
+      self.lastPaneBorderWidth = next
+      self.paneContainer?.applyPaneBorderWidth()
     }
 
     let screen = NSScreen.main ?? NSScreen.screens.first

@@ -627,35 +627,50 @@ extension PaneContainerViewController {
 
   // MARK: - Focus Indicator
 
-  func applyFocusBorder(_ pane: PaneModel) {
+  func applyFocusBorder(_ pane: PaneModel, in workspace: WorkspaceModel? = nil) {
     let cv = pane.containerView
     cv.wantsLayer = true
-    let isPrivate = workspaceContaining(pane: pane)?.isPrivate ?? false
+    // Resolve the pane's workspace explicitly so callers walking
+    // every workspace (Appearance preset fan-outs) get the right
+    // accent slot and the right columns to scan for the folded
+    // label. Falling back to a lookup lets the simple
+    // current-workspace callers stay terse.
+    let resolvedWorkspace = workspace ?? workspaceContaining(pane: pane)
+    let isPrivate = resolvedWorkspace?.isPrivate ?? false
+    let borderColor: NSColor
+    if let resolvedWorkspace,
+      let index = workspaces.firstIndex(where: { $0.id == resolvedWorkspace.id })
+    {
+      borderColor = Self.accentColor(forWorkspaceAt: index)
+    } else {
+      borderColor = focusBorderColor
+    }
     if isPrivate {
       cv.layer?.borderWidth = 0
       cv.layer?.borderColor = nil
-      installDottedBorderOverlay(in: cv, color: focusBorderColor)
+      installDottedBorderOverlay(in: cv, color: borderColor)
     } else {
       removeDottedBorderOverlay(in: cv)
       cv.layer?.borderWidth = focusBorderWidth
-      cv.layer?.borderColor = focusBorderColor.cgColor
+      cv.layer?.borderColor = borderColor.cgColor
     }
     logger.debug(
       "applyFocusBorder paneId=\(String(describing: pane.id), privacy: .public) layerExists=\(cv.layer == nil ? "no" : "yes", privacy: .public) borderWidth=\(cv.layer?.borderWidth ?? -1) private=\(isPrivate ? "yes" : "no", privacy: .public)"
     )
 
-    if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }),
-      column.isFolded
-    {
+    let searchColumns = resolvedWorkspace?.columns ?? self.columns
+    if let column = searchColumns.first(where: {
+      $0.panes.contains(where: { $0.id == pane.id })
+    }), column.isFolded {
       column.foldedLabelView.wantsLayer = true
       if isPrivate {
         column.foldedLabelView.layer?.borderWidth = 0
         column.foldedLabelView.layer?.borderColor = nil
-        installDottedBorderOverlay(in: column.foldedLabelView, color: focusBorderColor)
+        installDottedBorderOverlay(in: column.foldedLabelView, color: borderColor)
       } else {
         removeDottedBorderOverlay(in: column.foldedLabelView)
         column.foldedLabelView.layer?.borderWidth = focusBorderWidth
-        column.foldedLabelView.layer?.borderColor = focusBorderColor.cgColor
+        column.foldedLabelView.layer?.borderColor = borderColor.cgColor
       }
     }
   }
