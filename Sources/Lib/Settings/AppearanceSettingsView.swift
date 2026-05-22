@@ -10,6 +10,7 @@ struct AppearanceSettingsView: View {
   @State private var themePreset: ThemePreset
   @State private var accentPreset: AccentPalettePreset
   @State private var paneBorderWidthPreset: PaneBorderWidthPreset
+  @State private var paneGapPreset: PaneGapPreset
   @State private var cornerPreset: CornerRadiusPreset
   @State private var listenerToken: UUID?
 
@@ -20,6 +21,7 @@ struct AppearanceSettingsView: View {
       initialValue: AccentPalettePreset.resolve(prefs.accentPalette))
     _paneBorderWidthPreset = State(
       initialValue: PaneBorderWidthPreset.resolve(prefs.paneBorderWidth))
+    _paneGapPreset = State(initialValue: PaneGapPreset.resolve(prefs.paneGap))
     _cornerPreset = State(
       initialValue: CornerRadiusPreset.resolve(prefs.surfaceCornerRadius))
   }
@@ -29,6 +31,7 @@ struct AppearanceSettingsView: View {
       themeSection
       workspaceAccentSection
       paneBorderSection
+      paneGapSection
       surfaceCornersSection
     }
     .formStyle(.grouped)
@@ -135,6 +138,30 @@ struct AppearanceSettingsView: View {
     }
   }
 
+  // MARK: - Pane Gap
+
+  private var paneGapSection: some View {
+    Section {
+      Picker("Gap", selection: $paneGapPreset) {
+        ForEach(PaneGapPreset.allCases) { preset in
+          Text(preset.displayName).tag(preset)
+        }
+      }
+      .pickerStyle(.menu)
+      .onChange(of: paneGapPreset) { _, preset in
+        PreferencesStore.shared.update { $0.paneGap = preset.rawValue }
+      }
+    } header: {
+      Text("Pane Gap")
+    } footer: {
+      Text(
+        "Spacing between panes, between columns, and around the workspace strip. Updates live across every open workspace."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+  }
+
   // MARK: - Surface Corners (corner radius)
 
   private var surfaceCornersSection: some View {
@@ -173,6 +200,7 @@ struct AppearanceSettingsView: View {
       accentPreset = AccentPalettePreset.resolve(new.accentPalette)
       paneBorderWidthPreset = PaneBorderWidthPreset.resolve(
         new.paneBorderWidth)
+      paneGapPreset = PaneGapPreset.resolve(new.paneGap)
       cornerPreset = CornerRadiusPreset.resolve(new.surfaceCornerRadius)
     }
   }
