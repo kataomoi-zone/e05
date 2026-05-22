@@ -173,6 +173,37 @@ public enum ABPtoSafariConverter {
     return convertNetwork(line)
   }
 
+  /// ABP option names the converter does not implement but recognises so
+  /// the `$` boundary still detects when one of them appears alongside
+  /// implemented options. Treating these as valid here keeps the rule
+  /// from being misparsed as a literal URL pattern (which would smuggle
+  /// the `|` separators in `domain=a|b` into WebKit's regex compiler
+  /// and trip a stderr spam). The rule itself drops in
+  /// `convertNetwork` because `recognizedOptions` still excludes them.
+  private static let tolerableUnsupportedOptions: Set<String> = [
+    "important", "badfilter",
+    "generichide", "elemhide", "specifichide", "ehide",
+    "inline-script", "inline-font",
+    "strict3p", "strict1p",
+    "all", "empty", "mp4",
+    "removeparam", "cookie",
+  ]
+
+  /// Option keys that always carry a value (`key=...`). Recognising
+  /// the `key=` prefix lets `looksLikeOptionList` accept them without
+  /// inspecting the value, which is enough for boundary detection.
+  /// Bare-name variants (no `=`) live in ``tolerableUnsupportedOptions``
+  /// so the prefix match here never accidentally swallows tokens that
+  /// share a name root (e.g. a hypothetical `cookieless`).
+  private static let tolerableUnsupportedKeyedOptions: [String] = [
+    "redirect=", "redirect-rule=",
+    "csp=", "replace=", "removeparam=",
+    "denyallow=", "permissions=", "header=",
+    "cookie=",
+    "app=", "method=", "to=", "from=",
+    "rewrite=",
+  ]
+
   /// Heuristic: does the given suffix look like a comma-separated list
   /// of ABP options (`third-party`, `script`, `domain=...`, etc.) rather
   /// than part of a URL body? True if every non-empty token either
@@ -195,6 +226,10 @@ public enum ABPtoSafariConverter {
         || name == "match-case"
         || name == "~match-case"
       {
+        continue
+      }
+      if tolerableUnsupportedOptions.contains(name) { continue }
+      if tolerableUnsupportedKeyedOptions.contains(where: { name.hasPrefix($0) }) {
         continue
       }
       return false
