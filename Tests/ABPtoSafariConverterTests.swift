@@ -307,4 +307,66 @@ struct ABPtoSafariConverterTests {
     #expect(types == Set(["script", "image"]))
     #expect(rules[0].trigger.urlFilter.contains("\\$b"))
   }
+
+  // MARK: - uBO option boundary detection
+
+  @Test("uBO $redirect= suffix is treated as option boundary, rule drops cleanly")
+  func uboRedirectBoundary() {
+    // Without the boundary recognising `redirect=`, the entire body
+    // (including `domain=a|b`) would be emitted as a url-filter regex
+    // and WebKit's compiler would reject the `|` disjunction. With
+    // the boundary detected, `convertNetwork` drops the rule because
+    // `redirect=` is not in `recognizedOptions`, and nothing reaches
+    // WebKit at all.
+    let result = ABPtoSafariConverter.convert(
+      "||ads.example.com/ima3.js$script,domain=a.example|b.example,redirect=noop.js"
+    )
+    #expect(result.rules.isEmpty)
+    #expect(result.skipped == 1)
+  }
+
+  @Test("uBO $denyallow= suffix is treated as option boundary")
+  func uboDenyallowBoundary() {
+    let result = ABPtoSafariConverter.convert(
+      "||example.com^$script,denyallow=cdn.example|static.example,domain=foo.example"
+    )
+    #expect(result.rules.isEmpty)
+    #expect(result.skipped == 1)
+  }
+
+  @Test("$important / $generichide bare options are recognised at the boundary")
+  func bareUnsupportedOptionsBoundary() {
+    let importantRule = ABPtoSafariConverter.convert(
+      "||example.com^$important,domain=a.com|b.com"
+    )
+    #expect(importantRule.rules.isEmpty)
+    #expect(importantRule.skipped == 1)
+
+    let generichideRule = ABPtoSafariConverter.convert(
+      ".*$generichide,domain=site.example|other.example"
+    )
+    #expect(generichideRule.rules.isEmpty)
+    #expect(generichideRule.skipped == 1)
+  }
+
+  @Test("bare tolerable options ($removeparam, $cookie) hit the boundary")
+  func bareTolerableOptionsBoundary() {
+    // Both `removeparam` and `cookie` live in the bare option set so
+    // the suffix qualifies as an option list. The rule itself drops
+    // because neither is implemented in `recognizedOptions`. The
+    // assertion ensures the suffix is taken as options rather than
+    // being swallowed into a url-filter regex (which would carry the
+    // `|` disjunction through to WebKit).
+    let removeparam = ABPtoSafariConverter.convert(
+      "||example.com^$removeparam,domain=a.com|b.com"
+    )
+    #expect(removeparam.rules.isEmpty)
+    #expect(removeparam.skipped == 1)
+
+    let cookie = ABPtoSafariConverter.convert(
+      "||example.com^$cookie,domain=a.com|b.com"
+    )
+    #expect(cookie.rules.isEmpty)
+    #expect(cookie.skipped == 1)
+  }
 }
