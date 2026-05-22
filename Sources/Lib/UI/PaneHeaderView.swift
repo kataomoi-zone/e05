@@ -1,7 +1,6 @@
 import AppKit
 
 /// Overlay view showing the pane's terminal title.
-/// Renders with explicit dark colors to avoid appearance instability.
 @MainActor
 public final class PaneHeaderView: NSView {
   private static let fadeInDuration: TimeInterval = 0.15
@@ -11,7 +10,7 @@ public final class PaneHeaderView: NSView {
   private let titleLabel: NSTextField = {
     let label = NSTextField(labelWithString: "")
     label.font = .systemFont(ofSize: 11, weight: .medium)
-    label.textColor = NSColor(white: 1.0, alpha: 0.9)
+    label.textColor = .labelColor
     label.lineBreakMode = .byTruncatingMiddle
     label.maximumNumberOfLines = 1
     label.translatesAutoresizingMaskIntoConstraints = false
