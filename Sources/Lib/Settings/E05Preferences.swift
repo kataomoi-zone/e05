@@ -59,6 +59,11 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// tolerance as ``accentPalette``.
   public var paneBorderWidth: String?
 
+  /// Identifier of the pane gap preset. `nil` keeps the historical
+  /// 6pt resize-handle thickness and matching workspace outer margin.
+  /// Same unknown-value tolerance as ``accentPalette``.
+  public var paneGap: String?
+
   /// Identifier of the app-wide theme preset (System / Light /
   /// Dark). `nil` defers to the macOS Appearance preference. Same
   /// unknown-value tolerance as ``accentPalette``.
@@ -109,6 +114,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     accentPalette: String? = nil,
     surfaceCornerRadius: String? = nil,
     paneBorderWidth: String? = nil,
+    paneGap: String? = nil,
     theme: String? = nil,
     keyboardShortcuts: [String: ShortcutBinding]? = nil,
     adblockerEnabledSources: [String]? = nil,
@@ -124,6 +130,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.accentPalette = accentPalette
     self.surfaceCornerRadius = surfaceCornerRadius
     self.paneBorderWidth = paneBorderWidth
+    self.paneGap = paneGap
     self.theme = theme
     self.keyboardShortcuts = keyboardShortcuts
     self.adblockerEnabledSources = adblockerEnabledSources

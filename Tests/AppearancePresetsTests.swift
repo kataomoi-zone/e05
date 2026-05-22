@@ -132,6 +132,42 @@ struct PaneBorderWidthPresetTests {
   }
 }
 
+@Suite("PaneGapPreset")
+@MainActor
+struct PaneGapPresetTests {
+  @Test("resolve nil falls back to standard (historical default)")
+  func resolveNil() {
+    #expect(PaneGapPreset.resolve(nil) == .standard)
+  }
+
+  @Test("resolve unknown identifier falls back to standard")
+  func resolveUnknown() {
+    #expect(PaneGapPreset.resolve("unknown") == .standard)
+    #expect(PaneGapPreset.resolve("") == .standard)
+  }
+
+  @Test("resolve known identifier returns the matching case")
+  func resolveKnown() {
+    #expect(PaneGapPreset.resolve("tight") == .tight)
+    #expect(PaneGapPreset.resolve("standard") == .standard)
+    #expect(PaneGapPreset.resolve("loose") == .loose)
+  }
+
+  @Test("standard preserves the historical 6pt gap")
+  func standardIsHistoricalDefault() {
+    #expect(PaneGapPreset.standard.value == 6)
+  }
+
+  @Test("values are positive and monotonically increasing")
+  func valuesMonotonic() {
+    let values = PaneGapPreset.allCases.map { $0.value }
+    #expect(values.allSatisfy { $0 > 0 })
+    for i in 1..<values.count {
+      #expect(values[i - 1] < values[i], "gap values not monotonic at index \(i)")
+    }
+  }
+}
+
 @Suite("ThemePreset")
 @MainActor
 struct ThemePresetTests {
@@ -185,6 +221,7 @@ struct AppearancePreferencesTests {
         $0.accentPalette = "metro"
         $0.surfaceCornerRadius = "soft"
         $0.paneBorderWidth = "bold"
+        $0.paneGap = "loose"
         $0.theme = "light"
       }
 
@@ -192,6 +229,7 @@ struct AppearancePreferencesTests {
       #expect(reader.preferences.accentPalette == "metro")
       #expect(reader.preferences.surfaceCornerRadius == "soft")
       #expect(reader.preferences.paneBorderWidth == "bold")
+      #expect(reader.preferences.paneGap == "loose")
       #expect(reader.preferences.theme == "light")
     }
   }
@@ -217,6 +255,7 @@ struct AppearancePreferencesTests {
       #expect(store.preferences.accentPalette == nil)
       #expect(store.preferences.surfaceCornerRadius == nil)
       #expect(store.preferences.paneBorderWidth == nil)
+      #expect(store.preferences.paneGap == nil)
       #expect(store.preferences.theme == nil)
     }
   }
