@@ -2176,6 +2176,30 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// identity instead of a free-floating Set.
   var nativePorts: [ObjectIdentifier: NativeMessagingPort] = [:]
 
+  /// Reverse index from extension context identity to the live NM
+  /// port keys created on its behalf. WebKit never disconnects a
+  /// `WKWebExtension.MessagePort` while e05 still strong-retains it
+  /// (Apple SDK contract documented around
+  /// `WKWebExtensionControllerDelegate.webExtensionController(_:connectUsing:for:completionHandler:)`),
+  /// so popup-driven hosts accumulate one retained port + three pipe
+  /// fds per popup open. Tearing the ports down at popup close keeps
+  /// the fd / mach-port budget flat.
+  var portsByContextID: [ObjectIdentifier: Set<ObjectIdentifier>] = [:]
+
+  /// Tear down every NM port that was created for `context`. Called
+  /// when the extension's action popup closes — by that point the
+  /// popup-script's `chrome.runtime.connectNative` channels are no
+  /// longer needed, but WebKit won't disconnect them on its own.
+  func shutdownNativePorts(for context: WKWebExtensionContext) {
+    let cid = ObjectIdentifier(context)
+    guard let keys = portsByContextID.removeValue(forKey: cid),
+      !keys.isEmpty
+    else { return }
+    for key in keys {
+      nativePorts[key]?.shutdown(reason: "popup closed")
+    }
+  }
+
   /// Associated-object key for the per-popup KVO token. Storing the
   /// observation on the popup web view itself ties its lifetime to
   /// the view (released alongside the popup), unlike a delegate-side
@@ -2185,6 +2209,14 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// reallocated WKWebView at the same address can land in the dict
   /// and silently overwrite the old entry.
   private static var popupObservationKey: UInt8 = 0
+
+  /// Associated-object key for the `NSPopover.willCloseNotification`
+  /// observer token. Same lifetime-tying rationale as
+  /// `popupObservationKey`: the observer is released when the popover
+  /// goes away, so the token never outlives the popup it cleans up
+  /// after. Avoids a self-removing closure that would capture a
+  /// mutable `var` under Swift 6 strict concurrency's @Sendable.
+  private static var popupCloseObserverKey: UInt8 = 0
 
   // Hand back the single host window. e05's niri-style WM treats
   // every workspace as a slice of one continuous editing surface,
@@ -2426,16 +2458,42 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       return manifest.allowedOrigins?.first ?? manifest.allowedExtensions?.first
     }()
     let key = ObjectIdentifier(port)
+    let cid = ObjectIdentifier(context)
+    // Collapse duplicate (context, manifestPath) connections. WebKit
+    // never fires `disconnectHandler` on a `WKWebExtension.MessagePort`
+    // while we still strong-retain it, so background-script-driven
+    // hosts (e.g. password managers that poll `connectNative` from a
+    // service worker across suspend/resume cycles) leak one port +
+    // three pipe fds + assorted mach ports per reconnection attempt.
+    // Killing the prior port here pins the live count at 1 per
+    // (extension, native host) pair, matching the upstream
+    // `this.connected` reuse contract that the extension would
+    // normally enforce on its own. Look up via the reverse index so
+    // the scan is bounded to the requesting context's pool rather
+    // than every live port across the controller.
+    let staleKeys = (portsByContextID[cid] ?? []).filter { staleKey in
+      nativePorts[staleKey]?.manifestPath == manifest.path
+    }
+    for staleKey in staleKeys {
+      nativePorts[staleKey]?.shutdown(reason: "superseded by new connection")
+    }
     do {
       let nmPort = try NativeMessagingPort(
         port: port,
         manifest: manifest,
-        callerOrigin: callerOrigin
+        callerOrigin: callerOrigin,
+        context: context
       )
       nmPort.onClosed = { [weak self] in
         self?.nativePorts.removeValue(forKey: key)
+        // No-op when `shutdownNativePorts(for:)` already removed the
+        // cid entry. The idempotent remove keeps both teardown paths
+        // (per-port via supersede / per-context via popup close)
+        // correct without coordination.
+        self?.portsByContextID[cid]?.remove(key)
       }
       nativePorts[key] = nmPort
+      portsByContextID[cid, default: []].insert(key)
       completionHandler(nil)
     } catch {
       logger.error(
@@ -2535,6 +2593,30 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     // keeps it alive across in-app focus changes.
     popover.behavior = .semitransient
     logger.info("showing popover '\(name, privacy: .public)' anchor=\(String(describing: type(of: anchorView)), privacy: .public) rect=\(String(describing: anchorRect), privacy: .public)")
+    // Drop every NM port the popup spawned once it goes away. WebKit
+    // holds no contract for releasing `WKWebExtension.MessagePort`
+    // instances on popup teardown — they stay alive as long as e05
+    // retains them — so without an explicit close hook each open/close
+    // cycle leaks one port + 3 pipe fds + a handful of mach ports.
+    // The observer token is parked on the popover via an associated
+    // object so its lifetime ends with the popover; a self-removing
+    // closure would need to read a mutable `var` from inside an
+    // @Sendable closure under Swift 6 strict concurrency.
+    let closeToken = NotificationCenter.default.addObserver(
+      forName: NSPopover.willCloseNotification,
+      object: popover,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        self?.shutdownNativePorts(for: context)
+      }
+    }
+    objc_setAssociatedObject(
+      popover,
+      &Self.popupCloseObserverKey,
+      closeToken,
+      .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    )
     popover.show(
       relativeTo: anchorRect,
       of: anchorView,

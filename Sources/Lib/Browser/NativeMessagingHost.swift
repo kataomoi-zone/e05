@@ -78,9 +78,11 @@ enum NativeMessagingHostRegistry {
 /// over stdin / stdout per the Native Messaging spec.
 ///
 /// Retain a reference for as long as the connection should stay alive:
-/// releasing the port on the WebKit side disconnects it (Apple SDK contract,
-/// `WKWebExtensionControllerDelegate.h:198-199`), and dropping this object
-/// terminates the subprocess via `shutdown(reason:)`.
+/// releasing the port on the WebKit side disconnects it (Apple SDK
+/// contract for
+/// `WKWebExtensionControllerDelegate.webExtensionController(_:connectUsing:for:completionHandler:)`),
+/// and dropping this object terminates the subprocess via
+/// `shutdown(reason:)`.
 @MainActor
 final class NativeMessagingPort {
   private let port: WKWebExtension.MessagePort
@@ -101,15 +103,24 @@ final class NativeMessagingPort {
   /// owning controller can drop its retain on this port.
   var onClosed: (@MainActor () -> Void)?
   private(set) var isClosed = false
-  private let manifestPath: String
+  let manifestPath: String
+  /// The `WKWebExtensionContext` that requested this port. Retained
+  /// so the owning controller can pool ports by `(context, manifest)`
+  /// — the extension's service worker reconnects across its
+  /// suspend/resume cycle without WebKit firing `disconnectHandler`
+  /// on the prior port, so duplicates must be collapsed at connect
+  /// time.
+  let context: WKWebExtensionContext
 
   init(
     port: WKWebExtension.MessagePort,
     manifest: NativeMessagingManifest,
-    callerOrigin: String?
+    callerOrigin: String?,
+    context: WKWebExtensionContext
   ) throws {
     self.port = port
     self.manifestPath = manifest.path
+    self.context = context
     logger.info("Spawning host name=\(manifest.name, privacy: .public) path=\(manifest.path, privacy: .public) origin=\(callerOrigin ?? "(none)", privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: manifest.path)
