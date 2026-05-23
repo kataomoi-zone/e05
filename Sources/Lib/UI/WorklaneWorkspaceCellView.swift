@@ -45,6 +45,25 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.setRevealed(false)
     return b
   }()
+  /// Split-style chevron next to `+`. Click opens a menu of the
+  /// non-browser pane kinds (terminal, finder) so the common
+  /// browser case stays a one-click affordance while the longer
+  /// tail moves behind a hover-revealed dropdown rather than
+  /// crowding the workspace row.
+  private let addMoreButton: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "chevron.down",
+      accessibilityDescription: "New terminal or finder pane in this workspace")
+    b.toolTip = "New terminal or finder pane in this workspace"
+    b.setRevealed(false)
+    return b
+  }()
 
   private var trackingArea: NSTrackingArea?
   private var isHovered = false
@@ -52,6 +71,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   private weak var node: WorklaneWorkspaceNode?
   private var onCloseHandler: (() -> Void)?
   private var onAddHandler: (() -> Void)?
+  private var onAddTerminalHandler: (() -> Void)?
+  private var onAddFinderHandler: (() -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -84,9 +105,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     closeButton.action = #selector(closeTapped(_:))
     addButton.target = self
     addButton.action = #selector(addTapped(_:))
+    addMoreButton.target = self
+    addMoreButton.action = #selector(addMoreTapped(_:))
 
     addSubview(indicator)
     addSubview(label)
+    addSubview(addMoreButton)
     addSubview(addButton)
     addSubview(closeButton)
 
@@ -97,8 +121,14 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
       indicator.widthAnchor.constraint(equalToConstant: 3),
 
       label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 8),
-      label.trailingAnchor.constraint(lessThanOrEqualTo: addButton.leadingAnchor, constant: -4),
+      label.trailingAnchor.constraint(
+        lessThanOrEqualTo: addMoreButton.leadingAnchor, constant: -4),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      addMoreButton.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -2),
+      addMoreButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      addMoreButton.widthAnchor.constraint(equalToConstant: 14),
+      addMoreButton.heightAnchor.constraint(equalToConstant: 18),
 
       addButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
       addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -138,6 +168,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     onAddHandler = {
       [onAdd = input.onAddPaneToWorkspace] in onAdd(workspaceId)
     }
+    onAddTerminalHandler = {
+      [onAdd = input.onAddTerminalPaneToWorkspace] in onAdd(workspaceId)
+    }
+    onAddFinderHandler = {
+      [onAdd = input.onAddFinderPaneToWorkspace] in onAdd(workspaceId)
+    }
   }
 
   override func updateTrackingAreas() {
@@ -166,6 +202,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     isHovered = hovered
     closeButton.setRevealed(hovered)
     addButton.setRevealed(hovered)
+    addMoreButton.setRevealed(hovered)
     layer?.backgroundColor =
       hovered ? AppColors.hoverOverlay.cgColor : nil
     layer?.cornerRadius = hovered ? 4 : 0
@@ -178,6 +215,30 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   @objc private func addTapped(_: NSButton) {
     onAddHandler?()
   }
+
+  @objc private func addMoreTapped(_ sender: NSButton) {
+    let menu = NSMenu()
+    let terminal = NSMenuItem(
+      title: "New Terminal Pane",
+      action: #selector(addTerminalSelected),
+      keyEquivalent: "")
+    terminal.target = self
+    menu.addItem(terminal)
+    let finder = NSMenuItem(
+      title: "New Finder Pane",
+      action: #selector(addFinderSelected),
+      keyEquivalent: "")
+    finder.target = self
+    menu.addItem(finder)
+    // Drop the menu directly below the chevron so its top edge
+    // hugs the button's bottom — matches the sidebar header
+    // dropdown idiom.
+    let origin = NSPoint(x: 0, y: sender.bounds.height)
+    menu.popUp(positioning: nil, at: origin, in: sender)
+  }
+
+  @objc private func addTerminalSelected() { onAddTerminalHandler?() }
+  @objc private func addFinderSelected() { onAddFinderHandler?() }
 
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)

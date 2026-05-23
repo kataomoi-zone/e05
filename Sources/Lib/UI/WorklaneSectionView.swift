@@ -180,6 +180,14 @@ final class WorklaneSectionView: NSView {
   private var nodesByColumnId: [ULID: WorklaneColumnNode] = [:]
   private var nodesByWorkspaceId: [ULID: WorklaneWorkspaceNode] = [:]
 
+  /// Sticky footer pinned below the outline view. Hosts the New
+  /// Workspace / New Private Workspace buttons. Pinned outside the
+  /// scroll content rather than embedded as a row per workspace so
+  /// it stays at the bottom regardless of which workspace is
+  /// expanded — workspace creation always appends to the tail, so
+  /// the affordance only needs to live in one place.
+  private let footerView = WorklaneFooterView()
+
   /// Most recent reload input. Cell views fetch the live closures
   /// (onClick / onClose / accentColor lookup) from here so the input
   /// doesn't need to be threaded through every cell vend.
@@ -304,11 +312,20 @@ final class WorklaneSectionView: NSView {
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(scrollView)
 
+    footerView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(footerView)
+
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: topAnchor),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      // The footer is the bottom-pinned sibling of the outline view;
+      // the scroll content runs above it so workspaces / panes stay
+      // scrollable while the New Workspace buttons remain visible.
+      scrollView.bottomAnchor.constraint(equalTo: footerView.topAnchor),
+      footerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      footerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      footerView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
   }
 
@@ -373,6 +390,18 @@ final class WorklaneSectionView: NSView {
     /// container resolves the "switch first if non-current" branch
     /// internally so callers can stay workspace-agnostic.
     let onAddPaneToWorkspace: (ULID) -> Void
+    /// Add a terminal column to the given workspace. Surfaced from
+    /// the workspace row's chevron split-menu next to the plus.
+    let onAddTerminalPaneToWorkspace: (ULID) -> Void
+    /// Add a finder column to the given workspace. Surfaced from
+    /// the workspace row's chevron split-menu next to the plus.
+    let onAddFinderPaneToWorkspace: (ULID) -> Void
+    /// Append a fresh workspace. Bound to the `+` button in each
+    /// expanded workspace's footer row.
+    let onCreateWorkspace: () -> Void
+    /// Append a fresh private workspace. Bound to the dashed `+`
+    /// button in each expanded workspace's footer row.
+    let onCreatePrivateWorkspace: () -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -387,6 +416,7 @@ final class WorklaneSectionView: NSView {
     lastSnapshot = snapshot
     applyPersistedCollapseState(input: input)
     syncSelection(to: input.focusedPaneId)
+    footerView.configure(input: input)
   }
 
   private func currentSnapshot() -> WorklaneSnapshot {
