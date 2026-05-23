@@ -124,8 +124,15 @@ extension PaneContainerViewController {
     // for now the strip is just present and listening.
     pane.urlBarTopEdgeHitZone.isHidden = false
     if pane.isBlankBrowser {
+      // Blank pane has nothing to focus inside its content view; show
+      // the URL bar so the user can type a destination. Use a peek
+      // (not a pin) so the regular `onNavigate` / `onCancel` paths
+      // can collapse it — `setURLBarVisible(true)` would lock the
+      // bar into `.pinned`, which the peek-release call sites
+      // (PaneModel.setURLBarPeek(false) and friends) skip by design,
+      // leaving the bar stuck open after the navigate completes.
       if !pane.isURLBarVisible {
-        pane.setURLBarVisible(true)
+        pane.setURLBarPeek(true)
       }
       pane.urlBar.focusURLField()
     } else {
