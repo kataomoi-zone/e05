@@ -824,12 +824,12 @@ public final class ExtensionController {
   }
 
   /// Chrome version pinned for the Chrome Web Store update endpoint.
-  /// The server uses this to decide which CRX format to return; any
-  /// recent Chrome stable release works because we accept both crx2
-  /// and crx3 in the same request. Bumping it is harmless when a new
-  /// CRX format ships, but staying on a known-good value keeps the
-  /// download path reproducible.
-  private static let chromeStoreClientVersion = "120.0.6099.225"
+  /// The server compares this against each extension's
+  /// `manifest.minimum_chrome_version` and serves `HTTP 204 No Content`
+  /// (empty body) when the client is too old — the CRX download then
+  /// surfaces as "archive too small to be a valid CRX". Keep this above
+  /// the `minimum_chrome_version` of every extension we want to support.
+  private static let chromeStoreClientVersion = "140.0.0.0"
 
   /// Hosts the Chrome Web Store CRX endpoint is allowed to redirect
   /// to. The endpoint itself lives on `clients2.google.com`; the
