@@ -199,6 +199,20 @@ public final class PaneContainerViewController: NSViewController {
   /// `show` time avoids re-building the full array (with all its
   /// closure captures) on every keystroke.
   var cachedAllActions: [Action] = []
+  /// Snapshot pushed in from `AppDelegate.setupMenuKeyBindings` so the
+  /// menu-item tag stamped at build time indexes against the same array
+  /// the dispatch path reads from. AppDelegate keeps a transient local
+  /// copy while building the menu; this property is the canonical
+  /// store the validator and dispatcher consult.
+  ///
+  /// Single-window assumption: the array is built once per menu
+  /// rebuild from the sole `PaneContainerViewController`. If
+  /// multi-window support lands, the snapshot becomes per-window
+  /// (or re-fetched on focus change) because the handler closures
+  /// capture `[weak self]`. The tag-based index also assumes a
+  /// static action order — dynamic action lists would require
+  /// id-based lookup instead.
+  public var menuActionsSnapshot: [Action] = []
 
   // MARK: - Find in Page
   //

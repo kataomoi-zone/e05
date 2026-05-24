@@ -5,7 +5,7 @@ import os.log
 private let logger = Logger(subsystem: LogSubsystem.app, category: "App")
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+final class AppDelegate: NSObject, NSApplicationDelegate {
   private var window: NSWindow?
   private let ghosttyApp = GhosttyApp()
   private var paneContainer: PaneContainerViewController?
@@ -18,18 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   /// `nonPersistent()` data stores are intentionally not wired (private
   /// mode and persistent notifications don't mix).
   private var notificationDelivery: NotificationDeliveryDelegate?
-  /// Actions retrieved from the pane container, cached at menu-build time.
-  /// Indexed by `NSMenuItem.tag` (= position in the actions array) so that
-  /// `validateMenuItem` and `performAction` can look up the right entry in
-  /// O(1) without iterating or string matching.
-  ///
-  /// Single-window assumption: the array is built once from the sole
-  /// `paneContainer` and never refreshed. If multi-window support is
-  /// added, this cache must become per-window (or re-fetched on focus
-  /// change) because the handler closures capture `[weak paneContainer]`.
-  /// The tag-based index also assumes a static action order — dynamic
-  /// action lists would require id-based lookup instead.
-  private var actions: [Action] = []
 
   /// Handle returned by `addLocalMonitorForEvents`. Held so a
   /// re-entrant `applicationDidFinishLaunching` (test harness, state
@@ -566,6 +554,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       guard let self,
         event.keyCode == KeyCode.tab
       else { return event }
+      // `addLocalMonitorForEvents` is app-global, so a ⌃⇥ struck
+      // while Settings (or any other auxiliary panel) is key would
+      // otherwise cycle main-window panes behind the user's back.
+      // Restrict the hijack to main-window focus.
+      guard self.window?.isKeyWindow == true else { return event }
       let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
       // Only handle plain ⌃⇥ / ⌃⇧⇥. Letting ⌘⇥ / ⌥⇥ through keeps
       // the OS-level app switcher and any future option-tab keymap
@@ -614,7 +607,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       NSEvent.removeMonitor(existing)
       extensionCommandMonitor = nil
     }
-    extensionCommandMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+    extensionCommandMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      // App-global monitor; only forward to extensions when the main
+      // window owns focus, otherwise a Settings text field's ⌘⇧L
+      // (or any custom chord an extension grabs) would fire a
+      // Bitwarden autofill against the underlying pane.
+      guard self?.window?.isKeyWindow == true else { return event }
       if ExtensionController.shared.performExtensionCommand(for: event) {
         return nil
       }
@@ -627,7 +625,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   private func setupMenuKeyBindings() {
     let mainMenu = NSMenu()
 
-    self.actions = paneContainer?.actions() ?? []
+    // Fetch and publish the action list in one pass: the controller's
+    // `menuActionsSnapshot` is the single source the responder-chain
+    // dispatcher reads, and the local `actions` is just the build-time
+    // scratch the menu items get tagged against. AppKit walks the
+    // responder chain to dispatch the menu selector, so the controller
+    // — installed as the main window's `contentViewController` —
+    // naturally answers only while the main window is key; an
+    // auxiliary panel (Settings, Get Info, ...) becoming key drops the
+    // controller out of reach and AppKit greys the whole batch.
+    let actions = paneContainer?.actions() ?? []
+    paneContainer?.menuActionsSnapshot = actions
 
     // App menu (required for ⌘+Q). `Settings…` lives here for HIG
     // parity — every native macOS app routes ⌘, through the
@@ -641,7 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       let action = actions[settingsIndex]
       let item = NSMenuItem(
         title: action.title,
-        action: #selector(performAction(_:)),
+        action: #selector(PaneContainerViewController.performAction(_:)),
         keyEquivalent: action.keyEquivalent ?? ""
       )
       item.keyEquivalentModifierMask = action.modifierMask
@@ -671,7 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       }
       let item = NSMenuItem(
         title: action.title,
-        action: #selector(performAction(_:)),
+        action: #selector(PaneContainerViewController.performAction(_:)),
         keyEquivalent: action.keyEquivalent ?? ""
       )
       item.keyEquivalentModifierMask = action.modifierMask
@@ -705,38 +713,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
   // MARK: - Menu Validation
 
-  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-    guard menuItem.action == #selector(performAction(_:)),
-      actions.indices.contains(menuItem.tag)
-    else {
-      return true
-    }
-    // Disable every e05 action while the main window has a sheet
-    // attached. The modern `requestMediaCapturePermissionFor` hook
-    // ships with WebKit's own modal hold so the parent window's key
-    // dispatch is suspended for free, but the legacy
-    // `_webView:requestGeolocationPermissionForOrigin:...` SPI does
-    // not — without this guard a geolocation prompt sees ⌘W slip
-    // through to `removeCurrentPane`, the pane vanishes mid-sheet,
-    // and AppKit leaves the modal dim layer orphaned on the host
-    // window. Stock AppKit actions (Edit > Cut/Copy/Paste, Window
-    // menu, …) bypass this validator entirely and stay reachable.
-    if NSApp.mainWindow?.attachedSheet != nil {
-      return false
-    }
-    let action = actions[menuItem.tag]
-    guard let validate = action.validate else { return true }
-    let result = validate()
-    if let title = result.title {
-      menuItem.title = title
-    }
-    return result.enabled
-  }
-
-  // MARK: - Unified Action Dispatch
-
-  @objc private func performAction(_ sender: NSMenuItem) {
-    guard actions.indices.contains(sender.tag) else { return }
-    actions[sender.tag].handler()
-  }
 }

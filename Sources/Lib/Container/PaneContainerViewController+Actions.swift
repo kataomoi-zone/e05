@@ -51,7 +51,21 @@ extension PaneContainerViewController {
         id: "close_pane",
         title: "Close Pane",
         keyEquivalent: "w",
-        handler: { [weak self] in self?.removeCurrentPane() }
+        handler: { [weak self] in
+          // Auxiliary panels (Settings, Get Info, Quick Look,
+          // OperationsProgressPanel, ...) take over key focus
+          // without becoming main, so the same chord doubles as
+          // their rescue close path. NSApplication walks both the
+          // key and main responder chains, so this action stays
+          // reachable from the menu while a panel is frontmost —
+          // the validator further keeps `close_pane` enabled in
+          // both states (see `PaneContainerViewController+MenuDispatch`).
+          if let key = NSApp.keyWindow, key !== self?.view.window {
+            key.performClose(nil)
+            return
+          }
+          self?.removeCurrentPane()
+        }
       ),
       Action(
         id: "split_vertical",
