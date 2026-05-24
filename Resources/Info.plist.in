@@ -28,6 +28,24 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Browser app: the user navigates to arbitrary URLs including
+         intranet `http://` sites and custom-TLD developer setups like
+         `*.localhost` subdomains (`http://dev.foo.localhost/`). Default
+         ATS behaviour on macOS 26 admits literal `127.0.0.1` / bare
+         `localhost` but not multi-level localhost subdomains, so
+         without this opt-out the navigation surfaces as a bare
+         `ERR_FAILED`. Same general permission Safari and
+         Chromium-derived browsers grant themselves. Narrower
+         alternatives don't fit: `NSExceptionDomains` would need an
+         entry for every host the user might ever visit, and
+         `NSAllowsLocalNetworking` still blocks public plain-HTTP
+         sites (legacy blogs, archive mirrors, intranet over public
+         DNS) that a general browser is expected to load. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
     <key>NSCameraUsageDescription</key>
     <string>e05 needs camera access to satisfy permission requests from web pages.</string>
     <key>NSMicrophoneUsageDescription</key>
