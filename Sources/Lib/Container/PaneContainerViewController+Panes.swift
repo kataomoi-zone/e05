@@ -392,6 +392,31 @@ extension PaneContainerViewController {
         self.createWorkspace(isPrivate: inheritsPrivate)
         self.addColumn(address: PaneAddress(url))
       }
+      bv.onChromeWebStoreAction = { [weak self] extensionID, uninstall in
+        // Same install pipeline the Extensions sidebar's "Install
+        // from Chrome Web Store" URL prompt uses; rebranded CWS
+        // button click just skips the prompt step. The uninstall
+        // branch reaches `removeExtension(for:)` via the controller
+        // helper that maps a CWS ID back to its `sourceURL`. The
+        // result lands as a toast so the user sees confirmation
+        // without leaving the listing page.
+        Task { @MainActor in
+          guard let self else { return }
+          if uninstall {
+            ExtensionController.shared.uninstallChromeWebStoreExtension(
+              extensionID: extensionID)
+            self.showToast("Remove Extension")
+            return
+          }
+          do {
+            try await ExtensionController.shared.installFromChromeWebStore(
+              extensionID: extensionID)
+            self.showToast("Add Extension")
+          } catch {
+            self.showToast("Add Extension Failed — \(error.localizedDescription)")
+          }
+        }
+      }
     } else if let fv = pane.finderView {
       // Finder pane: cwd, focus, navigation enabledness, and titles
       // all flow through the same handlers the browser pane uses, so

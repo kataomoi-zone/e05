@@ -31,6 +31,42 @@ public final class ExtensionController {
   /// `loadedExtensions` after every `didChangeNotification`.
   public private(set) var loadedExtensions: [LoadedExtension] = []
 
+  /// 32-character Chrome Web Store extension IDs of currently
+  /// installed extensions, derived from each
+  /// ``LoadedExtension/sourceURL``'s last path component. The CRX
+  /// install path lays the unpacked tree out under
+  /// `extensionsRoot/<id>/`, so the directory name doubles as the
+  /// store ID. Used by the in-pane Chrome Web Store overlay to
+  /// flip its rebranded button between "Add to E05" and
+  /// "Remove from E05" on listing pages — WKWebView has no
+  /// equivalent of Chromium's `chrome.management` API to push that
+  /// state into CWS directly.
+  public var installedChromeWebStoreIDs: [String] {
+    let storeRoot = Self.extensionsRoot.standardizedFileURL.path
+    return loadedExtensions.compactMap { ext in
+      let path = ext.sourceURL.standardizedFileURL.path
+      guard path.hasPrefix(storeRoot) else { return nil }
+      let id = ext.sourceURL.lastPathComponent
+      guard id.count == 32, id.range(of: #"^[a-p]{32}$"#, options: .regularExpression) != nil
+      else { return nil }
+      return id
+    }
+  }
+
+  /// Remove the unpacked Chrome Web Store extension whose directory
+  /// name matches `id`. Returns silently if no installed extension
+  /// matches — keeps the in-pane CWS uninstall click idempotent
+  /// against a concurrent sidebar removal.
+  public func uninstallChromeWebStoreExtension(extensionID id: String) {
+    let storeRoot = Self.extensionsRoot.standardizedFileURL.path
+    let match = loadedExtensions.first { ext in
+      ext.sourceURL.lastPathComponent == id
+        && ext.sourceURL.standardizedFileURL.path.hasPrefix(storeRoot)
+    }
+    guard let match else { return }
+    removeExtension(for: match.sourceURL)
+  }
+
   /// Posted on the main queue whenever `loadedExtensions` is mutated
   /// (a successful load, an enable/disable toggle, or a future
   /// removal). Listener views subscribe via

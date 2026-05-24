@@ -52,6 +52,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Re-assigned by `restore()` because the previous handler is bound
   /// to the discarded web view's user content controller.
   private var hoverLinkMessageHandler: HoverLinkMessageHandler
+  /// Same strong-reference rationale as ``hoverLinkMessageHandler``,
+  /// but for the Chrome Web Store "Add to e05" button intercept.
+  /// `nil` on extension-hosted panes — the overlay only makes sense
+  /// for ordinary browsing.
+  private var chromeWebStoreInstallHandler: ChromeWebStoreInstallHandler?
+  /// Replies to the CWS overlay's startup query so the first
+  /// rewrite pass already knows which extensions are installed —
+  /// otherwise the page flickers between "Add to E05" and "Remove
+  /// from E05" once the `didFinish` push catches up.
+  private var chromeWebStoreStateHandler: ChromeWebStoreStateHandler?
 
   /// Paired horizontal constraints for ``hoverLinkOverlay``. Only
   /// one is active at any time; the JS content script decides which
@@ -84,6 +94,18 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// by Shift-clicks on links and the "Open in Workspace" context-
   /// menu item.
   public var onOpenInNewWorkspace: ((URL) -> Void)?
+  /// Called when the user clicks the rebranded install / uninstall
+  /// button on a Chrome Web Store listing. The first argument is
+  /// the 32-character extension ID parsed out of the listing URL;
+  /// the second is `true` when the user clicked the "Remove from
+  /// E05" form of the button (i.e. the extension is already
+  /// installed and the click is an uninstall intent). The
+  /// container is expected to thread the ID into
+  /// ``ExtensionController/installFromChromeWebStore(extensionID:)``
+  /// or
+  /// ``ExtensionController/uninstallChromeWebStoreExtension(extensionID:)``
+  /// and surface the result.
+  public var onChromeWebStoreAction: ((_ extensionID: String, _ uninstall: Bool) -> Void)?
   /// Called when either ``isMuted`` or ``isPlayingAudio`` changes.
   public var onAudioStateChanged: (() -> Void)?
   /// Called after ``suspend()`` detaches the web view, or ``restore()``
@@ -99,6 +121,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var isLoadingObservation: NSKeyValueObservation?
   private var adblockerObserverTask: Task<Void, Never>?
   private var adblockerWhitelistObserverTask: Task<Void, Never>?
+  /// Token for the ``ExtensionController/didChangeNotification``
+  /// observer used to keep `window.__e05InstalledExtensions` on the
+  /// Chrome Web Store overlay in sync. `nil` on extension-hosted
+  /// panes (the overlay is only attached to ordinary browser panes).
+  /// `nonisolated(unsafe)` so `deinit` can release the token under
+  /// Swift 6 strict concurrency.
+  nonisolated(unsafe) private var extensionsChangedObserver: NSObjectProtocol?
 
   /// Per-pane mute state. Mutated through ``setMuted(_:)`` /
   /// ``toggleMute()``. The actual audio suppression is performed by
@@ -238,6 +267,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       extensionContext: extensionContext, dataStore: dataStore)
     webView = built.webView
     hoverLinkMessageHandler = built.hoverHandler
+    chromeWebStoreInstallHandler = built.cwsInstallHandler
+    chromeWebStoreStateHandler = built.cwsStateHandler
     muteChannelId = built.channelId
     isExtensionHosted = built.isExtensionHosted
     savedDataStore = dataStore
@@ -253,6 +284,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         self.hoverLinkOverlay.hide()
       }
     }
+    built.cwsInstallHandler?.onAction = { [weak self] extensionID, uninstall in
+      self?.onChromeWebStoreAction?(extensionID, uninstall)
+    }
+    built.cwsStateHandler?.idsProvider = {
+      ExtensionController.shared.installedChromeWebStoreIDs
+    }
     wantsLayer = true
     layer?.backgroundColor = AppColors.paneSurface.cgColor
 
@@ -263,6 +300,45 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     setupHostAndWebView()
     setupObservers()
     observeAdBlockerReady()
+    observeExtensionInstallChanges()
+  }
+
+  /// Subscribe to ``ExtensionController/didChangeNotification`` so
+  /// the Chrome Web Store overlay's `window.__e05InstalledExtensions`
+  /// mirror tracks the live registry. Skipped on extension-hosted
+  /// panes — the overlay isn't installed there.
+  private func observeExtensionInstallChanges() {
+    guard !isExtensionHosted, extensionsChangedObserver == nil else { return }
+    extensionsChangedObserver = NotificationCenter.default.addObserver(
+      forName: ExtensionController.didChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        self?.pushChromeWebStoreInstalledIDs()
+      }
+    }
+  }
+
+  /// Write the current Chrome Web Store install ID list into the
+  /// page so the overlay user script can update its branded button
+  /// text. No-op on extension-hosted panes and on web views that
+  /// aren't currently loaded onto a CWS listing (the snippet still
+  /// runs but the rewrite hook bails on the host check).
+  private func pushChromeWebStoreInstalledIDs() {
+    guard !isExtensionHosted else { return }
+    // Skip non-CWS panes — every loaded extension would otherwise
+    // trigger an evaluateJavaScript on every browser pane in the
+    // process, leaving JS state side-effects on unrelated origins.
+    // The user script only attaches its `__e05CWSOverlayRewrite`
+    // hook on the CWS hosts, so the snippet is a no-op elsewhere,
+    // but skipping the IPC entirely keeps the system audit cleaner.
+    guard let host = webView.url?.host(percentEncoded: false),
+      host == "chromewebstore.google.com" || host == "chrome.google.com"
+    else { return }
+    let ids = ExtensionController.shared.installedChromeWebStoreIDs
+    let snippet = ChromeWebStoreOverlay.installedIDsSnippet(ids)
+    webView.evaluateJavaScript(snippet, completionHandler: nil)
   }
 
   /// Build a fresh `FocusReportingWebView` with the full per-pane
@@ -279,6 +355,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   ) -> (
     webView: FocusReportingWebView,
     hoverHandler: HoverLinkMessageHandler,
+    cwsInstallHandler: ChromeWebStoreInstallHandler?,
+    cwsStateHandler: ChromeWebStoreStateHandler?,
     channelId: String,
     isExtensionHosted: Bool
   ) {
@@ -342,6 +420,37 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       config.userContentController.addUserScript(
         Self.makeMuteUserScript(channelId: channelId))
     }
+    // Chrome Web Store "Add to Chrome" → "Add to e05" overlay. The
+    // user script is a no-op on non-CWS pages (the IIFE bails on the
+    // host check), so it's cheap to register on every regular browser
+    // pane. Skipped on extension-hosted panes — those don't browse
+    // CWS and a rogue listener inside an extension's options page
+    // would only add surface.
+    //
+    // The state handler is wired through
+    // `addScriptMessageHandlerWithReply` so the user script's
+    // startup query resolves synchronously and the first paint
+    // already carries the right wording. The fire-and-forget
+    // install/uninstall handler stays on the ordinary `add(_:name:)`
+    // path.
+    let cwsInstallHandler: ChromeWebStoreInstallHandler?
+    let cwsStateHandler: ChromeWebStoreStateHandler?
+    if extensionConfig == nil {
+      let installHandler = ChromeWebStoreInstallHandler()
+      let stateHandler = ChromeWebStoreStateHandler()
+      config.userContentController.addUserScript(ChromeWebStoreOverlay.userScript)
+      config.userContentController.add(installHandler, name: ChromeWebStoreOverlay.handlerName)
+      config.userContentController.addScriptMessageHandler(
+        stateHandler,
+        contentWorld: .page,
+        name: ChromeWebStoreOverlay.stateHandlerName
+      )
+      cwsInstallHandler = installHandler
+      cwsStateHandler = stateHandler
+    } else {
+      cwsInstallHandler = nil
+      cwsStateHandler = nil
+    }
     let webView = FocusReportingWebView(frame: .zero, configuration: config)
     // WKWebView's default UA on macOS 26 omits both `Version/<n>` and
     // `Safari/<rev>`, leaving sites that key off those tokens unable
@@ -353,7 +462,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     if extensionConfig == nil {
       webView.customUserAgent = Self.safariUserAgent
     }
-    return (webView, hoverHandler, channelId, extensionConfig != nil)
+    return (webView, hoverHandler, cwsInstallHandler, cwsStateHandler, channelId, extensionConfig != nil)
   }
 
   /// Safari-equivalent UA stamped onto every non-extension pane's
@@ -454,6 +563,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   deinit {
     adblockerObserverTask?.cancel()
     adblockerWhitelistObserverTask?.cancel()
+    if let token = extensionsChangedObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
   }
 
   @available(*, unavailable)
@@ -994,6 +1106,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       extensionContext: nil, dataStore: savedDataStore)
     webView = built.webView
     hoverLinkMessageHandler = built.hoverHandler
+    chromeWebStoreInstallHandler = built.cwsInstallHandler
+    chromeWebStoreStateHandler = built.cwsStateHandler
     muteChannelId = built.channelId
 
     built.hoverHandler.onMessage = { [weak self] url, side in
@@ -1004,6 +1118,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       } else {
         self.hoverLinkOverlay.hide()
       }
+    }
+    built.cwsInstallHandler?.onAction = { [weak self] extensionID, uninstall in
+      self?.onChromeWebStoreAction?(extensionID, uninstall)
+    }
+    built.cwsStateHandler?.idsProvider = {
+      ExtensionController.shared.installedChromeWebStoreIDs
     }
     built.webView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()
@@ -1721,6 +1841,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // declare the icon via <link> instead) and SPAs whose link tags
     // are injected after the initial HTML ships.
     scanPageFavicon()
+    // Push the live installed-extension list into the page so the
+    // Chrome Web Store overlay can flip its rebranded button text
+    // between "Add to E05" and "Remove from E05". WKWebView has no
+    // chrome.management equivalent, so this is the only channel by
+    // which CWS pages learn that we already have an extension.
+    pushChromeWebStoreInstalledIDs()
     // Re-sync mute state into the freshly loaded page. The user
     // script's IIFE runs at document-start with `muted = false`, so
     // a navigation while the pane is muted would leak audio on the
