@@ -113,7 +113,24 @@ final class SidebarViewController: NSViewController {
     overlay.onHoverEnter = { [weak self] in self?.setSidebarHovered(true) }
     overlay.onHoverExit = { [weak self] in self?.setSidebarHovered(false) }
     overlay.header.onTogglePin = { [weak self] in self?.togglePin() }
+    overlay.header.onOpenSettings = { [weak self] in self?.invokeHeaderAction("open_settings") }
+    overlay.header.onOpenCommandPalette = { [weak self] in self?.invokeHeaderAction("command_palette") }
     applyMode(currentMode)
+  }
+
+  /// Resolve the named action through the live registry and invoke
+  /// its handler. Used by the header's Settings / Command Palette
+  /// click-only buttons; missing actions log loudly so a renamed
+  /// id or a click before `attachContainer()` ran can't quietly
+  /// strand the user (the buttons exist precisely to be the fallback
+  /// when chords are misconfigured — silent failure here defeats
+  /// the point).
+  private func invokeHeaderAction(_ id: String) {
+    guard let action = container?.actions().first(where: { $0.id == id }) else {
+      logger.error("[sidebar/header] action '\(id, privacy: .public)' missing — click ignored (container=\(self.container == nil ? "nil" : "set", privacy: .public))")
+      return
+    }
+    action.handler()
   }
 
   /// Wire up container-dependent state. Called exactly once by

@@ -2,9 +2,16 @@ import AppKit
 
 /// Top 36pt strip inside the sidebar overlay. The left portion sits
 /// under the OS traffic lights (which stay at their default position
-/// thanks to `titlebarAppearsTransparent`); the trailing edge hosts the
-/// pin toggle button. Click invokes `onTogglePin`, which the view
-/// controller routes into the `SidebarState` machine.
+/// thanks to `titlebarAppearsTransparent`); the trailing edge hosts
+/// the Settings / Command Palette / Pin toggle button cluster.
+///
+/// Settings and Command Palette ship with default keyboard shortcuts
+/// (⌘, / ⌘⇧P) but those bindings are user-editable via the Shortcuts
+/// settings tab. A misconfigured chord could otherwise lock the user
+/// out of the Settings window itself, so the buttons here are the
+/// guaranteed click-only path back in. Both routes through the
+/// `Action` registry so a remapped chord and a button click resolve
+/// through the same handler.
 ///
 /// Workspace / pane creation entry points used to live next to the
 /// pin button as a `+` menu, but they only make sense while the
@@ -27,7 +34,11 @@ final class SidebarHeaderView: NSView {
   /// buttons can be measured.
   private var titleLeadingConstraint: NSLayoutConstraint?
 
-  let pinButton: HoverIconButton = {
+  let pinButton: HoverIconButton = SidebarHeaderView.makeIconButton()
+  let settingsButton: HoverIconButton = SidebarHeaderView.makeIconButton()
+  let paletteButton: HoverIconButton = SidebarHeaderView.makeIconButton()
+
+  private static func makeIconButton() -> HoverIconButton {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
     b.isBordered = false
@@ -35,7 +46,7 @@ final class SidebarHeaderView: NSView {
     b.imagePosition = .imageOnly
     b.imageScaling = .scaleProportionallyDown
     return b
-  }()
+  }
 
   private let titleLabel: TitleLabel = {
     let label = TitleLabel(labelWithString: SidebarHeaderView.displayTitle())
@@ -77,6 +88,15 @@ final class SidebarHeaderView: NSView {
   /// Invoked when the user clicks the pin toggle. The view controller
   /// owns the state machine — this view only reports intent.
   var onTogglePin: (() -> Void)?
+
+  /// Invoked when the user clicks the gear icon. Routed by the view
+  /// controller into the `open_settings` Action handler so a remapped
+  /// chord and a click stay equivalent.
+  var onOpenSettings: (() -> Void)?
+
+  /// Invoked when the user clicks the command-palette icon. Routed
+  /// the same way as `onOpenSettings`.
+  var onOpenCommandPalette: (() -> Void)?
 
   /// Drives the pin icon glyph and accessibility text. When `true`,
   /// the filled pin emphasises the "currently pinned" state; when
@@ -137,7 +157,25 @@ final class SidebarHeaderView: NSView {
   private func setupLayout() {
     pinButton.target = self
     pinButton.action = #selector(pinTapped(_:))
+    settingsButton.target = self
+    settingsButton.action = #selector(settingsTapped(_:))
+    paletteButton.target = self
+    paletteButton.action = #selector(paletteTapped(_:))
+
+    settingsButton.image = NSImage(
+      systemSymbolName: "gearshape",
+      accessibilityDescription: "Open Settings"
+    )
+    settingsButton.toolTip = "Settings"
+    paletteButton.image = NSImage(
+      systemSymbolName: "command",
+      accessibilityDescription: "Open Command Palette"
+    )
+    paletteButton.toolTip = "Command Palette"
+
     addSubview(pinButton)
+    addSubview(paletteButton)
+    addSubview(settingsButton)
     addSubview(titleLabel)
 
     let leading = titleLabel.leadingAnchor.constraint(
@@ -149,8 +187,16 @@ final class SidebarHeaderView: NSView {
       pinButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       pinButton.widthAnchor.constraint(equalToConstant: 22),
       pinButton.heightAnchor.constraint(equalToConstant: 22),
+      paletteButton.trailingAnchor.constraint(equalTo: pinButton.leadingAnchor, constant: -4),
+      paletteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      paletteButton.widthAnchor.constraint(equalToConstant: 22),
+      paletteButton.heightAnchor.constraint(equalToConstant: 22),
+      settingsButton.trailingAnchor.constraint(equalTo: paletteButton.leadingAnchor, constant: -4),
+      settingsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+      settingsButton.widthAnchor.constraint(equalToConstant: 22),
+      settingsButton.heightAnchor.constraint(equalToConstant: 22),
       leading,
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
+      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: settingsButton.leadingAnchor, constant: -8),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }
@@ -176,5 +222,13 @@ final class SidebarHeaderView: NSView {
 
   @objc private func pinTapped(_: NSButton) {
     onTogglePin?()
+  }
+
+  @objc private func settingsTapped(_: NSButton) {
+    onOpenSettings?()
+  }
+
+  @objc private func paletteTapped(_: NSButton) {
+    onOpenCommandPalette?()
   }
 }
