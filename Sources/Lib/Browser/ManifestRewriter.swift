@@ -232,6 +232,33 @@ enum ManifestRewriter {
     // discoverable to the bg even if they don't auto-apply).
     manifest.removeValue(forKey: "minimum_chrome_version")
 
+    // `commands` entries without `description` parse as
+    // `WKWebExtensionErrorDomain` code 6 ("Empty or invalid
+    // `description`") even for reserved entries (`_execute_action`,
+    // `_execute_browser_action`, `_execute_page_action`) where Chrome
+    // treats `description` as optional because the entry is implicitly
+    // labeled by the extension's action button. Backfill a non-empty
+    // placeholder so the WebKit parser accepts the entry. The value is
+    // never surfaced — WebKit owns the UI for reserved commands and
+    // `chrome.commands.getAll()` callers receive the same string back
+    // without behavioural impact.
+    if var commands = manifest["commands"] as? [String: Any] {
+      var changed = false
+      for (key, raw) in commands {
+        guard var entry = raw as? [String: Any] else { continue }
+        let desc = (entry["description"] as? String) ?? ""
+        if desc.isEmpty {
+          entry["description"] = key
+          commands[key] = entry
+          changed = true
+        }
+      }
+      if changed {
+        manifest["commands"] = commands
+        didRewrite = true
+      }
+    }
+
     // Stub out manifest content_scripts whose `js` / `css` files
     // aren't bundled in the CRX. Bitwarden's manifest references
     // MV2-only files like `content/fido2-page-script-delay-append-mv2.js`
