@@ -3,7 +3,7 @@
 #
 # Runs the binary directly out of the bundle so stderr is
 # attached to the terminal and unified log Logger picks up
-# the dev bundle id (org.kawarimidoll.e05.debug) as subsystem.
+# the dev bundle id (com.kawarimidoll.e05.debug) as subsystem.
 # Extra args are forwarded to the e05 binary.
 
 set -euo pipefail

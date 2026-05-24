@@ -23,13 +23,13 @@ FLAVOR="${1:-dev}"
 # dev-only machine still has the only registered handler.
 case "$FLAVOR" in
     dev)
-        BUNDLE_ID="org.kawarimidoll.e05.debug"
+        BUNDLE_ID="com.kawarimidoll.e05.debug"
         DISPLAY_NAME="e05[DEV]"
         BIN_SRC=".build/debug/e05"
         URL_HANDLER_RANK="Alternate"
         ;;
     release)
-        BUNDLE_ID="org.kawarimidoll.e05"
+        BUNDLE_ID="com.kawarimidoll.e05"
         DISPLAY_NAME="e05"
         BIN_SRC=".build/release/e05"
         URL_HANDLER_RANK="Owner"

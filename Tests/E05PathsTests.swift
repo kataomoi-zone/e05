@@ -115,20 +115,20 @@ struct E05PathsTests {
 
   @Test("dataDir is keyed on the bundle identifier under Application Support")
   func dataDirRelease() {
-    let paths = E05Paths(env: [:], bundleIdentifier: "org.kawarimidoll.e05", home: home)
-    #expect(paths.dataDir.path == "/Users/test/Library/Application Support/org.kawarimidoll.e05")
+    let paths = E05Paths(env: [:], bundleIdentifier: "com.kawarimidoll.e05", home: home)
+    #expect(paths.dataDir.path == "/Users/test/Library/Application Support/com.kawarimidoll.e05")
   }
 
   @Test("cacheDir is keyed on the bundle identifier under Caches")
   func cacheDirRelease() {
-    let paths = E05Paths(env: [:], bundleIdentifier: "org.kawarimidoll.e05", home: home)
-    #expect(paths.cacheDir.path == "/Users/test/Library/Caches/org.kawarimidoll.e05")
+    let paths = E05Paths(env: [:], bundleIdentifier: "com.kawarimidoll.e05", home: home)
+    #expect(paths.cacheDir.path == "/Users/test/Library/Caches/com.kawarimidoll.e05")
   }
 
   @Test("dev and release bundle ids resolve to disjoint directories")
   func dataDirDevReleaseSplit() {
-    let release = E05Paths(env: [:], bundleIdentifier: "org.kawarimidoll.e05", home: home)
-    let dev = E05Paths(env: [:], bundleIdentifier: "org.kawarimidoll.e05.debug", home: home)
+    let release = E05Paths(env: [:], bundleIdentifier: "com.kawarimidoll.e05", home: home)
+    let dev = E05Paths(env: [:], bundleIdentifier: "com.kawarimidoll.e05.debug", home: home)
     #expect(release.dataDir != dev.dataDir)
     #expect(release.cacheDir != dev.cacheDir)
   }

@@ -65,8 +65,8 @@ public struct SessionState: Codable {
   // MARK: - File Path
 
   /// Production path for the saved session, resolved through
-  /// `E05Paths.default.dataDir` so dev (`org.kawarimidoll.e05.debug`)
-  /// and release (`org.kawarimidoll.e05`) builds keep separate
+  /// `E05Paths.default.dataDir` so dev (`com.kawarimidoll.e05.debug`)
+  /// and release (`com.kawarimidoll.e05`) builds keep separate
   /// session files without code branches. `save()` creates the
   /// directory on demand — `Application Support/<bundle-id>/` is
   /// not guaranteed to exist on first launch.

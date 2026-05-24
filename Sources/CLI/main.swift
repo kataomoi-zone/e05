@@ -195,7 +195,7 @@ func resolveSocketPath() -> String {
   if let env = ProcessInfo.processInfo.environment["E05_SOCKET"], !env.isEmpty {
     return env
   }
-  let bundleId = locateBundleIdentifier() ?? "org.kawarimidoll.e05"
+  let bundleId = locateBundleIdentifier() ?? "com.kawarimidoll.e05"
   let home = FileManager.default.homeDirectoryForCurrentUser
   return
     home

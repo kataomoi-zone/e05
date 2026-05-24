@@ -10,8 +10,8 @@ import Foundation
 /// is human-edited and lives under `~/.config` (XDG-overridable so the
 /// ghostty-compatible `config` keeps a familiar home), data and cache are
 /// machine-managed and live under `~/Library/...` keyed on the bundle
-/// identifier so dev (`org.kawarimidoll.e05.debug`) and release
-/// (`org.kawarimidoll.e05`) builds stay isolated without code branches.
+/// identifier so dev (`com.kawarimidoll.e05.debug`) and release
+/// (`com.kawarimidoll.e05`) builds stay isolated without code branches.
 public struct E05Paths: Sendable {
   /// Directory holding the ghostty-compatible flat-key `config` file and
   /// any future hand-edited preferences. Lookup order:
