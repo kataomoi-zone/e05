@@ -620,10 +620,20 @@ extension PaneContainerViewController {
     pane.urlBar.setZoomPercent(webView.pageZoom)
   }
 
-  /// Reset the focused browser pane's page zoom to 1.0.
+  /// Reset the focused browser pane's page zoom to 1.0. Clears both
+  /// the `pageZoom` (driven by `⌘+` / `⌘-`, reflows the layout) and
+  /// the rendering-layer `magnification` (driven by the pinch
+  /// gesture, no reflow) so the user lands at the baseline regardless
+  /// of which input accumulated the zoom — matching Safari's `⌘0`
+  /// semantics. `⌘+` / `⌘-` still step `pageZoom` alone, so the
+  /// per-gesture independence the two surfaces have is preserved.
+  /// On extension-hosted panes `setMagnification` is a no-op because
+  /// `allowsMagnification` is false there, so the call is safe to
+  /// issue unconditionally.
   public func resetFocusedBrowserZoom() {
-    guard let pane = focusedPane else { return }
-    pane.browserView?.webView.pageZoom = 1.0
+    guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+    webView.pageZoom = 1.0
+    webView.setMagnification(1.0, centeredAt: .zero)
     pane.urlBar.setZoomPercent(1.0)
   }
 
