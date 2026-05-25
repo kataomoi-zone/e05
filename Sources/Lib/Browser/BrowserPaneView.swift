@@ -2504,13 +2504,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// region (X.com timelines, Discord channel lists, Notion wide
   /// tables, …), so a `document.scrollingElement`-only probe would
   /// misreport every one of them as having no horizontal overflow.
-  /// Tracks the cursor target via `mouseover` / `mousemove` (capture
-  /// phase to catch synthetic clones), walks ancestors at probe time
-  /// to find the nearest element whose computed `overflow-x` allows
-  /// scrolling AND has horizontally-overflowing content, and reports
-  /// that element's edge state. De-duplicates against the last sent
-  /// value so a still cursor and a quiet page don't flood the IPC
-  /// channel.
+  /// Tracks the cursor target via `mouseover` / `mousemove` / `wheel`
+  /// (capture phase to catch synthetic clones), walks ancestors at
+  /// probe time to find the nearest element whose computed
+  /// `overflow-x` allows scrolling AND has horizontally-overflowing
+  /// content, and reports that element's edge state. The `wheel`
+  /// listener is what catches the user's first gesture after a focus
+  /// move or keyboard-driven action — the cursor may never have
+  /// physically traversed the pane, so the snap can't wait for a
+  /// mouseover. De-duplicates against the last sent value so a still
+  /// cursor and a quiet page don't flood the IPC channel.
   private static let scrollEdgeUserScript = WKUserScript(
     source: """
       (function() {
@@ -2563,6 +2566,22 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
           snap();
         }, { passive: true, capture: true });
         document.addEventListener('mousemove', (e) => {
+          if (e.target === hoverTarget) return;
+          hoverTarget = e.target;
+          snap();
+        }, { passive: true, capture: true });
+        // Cover the gesture-before-any-mouse-event case: just after
+        // launch, after a ⌘L / keyboard focus move, or on a trackpad
+        // user who keeps the cursor parked while two-finger swiping.
+        // The wheel event itself carries the cursor-target element so
+        // the snap can resolve the right scrollable ancestor and
+        // report an accurate edge before the Swift monitor's `.began`
+        // decision runs. Skip when the target is unchanged: wheel
+        // fires 60-120 Hz during a continuous gesture and findScrollableX
+        // walks ancestors + flushes getComputedStyle on every call.
+        // The scroll listener already covers same-target edge updates
+        // once the page actually scrolls.
+        document.addEventListener('wheel', (e) => {
           if (e.target === hoverTarget) return;
           hoverTarget = e.target;
           snap();
