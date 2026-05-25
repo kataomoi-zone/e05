@@ -7,33 +7,23 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Panes")
 extension PaneContainerViewController {
   // MARK: - Column Management
 
-  /// Build a pane via `makePane` and append a column for it. Pass
-  /// `startSuspended: true` (with `initialTitle:`) to skip the
-  /// first navigation on a browser pane — see `PaneModel.init` for
-  /// the contract. `initialBackHistory` / `initialForwardHistory`
-  /// seed the cross-launch back/forward shadow stack.
-  /// `focusOnInsert: false` is opt-in for callers that commit
-  /// their own focus target after the insert loop completes (e.g.
-  /// `restoreSession` finishes with
+  /// Build a pane via `makePane` and append a column for it. Optional
+  /// browser-specific knobs (suspend-deferred boot, restored title /
+  /// history) live on `PaneDependencies`; see `PaneModel.init` for
+  /// the field-level contract. `focusOnInsert: false` is opt-in for
+  /// callers that commit their own focus target after the insert loop
+  /// completes (e.g. `restoreSession` finishes with
   /// `restoreFocusInCurrentWorkspace`); without that follow-up the
   /// container is left with stale focus state.
   @discardableResult
   public func addColumn(
     address: PaneAddress = .terminal,
-    startSuspended: Bool = false,
-    initialTitle: String? = nil,
-    initialBackHistory: [URL] = [],
-    initialForwardHistory: [URL] = [],
+    dependencies: PaneDependencies = .init(),
     focusOnInsert: Bool = true,
     id: ULID = ULID()
   ) -> ColumnModel {
     insertColumn(
-      with: makePane(
-        address: address,
-        startSuspended: startSuspended,
-        initialTitle: initialTitle,
-        initialBackHistory: initialBackHistory,
-        initialForwardHistory: initialForwardHistory),
+      with: makePane(address: address, dependencies: dependencies),
       focusOnInsert: focusOnInsert,
       id: id)
   }

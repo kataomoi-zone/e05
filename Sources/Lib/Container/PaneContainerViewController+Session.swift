@@ -209,10 +209,12 @@ extension PaneContainerViewController {
         let columnId = colState.id.map(ULID.init) ?? ULID()
         let column = addColumn(
           address: firstAddress,
-          startSuspended: !firstIsLive,
-          initialTitle: firstPaneState.title,
-          initialBackHistory: Self.urls(from: firstPaneState.backHistory),
-          initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory),
+          dependencies: PaneDependencies(
+            startSuspended: !firstIsLive,
+            initialTitle: firstPaneState.title,
+            initialBackHistory: Self.urls(from: firstPaneState.backHistory),
+            initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory)
+          ),
           focusOnInsert: false,
           id: columnId
         )
@@ -234,10 +236,12 @@ extension PaneContainerViewController {
             && liveTarget?.paneIdx == paneIdx
           let pane = makePane(
             address: address,
-            startSuspended: !isLive,
-            initialTitle: paneState.title,
-            initialBackHistory: Self.urls(from: paneState.backHistory),
-            initialForwardHistory: Self.urls(from: paneState.forwardHistory)
+            dependencies: PaneDependencies(
+              startSuspended: !isLive,
+              initialTitle: paneState.title,
+              initialBackHistory: Self.urls(from: paneState.backHistory),
+              initialForwardHistory: Self.urls(from: paneState.forwardHistory)
+            )
           )
           if let title = paneState.title { pane.title = title }
           setupPaneCallbacks(pane: pane, column: column)

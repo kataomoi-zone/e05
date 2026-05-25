@@ -22,6 +22,53 @@ public enum PaneContent {
   case finder(FinderPaneView)
 }
 
+/// Optional construction inputs for ``PaneModel``. Grouped into a
+/// struct so the init does not grow a column-wide named-arg list as
+/// new optional hooks (cross-launch shadow stack, suspend-deferred
+/// boot, future Web Notifications icon URL, etc.) accumulate. Every
+/// field carries a sensible default so the historical
+/// `PaneModel(address:, ghosttyApp:)` call site keeps compiling
+/// unchanged.
+@MainActor
+public struct PaneDependencies {
+  /// Workspace-scoped ephemeral website data store. Non-nil for
+  /// panes that belong to a private workspace; nil falls through to
+  /// `WKWebsiteDataStore.default()` on browser panes and is ignored
+  /// elsewhere.
+  public var dataStore: WKWebsiteDataStore?
+  /// Skip the initial navigation and render the suspend placeholder
+  /// until first focus restores the live `WKWebView`. Only meaningful
+  /// for browser panes; non-browser kinds ignore the flag.
+  public var startSuspended: Bool
+  /// Initial title text rendered on the placeholder / sidebar
+  /// worklane row before the live page settles its title KVO. Only
+  /// meaningful for browser panes.
+  public var initialTitle: String?
+  /// Cross-launch back history seeded into the browser pane's
+  /// shadow URL stack so the URL bar's back affordance works before
+  /// the user navigates past the saved cursor. Oldest entry first.
+  public var initialBackHistory: [URL]
+  /// Cross-launch forward history, mirror of ``initialBackHistory``.
+  /// Stored nearest-to-current at the end, matching how
+  /// ``BrowserPaneView/installRestoredHistory(back:current:forward:)``
+  /// consumes it.
+  public var initialForwardHistory: [URL]
+
+  public init(
+    dataStore: WKWebsiteDataStore? = nil,
+    startSuspended: Bool = false,
+    initialTitle: String? = nil,
+    initialBackHistory: [URL] = [],
+    initialForwardHistory: [URL] = []
+  ) {
+    self.dataStore = dataStore
+    self.startSuspended = startSuspended
+    self.initialTitle = initialTitle
+    self.initialBackHistory = initialBackHistory
+    self.initialForwardHistory = initialForwardHistory
+  }
+}
+
 /// A single pane within a column — either a terminal or a browser.
 @MainActor
 public final class PaneModel {
@@ -193,53 +240,39 @@ public final class PaneModel {
   private var contentTopConstraint: NSLayoutConstraint?
   private var cornerObserver: SurfaceCornerObserver?
 
-  /// Create a pane from a PaneAddress. Routes to the appropriate content type.
+  /// Create a pane from a PaneAddress. Routes to the appropriate
+  /// content type.
   ///
-  /// `ghosttyApp` is optional so browser-only callers and tests can omit
-  /// it; the terminal branch asserts it when needed. Unknown kinds (e.g.
-  /// a session entry pointing at a retired `e05://history` URL) fall
-  /// back to a blank browser so old sessions still load without crashing.
+  /// `ghosttyApp` is optional so browser-only callers and tests can
+  /// omit it; the terminal branch asserts it when needed. Unknown
+  /// kinds (e.g. a session entry pointing at a retired
+  /// `e05://history` URL) fall back to a blank browser so old
+  /// sessions still load without crashing.
   ///
-  /// `dataStore` is propagated to `BrowserPaneView` so private workspaces
-  /// can isolate cookies / storage from the default profile. Nil keeps
-  /// the existing default-store behaviour for normal workspaces.
+  /// Optional inputs live on ``PaneDependencies`` (private-workspace
+  /// data store, suspend-on-construct flag, initial title, and
+  /// cross-launch back / forward history). All of them apply only
+  /// to browser panes; non-browser kinds and blank /
+  /// unresolved-extension browsers ignore the values entirely.
   ///
-  /// `startSuspended` only matters for browser panes. When true, the
-  /// pane skips its first navigation and renders the suspend
-  /// placeholder; a subsequent `restoreIfSuspended()` (typically from
-  /// the focus handler) builds the live web view and loads the URL.
-  /// `initialTitle` is plumbed through to both `self.title` and the
-  /// placeholder so sidebar / worklane rows have something to render
-  /// before the page actually loads; when nil the placeholder falls
-  /// back to the URL's host.
-  ///
-  /// `initialBackHistory` and `initialForwardHistory` seed the
-  /// `BrowserPaneView` shadow back/forward stack with URLs the
-  /// previous session captured from the live
-  /// `WKBackForwardList`. The shadow stack carries the URL bar's
-  /// `canGoBack` / `canGoForward` until the user starts a real
-  /// navigation that abandons it; see
-  /// `BrowserPaneView.installRestoredHistory` for the contract.
-  ///
-  /// Live-restore (`startSuspended == false`) installs the shadow
-  /// stack and calls `expectAnchorLoad()` so the immediately
-  /// following `navigate(to: address.url)` is absorbed as the
-  /// stack's anchor load rather than abandoning the stack. The
-  /// suspended branch (`startSuspended == true`) installs the
-  /// stack without `expectAnchorLoad` because no load runs until
-  /// `restore()` later — and `restore()` already increments the
-  /// counter for its own load.
-  ///
-  /// All four parameters are ignored for non-browser kinds and for
-  /// blank / unresolved-extension browsers.
+  /// Live-restore (`dependencies.startSuspended == false`) installs
+  /// the shadow back / forward stack and calls `expectAnchorLoad()`
+  /// so the immediately following `navigate(to: address.url)` is
+  /// absorbed as the stack's anchor load rather than abandoning the
+  /// stack. The suspended branch installs the stack without
+  /// `expectAnchorLoad` because no load runs until `restore()`
+  /// later — and `restore()` already increments the counter for
+  /// its own load.
   public init(
-    address: PaneAddress, ghosttyApp: GhosttyApp?,
-    dataStore: WKWebsiteDataStore? = nil,
-    startSuspended: Bool = false,
-    initialTitle: String? = nil,
-    initialBackHistory: [URL] = [],
-    initialForwardHistory: [URL] = []
+    address: PaneAddress,
+    ghosttyApp: GhosttyApp?,
+    dependencies: PaneDependencies = .init()
   ) {
+    let dataStore = dependencies.dataStore
+    let startSuspended = dependencies.startSuspended
+    let initialTitle = dependencies.initialTitle
+    let initialBackHistory = dependencies.initialBackHistory
+    let initialForwardHistory = dependencies.initialForwardHistory
     self.address = address
     switch address.kind {
     case .terminal:

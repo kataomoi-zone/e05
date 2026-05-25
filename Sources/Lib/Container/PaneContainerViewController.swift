@@ -567,32 +567,29 @@ public final class PaneContainerViewController: NSViewController {
   /// another layout pass is triggered.
   var isAnimatingWorkspaceSwitch = false
 
-  /// Factory: construct a `PaneModel` with the terminal dependency the
-  /// container owns. Kept as a method so future per-pane dependencies
-  /// land in one place. The browser data store comes from the
-  /// **target** workspace (not the focused one) so panes built for a
-  /// new workspace honour its private flag even before the container
-  /// switches over to it.
-  ///
-  /// `startSuspended`, `initialTitle`, `initialBackHistory`, and
-  /// `initialForwardHistory` are forwarded to `PaneModel` for the
-  /// browser-lazy-load and cross-launch back/forward paths; all
-  /// default to "off" for every existing callsite. See
-  /// `PaneModel.init` for the exact contract.
+  /// Factory: construct a `PaneModel` with the terminal dependency
+  /// the container owns. Kept as a method so future per-pane
+  /// dependencies land in one place. The browser data store comes
+  /// from the **target** workspace (not the focused one) so panes
+  /// built for a new workspace honour its private flag even before
+  /// the container switches over to it — `dependencies.dataStore` is
+  /// only filled in from the workspace when the caller leaves it
+  /// nil. Optional browser-specific inputs (suspend-deferred boot,
+  /// restored title / history) live on `PaneDependencies`; see
+  /// `PaneModel.init` for the field-level contract.
   func makePane(
     address: PaneAddress,
     in workspace: WorkspaceModel? = nil,
-    startSuspended: Bool = false,
-    initialTitle: String? = nil,
-    initialBackHistory: [URL] = [],
-    initialForwardHistory: [URL] = []
+    dependencies: PaneDependencies = .init()
   ) -> PaneModel {
     let ws = workspace ?? currentWorkspace
-    return PaneModel(
-      address: address, ghosttyApp: ghosttyApp, dataStore: ws.dataStore,
-      startSuspended: startSuspended, initialTitle: initialTitle,
-      initialBackHistory: initialBackHistory,
-      initialForwardHistory: initialForwardHistory)
+    var deps = dependencies
+    // Default the data store from the resolved workspace if the
+    // caller did not pass one explicitly. Caller-supplied values
+    // win so call sites that genuinely need a different store
+    // (rare) can still override.
+    if deps.dataStore == nil { deps.dataStore = ws.dataStore }
+    return PaneModel(address: address, ghosttyApp: ghosttyApp, dependencies: deps)
   }
 
   private var hasAppearedOnce = false
