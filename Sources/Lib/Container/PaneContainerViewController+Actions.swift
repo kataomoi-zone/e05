@@ -70,6 +70,7 @@ extension PaneContainerViewController {
       Action(
         id: "split_vertical",
         title: "Split Vertical",
+        menuTitle: "Split Vertically",
         keyEquivalent: "v",
         modifierMask: [.option, .control],
         handler: { [weak self] in self?.splitVertical() }
@@ -149,6 +150,7 @@ extension PaneContainerViewController {
       Action(
         id: "cycle_width",
         title: "Cycle Width",
+        menuTitle: "Cycle Width Preset",
         keyEquivalent: "/",
         modifierMask: [.option, .control],
         handler: { [weak self] in self?.cycleWidthPreset(Self.defaultWidthCycle) },
@@ -194,6 +196,7 @@ extension PaneContainerViewController {
       Action(
         id: "toggle_bookmark",
         title: "Toggle Bookmark",
+        menuTitle: "Add to Bookmarks",
         keyEquivalent: "d",
         handler: { [weak self] in
           if let added = self?.toggleBookmark() {
@@ -209,6 +212,7 @@ extension PaneContainerViewController {
       Action(
         id: "toggle_inspector",
         title: "Toggle Web Inspector",
+        menuTitle: "Web Inspector",
         keyEquivalent: "i",
         modifierMask: [.option, .command],
         handler: { [weak self] in
@@ -225,6 +229,7 @@ extension PaneContainerViewController {
       Action(
         id: "browser_reload",
         title: "Reload Page",
+        menuTitle: "Reload",
         keyEquivalent: "r",
         handler: { [weak self] in
           guard let self, self.isFocusedPaneBrowser else { return }
@@ -237,6 +242,7 @@ extension PaneContainerViewController {
       Action(
         id: "browser_hard_reload",
         title: "Reload Page (Bypass Cache)",
+        menuTitle: "Hard Reload",
         keyEquivalent: "r",
         modifierMask: [.command, .shift],
         handler: { [weak self] in
@@ -312,6 +318,7 @@ extension PaneContainerViewController {
       Action(
         id: "browser_zoom_reset",
         title: "Actual Size",
+        menuTitle: "Reset Zoom",
         keyEquivalent: "0",
         handler: { [weak self] in
           guard let self, self.isFocusedPaneBrowser else { return }
@@ -340,6 +347,7 @@ extension PaneContainerViewController {
       Action(
         id: "browser_keep_active",
         title: "Don't Auto-Suspend",
+        menuTitle: "Keep Pane Active",
         // Toggles `PaneModel.isSuspendExempt` on the focused pane.
         // The validator flips both the enable state and the title so
         // the menu / palette label reflects what the next invocation

@@ -409,13 +409,15 @@ final class WorklaneSectionView: NSView {
     /// button in each expanded workspace's footer row.
     let onCreatePrivateWorkspace: () -> Void
     /// Effective `Action` snapshot the worklane context menu consults
-    /// to populate menu items. Lifted off
-    /// `PaneContainerViewController.menuActionsSnapshot` at reload
-    /// time so chord overrides applied through the Shortcuts settings
-    /// tab flow into the per-row menu without separate wiring. Empty
-    /// is safe — items that can't find their backing action lose
-    /// their chord glyph but still fire through `onPaneAction`.
-    let paneActions: [Action]
+    /// to populate menu items. Closure rather than `[Action]` so the
+    /// menu always reads the latest
+    /// `PaneContainerViewController.menuActionsSnapshot` at the
+    /// moment the menu is built — a chord remapped through the
+    /// Shortcuts settings tab takes effect on the next right-click
+    /// without requiring a worklane reload. Empty is safe: items that
+    /// can't find their backing action lose their chord glyph but
+    /// still fire through `onPaneAction`.
+    let paneActionsProvider: @MainActor () -> [Action]
     /// Dispatch a context-menu action against a specific pane: focus
     /// transfer (across workspaces if necessary) + handler invocation
     /// in one shot. `actionId` is normally a palette id
@@ -1460,58 +1462,108 @@ extension WorklaneSectionView: NSMenuDelegate {
     // Workspace and column rows ship their menus in follow-up
     // phases; today the menu only fires for pane rows.
     if let paneNode = node as? WorklanePaneNode {
-      buildPaneMenu(menu, paneId: paneNode.id, input: input)
+      buildPaneMenu(menu, paneNode: paneNode, input: input)
     }
   }
 
-  /// Append the per-pane context menu's top section. `paneActions`
-  /// drives chord-glyph display through palette ids; the
-  /// `_mute_pane` / `_mute_site` / `_copy_url` sentinels cover the
-  /// menu-only items that don't have a palette entry.
-  private func buildPaneMenu(_ menu: NSMenu, paneId: ULID, input: ReloadInput) {
-    appendPaletteAction(
-      to: menu, actionId: "browser_reload", title: "Reload",
-      paneId: paneId, input: input)
-    appendPaletteAction(
-      to: menu, actionId: "toggle_bookmark", title: "Add to Bookmarks",
-      paneId: paneId, input: input)
-    appendSyntheticItem(
-      to: menu, sentinel: "_copy_url", title: "Copy URL",
-      paneId: paneId)
+  /// Dispatch the menu by pane content kind. Per-kind builders make
+  /// every menu item tailored to the actual capabilities of the
+  /// right-clicked pane — a terminal pane never offers Back /
+  /// Bookmark / Web Inspector, a finder pane never offers Reload but
+  /// gets view-mode toggles, etc.
+  private func buildPaneMenu(
+    _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
+  ) {
+    let paneId = paneNode.id
+    switch paneNode.model.content {
+    case .browser:
+      buildBrowserPaneMenu(menu, paneId: paneId, input: input)
+    case .terminal:
+      buildTerminalPaneMenu(menu, paneId: paneId, input: input)
+    case .finder:
+      buildFinderPaneMenu(menu, paneId: paneId, input: input)
+    }
+  }
+
+  private func buildBrowserPaneMenu(
+    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+  ) {
+    appendPaletteAction(to: menu, actionId: "browser_reload", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "browser_hard_reload", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "browser_back", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "browser_forward", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendSyntheticItem(
-      to: menu, sentinel: "_mute_pane", title: "Mute Pane",
-      paneId: paneId)
-    appendSyntheticItem(
-      to: menu, sentinel: "_mute_site", title: "Mute Site",
-      paneId: paneId)
+    appendPaletteAction(to: menu, actionId: "toggle_bookmark", paneId: paneId, input: input)
+    appendSyntheticItem(to: menu, sentinel: "_copy_url", title: "Copy URL", paneId: paneId)
+    appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendPaletteAction(
-      to: menu, actionId: "close_pane", title: "Close Pane",
-      paneId: paneId, input: input)
-    appendPaletteAction(
-      to: menu, actionId: "undo_close", title: "Reopen Closed Pane",
-      paneId: paneId, input: input)
+    appendSyntheticItem(to: menu, sentinel: "_mute_pane", title: "Mute Pane", paneId: paneId)
+    appendSyntheticItem(to: menu, sentinel: "_mute_site", title: "Mute Site", paneId: paneId)
+    appendPaletteAction(to: menu, actionId: "browser_suspend", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "browser_keep_active", paneId: paneId, input: input)
+    menu.addItem(.separator())
+    appendPaletteAction(to: menu, actionId: "browser_zoom_reset", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "toggle_inspector", paneId: paneId, input: input)
+    menu.addItem(.separator())
+    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+  }
+
+  private func buildTerminalPaneMenu(
+    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+  ) {
+    appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
+    menu.addItem(.separator())
+    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+  }
+
+  private func buildFinderPaneMenu(
+    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+  ) {
+    appendPaletteAction(to: menu, actionId: "toggle_hidden_files", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "finder_view_as_icons", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "finder_view_as_list", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
+    menu.addItem(.separator())
+    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+  }
+
+  /// Layout / lifecycle items shared by every pane kind. Split is
+  /// kind-agnostic (column split works for terminal / browser /
+  /// finder alike), close / reopen are the universal exits.
+  private func appendCommonPaneFooter(
+    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+  ) {
+    appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "cycle_width", paneId: paneId, input: input)
+    menu.addItem(.separator())
+    appendPaletteAction(to: menu, actionId: "close_pane", paneId: paneId, input: input)
+    appendPaletteAction(to: menu, actionId: "undo_close", paneId: paneId, input: input)
   }
 
   /// Append a menu item that mirrors an existing palette `Action`.
-  /// The chord glyph (`⌘R`, `⌘⇧T`, …) shown in the menu is sourced
-  /// from `input.paneActions` so user-customised chords from the
-  /// Shortcuts settings tab flow through automatically. Items whose
-  /// action has no chord stay unlabelled rather than disabled — the
-  /// item still fires through `onPaneAction`.
+  /// The displayed text comes from `action.menuTitle ?? action.title`
+  /// so the action registry stays the single source of truth — a
+  /// context menu wants a tighter phrasing than the palette and
+  /// `menuTitle` is the explicit override for that. Chord glyph
+  /// (`⌘R`, `⌘⇧T`, …) is sourced through `input.paneActionsProvider()`
+  /// so user-customised chords from the Shortcuts settings tab flow
+  /// through on the next menu open without a worklane reload. The
+  /// item is skipped entirely when the action is missing from the
+  /// snapshot (catches typos / removed ids at development time
+  /// rather than silently producing chord-less menu items).
   private func appendPaletteAction(
-    to menu: NSMenu, actionId: String, title: String, paneId: ULID,
+    to menu: NSMenu, actionId: String, paneId: ULID,
     input: ReloadInput
   ) {
+    guard let action = input.paneActionsProvider()
+      .first(where: { $0.id == actionId })
+    else { return }
     let item = NSMenuItem(
-      title: title,
+      title: action.menuTitle ?? action.title,
       action: #selector(handlePaneMenuAction(_:)),
       keyEquivalent: "")
     item.target = self
-    if let action = input.paneActions.first(where: { $0.id == actionId }),
-      let key = action.keyEquivalent, !key.isEmpty
-    {
+    if let key = action.keyEquivalent, !key.isEmpty {
       item.keyEquivalent = key
       item.keyEquivalentModifierMask = action.modifierMask
     }

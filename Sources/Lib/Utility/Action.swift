@@ -29,6 +29,14 @@ public struct Action {
   /// `keyEquivalent` + `modifierMask` at init time.
   public let keyLabel: String?
 
+  /// Compact title used by context menus where space is tighter than
+  /// the palette and the conventional menu phrasing differs (e.g.
+  /// palette "Reload Page" → menu "Reload", palette "Toggle Web
+  /// Inspector" → menu "Web Inspector"). `nil` (default) keeps the
+  /// palette `title` as the single source of truth — only set this
+  /// when the menu phrasing genuinely needs to diverge.
+  public let menuTitle: String?
+
   /// The operation to perform. Captured `[weak paneContainer]` to avoid
   /// retain cycles.
   public let handler: @MainActor () -> Void
@@ -46,6 +54,7 @@ public struct Action {
   public init(
     id: String,
     title: String,
+    menuTitle: String? = nil,
     keyEquivalent: String? = nil,
     modifierMask: NSEvent.ModifierFlags = [.command],
     handler: @escaping @MainActor () -> Void,
@@ -54,6 +63,7 @@ public struct Action {
   ) {
     self.id = id
     self.title = title
+    self.menuTitle = menuTitle
     self.keyEquivalent = keyEquivalent
     self.modifierMask = modifierMask
     self.handler = handler
@@ -119,6 +129,7 @@ public struct Action {
     return Action(
       id: id,
       title: title,
+      menuTitle: menuTitle,
       keyEquivalent: override.keyEquivalent,
       modifierMask: mask,
       handler: handler,
