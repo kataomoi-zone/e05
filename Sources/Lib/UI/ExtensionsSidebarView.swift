@@ -26,6 +26,7 @@ final class ExtensionsSidebarView: NSView {
   private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "")
   private let addButton = NSButton()
+  private let openStoreButton = NSButton()
   private var rows: [LoadedExtension] = []
   nonisolated(unsafe) private var changeObserver: NSObjectProtocol?
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -118,6 +119,24 @@ final class ExtensionsSidebarView: NSView {
     addButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(addButton)
 
+    // Companion button that routes the user to the Chrome Web Store
+    // in a fresh browser pane. The `ChromeWebStoreOverlay` user
+    // script picks up from there: install buttons are rewritten to
+    // "Add to E05" and the click intercept funnels through the
+    // controller's existing CRX install path.
+    openStoreButton.title = "Open Web Store"
+    openStoreButton.image = NSImage(
+      systemSymbolName: "swatchpalette", accessibilityDescription: "Open Web Store"
+    )
+    openStoreButton.imagePosition = .imageLeading
+    openStoreButton.bezelStyle = .recessed
+    openStoreButton.font = .systemFont(ofSize: 11, weight: .medium)
+    openStoreButton.target = self
+    openStoreButton.action = #selector(openStoreClicked)
+    openStoreButton.toolTip = "Open the Chrome Web Store in a new column"
+    openStoreButton.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(openStoreButton)
+
     // Two-line empty state mirroring the placeholder feel of other
     // sidebar modes. The path hint surfaces the convention so users
     // know where the picker copies the chosen folder to.
@@ -137,7 +156,7 @@ final class ExtensionsSidebarView: NSView {
       .replacingOccurrences(of: NSHomeDirectory(), with: "~")
     emptyLabel.stringValue =
       "No extensions loaded.\n"
-      + "Use “Add from Folder or ZIP” above or drop an\n"
+      + "Use the buttons above or drop an\n"
       + "unpacked extension into\n"
       + abbreviatedPath
     emptyLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -148,7 +167,14 @@ final class ExtensionsSidebarView: NSView {
       addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       addButton.heightAnchor.constraint(equalToConstant: 22),
 
-      scrollView.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 6),
+      // Stack the Web Store button below the folder/ZIP button so
+      // both keep their full labels; the two text buttons would
+      // overflow the sidebar width if placed on a single row.
+      openStoreButton.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 4),
+      openStoreButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      openStoreButton.heightAnchor.constraint(equalToConstant: 22),
+
+      scrollView.topAnchor.constraint(equalTo: openStoreButton.bottomAnchor, constant: 6),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
       scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -189,6 +215,11 @@ final class ExtensionsSidebarView: NSView {
         }
       }
     }
+  }
+
+  @objc private func openStoreClicked() {
+    guard let url = URL(string: "https://chromewebstore.google.com/") else { return }
+    onOpenURL?(url)
   }
 
   private func presentAddError(_ error: Error) {
