@@ -461,6 +461,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // visit the ecosystem of sites that trigger the warning.
     if extensionConfig == nil {
       webView.customUserAgent = Self.safariUserAgent
+      // Pinch-to-magnify mirrors Safari's visual zoom (rendering-layer
+      // scale, no reflow). Extension-hosted panes stay at 1.0 because
+      // popup UIs are fixed-size and a stray gesture there would feel
+      // broken rather than helpful.
+      webView.allowsMagnification = true
     }
     return (webView, hoverHandler, cwsInstallHandler, cwsStateHandler, channelId, extensionConfig != nil)
   }
