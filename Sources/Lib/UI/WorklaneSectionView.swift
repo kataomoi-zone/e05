@@ -1451,6 +1451,20 @@ private final class WorklanePaneMenuPayload: NSObject {
   }
 }
 
+/// Payload for the "Move to Workspace ▶" submenu's per-workspace
+/// items: enough to route ``ReloadInput.onMovePaneToWorkspace``
+/// without needing a separate sentinel string in `actionId`.
+@MainActor
+private final class MoveToWorkspacePayload: NSObject {
+  let paneId: ULID
+  let targetWorkspaceId: ULID
+  init(paneId: ULID, targetWorkspaceId: ULID) {
+    self.paneId = paneId
+    self.targetWorkspaceId = targetWorkspaceId
+    super.init()
+  }
+}
+
 extension WorklaneSectionView: NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
@@ -1470,24 +1484,29 @@ extension WorklaneSectionView: NSMenuDelegate {
   /// every menu item tailored to the actual capabilities of the
   /// right-clicked pane — a terminal pane never offers Back /
   /// Bookmark / Web Inspector, a finder pane never offers Reload but
-  /// gets view-mode toggles, etc.
+  /// gets view-mode toggles, etc. `paneNode` is threaded all the way
+  /// through to the footer's "Move to Workspace" submenu so the
+  /// source workspace can be resolved by reading
+  /// `paneNode.workspaceNode?.model` instead of re-walking the entire
+  /// workspaces / columns / panes tree per menu open.
   private func buildPaneMenu(
     _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
-    let paneId = paneNode.id
     switch paneNode.model.content {
     case .browser:
-      buildBrowserPaneMenu(menu, paneId: paneId, input: input)
+      buildBrowserPaneMenu(menu, paneNode: paneNode, input: input)
     case .terminal:
-      buildTerminalPaneMenu(menu, paneId: paneId, input: input)
+      buildTerminalPaneMenu(menu, paneNode: paneNode, input: input)
     case .finder:
-      buildFinderPaneMenu(menu, paneId: paneId, input: input)
+      buildFinderPaneMenu(menu, paneNode: paneNode, input: input)
     }
   }
 
   private func buildBrowserPaneMenu(
-    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+    _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
+    let paneId = paneNode.id
+    let pane = paneNode.model
     appendPaletteAction(to: menu, actionId: "browser_reload", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "browser_hard_reload", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "browser_back", paneId: paneId, input: input)
@@ -1497,51 +1516,141 @@ extension WorklaneSectionView: NSMenuDelegate {
     appendSyntheticItem(to: menu, sentinel: "_copy_url", title: "Copy URL", paneId: paneId)
     appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendSyntheticItem(to: menu, sentinel: "_mute_pane", title: "Mute Pane", paneId: paneId)
-    appendSyntheticItem(to: menu, sentinel: "_mute_site", title: "Mute Site", paneId: paneId)
+    // State-dependent labels reflect the *clicked* pane (not the
+    // focused one) so the user reads what the next click will do.
+    // `Action.validate` is a focused-state probe and can't answer
+    // for the row under the cursor when those differ.
+    let paneIsMuted = pane.browserView?.isMuted ?? false
+    appendSyntheticItem(
+      to: menu, sentinel: "_mute_pane",
+      title: paneIsMuted ? "Unmute Pane" : "Mute Pane", paneId: paneId)
+    let host = pane.browserView?.webView.url?.host(percentEncoded: false)
+    let siteIsMuted = host.map { MutedSitesStore.shared.isMuted(host: $0) } ?? false
+    appendSyntheticItem(
+      to: menu, sentinel: "_mute_site",
+      title: siteIsMuted ? "Unmute Site" : "Mute Site", paneId: paneId)
     appendPaletteAction(to: menu, actionId: "browser_suspend", paneId: paneId, input: input)
-    appendPaletteAction(to: menu, actionId: "browser_keep_active", paneId: paneId, input: input)
+    appendPaletteAction(
+      to: menu, actionId: "browser_keep_active", paneId: paneId, input: input,
+      titleOverride: pane.isSuspendExempt ? "Allow Suspension" : "Keep Pane Active")
     menu.addItem(.separator())
     appendPaletteAction(to: menu, actionId: "browser_zoom_reset", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "toggle_inspector", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+    appendCommonPaneFooter(menu, paneNode: paneNode, input: input)
   }
 
   private func buildTerminalPaneMenu(
-    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+    _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
+    let paneId = paneNode.id
     appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+    appendCommonPaneFooter(menu, paneNode: paneNode, input: input)
   }
 
   private func buildFinderPaneMenu(
-    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+    _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
+    let paneId = paneNode.id
     appendPaletteAction(to: menu, actionId: "toggle_hidden_files", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "finder_view_as_icons", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "finder_view_as_list", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
-    appendCommonPaneFooter(menu, paneId: paneId, input: input)
+    appendCommonPaneFooter(menu, paneNode: paneNode, input: input)
   }
 
   /// Layout / lifecycle items shared by every pane kind. Split is
   /// kind-agnostic (column split works for terminal / browser /
-  /// finder alike), close / reopen are the universal exits.
+  /// finder alike), close / reopen are the universal exits. The
+  /// "Move to Workspace" submenu only appears when there are
+  /// multiple workspaces — a single-workspace session has nowhere
+  /// to move the pane.
   private func appendCommonPaneFooter(
-    _ menu: NSMenu, paneId: ULID, input: ReloadInput
+    _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
+    let paneId = paneNode.id
     appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "cycle_width", paneId: paneId, input: input)
+    if input.workspaces.count > 1 {
+      appendMoveToWorkspace(to: menu, paneNode: paneNode, input: input)
+    }
     menu.addItem(.separator())
     appendPaletteAction(to: menu, actionId: "close_pane", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "undo_close", paneId: paneId, input: input)
   }
 
+  /// Append the parent "Move to Workspace ▶" item whose submenu
+  /// lists every workspace by display index. Items for the source
+  /// workspace and for workspaces that cross the private boundary
+  /// are presented in disabled form so the choice space is visible
+  /// but rejection paths are unclickable (the `validateDrop` path
+  /// gates the same boundary for drag-drop already). Skipped
+  /// entirely if the source workspace can't be resolved from the
+  /// node (race between worklane reload and menu open) — clicking a
+  /// menu populated against a stale identity would silently no-op
+  /// in `dispatchPaneMenuAction` anyway, so leaving the item out
+  /// avoids the confusing "all items disabled" submenu.
+  private func appendMoveToWorkspace(
+    to menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
+  ) {
+    guard let sourceWs = paneNode.workspaceNode?.model else { return }
+    let item = NSMenuItem(
+      title: "Move to Workspace", action: nil, keyEquivalent: "")
+    item.submenu = buildMoveToWorkspaceSubmenu(
+      paneId: paneNode.id, sourceWs: sourceWs, input: input)
+    menu.addItem(item)
+  }
+
+  private func buildMoveToWorkspaceSubmenu(
+    paneId: ULID, sourceWs: WorkspaceModel, input: ReloadInput
+  ) -> NSMenu {
+    let submenu = NSMenu()
+    // Make per-item `isEnabled` authoritative. AppKit's default
+    // `autoenablesItems = true` calls `validateMenuItem:` /
+    // `validateUserInterfaceItem:` on the target — since the
+    // target (self) responds to the selector and no validator is
+    // implemented, every item would be re-enabled at display time,
+    // silently bypassing the source-self / cross-private disables
+    // set below. Submenus need their own opt-out because `NSMenu`
+    // doesn't propagate this flag from the parent menu.
+    submenu.autoenablesItems = false
+    let sourceIsPrivate = sourceWs.isPrivate
+    for (index, ws) in input.workspaces.enumerated() {
+      let item = NSMenuItem(
+        title: "Workspace \(index + 1)",
+        action: #selector(handleMoveToWorkspace(_:)),
+        keyEquivalent: "")
+      item.target = self
+      if ws.id == sourceWs.id {
+        // Same workspace would be a no-op — disable so the choice
+        // surface reads correctly without becoming a footgun.
+        item.isEnabled = false
+      } else if ws.isPrivate != sourceIsPrivate {
+        // Cross-private-boundary moves are blocked elsewhere
+        // (`performCrossWorkspaceMove` + `validateDrop`); reflect
+        // that constraint in the menu rather than letting the user
+        // click a doomed item.
+        item.isEnabled = false
+      }
+      item.representedObject = MoveToWorkspacePayload(
+        paneId: paneId, targetWorkspaceId: ws.id)
+      submenu.addItem(item)
+    }
+    return submenu
+  }
+
+  @objc private func handleMoveToWorkspace(_ sender: NSMenuItem) {
+    guard let payload = sender.representedObject as? MoveToWorkspacePayload,
+      let input = lastInput
+    else { return }
+    input.onMovePaneToWorkspace(
+      payload.paneId, payload.targetWorkspaceId, nil)
+  }
+
   /// Append a menu item that mirrors an existing palette `Action`.
-  /// The displayed text comes from `action.menuTitle ?? action.title`
+  /// The displayed text defaults to `action.menuTitle ?? action.title`
   /// so the action registry stays the single source of truth — a
   /// context menu wants a tighter phrasing than the palette and
   /// `menuTitle` is the explicit override for that. Chord glyph
@@ -1551,15 +1660,23 @@ extension WorklaneSectionView: NSMenuDelegate {
   /// item is skipped entirely when the action is missing from the
   /// snapshot (catches typos / removed ids at development time
   /// rather than silently producing chord-less menu items).
+  ///
+  /// `titleOverride` lets the builder compute a state-dependent
+  /// label at menu-open time (e.g. "Keep Pane Active" ↔ "Allow
+  /// Suspension" depending on the clicked pane's `isSuspendExempt`).
+  /// `Action.validate`'s second-element title hint can't be used
+  /// here because `validate` is a *focused*-state probe; the
+  /// worklane menu needs the *clicked-row* state, which often
+  /// differs from focus.
   private func appendPaletteAction(
     to menu: NSMenu, actionId: String, paneId: ULID,
-    input: ReloadInput
+    input: ReloadInput, titleOverride: String? = nil
   ) {
     guard let action = input.paneActionsProvider()
       .first(where: { $0.id == actionId })
     else { return }
     let item = NSMenuItem(
-      title: action.menuTitle ?? action.title,
+      title: titleOverride ?? action.menuTitle ?? action.title,
       action: #selector(handlePaneMenuAction(_:)),
       keyEquivalent: "")
     item.target = self
