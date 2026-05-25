@@ -190,6 +190,7 @@ public final class PaneModel {
   }
 
   private var urlBarTopConstraint: NSLayoutConstraint?
+  private var contentTopConstraint: NSLayoutConstraint?
   private var cornerObserver: SurfaceCornerObserver?
 
   /// Create a pane from a PaneAddress. Routes to the appropriate content type.
@@ -387,8 +388,10 @@ public final class PaneModel {
     headerView.translatesAutoresizingMaskIntoConstraints = false
 
     // The URL bar is a floating overlay driven by `alphaValue` over
-    // the pane's top edge. `cv` always spans the full container, so
-    // peek / pinned / hidden transitions never shift content layout.
+    // the pane's top edge. `cv`'s top constraint has a mutable inset
+    // that opens to `PaneURLBar.barHeight` only while the bar is
+    // pinned by the global toggle; peek and hidden keep the inset at
+    // zero so the bar floats over the content without shifting it.
     // Click pass-through is alpha-gated in `PaneURLBar.hitTest` so
     // an invisible bar leaves the page beneath fully interactive.
     // The find bar lives in a child NSPanel managed by
@@ -416,6 +419,7 @@ public final class PaneModel {
 
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
     let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)
+    contentTopConstraint = cv.topAnchor.constraint(equalTo: containerView.topAnchor)
 
     NSLayoutConstraint.activate([
       urlBarTopConstraint!,
@@ -423,9 +427,7 @@ public final class PaneModel {
       urlBar.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       urlBarHeight,
 
-      // `cv` always spans the full container — URL bar visibility
-      // never moves the page content.
-      cv.topAnchor.constraint(equalTo: containerView.topAnchor),
+      contentTopConstraint!,
       cv.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       cv.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
       cv.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
@@ -494,17 +496,24 @@ public final class PaneModel {
 
   private func applyURLBarVisibility(animated: Bool = true) {
     // Cross-fade the bar over 120ms — the same cadence as the find
-    // bar so the two chrome elements feel like siblings. The bar is
-    // a floating overlay anchored to the pane's top edge, so neither
-    // alpha nor opacity animation ever shifts the content beneath.
-    // `PaneURLBar.hitTest` skips alpha-zero bars so clicks fall
-    // through to the page when the bar is invisible.
+    // bar so the two chrome elements feel like siblings. Peek and
+    // hidden keep the content top at zero so the bar floats over the
+    // page; pinned opens the content top inset to `barHeight` so the
+    // bar lives above the page rather than over it. `PaneURLBar.hitTest`
+    // skips alpha-zero bars so clicks fall through to the page when
+    // the bar is invisible.
     //
     // `animated: false` is for the initial pane build, where the
     // freshly-allocated `PaneURLBar` is still at its default 1.0
     // alpha and a fade-from-visible would briefly flash the bar
     // before settling at hidden.
     let target: CGFloat = isURLBarVisible ? 1 : 0
+    // `isURLBarVisible` covers hidden/peek/pinned for alpha; `isPinned`
+    // is the strict subset that also wants the content shifted, so
+    // peek → pinned animates the content drop alone (alpha is already
+    // 1) and pinned → peek can never fire because `setURLBarPeek`
+    // rejects from `.pinned`.
+    let contentInset: CGFloat = urlBarHoverState.isPinned ? PaneURLBar.barHeight : 0
     if isURLBarVisible {
       // Probe the cursor before the alpha animation starts. AppKit's
       // tracking area only fires `mouseEntered` on a fresh entry,
@@ -529,10 +538,13 @@ public final class PaneModel {
         ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
         ctx.allowsImplicitAnimation = true
         urlBar.animator().alphaValue = target
+        contentTopConstraint?.constant = contentInset
+        containerView.layoutSubtreeIfNeeded()
       }
     } else {
       urlBar.layer?.removeAnimation(forKey: "opacity")
       urlBar.alphaValue = target
+      contentTopConstraint?.constant = contentInset
     }
   }
 
