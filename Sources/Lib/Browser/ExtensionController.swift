@@ -14,9 +14,9 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Extensions")
 /// through `E05Paths.default.dataDir`). Each immediate child is
 /// interpreted as one extension's resource base URL. The root
 /// directory is created lazily at first scan; the user is responsible
-/// for placing extensions there. Companion state files
-/// (`extensions-state.json`, `extensions-app-bundles.json`) live
-/// alongside the dir under the same `dataDir`.
+/// for placing extensions there. The companion state file
+/// (`extensions-state.json`) lives alongside the dir under the same
+/// `dataDir`.
 @MainActor
 public final class ExtensionController {
   public static let shared = ExtensionController()
@@ -105,14 +105,6 @@ public final class ExtensionController {
   /// `disabledExtensions` in `extensions-state.json`; pruned the
   /// same way at scan time.
   private var pinnedExtensions: Set<String> = []
-
-  /// External `.appex` paths the user added through `From App Bundle…`.
-  /// Persisted as JSON at `appBundlesStateFileURL` so the bundle
-  /// auto-reloads on next launch. Pruned at scan time when the
-  /// referenced bundle has disappeared from disk (the user trashed
-  /// the host app, the path moved, etc.) so the file mirrors what's
-  /// actually loadable.
-  private var persistedAppBundlePaths: [URL] = []
 
   /// One Task per active context, watching the context's
   /// `errorsDidUpdateNotification` stream. Tracked here so a toggle
@@ -362,12 +354,10 @@ public final class ExtensionController {
         console.log('[e05/polyfill] chrome.scripting.ExecutionWorld stubbed at', location.href);
       }
       // chrome.webNavigation.onCreatedNavigationTarget: present in
-      // Chrome but absent from WebKit. Same `.appex`-bypass-rewriter
-      // story as ExecutionWorld; inject here so 1Password's bg
-      // listener attach (line 110:369317 in 8.12.12) doesn't throw.
-      // stubEvent() returns a fresh object whose addListener is a
-      // no-op — WebKit doesn't track this event in any internal
-      // routing path, so synthesizing it is safe.
+      // Chrome but absent from WebKit. stubEvent() returns a fresh
+      // object whose addListener is a no-op — WebKit doesn't track
+      // this event in any internal routing path, so synthesizing it
+      // is safe.
       if (!disabled('webNavigation') && chrome.webNavigation
           && !chrome.webNavigation.onCreatedNavigationTarget) {
         chrome.webNavigation.onCreatedNavigationTarget = stubEvent();
@@ -771,16 +761,6 @@ public final class ExtensionController {
       "extensions-state.json", isDirectory: false)
   }
 
-  /// Persisted list of external `.appex` paths the user added through
-  /// `From App Bundle…`. Kept in a separate file from
-  /// `extensions-state.json` because the lifecycle is different
-  /// (entries can vanish when the host app is trashed; archive
-  /// entries live and die with `extensionsRoot`).
-  private static var appBundlesStateFileURL: URL {
-    E05Paths.default.dataDir.appendingPathComponent(
-      "extensions-app-bundles.json", isDirectory: false)
-  }
-
   /// On-disk shape of the state file. Kept as a dedicated nested
   /// `Codable` type so additions (e.g. per-extension permission
   /// overrides, last-update timestamps) can be appended later without
@@ -793,14 +773,6 @@ public final class ExtensionController {
     /// state.json written before the URL-bar pinning feature shipped
     /// decodes to "all unpinned" without a migration step.
     var pinnedExtensions: [String] = []
-  }
-
-  /// On-disk shape of `appBundlesStateFileURL`. Stores absolute file
-  /// system paths (resolved to the inner `.appex`, not the parent
-  /// `.app`) so re-launch hits the same load target without
-  /// re-running the picker logic.
-  private struct PersistedAppBundles: Codable {
-    var bundlePaths: [String] = []
   }
 
   /// Domain shared by every NSError thrown from this controller.
@@ -817,7 +789,6 @@ public final class ExtensionController {
     case notLoaded = 2
     case storeFetchFailed = 3
     case storeBadResponse = 4
-    case bundleNoAppex = 5
     case bundleInvalid = 6
     case nativeHostNotFound = 12
     case nativeHostLaunchFailed = 13
@@ -929,105 +900,6 @@ public final class ExtensionController {
       pinnedExtensions.formIntersection(presentFilenames)
       savePersistedState()
     }
-
-    await loadPersistedAppBundles()
-  }
-
-  /// Re-load every `.appex` the user previously added through
-  /// `From App Bundle…`. Only bundles whose host app has been
-  /// physically removed (Trashed, moved, renamed) are dropped —
-  /// transient failures (codesign cache mismatch, alreadyInstalled
-  /// from a duplicate launch path, etc.) keep their path in the
-  /// list so the next launch can retry instead of silently losing
-  /// the user's saved entry.
-  private func loadPersistedAppBundles() async {
-    loadPersistedAppBundlesState()
-    let saved = persistedAppBundlePaths
-    // Reset and rebuild from successful + retained paths. The user-
-    // facing `installFromAppBundle` is bypassed in favour of the
-    // internal core so startup re-install never touches the persist
-    // step (we'll save the full reconciled list once at the end).
-    persistedAppBundlePaths = []
-    let fm = FileManager.default
-    for bundleURL in saved {
-      guard fm.fileExists(atPath: bundleURL.path) else {
-        logger.info(
-          """
-          Pruning missing app-bundle reference \
-          \(bundleURL.path, privacy: .public)
-          """
-        )
-        continue
-      }
-      do {
-        try await loadAppBundleInternal(at: bundleURL)
-        persistedAppBundlePaths.append(bundleURL)
-      } catch {
-        // Path is on disk but the load throw'd. Could be a transient
-        // failure (codesign re-validation racing the launch, an OS
-        // upgrade-induced cache miss, alreadyInstalled if loadAll
-        // ever runs twice) — keep the path so the next launch retries
-        // instead of silently dropping the user's saved bundle.
-        persistedAppBundlePaths.append(bundleURL)
-        logger.error(
-          """
-          Failed to re-load persisted app bundle \
-          \(bundleURL.lastPathComponent, privacy: .public): \
-          \(String(describing: error), privacy: .public). \
-          Path retained for next launch.
-          """
-        )
-      }
-    }
-    // Persist the reconciled list once. Skipping the save keeps the
-    // existing file untouched if `loadPersistedAppBundlesState`
-    // detected and quarantined a corrupt original.
-    saveAppBundlesState()
-  }
-
-  private func loadPersistedAppBundlesState() {
-    let url = Self.appBundlesStateFileURL
-    guard let data = try? Data(contentsOf: url) else { return }
-    do {
-      let decoded = try JSONDecoder().decode(PersistedAppBundles.self, from: data)
-      persistedAppBundlePaths = decoded.bundlePaths.map(URL.init(fileURLWithPath:))
-    } catch {
-      // Move the bad file aside instead of overwriting it: if the
-      // user (or a buggy editor) corrupted the JSON, we want a copy
-      // they can recover from rather than silently turning it into
-      // an empty array. The next save writes a fresh file at the
-      // canonical path.
-      let quarantineURL = url.appendingPathExtension("corrupt")
-      logger.error(
-        """
-        Failed to decode extensions-app-bundles.json: \
-        \(String(describing: error), privacy: .public). \
-        Moving the original to \(quarantineURL.lastPathComponent, privacy: .public).
-        """
-      )
-      try? FileManager.default.moveItem(at: url, to: quarantineURL)
-    }
-  }
-
-  private func saveAppBundlesState() {
-    let url = Self.appBundlesStateFileURL
-    let payload = PersistedAppBundles(
-      bundlePaths: persistedAppBundlePaths.map(\.path).sorted()
-    )
-    do {
-      let encoder = JSONEncoder()
-      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-      let data = try encoder.encode(payload)
-      try data.write(to: url, options: [.atomic])
-    } catch {
-      logger.error(
-        """
-        Failed to write extensions-app-bundles.json at \
-        \(url.path, privacy: .private(mask: .hash)): \
-        \(String(describing: error), privacy: .public)
-        """
-      )
-    }
   }
 
   private func load(at url: URL) async throws {
@@ -1049,53 +921,16 @@ public final class ExtensionController {
       }
     }
     let ext = try await WKWebExtension(resourceBaseURL: url)
-    try activate(ext: ext, sourceURL: url, sourceKind: .archive)
+    try activate(ext: ext, sourceURL: url)
   }
 
-  /// Build a `WKWebExtension` from a Safari Web Extension's `.appex`
-  /// bundle and activate it through the standard pipeline. The
-  /// bundle reference is held implicitly by the resulting context
-  /// for as long as `WKWebExtensionController` keeps it loaded —
-  /// we never copy the `.appex` into `extensionsRoot`, because
-  /// copying would invalidate any code-signed Mac app's signature.
-  private func loadFromBundle(_ bundle: Bundle, sourceURL: URL) async throws {
-    let ext: WKWebExtension
-    do {
-      ext = try await WKWebExtension(appExtensionBundle: bundle)
-    } catch {
-      // Wrap WebKit's raw error in our own `bundleInvalid` so the
-      // sidebar alert speaks the same language for `.app` / `.appex`
-      // problems as the store paths do for HTTP failures, and so
-      // the underlying WebKit text shows up in `localizedDescription`
-      // without leaking domain implementation details to UI code.
-      logger.error(
-        """
-        WKWebExtension(appExtensionBundle:) threw for \
-        \(sourceURL.lastPathComponent, privacy: .public): \
-        \(String(describing: error), privacy: .public)
-        """
-      )
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.bundleInvalid.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Could not load '\(sourceURL.lastPathComponent)' as a Safari Web Extension: "
-            + (error as NSError).localizedDescription
-        ]
-      )
-    }
-    try activate(ext: ext, sourceURL: sourceURL, sourceKind: .appBundle)
-  }
-
-  /// Shared activation tail used by both the directory/ZIP and
-  /// `.appex` load paths. Builds the context, pre-grants permissions,
-  /// honours the persisted disable flag, and appends a snapshot to
-  /// `loadedExtensions`. Every call site has already produced the
-  /// `WKWebExtension` instance — this helper handles the
-  /// post-construction work that's identical across sources.
+  /// Shared activation tail for the directory/ZIP load path. Builds
+  /// the context, pre-grants permissions, honours the persisted
+  /// disable flag, and appends a snapshot to `loadedExtensions`.
+  /// Callers have already produced the `WKWebExtension` instance —
+  /// this helper handles the post-construction work.
   private func activate(
-    ext: WKWebExtension, sourceURL: URL, sourceKind: SourceKind
+    ext: WKWebExtension, sourceURL: URL
   ) throws {
     let name = ext.displayName ?? sourceURL.lastPathComponent
     let mv = String(format: "%g", ext.manifestVersion)
@@ -1136,9 +971,8 @@ public final class ExtensionController {
     // creation, which means each launch sees the extension as a
     // brand-new install: stored auth tokens vanish, vault encryption
     // keys can't be located, and password managers fall back to the
-    // first-run flow. Using the source filename (e.g. the CRX
-    // basename or `<host>.appex` lastPathComponent) keeps the
-    // identifier deterministic across runs without leaking the path.
+    // first-run flow. Using the source filename keeps the identifier
+    // deterministic across runs without leaking the path.
     ctx.uniqueIdentifier = "e05.\(sourceURL.lastPathComponent)"
 
     // Surface the extension's background page / service worker (and
@@ -1235,7 +1069,6 @@ public final class ExtensionController {
       icon: Self.bestIcon(for: ext),
       isEnabled: isEnabled,
       isPinned: pinnedExtensions.contains(filename),
-      sourceKind: sourceKind,
       hasOptionsPage: ext.hasOptionsPage
     )
     loadedExtensions.append(entry)
@@ -1378,12 +1211,6 @@ public final class ExtensionController {
     }
     let displayName = oldCtx.webExtension.displayName ?? filename
     let wasEnabled = !disabledExtensions.contains(filename)
-    // Capture the prior snapshot's source kind so the rollback path
-    // can restore it without re-deriving it from controller state —
-    // future bundle-source reload support won't have to touch this
-    // code.
-    let oldSourceKind =
-      loadedExtensions.first(where: { $0.sourceURL == sourceURL })?.sourceKind ?? .archive
 
     errorsTasksByFilename[filename]?.cancel()
     errorsTasksByFilename.removeValue(forKey: filename)
@@ -1423,8 +1250,7 @@ public final class ExtensionController {
         sourceURL: sourceURL,
         filename: filename,
         wasEnabled: wasEnabled,
-        displayName: displayName,
-        sourceKind: oldSourceKind
+        displayName: displayName
       )
       throw error
     }
@@ -1443,8 +1269,7 @@ public final class ExtensionController {
     sourceURL: URL,
     filename: String,
     wasEnabled: Bool,
-    displayName: String,
-    sourceKind: SourceKind
+    displayName: String
   ) {
     contextsByFilename[filename] = oldCtx
     if wasEnabled {
@@ -1478,7 +1303,6 @@ public final class ExtensionController {
       icon: Self.bestIcon(for: oldExt),
       isEnabled: wasEnabled,
       isPinned: pinnedExtensions.contains(filename),
-      sourceKind: sourceKind,
       hasOptionsPage: oldExt.hasOptionsPage
     )
     loadedExtensions.append(entry)
@@ -1688,80 +1512,6 @@ public final class ExtensionController {
     }
   }
 
-  /// Load a Safari Web Extension from a code-signed Mac app's
-  /// bundled `.appex` (or a directly-passed `.appex`). The bundle is
-  /// held in place — we deliberately do **not** copy it into
-  /// `extensionsRoot`, because copying invalidates the parent app's
-  /// code signature (App Store distributions, Developer ID-signed
-  /// builds, and ad-hoc-signed local builds all care). As a
-  /// consequence:
-  ///
-  /// - The bundle path is recorded in
-  ///   `extensions-app-bundles.json` so the next launch re-loads
-  ///   the same `.appex` automatically (`forgetAppBundleExtension`
-  ///   is the matching uninstall path).
-  /// - The sidebar row gates Reload and Move to Trash off so we
-  ///   never invoke `controller.unload`+rebuild on a bundle whose
-  ///   reference we'd have to re-resolve, and never `trashItem` an
-  ///   external app the user did not install through e05. The
-  ///   bundle row gets a `Forget` action instead.
-  /// - There's no `rollbackInstall` step on failure: nothing was
-  ///   copied, so a thrown error already leaves the user's
-  ///   filesystem untouched.
-  public func installFromAppBundle(at sourceURL: URL) async throws {
-    let resolvedURL = try await loadAppBundleInternal(at: sourceURL)
-    // User-driven installs append to the persisted list and save
-    // immediately; startup reloads bypass this and let
-    // `loadPersistedAppBundles` save once at the end of reconciliation.
-    if !persistedAppBundlePaths.contains(where: { $0.path == resolvedURL.path }) {
-      persistedAppBundlePaths.append(resolvedURL)
-      saveAppBundlesState()
-    }
-  }
-
-  /// Core install path for `.appex` sources. Resolves the bundle,
-  /// guards against duplicate filenames, and runs the standard
-  /// activation pipeline. Both the user-facing `installFromAppBundle`
-  /// and the startup `loadPersistedAppBundles` funnel through this so
-  /// the activation logic stays in one place; persistence is layered
-  /// on by the caller depending on whether this is a new install or
-  /// a startup reload. Returns the resolved `.appex` URL — the
-  /// caller often handed in a `.app` and needs to know which
-  /// internal `.appex` was actually loaded.
-  @discardableResult
-  private func loadAppBundleInternal(at sourceURL: URL) async throws -> URL {
-    let appexURL = try Self.resolveAppExtensionBundle(at: sourceURL)
-    // Same `alreadyInstalled` guard the archive paths use: silently
-    // overwriting a context that's already keyed under
-    // `appex.lastPathComponent` would orphan the previous entry's
-    // toggle/error subscriptions and let the new row mask the old
-    // one without warning.
-    let filename = appexURL.lastPathComponent
-    if contextsByFilename[filename] != nil {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.alreadyInstalled.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "An extension named '\(filename)' is already loaded. "
-            + "Remove the existing copy first if you want to replace it."
-        ]
-      )
-    }
-    guard let bundle = Bundle(url: appexURL) else {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.bundleInvalid.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Could not open '\(filename)' as an app extension bundle."
-        ]
-      )
-    }
-    try await loadFromBundle(bundle, sourceURL: appexURL)
-    return appexURL
-  }
-
   /// Default `WKWebExtensionAction` for `sourceURL`'s extension —
   /// the toolbar/badge surface a UI builds on top of. Returns `nil`
   /// when the extension isn't loaded or the action is suppressed
@@ -1799,92 +1549,6 @@ public final class ExtensionController {
     // Anchor is intentionally not cleared: WebKit may dispatch
     // presentActionPopup after this returns. The capture is
     // single-slot; the next click overwrites it.
-  }
-
-  /// Drop an app-bundle extension's controller state and remove its
-  /// path from the persisted list so the next launch ignores it.
-  /// Doesn't touch the on-disk `.app` — that belongs to the user;
-  /// uninstalling the host app is a separate operation. This is the
-  /// `.appBundle`-source counterpart to `removeExtension`'s
-  /// Move-to-Trash flow.
-  public func forgetAppBundleExtension(for sourceURL: URL) {
-    let filename = sourceURL.lastPathComponent
-    guard let ctx = contextsByFilename[filename] else {
-      logger.error(
-        "forgetAppBundleExtension for unknown source '\(filename, privacy: .public)' — ignored"
-      )
-      return
-    }
-    let displayName = ctx.webExtension.displayName ?? filename
-
-    errorsTasksByFilename[filename]?.cancel()
-    errorsTasksByFilename.removeValue(forKey: filename)
-    // Same disabledExtensions-gated unload as `removeExtension`; see
-    // there for the reasoning (entries that were never `controller.load`'d
-    // throw on unload).
-    if !disabledExtensions.contains(filename) {
-      do {
-        try controller.unload(ctx)
-      } catch {
-        logger.error(
-          """
-          controller.unload during forget failed for \
-          '\(displayName, privacy: .public)': \
-          \(String(describing: error), privacy: .public)
-          """
-        )
-      }
-    }
-
-    contextsByFilename.removeValue(forKey: filename)
-    disabledExtensions.remove(filename)
-    pinnedExtensions.remove(filename)
-    loadedExtensions.removeAll { $0.sourceURL == sourceURL }
-    persistedAppBundlePaths.removeAll { $0.path == sourceURL.path }
-    savePersistedState()
-    saveAppBundlesState()
-    logger.info("Forgot app-bundle extension '\(displayName, privacy: .public)'")
-    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
-  }
-
-  /// Resolve an `.appex` URL out of the user's selection. Accepts
-  /// either an `.appex` directly or a parent `.app`; in the latter
-  /// case the lexicographically first `.appex` under
-  /// `Contents/PlugIns` wins, sorted to keep the choice
-  /// deterministic across runs.
-  private static func resolveAppExtensionBundle(at url: URL) throws -> URL {
-    if url.pathExtension.lowercased() == "appex" {
-      return url
-    }
-    let pluginsURL = url.appendingPathComponent("Contents/PlugIns", isDirectory: true)
-    let fm = FileManager.default
-    guard fm.fileExists(atPath: pluginsURL.path) else {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.bundleNoAppex.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Selected app does not embed a Safari Web Extension."
-        ]
-      )
-    }
-    let entries =
-      ((try? fm.contentsOfDirectory(
-        at: pluginsURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
-      )) ?? [])
-      .sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
-    guard let firstAppex = entries.first(where: { $0.pathExtension.lowercased() == "appex" })
-    else {
-      throw NSError(
-        domain: Self.errorDomain,
-        code: ErrorCode.bundleNoAppex.rawValue,
-        userInfo: [
-          NSLocalizedDescriptionKey:
-            "Selected app does not embed a Safari Web Extension."
-        ]
-      )
-    }
-    return firstAppex
   }
 
   /// Move an extension to the Trash and tear down every cache entry
@@ -2163,36 +1827,11 @@ public struct LoadedExtension {
   /// slot. Mutated through `ExtensionController.setPinned`; the
   /// snapshot field exists so cell renders skip a controller hop.
   public internal(set) var isPinned: Bool
-  /// Where the extension was loaded from. Drives the sidebar's
-  /// per-row UI gating: `.archive` rows expose the full ellipsis
-  /// menu (Reload / Move to Trash), `.appBundle` rows hide actions
-  /// that would touch a code-signed app the controller doesn't own.
-  public let sourceKind: SourceKind
   /// Mirrors `WKWebExtension.hasOptionsPage` at activation time.
   /// Captured into the snapshot so the sidebar's row menu can gate
   /// the `Open Options Page` item without a per-render lookup
   /// through the context cache.
   public let hasOptionsPage: Bool
-}
-
-/// How an extension reached `ExtensionController`. The value is
-/// frozen at install time and travels with the snapshot so UI code
-/// can gate destructive actions without re-inspecting the file
-/// system. `public` mirrors `LoadedExtension`; tightening both to
-/// `internal` is a follow-up bundled with the loadedExtensions
-/// access-level review.
-public enum SourceKind: Sendable {
-  /// Unpacked directory or ZIP archive under
-  /// `ExtensionController.extensionsRoot` — including ones the user
-  /// dropped in by hand and ones e05 wrote there from a Web Store /
-  /// AMO download. Safe targets for Reload / Move to Trash.
-  case archive
-  /// `.appex` bundle inside an external `.app` (typically a
-  /// Mac App Store app's bundled Safari Web Extension). Loaded in
-  /// place; Reload would need to recreate the bundle reference and
-  /// Move to Trash would Trash the bundling app, so both are gated
-  /// off in the sidebar UI.
-  case appBundle
 }
 
 /// Delegate wrapper kept as a private class so the controller retains it via
@@ -2478,8 +2117,8 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     // `chrome-extension://<id>/` to `_e05_caller_origin` next to the
     // manifest and prefer it here. Hosts that don't validate (Bitwarden
     // Desktop) don't care which valid-shape origin we send. Falling
-    // back to the manifest's first allowed origin keeps the older
-    // `.appex` path working.
+    // back to the manifest's first allowed origin keeps the lookup
+    // robust when the marker file is absent.
     let callerOrigin: String? = {
       if let extDir = controller?.extensionDirectory(for: context) {
         let originFile = extDir.appendingPathComponent("_e05_caller_origin")

@@ -1,5 +1,4 @@
 import AppKit
-import UniformTypeIdentifiers
 import os.log
 
 private let extensionsCellLogger = Logger(
@@ -27,7 +26,6 @@ final class ExtensionsSidebarView: NSView {
   private let tableView = NSTableView()
   private let emptyLabel = NSTextField(labelWithString: "")
   private let addButton = NSButton()
-  private let addMenuButton = NSButton()
   private var rows: [LoadedExtension] = []
   nonisolated(unsafe) private var changeObserver: NSObjectProtocol?
   nonisolated(unsafe) private var scrollObserver: NSObjectProtocol?
@@ -108,36 +106,17 @@ final class ExtensionsSidebarView: NSView {
     // controls used elsewhere in the sidebar (download trailing
     // buttons, find-bar buttons). `imagePosition = .imageLeading`
     // pairs the SF Symbol with the title.
-    addButton.title = "Add Extension"
+    addButton.title = "Add from Folder or ZIP"
     addButton.image = NSImage(
-      systemSymbolName: "plus", accessibilityDescription: "Add Extension"
+      systemSymbolName: "plus", accessibilityDescription: "Add from Folder or ZIP"
     )
     addButton.imagePosition = .imageLeading
     addButton.bezelStyle = .recessed
     addButton.font = .systemFont(ofSize: 11, weight: .medium)
     addButton.target = self
-    // Default action is the folder/zip picker — that path predates
-    // store install and stays the lowest-friction option for users
-    // pointing at an unpacked dev build. The dropdown to its right
-    // surfaces the alternative install sources.
     addButton.action = #selector(addFromFolderClicked)
     addButton.translatesAutoresizingMaskIntoConstraints = false
     addSubview(addButton)
-
-    // Split-button companion: chevron.down to the right of the main
-    // Add Extension button opens a menu listing every install
-    // source. Visually flush with the main button so the pair reads
-    // as a single split control.
-    addMenuButton.image = NSImage(
-      systemSymbolName: "chevron.down", accessibilityDescription: "More install options"
-    )
-    addMenuButton.imagePosition = .imageOnly
-    addMenuButton.bezelStyle = .recessed
-    addMenuButton.target = self
-    addMenuButton.action = #selector(addMenuClicked)
-    addMenuButton.toolTip = "More install options"
-    addMenuButton.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(addMenuButton)
 
     // Two-line empty state mirroring the placeholder feel of other
     // sidebar modes. The path hint surfaces the convention so users
@@ -158,7 +137,7 @@ final class ExtensionsSidebarView: NSView {
       .replacingOccurrences(of: NSHomeDirectory(), with: "~")
     emptyLabel.stringValue =
       "No extensions loaded.\n"
-      + "Use “Add Extension” above or drop an\n"
+      + "Use “Add from Folder or ZIP” above or drop an\n"
       + "unpacked extension into\n"
       + abbreviatedPath
     emptyLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -168,11 +147,6 @@ final class ExtensionsSidebarView: NSView {
       addButton.topAnchor.constraint(equalTo: topAnchor, constant: 4),
       addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
       addButton.heightAnchor.constraint(equalToConstant: 22),
-
-      addMenuButton.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
-      addMenuButton.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: 2),
-      addMenuButton.widthAnchor.constraint(equalToConstant: 22),
-      addMenuButton.heightAnchor.constraint(equalToConstant: 22),
 
       scrollView.topAnchor.constraint(equalTo: addButton.bottomAnchor, constant: 6),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -217,178 +191,12 @@ final class ExtensionsSidebarView: NSView {
     }
   }
 
-  @objc private func addMenuClicked() {
-    let menu = NSMenu()
-    menu.autoenablesItems = false
-
-    let folderItem = NSMenuItem(
-      title: "From Folder or ZIP…",
-      action: #selector(addFromFolderClicked),
-      keyEquivalent: ""
-    )
-    folderItem.target = self
-    folderItem.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
-    menu.addItem(folderItem)
-
-    menu.addItem(.separator())
-
-    let chromeItem = NSMenuItem(
-      title: "From Chrome Web Store…",
-      action: #selector(addFromChromeWebStoreClicked),
-      keyEquivalent: ""
-    )
-    chromeItem.target = self
-    chromeItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-    menu.addItem(chromeItem)
-
-    menu.addItem(.separator())
-
-    let bundleItem = NSMenuItem(
-      title: "From App Bundle (POC, in-memory)…",
-      action: #selector(addFromAppBundleClicked),
-      keyEquivalent: ""
-    )
-    bundleItem.target = self
-    bundleItem.image = NSImage(systemSymbolName: "app.gift", accessibilityDescription: nil)
-    bundleItem.toolTip =
-      "Load a Safari Web Extension from a Mac app's .appex bundle. "
-      + "POC: the entry disappears on relaunch until persistence ships."
-    menu.addItem(bundleItem)
-
-    let origin = NSPoint(x: 0, y: addMenuButton.bounds.height)
-    menu.popUp(positioning: nil, at: origin, in: addMenuButton)
-  }
-
-  @objc private func addFromChromeWebStoreClicked() {
-    promptForStoreInstall(
-      title: "Install from Chrome Web Store",
-      placeholder: "https://chromewebstore.google.com/detail/<name>/<id>",
-      parser: Self.parseChromeWebStoreID,
-      install: { id in
-        try await ExtensionController.shared.installFromChromeWebStore(extensionID: id)
-      }
-    )
-  }
-
-  @objc private func addFromAppBundleClicked() {
-    guard let host = hostWindow else { return }
-    // `.application` covers the typical Mac App Store case (the
-    // user picks Bitwarden.app and we fish the .appex out of
-    // Contents/PlugIns). The dynamic UTI for `.appex`
-    // (`com.apple.application-extension`) lets power users hand us
-    // an `.appex` directly. macOS registers the `.appex` UTI at
-    // boot, so the lookup never fails in practice — surface a
-    // diagnostic alert if it ever does instead of silently dropping
-    // the filter.
-    guard let appex = UTType(filenameExtension: "appex") else {
-      presentRowAlert(
-        title: "Could not open app picker",
-        text:
-          "macOS did not register the .appex uniform type identifier; "
-          + "the app extension picker cannot filter sensibly.",
-        style: .warning
-      )
-      return
-    }
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.message =
-      "Choose a Mac app whose Safari Web Extension you want to load, "
-      + "or pick a .appex directly."
-    panel.prompt = "Add"
-    panel.allowedContentTypes = [.application, appex]
-    panel.beginSheetModal(for: host) { [weak self] response in
-      guard response == .OK, let chosen = panel.urls.first else { return }
-      Task { @MainActor in
-        do {
-          try await ExtensionController.shared.installFromAppBundle(at: chosen)
-        } catch {
-          self?.presentAddError(error)
-        }
-      }
-    }
-  }
-
-  /// Shared sheet for store-sourced installs: a single text field
-  /// accepts either a full listing URL or a bare ID/slug, the parser
-  /// closure normalises the input, and the install closure performs
-  /// the asynchronous fetch + load. Errors surface through
-  /// `presentAddError`.
-  private func promptForStoreInstall(
-    title: String,
-    placeholder: String,
-    parser: @escaping (String) -> String?,
-    install: @escaping (String) async throws -> Void
-  ) {
-    guard let host = hostWindow else { return }
-    let alert = NSAlert()
-    alert.messageText = title
-    alert.informativeText = "Paste the listing URL or extension ID."
-    alert.addButton(withTitle: "Install")
-    alert.addButton(withTitle: "Cancel")
-
-    let field = NSTextField(string: "")
-    field.placeholderString = placeholder
-    field.translatesAutoresizingMaskIntoConstraints = false
-    // NSAlert sizes its accessoryView from a combination of the
-    // initial frame and Auto Layout's fittingSize — seeding the
-    // frame keeps the field from collapsing to a sliver before the
-    // layout pass resolves the width constraint. Same lesson the
-    // bookmarks edit sheet documents.
-    field.frame = NSRect(x: 0, y: 0, width: 380, height: 22)
-    NSLayoutConstraint.activate([
-      field.widthAnchor.constraint(equalToConstant: 380)
-    ])
-    alert.accessoryView = field
-    alert.window.initialFirstResponder = field
-
-    alert.beginSheetModal(for: host) { [weak self] response in
-      guard let self else { return }
-      guard response == .alertFirstButtonReturn else { return }
-      let raw = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard let id = parser(raw), !id.isEmpty else {
-        self.presentRowAlert(
-          title: "Invalid input",
-          text: "Couldn't parse a store URL or extension ID from the input.",
-          style: .warning
-        )
-        return
-      }
-      Task { @MainActor in
-        do {
-          try await install(id)
-        } catch {
-          self.presentAddError(error)
-        }
-      }
-    }
-  }
-
   private func presentAddError(_ error: Error) {
     presentRowAlert(
       title: "Could not add extension",
       text: error.localizedDescription,
       style: .warning
     )
-  }
-
-  /// Pull a 32-character Chrome Web Store ID out of `input`. Accepts:
-  /// - the bare ID (32 chars from the `[a-p]` alphabet Google uses)
-  /// - any Web Store URL (`chromewebstore.google.com/detail/...`,
-  ///   the legacy `chrome.google.com/webstore/...`, or any future
-  ///   variant) — the ID is uniquely formatted enough that a
-  ///   first-match regex finds it without per-host parsing.
-  ///
-  /// Marked `nonisolated` because the function is purely textual and
-  /// mainly exists for unit tests; running it off the main actor in
-  /// a future store-search pipeline costs nothing.
-  nonisolated static func parseChromeWebStoreID(_ input: String) -> String? {
-    if let match = input.firstMatch(of: #/[a-p]{32}/#) {
-      return String(match.0)
-    }
-    return nil
   }
 
   private func reload() {
@@ -458,11 +266,8 @@ enum ExtensionRowAction {
   /// reachable via the puzzle-piece menu.
   case unpinFromURLBar
   /// Move the extension's source archive to the Trash and clear all
-  /// caches. `.archive` rows only.
+  /// caches.
   case remove
-  /// Drop controller state + the persisted app-bundle path entry,
-  /// leaving the host `.app` untouched. `.appBundle` rows only.
-  case forget
 }
 
 extension ExtensionsSidebarView {
@@ -508,8 +313,6 @@ extension ExtensionsSidebarView {
       ExtensionController.shared.setPinned(false, for: sourceURL)
     case .remove:
       ExtensionController.shared.removeExtension(for: sourceURL)
-    case .forget:
-      ExtensionController.shared.forgetAppBundleExtension(for: sourceURL)
     }
   }
 
@@ -549,7 +352,6 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   private let toggle = NSSwitch()
   private let menuButton = HoverIconButton()
   private var currentSourceURL: URL?
-  private var currentSourceKind: SourceKind = .archive
   /// Mirrored from the latest `configure(with:)` so menu construction
   /// can gate `Open Options Page` on the manifest declaration without
   /// re-reading the snapshot.
@@ -662,12 +464,6 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   @objc private func menuTapped() {
     guard let sourceURL = currentSourceURL else { return }
     let hasErrors = !ExtensionController.shared.errors(for: sourceURL).isEmpty
-    // Bundle-sourced rows reference an `.appex` inside an external
-    // app the controller doesn't own. Reload would need to resolve
-    // the bundle reference again, and Move to Trash would Trash that
-    // external app — both gated off until the persistence story
-    // lands.
-    let isFileBacked = currentSourceKind == .archive
     let menu = NSMenu()
     // Default-true autoenablesItems would override per-item
     // `isEnabled = false` whenever the item carries a wired
@@ -685,8 +481,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         title: "Reload",
         symbol: "arrow.clockwise",
         action: #selector(menuReload(_:)),
-        sourceURL: sourceURL,
-        enabled: isFileBacked
+        sourceURL: sourceURL
       )
     )
     menu.addItem(
@@ -729,28 +524,14 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
       )
     )
     menu.addItem(.separator())
-    if isFileBacked {
-      menu.addItem(
-        buildMenuItem(
-          title: "Move to Trash",
-          symbol: "trash",
-          action: #selector(menuRemove(_:)),
-          sourceURL: sourceURL
-        )
+    menu.addItem(
+      buildMenuItem(
+        title: "Move to Trash",
+        symbol: "trash",
+        action: #selector(menuRemove(_:)),
+        sourceURL: sourceURL
       )
-    } else {
-      // Bundle-sourced rows can't Trash the host `.app`; Forget is
-      // the symmetric action that drops controller state + the
-      // persisted bundle path entry.
-      menu.addItem(
-        buildMenuItem(
-          title: "Forget",
-          symbol: "eject",
-          action: #selector(menuForget(_:)),
-          sourceURL: sourceURL
-        )
-      )
-    }
+    )
 
     // Anchor flush to the menu button's bottom-left so the first item
     // sits directly under the glyph (same idiom as Bookmarks).
@@ -802,11 +583,6 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     onRowAction?(sourceURL, .remove)
   }
 
-  @objc private func menuForget(_ sender: NSMenuItem) {
-    guard let sourceURL = sourceURL(from: sender) else { return }
-    onRowAction?(sourceURL, .forget)
-  }
-
   /// Pull the row's URL back out of the menu item. A nil result means
   /// the item was constructed without `representedObject` set —
   /// `buildMenuItem` always populates it, so a nil here is a bug in
@@ -826,7 +602,6 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
 
   func configure(with entry: LoadedExtension) {
     currentSourceURL = entry.sourceURL
-    currentSourceKind = entry.sourceKind
     currentHasOptionsPage = entry.hasOptionsPage
     currentIsEnabled = entry.isEnabled
     currentIsPinned = entry.isPinned

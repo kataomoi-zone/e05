@@ -91,44 +91,6 @@ struct CRXArchiveTests {
   }
 }
 
-@Suite("ExtensionsSidebarView parsers")
-struct ExtensionsSidebarParsersTests {
-  // MARK: Chrome Web Store ID
-
-  @Test("accepts a bare 32-char ID")
-  func bareID() {
-    #expect(
-      ExtensionsSidebarView.parseChromeWebStoreID("nngceckbapebfimnlniiiahkandclblb")
-        == "nngceckbapebfimnlniiiahkandclblb"
-    )
-  }
-
-  @Test("extracts ID from current Web Store URL")
-  func currentURL() {
-    let url =
-      "https://chromewebstore.google.com/detail/bitwarden-password-manager/nngceckbapebfimnlniiiahkandclblb"
-    #expect(
-      ExtensionsSidebarView.parseChromeWebStoreID(url) == "nngceckbapebfimnlniiiahkandclblb"
-    )
-  }
-
-  @Test("extracts ID from legacy Web Store URL")
-  func legacyURL() {
-    let url =
-      "https://chrome.google.com/webstore/detail/bitwarden-free-password-m/nngceckbapebfimnlniiiahkandclblb"
-    #expect(
-      ExtensionsSidebarView.parseChromeWebStoreID(url) == "nngceckbapebfimnlniiiahkandclblb"
-    )
-  }
-
-  @Test("returns nil for input without an ID")
-  func chromeNoID() {
-    #expect(ExtensionsSidebarView.parseChromeWebStoreID("not a store URL") == nil)
-    #expect(ExtensionsSidebarView.parseChromeWebStoreID("") == nil)
-  }
-
-}
-
 extension Data {
   fileprivate mutating func append(uint32LE value: UInt32) {
     var v = value.littleEndian
