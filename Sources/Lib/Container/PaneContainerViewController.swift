@@ -126,6 +126,20 @@ public final class PaneContainerViewController: NSViewController {
 
   nonisolated(unsafe) var scrollEventMonitor: Any?
 
+  /// Trackpad gestures get a single routing decision (pane vs. workspace)
+  /// at their `.began` event, applied to every subsequent `.changed` /
+  /// `.ended` / momentum event in the same gesture so the routing
+  /// can't flip mid-stream when the page's `horizontalScrollEdge`
+  /// shifts under the user's finger. The lock survives between
+  /// gestures with no harm — the next `.began` overwrites it
+  /// outright. Mouse-wheel events (no phase) bypass the lock and
+  /// decide per event.
+  private enum ScrollGestureLock {
+    case pane
+    case workspace
+  }
+  private var scrollGestureLock: ScrollGestureLock?
+
   /// Single 1 Hz tick that drives `BrowserPaneView.updateAudioStateOnce`
   /// across every pane, replacing the per-pane Task that earlier drafts
   /// kept. One main-actor wakeup per second covers all panes; probes
@@ -743,22 +757,118 @@ public final class PaneContainerViewController: NSViewController {
 
   // MARK: - Scroll Event Monitor
 
-  /// Intercept horizontal scroll events before GhosttyTerminalView consumes them.
+  /// Route every scrollWheel event between pane content and the
+  /// workspace's horizontal pane-navigation scroll view. Vertical
+  /// gestures always belong to the pane (the browser, terminal, and
+  /// finder all scroll their own content vertically). Horizontal
+  /// gestures over a browser pane stay in the pane while the page has
+  /// horizontal-scrollable content available in the gesture's
+  /// direction; otherwise (no horizontal overflow, or at the edge
+  /// against the gesture direction) the gesture spills to the
+  /// workspace scrollView for pane navigation. Terminal / finder /
+  /// off-pane regions are workspace-by-default for horizontal
+  /// gestures since they have no horizontal-overflow concept.
+  ///
+  /// The decision is latched at the gesture's `.began` event and
+  /// reused for every subsequent `.changed` / `.ended` / momentum
+  /// event in the same gesture, so mid-gesture changes to a page's
+  /// horizontal scroll state can't toggle the routing mid-stream.
+  /// Mouse-wheel events arrive without a phase and are decided per
+  /// event.
   private func installScrollEventMonitor() {
     scrollEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) {
       [weak self] event in
       guard let self else { return event }
+      return self.routeScrollEvent(event)
+    }
+  }
 
-      let locationInView = self.scrollView.convert(event.locationInWindow, from: nil)
-      guard self.scrollView.bounds.contains(locationInView) else { return event }
+  private func routeScrollEvent(_ event: NSEvent) -> NSEvent? {
+    let locationInView = scrollView.convert(event.locationInWindow, from: nil)
+    guard scrollView.bounds.contains(locationInView) else { return event }
 
-      if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
-        self.scrollView.scrollWheel(with: event)
-        return nil
-      }
+    let decision: ScrollGestureLock
+    if event.phase == .began {
+      let d = decideScrollLock(for: event)
+      scrollGestureLock = d
+      decision = d
+    } else if event.phase == [] && event.momentumPhase == [] {
+      // Mouse wheel: no phase to latch against, decide per event.
+      decision = decideScrollLock(for: event)
+    } else if let locked = scrollGestureLock {
+      decision = locked
+    } else {
+      // Phase event with no prior `.began` (e.g., a stray momentum
+      // event after our monitor was reattached). Decide ad-hoc rather
+      // than dropping the event.
+      decision = decideScrollLock(for: event)
+    }
 
+    switch decision {
+    case .workspace:
+      scrollView.scrollWheel(with: event)
+      return nil
+    case .pane:
       return event
     }
+  }
+
+  private func decideScrollLock(for event: NSEvent) -> ScrollGestureLock {
+    if abs(event.scrollingDeltaX) <= abs(event.scrollingDeltaY) {
+      return .pane
+    }
+    guard let pane = paneAtWindowLocation(event.locationInWindow),
+      let browserView = pane.browserView
+    else {
+      return .workspace
+    }
+    return canPaneAbsorbHorizontal(
+      deltaX: event.scrollingDeltaX,
+      edge: browserView.horizontalScrollEdge
+    ) ? .pane : .workspace
+  }
+
+  /// Whether the pane's horizontal scroll capability accommodates a
+  /// gesture of the given delta. `deltaX` follows NSEvent's
+  /// natural-scrolling convention: a positive value corresponds to a
+  /// gesture that scrolls the page back toward its leading content
+  /// (the user's swipe reveals what was hidden to the left), and a
+  /// negative value scrolls forward toward trailing content. The edge
+  /// labels mirror that — `right` means "the page can still scroll
+  /// rightward into trailing content," etc. — so the absorb check is
+  /// the natural conjunction.
+  private func canPaneAbsorbHorizontal(
+    deltaX: CGFloat,
+    edge: BrowserPaneView.HorizontalScrollEdge
+  ) -> Bool {
+    switch edge {
+    case .none: return false
+    case .both: return true
+    case .left: return deltaX > 0
+    case .right: return deltaX < 0
+    }
+  }
+
+  /// Hit-test every pane in the current workspace's columns for a
+  /// window-space point. Non-current workspaces are parked off-screen
+  /// by `viewDidLayout` so their pane frames never overlap any visible
+  /// cursor position; restricting the scan to `columns` (=
+  /// `currentWorkspace.columns`) avoids a confusing match against an
+  /// off-screen pane that happens to share a coordinate with the
+  /// cursor. Panes don't overlap within a workspace, so first-hit is
+  /// unambiguous. Returns `nil` when the cursor is over chrome
+  /// (sidebar, gaps between panes, the URL bar's hover-peek body,
+  /// etc.) — those land on the workspace by default.
+  private func paneAtWindowLocation(_ pointInWindow: NSPoint) -> PaneModel? {
+    for col in columns {
+      for pane in col.panes {
+        let frame = pane.containerView.convert(pane.containerView.bounds, to: nil)
+        if frame.contains(pointInWindow) {
+          return pane
+        }
+      }
+    }
+    return nil
   }
 
 }

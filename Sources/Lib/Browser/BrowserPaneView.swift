@@ -62,6 +62,31 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// otherwise the page flickers between "Add to E05" and "Remove
   /// from E05" once the `didFinish` push catches up.
   private var chromeWebStoreStateHandler: ChromeWebStoreStateHandler?
+  /// Strong-references the handler that mirrors the page's horizontal
+  /// overflow scroll position into ``horizontalScrollEdge``. Same
+  /// strong-reference rationale as the hover-link / CWS handlers: the
+  /// user content controller only holds the handler weakly, so without
+  /// a property here it would deallocate right after `init` returns.
+  /// `nil` on extension-hosted panes (the overscroll-spill router has
+  /// no use for an extension popup's scroll state).
+  private var scrollEdgeHandler: ScrollEdgeMessageHandler?
+
+  /// Coarse summary of whether the page can scroll horizontally and
+  /// in which direction(s) from its current position. Updated from
+  /// the ``scrollEdgeUserScript`` content script on `scroll` /
+  /// `resize` / DOMContentLoaded, and read by
+  /// ``PaneContainerViewController`` when deciding whether a
+  /// horizontal scrollWheel gesture should drive page scrolling or
+  /// workspace pane navigation. Always `.none` on extension-hosted
+  /// panes and on freshly-loaded pages until the first snapshot
+  /// arrives — both safely fall through to workspace-handles-it.
+  public enum HorizontalScrollEdge: String {
+    case none
+    case both
+    case left
+    case right
+  }
+  public private(set) var horizontalScrollEdge: HorizontalScrollEdge = .none
 
   /// Paired horizontal constraints for ``hoverLinkOverlay``. Only
   /// one is active at any time; the JS content script decides which
@@ -269,6 +294,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     hoverLinkMessageHandler = built.hoverHandler
     chromeWebStoreInstallHandler = built.cwsInstallHandler
     chromeWebStoreStateHandler = built.cwsStateHandler
+    scrollEdgeHandler = built.scrollEdgeHandler
     muteChannelId = built.channelId
     isExtensionHosted = built.isExtensionHosted
     savedDataStore = dataStore
@@ -289,6 +315,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     built.cwsStateHandler?.idsProvider = {
       ExtensionController.shared.installedChromeWebStoreIDs
+    }
+    built.scrollEdgeHandler?.onChange = { [weak self] edge in
+      self?.horizontalScrollEdge = edge
     }
     wantsLayer = true
     layer?.backgroundColor = AppColors.paneSurface.cgColor
@@ -357,6 +386,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     hoverHandler: HoverLinkMessageHandler,
     cwsInstallHandler: ChromeWebStoreInstallHandler?,
     cwsStateHandler: ChromeWebStoreStateHandler?,
+    scrollEdgeHandler: ScrollEdgeMessageHandler?,
     channelId: String,
     isExtensionHosted: Bool
   ) {
@@ -435,6 +465,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // path.
     let cwsInstallHandler: ChromeWebStoreInstallHandler?
     let cwsStateHandler: ChromeWebStoreStateHandler?
+    let scrollEdgeHandler: ScrollEdgeMessageHandler?
     if extensionConfig == nil {
       let installHandler = ChromeWebStoreInstallHandler()
       let stateHandler = ChromeWebStoreStateHandler()
@@ -447,9 +478,27 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       )
       cwsInstallHandler = installHandler
       cwsStateHandler = stateHandler
+
+      // Horizontal-overflow snapshot for the workspace-vs-pane scroll
+      // router (`PaneContainerViewController.routeScrollEvent`). The
+      // user script lives in the same `.defaultClient` content world
+      // as hover-link so the page can't shadow `webkit.messageHandlers`
+      // — a content script in `.page` would be visible to ad code that
+      // routinely scribbles over `webkit`. Main-frame only: the router
+      // cares about the top document's scrollable region; iframe-local
+      // horizontal overflow is rare and the iframe owns its own scroll
+      // gesture handling anyway.
+      let edgeHandler = ScrollEdgeMessageHandler()
+      config.userContentController.addUserScript(Self.scrollEdgeUserScript)
+      config.userContentController.add(
+        edgeHandler,
+        contentWorld: Self.scrollEdgeContentWorld,
+        name: Self.scrollEdgeHandlerName)
+      scrollEdgeHandler = edgeHandler
     } else {
       cwsInstallHandler = nil
       cwsStateHandler = nil
+      scrollEdgeHandler = nil
     }
     let webView = FocusReportingWebView(frame: .zero, configuration: config)
     // WKWebView's default UA on macOS 26 omits both `Version/<n>` and
@@ -467,7 +516,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       // broken rather than helpful.
       webView.allowsMagnification = true
     }
-    return (webView, hoverHandler, cwsInstallHandler, cwsStateHandler, channelId, extensionConfig != nil)
+    return (webView, hoverHandler, cwsInstallHandler, cwsStateHandler, scrollEdgeHandler, channelId, extensionConfig != nil)
   }
 
   /// Safari-equivalent UA stamped onto every non-extension pane's
@@ -1113,7 +1162,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     hoverLinkMessageHandler = built.hoverHandler
     chromeWebStoreInstallHandler = built.cwsInstallHandler
     chromeWebStoreStateHandler = built.cwsStateHandler
+    scrollEdgeHandler = built.scrollEdgeHandler
     muteChannelId = built.channelId
+    horizontalScrollEdge = .none
 
     built.hoverHandler.onMessage = { [weak self] url, side in
       guard let self else { return }
@@ -1129,6 +1180,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     built.cwsStateHandler?.idsProvider = {
       ExtensionController.shared.installedChromeWebStoreIDs
+    }
+    built.scrollEdgeHandler?.onChange = { [weak self] edge in
+      self?.horizontalScrollEdge = edge
     }
     built.webView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()
@@ -2321,6 +2375,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Content world shared by the hover-link user script and its
   /// message handler. Isolates `window.__e05HoverLinkInstalled`
   /// from page scripts so ad code can't clobber the install guard.
+  /// Also reused by ``scrollEdgeContentWorld``; both scripts coexist
+  /// behind distinct install guards and distinct message-handler
+  /// names. Don't migrate hover-link off `.defaultClient` without
+  /// also moving scroll-edge — the routing logic in
+  /// ``PaneContainerViewController`` depends on the latter staying
+  /// reachable from this world.
   static let hoverLinkContentWorld: WKContentWorld = .defaultClient
 
   /// Content script that delegates mouse events on `document` to
@@ -2428,6 +2488,98 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     forMainFrameOnly: false,
     in: hoverLinkContentWorld
   )
+
+  static let scrollEdgeHandlerName = "e05ScrollEdge"
+
+  /// Same world as hover-link so the install guard and message-handler
+  /// surface are isolated from page scripts. Reusing `.defaultClient`
+  /// is safe — both scripts use distinct install guards and distinct
+  /// handler names.
+  static let scrollEdgeContentWorld: WKContentWorld = .defaultClient
+
+  /// Content script that snapshots the horizontal overflow state of
+  /// whatever scrollable region currently lives under the cursor. The
+  /// top document is the fallback, but most modern sites use an inner
+  /// `<div overflow-x: scroll>` for their horizontally-scrollable
+  /// region (X.com timelines, Discord channel lists, Notion wide
+  /// tables, …), so a `document.scrollingElement`-only probe would
+  /// misreport every one of them as having no horizontal overflow.
+  /// Tracks the cursor target via `mouseover` / `mousemove` (capture
+  /// phase to catch synthetic clones), walks ancestors at probe time
+  /// to find the nearest element whose computed `overflow-x` allows
+  /// scrolling AND has horizontally-overflowing content, and reports
+  /// that element's edge state. De-duplicates against the last sent
+  /// value so a still cursor and a quiet page don't flood the IPC
+  /// channel.
+  private static let scrollEdgeUserScript = WKUserScript(
+    source: """
+      (function() {
+        if (window.__e05ScrollEdgeInstalled) return;
+        window.__e05ScrollEdgeInstalled = true;
+
+        let hoverTarget = null;
+        let lastSent = null;
+
+        function findScrollableX(el) {
+          const view = (el && el.ownerDocument && el.ownerDocument.defaultView) || window;
+          let node = el;
+          while (node && node.nodeType === 1) {
+            const sw = node.scrollWidth | 0;
+            const cw = node.clientWidth | 0;
+            if (sw > cw + 1) {
+              const ox = view.getComputedStyle(node).overflowX;
+              if (ox === 'scroll' || ox === 'auto') return node;
+            }
+            if (node === node.ownerDocument.documentElement) break;
+            node = node.parentNode;
+          }
+          // Top-level page scroll fallback.
+          return document.scrollingElement || document.documentElement;
+        }
+
+        function edgeFor(el) {
+          if (!el) return 'none';
+          const sl = el.scrollLeft | 0;
+          const max = (el.scrollWidth - el.clientWidth) | 0;
+          if (max <= 1) return 'none';
+          if (sl <= 0) return 'right';
+          if (sl >= max - 1) return 'left';
+          return 'both';
+        }
+
+        function snap() {
+          const target = hoverTarget ? findScrollableX(hoverTarget)
+            : (document.scrollingElement || document.documentElement);
+          const edge = edgeFor(target);
+          if (edge === lastSent) return;
+          lastSent = edge;
+          try {
+            webkit.messageHandlers.e05ScrollEdge.postMessage(edge);
+          } catch (e) { /* handler not yet registered on this frame */ }
+        }
+
+        document.addEventListener('mouseover', (e) => {
+          hoverTarget = e.target;
+          snap();
+        }, { passive: true, capture: true });
+        document.addEventListener('mousemove', (e) => {
+          if (e.target === hoverTarget) return;
+          hoverTarget = e.target;
+          snap();
+        }, { passive: true, capture: true });
+        addEventListener('scroll', snap, { passive: true, capture: true });
+        addEventListener('resize', () => { lastSent = null; snap(); });
+        document.addEventListener('DOMContentLoaded', () => {
+          lastSent = null;
+          snap();
+        });
+        setTimeout(snap, 0);
+      })();
+      """,
+    injectionTime: .atDocumentStart,
+    forMainFrameOnly: true,
+    in: scrollEdgeContentWorld
+  )
 }
 
 /// Bridges JS `webkit.messageHandlers.e05HoverLink` posts to a Swift
@@ -2447,6 +2599,27 @@ private final class HoverLinkMessageHandler: NSObject, WKScriptMessageHandler {
     let url = body?["url"] as? String
     let side = body?["side"] as? String
     onMessage?(url, side)
+  }
+}
+
+/// Bridges JS `webkit.messageHandlers.e05ScrollEdge` posts to a Swift
+/// closure. Same retain-strategy as ``HoverLinkMessageHandler``: kept
+/// out of ``BrowserPaneView`` so the user content controller can hold
+/// a weak reference without creating a retain cycle, and held alive
+/// by ``BrowserPaneView.scrollEdgeHandler``.
+@MainActor
+private final class ScrollEdgeMessageHandler: NSObject, WKScriptMessageHandler {
+  var onChange: ((BrowserPaneView.HorizontalScrollEdge) -> Void)?
+
+  func userContentController(
+    _: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard message.name == BrowserPaneView.scrollEdgeHandlerName else { return }
+    guard let raw = message.body as? String,
+      let edge = BrowserPaneView.HorizontalScrollEdge(rawValue: raw)
+    else { return }
+    onChange?(edge)
   }
 }
 
