@@ -28,6 +28,19 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// Used by undo close to keep the terminal alive while detached.
   public var keepSurfaceAlive = false
 
+  /// Observer for `NSApplication.didChangeScreenParametersNotification`.
+  /// `viewDidChangeBackingProperties` fires on backing scale change, but
+  /// physically reconnecting a display (or any display arrangement
+  /// change that does not move the window across scale boundaries) does
+  /// not surface as a backing scale change, so the metal layer keeps
+  /// its previous `contentsScale` while libghostty re-renders glyphs
+  /// against the new screen — visually the cell size goes wrong until
+  /// something else forces a resync. Listen at the application level
+  /// and resync explicitly. `nonisolated(unsafe)` so the nonisolated
+  /// deinit can read it for teardown; the token is a class reference
+  /// and `NotificationCenter.removeObserver` is documented thread-safe.
+  nonisolated(unsafe) private var screenParametersObserver: NSObjectProtocol?
+
   public init(frame: NSRect, ghosttyApp: GhosttyApp) {
     self.ghosttyApp = ghosttyApp
     super.init(frame: frame)
@@ -37,6 +50,16 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   @available(*, unavailable)
   required init?(coder _: NSCoder) {
     fatalError()
+  }
+
+  deinit {
+    // Defense in depth: `viewDidMoveToWindow(nil)` normally tears the
+    // observer down, but a teardown path that skips it (e.g. abrupt
+    // app termination, future retain cycle) would otherwise leave the
+    // NotificationCenter entry behind.
+    if let obs = screenParametersObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
   }
 
   // MARK: - Layer
@@ -56,14 +79,44 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     super.viewDidMoveToWindow()
     if window != nil {
       if surface != nil {
-        // Re-entering view hierarchy (e.g. undo close): refresh size
-        updateSize()
+        // Re-entering view hierarchy (e.g. undo close): resync the
+        // full set of display metrics rather than just size — the
+        // observer is detached while the view is detached, so any
+        // screen change that landed during the detached window may
+        // have left the metal layer and the surface scale stale.
+        resyncDisplayMetrics()
       } else {
         createSurface()
       }
-    } else if !keepSurfaceAlive {
-      destroySurface()
+      attachScreenParametersObserver()
+    } else {
+      detachScreenParametersObserver()
+      if !keepSurfaceAlive {
+        destroySurface()
+      }
     }
+  }
+
+  private func attachScreenParametersObserver() {
+    guard screenParametersObserver == nil else { return }
+    screenParametersObserver = NotificationCenter.default.addObserver(
+      forName: NSApplication.didChangeScreenParametersNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      // Defer to the next runloop turn so `window?.backingScaleFactor`
+      // and `bounds` reflect the post-reconfiguration display rather
+      // than whatever AppKit briefly reports during the change.
+      DispatchQueue.main.async { [weak self] in
+        self?.resyncDisplayMetrics()
+      }
+    }
+  }
+
+  private func detachScreenParametersObserver() {
+    guard let obs = screenParametersObserver else { return }
+    NotificationCenter.default.removeObserver(obs)
+    screenParametersObserver = nil
   }
 
   private func createSurface() {
@@ -113,6 +166,18 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   public override func viewDidChangeBackingProperties() {
     super.viewDidChangeBackingProperties()
+    resyncDisplayMetrics()
+  }
+
+  /// Re-bind the metal layer's `contentsScale` and ghostty's content
+  /// scale to the current window's backing scale, then refresh the
+  /// surface size. Called from both the backing-properties hook (for
+  /// scale-only changes) and the screen-parameters observer (for
+  /// reconnect-style changes where backing scale stays nominally the
+  /// same but the underlying display has been swapped). Safe to call
+  /// on column-folded panes: the scale calls are size-independent and
+  /// `updateSize` self-guards on `isHiddenOrHasHiddenAncestor`.
+  private func resyncDisplayMetrics() {
     guard let surface, let scale = window?.backingScaleFactor else { return }
     metalLayer?.contentsScale = scale
     ghostty_surface_set_content_scale(surface, scale, scale)
