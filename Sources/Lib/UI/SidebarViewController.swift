@@ -364,6 +364,12 @@ final class SidebarViewController: NSViewController {
         },
         onCreatePrivateWorkspace: { [weak container] in
           container?.createWorkspace(isPrivate: true)
+        },
+        paneActionsProvider: { [weak container] in
+          container?.menuActionsSnapshot ?? []
+        },
+        onPaneAction: { [weak container] actionId, paneId in
+          container?.dispatchPaneMenuAction(actionId, paneId: paneId)
         }
       ))
   }

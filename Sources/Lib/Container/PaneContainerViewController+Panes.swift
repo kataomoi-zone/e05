@@ -1418,6 +1418,107 @@ extension PaneContainerViewController {
     locatePane(id: paneId)?.pane.browserView?.toggleMute()
   }
 
+  /// Toggle the per-host mute flag for the pane's current URL host.
+  /// Writes through `MutedSitesStore` and fans out the new state to
+  /// every already-open browser pane on the same host via
+  /// `applyMuteToPanes(matchingHost:muted:)` so the worklane mute
+  /// indicator and the URL bar speaker glyph reflect the change
+  /// immediately, not only on the next navigation. No-op for panes
+  /// whose host isn't resolvable (extension-hosted pages,
+  /// pre-navigation blank panes).
+  public func toggleSiteMuteForPane(id paneId: ULID) {
+    guard let target = locatePane(id: paneId),
+      let bv = target.pane.browserView,
+      !bv.isExtensionHosted,
+      let host = bv.webView.url?.host(percentEncoded: false)?.lowercased()
+    else { return }
+    let store = MutedSitesStore.shared
+    let next = !store.isMuted(host: host)
+    store.setMuted(next, host: host)
+    applyMuteToPanes(matchingHost: host, muted: next)
+  }
+
+  /// Copy the pane's current URL to the general pasteboard. Used by
+  /// the worklane context menu's `"Copy URL"` item. Silent no-op for
+  /// panes whose URL hasn't resolved yet (blank browser, suspended
+  /// pane with no captured URL, extension popups with internal-only
+  /// addresses).
+  public func copyPaneURL(id paneId: ULID) {
+    guard let target = locatePane(id: paneId),
+      let url = target.pane.browserView?.webView.url?.absoluteString,
+      !url.isEmpty
+    else { return }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(url, forType: .string)
+    showToast("Copy URL")
+  }
+
+  /// Route a worklane context-menu action against the targeted pane.
+  /// Synthetic sentinels (`_mute_pane` / `_mute_site` / `_copy_url`)
+  /// dispatch to their dedicated helpers; everything else is treated
+  /// as a palette `Action.id` — the focused pane is first moved to
+  /// the target (transferring across workspaces when necessary via
+  /// `switchWorkspace`), then the corresponding action's `handler()`
+  /// is invoked through `menuActionsSnapshot`. Going through the
+  /// snapshot rather than re-resolving `actions()` keeps the menu
+  /// dispatching in lockstep with the chord overrides the Shortcuts
+  /// settings tab pushes, so a remapped chord and a menu click
+  /// invoke the same handler reference.
+  public func dispatchPaneMenuAction(_ actionId: String, paneId: ULID) {
+    switch actionId {
+    case "_mute_pane":
+      toggleMuteForPane(id: paneId)
+      return
+    case "_mute_site":
+      toggleSiteMuteForPane(id: paneId)
+      return
+    case "_copy_url":
+      copyPaneURL(id: paneId)
+      return
+    default:
+      break
+    }
+    // Pane-agnostic actions act on the app-wide recently-closed
+    // stash (`undo_close`) or other global state rather than the
+    // pane the user right-clicked. Migrating focus to the clicked
+    // pane before invoking them would feel like an unrelated focus
+    // jump.
+    if Self.paneAgnosticMenuActions.contains(actionId) {
+      menuActionsSnapshot.first(where: { $0.id == actionId })?.handler()
+      return
+    }
+    guard let initialTarget = locatePane(id: paneId) else { return }
+    // Re-evaluate location on invocation so a pane that moved during
+    // the workspace-switch animation (close / cross-WS drag / column
+    // collapse interleaved with the menu click) still routes the
+    // action to the right slot — the captured indices would
+    // otherwise point at whatever pane now occupies the old slot.
+    let invoke: () -> Void = { [weak self] in
+      guard let self, let current = self.locatePane(id: paneId) else { return }
+      self.setFocus(
+        columnIndex: current.columnIndex, paneIndex: current.paneIndex)
+      self.menuActionsSnapshot
+        .first(where: { $0.id == actionId })?.handler()
+    }
+    if initialTarget.workspaceIndex == focusedWorkspaceIndex {
+      invoke()
+    } else {
+      switchWorkspace(to: initialTarget.workspaceIndex) { invoke() }
+    }
+  }
+
+  /// Palette action ids whose effect is independent of the
+  /// right-clicked pane. ``dispatchPaneMenuAction`` skips focus
+  /// migration for these so a context-menu click on pane A doesn't
+  /// drag focus there for an action that, semantically, has nothing
+  /// to do with A (e.g. `undo_close` restores whatever was last
+  /// stashed in `recentlyClosed`, regardless of which pane the menu
+  /// was invoked from).
+  private static let paneAgnosticMenuActions: Set<String> = [
+    "undo_close"
+  ]
+
   /// Apply `muted` to every already-open browser pane whose current
   /// URL host matches `host` (case-insensitive). The site-mute menu
   /// uses this so a "Mute this Site" toggle takes effect on every

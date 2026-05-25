@@ -293,6 +293,12 @@ final class WorklaneSectionView: NSView {
     outlineView.floatsGroupRows = false
     outlineView.dataSource = self
     outlineView.delegate = self
+    // Per-row right-click menu. Rebuilt in `menuNeedsUpdate(_:)`
+    // against the cursor's `clickedRow` so the same NSMenu instance
+    // serves every row kind (pane / column / workspace).
+    let contextMenu = NSMenu()
+    contextMenu.delegate = self
+    outlineView.menu = contextMenu
     outlineView.registerForDraggedTypes(
       [Self.workspaceDragType, Self.paneDragType])
     // Internal-only drag: dragging a workspace row out of the app
@@ -402,6 +408,22 @@ final class WorklaneSectionView: NSView {
     /// Append a fresh private workspace. Bound to the dashed `+`
     /// button in each expanded workspace's footer row.
     let onCreatePrivateWorkspace: () -> Void
+    /// Effective `Action` snapshot the worklane context menu consults
+    /// to populate menu items. Lifted off
+    /// `PaneContainerViewController.menuActionsSnapshot` at reload
+    /// time so chord overrides applied through the Shortcuts settings
+    /// tab flow into the per-row menu without separate wiring. Empty
+    /// is safe — items that can't find their backing action lose
+    /// their chord glyph but still fire through `onPaneAction`.
+    let paneActions: [Action]
+    /// Dispatch a context-menu action against a specific pane: focus
+    /// transfer (across workspaces if necessary) + handler invocation
+    /// in one shot. `actionId` is normally a palette id
+    /// (`"browser_reload"`, `"close_pane"`, `"undo_close"`, …); the
+    /// sentinels `"_mute_pane"` / `"_mute_site"` / `"_copy_url"`
+    /// cover the menu-only items that don't sit in the palette
+    /// registry.
+    let onPaneAction: (_ actionId: String, _ paneId: ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -1406,5 +1428,119 @@ extension WorklaneSectionView: NSOutlineViewDelegate {
     if let ws = item as? WorklaneWorkspaceNode { return ws.id }
     if let column = item as? WorklaneColumnNode { return column.id }
     return nil
+  }
+}
+
+// MARK: - Context menu
+
+/// Payload carried on every context-menu item so the target's
+/// `@objc` handler can recover the row identity after the menu
+/// closes. Reading `outlineView.clickedRow` inside the handler is
+/// unsafe — by the time the closure fires the menu has dismissed
+/// and AppKit has reset the clicked-row tracking.
+@MainActor
+private final class WorklanePaneMenuPayload: NSObject {
+  let actionId: String
+  let paneId: ULID
+  init(actionId: String, paneId: ULID) {
+    self.actionId = actionId
+    self.paneId = paneId
+    super.init()
+  }
+}
+
+extension WorklaneSectionView: NSMenuDelegate {
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    menu.removeAllItems()
+    let row = outlineView.clickedRow
+    guard row >= 0,
+      let input = lastInput,
+      let node = outlineView.item(atRow: row)
+    else { return }
+    // Workspace and column rows ship their menus in follow-up
+    // phases; today the menu only fires for pane rows.
+    if let paneNode = node as? WorklanePaneNode {
+      buildPaneMenu(menu, paneId: paneNode.id, input: input)
+    }
+  }
+
+  /// Append the per-pane context menu's top section. `paneActions`
+  /// drives chord-glyph display through palette ids; the
+  /// `_mute_pane` / `_mute_site` / `_copy_url` sentinels cover the
+  /// menu-only items that don't have a palette entry.
+  private func buildPaneMenu(_ menu: NSMenu, paneId: ULID, input: ReloadInput) {
+    appendPaletteAction(
+      to: menu, actionId: "browser_reload", title: "Reload",
+      paneId: paneId, input: input)
+    appendPaletteAction(
+      to: menu, actionId: "toggle_bookmark", title: "Add to Bookmarks",
+      paneId: paneId, input: input)
+    appendSyntheticItem(
+      to: menu, sentinel: "_copy_url", title: "Copy URL",
+      paneId: paneId)
+    menu.addItem(.separator())
+    appendSyntheticItem(
+      to: menu, sentinel: "_mute_pane", title: "Mute Pane",
+      paneId: paneId)
+    appendSyntheticItem(
+      to: menu, sentinel: "_mute_site", title: "Mute Site",
+      paneId: paneId)
+    menu.addItem(.separator())
+    appendPaletteAction(
+      to: menu, actionId: "close_pane", title: "Close Pane",
+      paneId: paneId, input: input)
+    appendPaletteAction(
+      to: menu, actionId: "undo_close", title: "Reopen Closed Pane",
+      paneId: paneId, input: input)
+  }
+
+  /// Append a menu item that mirrors an existing palette `Action`.
+  /// The chord glyph (`⌘R`, `⌘⇧T`, …) shown in the menu is sourced
+  /// from `input.paneActions` so user-customised chords from the
+  /// Shortcuts settings tab flow through automatically. Items whose
+  /// action has no chord stay unlabelled rather than disabled — the
+  /// item still fires through `onPaneAction`.
+  private func appendPaletteAction(
+    to menu: NSMenu, actionId: String, title: String, paneId: ULID,
+    input: ReloadInput
+  ) {
+    let item = NSMenuItem(
+      title: title,
+      action: #selector(handlePaneMenuAction(_:)),
+      keyEquivalent: "")
+    item.target = self
+    if let action = input.paneActions.first(where: { $0.id == actionId }),
+      let key = action.keyEquivalent, !key.isEmpty
+    {
+      item.keyEquivalent = key
+      item.keyEquivalentModifierMask = action.modifierMask
+    }
+    item.representedObject = WorklanePaneMenuPayload(
+      actionId: actionId, paneId: paneId)
+    menu.addItem(item)
+  }
+
+  /// Append a menu item bound to a synthetic action id that doesn't
+  /// have a palette entry (mute toggles / Copy URL). The container's
+  /// `dispatchPaneMenuAction` matches the sentinel and routes to the
+  /// right helper.
+  private func appendSyntheticItem(
+    to menu: NSMenu, sentinel: String, title: String, paneId: ULID
+  ) {
+    let item = NSMenuItem(
+      title: title,
+      action: #selector(handlePaneMenuAction(_:)),
+      keyEquivalent: "")
+    item.target = self
+    item.representedObject = WorklanePaneMenuPayload(
+      actionId: sentinel, paneId: paneId)
+    menu.addItem(item)
+  }
+
+  @objc private func handlePaneMenuAction(_ sender: NSMenuItem) {
+    guard let payload = sender.representedObject as? WorklanePaneMenuPayload,
+      let input = lastInput
+    else { return }
+    input.onPaneAction(payload.actionId, payload.paneId)
   }
 }
