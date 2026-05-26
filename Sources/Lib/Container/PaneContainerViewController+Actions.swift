@@ -69,6 +69,25 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "close_other_panes_in_column",
+        title: "Close Other Panes in Column",
+        menuTitle: "Close Other Panes",
+        // No default chord: discoverable through palette / worklane
+        // context menu. Adding a binding would risk collision with
+        // close_pane (⌘W) variants and the column-close path uses
+        // the worklane row × instead.
+        handler: { [weak self] in
+          guard let self, let pane = self.focusedPane else { return }
+          self.closeOtherPanesInColumn(keepPaneId: pane.id)
+        },
+        validate: { [weak self] in
+          guard let self,
+            let column = self.columns[safe: self.focusedColumnIndex]
+          else { return (false, nil) }
+          return (column.panes.count > 1, nil)
+        }
+      ),
+      Action(
         id: "split_vertical",
         title: "Split Vertical",
         menuTitle: "Split Vertically",

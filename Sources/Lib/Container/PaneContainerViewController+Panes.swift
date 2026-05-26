@@ -1376,6 +1376,63 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Close every pane in the column that contains `paneId`, except
+  /// the targeted one. No-op when the pane sits alone in its column
+  /// (nothing to keep open separately). Bulk confirmation matches
+  /// ``closeColumn(id:)`` — one sheet up front if any of the
+  /// to-be-closed panes flags needs-confirm-quit, then a silent
+  /// per-pane close so the gesture surfaces a single
+  /// "Close N Panes" toast rather than N stacked ones.
+  public func closeOtherPanesInColumn(keepPaneId paneId: ULID) {
+    guard let loc = locatePane(id: paneId) else {
+      logger.debug("[panes/close] closeOtherPanesInColumn no-op: pane not found id=\(paneId, privacy: .public)")
+      return
+    }
+    let column = workspaces[loc.workspaceIndex].columns[loc.columnIndex]
+    // Capture the column id alongside the keep pane: post-confirm
+    // re-resolves the column by id rather than by re-walking from
+    // the keep pane's current location. Without this, a keep pane
+    // dragged into a different column while the confirm sheet was
+    // open would silently retarget the others-close at the new
+    // column's siblings — the user clicked through expecting the
+    // count they saw at sheet time. Matches ``closeColumn(id:)``'s
+    // column-identity contract.
+    let columnId = column.id
+    let othersToClose = column.panes.filter { $0.id != paneId }
+    guard !othersToClose.isEmpty else { return }
+    let needsConfirm = othersToClose.contains { pane in
+      guard let surface = pane.terminalView?.surface else { return false }
+      return ghostty_surface_needs_confirm_quit(surface)
+    }
+
+    let runClose: @MainActor () -> Void = { [weak self] in
+      guard let self, let liveColumn = self.locateColumn(id: columnId),
+        liveColumn.panes.contains(where: { $0.id == paneId })
+      else {
+        logger.debug("[panes/close] closeOtherPanesInColumn post-confirm no-op: column or keep pane gone columnId=\(columnId, privacy: .public) paneId=\(paneId, privacy: .public)")
+        return
+      }
+      let otherIds = liveColumn.panes.map(\.id).filter { $0 != paneId }
+      let count = otherIds.count
+      guard count > 0 else { return }
+      // No workspace-cascade guard needed: the keep pane survives,
+      // so the column (and therefore the workspace) cannot empty
+      // out — ``closeColumn(id:)``'s `cascadedToWorkspaceClose`
+      // branch would never fire here.
+      for otherId in otherIds {
+        guard let otherLoc = self.locatePane(id: otherId) else { continue }
+        self.performBackgroundOrCurrentClose(at: otherLoc, silent: true)
+      }
+      self.showToast(count > 1 ? "Close \(count) Panes" : "Close Pane")
+    }
+
+    if needsConfirm {
+      confirmCloseColumn(count: othersToClose.count, onConfirm: runClose)
+    } else {
+      runClose()
+    }
+  }
+
   private func locateColumn(id columnId: ULID) -> ColumnModel? {
     for ws in workspaces {
       if let column = ws.columns.first(where: { $0.id == columnId }) {
@@ -1397,7 +1454,13 @@ extension PaneContainerViewController {
     alert.informativeText =
       "One or more panes in this column have running processes."
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "Close All")
+    // Generic "Close" rather than "Close All": the same sheet serves
+    // both whole-column close (`closeColumn(id:)`) and keep-one
+    // others-close (`closeOtherPanesInColumn(keepPaneId:)`), and
+    // "All" reads as a contradiction in the others-close case where
+    // one pane is intentionally spared. The count in messageText
+    // already conveys the scope.
+    alert.addButton(withTitle: "Close")
     alert.addButton(withTitle: "Cancel")
     alert.beginSheetModal(for: window) { response in
       guard response == .alertFirstButtonReturn else { return }

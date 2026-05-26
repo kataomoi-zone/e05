@@ -1634,6 +1634,15 @@ extension WorklaneSectionView: NSMenuDelegate {
     }
     menu.addItem(.separator())
     appendPaletteAction(to: menu, actionId: "close_pane", paneId: paneId, input: input)
+    // Skip "Close Other Panes" for single-pane columns: a pane that
+    // appears at workspace top level (`columnNode == nil`) is alone
+    // in its column by construction, so the item would always close
+    // zero panes.
+    if paneNode.columnNode != nil {
+      appendPaletteAction(
+        to: menu, actionId: "close_other_panes_in_column",
+        paneId: paneId, input: input)
+    }
     appendPaletteAction(to: menu, actionId: "undo_close", paneId: paneId, input: input)
   }
 
