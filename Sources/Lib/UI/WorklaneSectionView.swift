@@ -426,6 +426,14 @@ final class WorklaneSectionView: NSView {
     /// cover the menu-only items that don't sit in the palette
     /// registry.
     let onPaneAction: (_ actionId: String, _ paneId: ULID) -> Void
+    /// Dispatch a context-menu action against a specific column:
+    /// switch to the column's workspace if necessary, refocus the
+    /// column's focused pane so palette actions (`toggle_fold`,
+    /// `new_browser_pane`, `move_column_left/right`, …) target it,
+    /// and invoke the handler. The sentinel `"_close_column"` is a
+    /// menu-only shortcut that routes through ``onColumnClose``
+    /// without going through the focus transfer dance.
+    let onColumnAction: (_ actionId: String, _ columnId: ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -1465,6 +1473,21 @@ private final class MoveToWorkspacePayload: NSObject {
   }
 }
 
+/// Same-shape payload for column-row menu items. Distinct type from
+/// ``WorklanePaneMenuPayload`` so the dispatch handler can tell
+/// pane / column actions apart at `as?` cast time instead of
+/// branching on the sentinel string.
+@MainActor
+private final class WorklaneColumnMenuPayload: NSObject {
+  let actionId: String
+  let columnId: ULID
+  init(actionId: String, columnId: ULID) {
+    self.actionId = actionId
+    self.columnId = columnId
+    super.init()
+  }
+}
+
 extension WorklaneSectionView: NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
@@ -1473,11 +1496,12 @@ extension WorklaneSectionView: NSMenuDelegate {
       let input = lastInput,
       let node = outlineView.item(atRow: row)
     else { return }
-    // Workspace and column rows ship their menus in follow-up
-    // phases; today the menu only fires for pane rows.
     if let paneNode = node as? WorklanePaneNode {
       buildPaneMenu(menu, paneNode: paneNode, input: input)
+    } else if let columnNode = node as? WorklaneColumnNode {
+      buildColumnMenu(menu, columnNode: columnNode, input: input)
     }
+    // Workspace rows ship their menu in P5.
   }
 
   /// Dispatch the menu by pane content kind. Per-kind builders make
@@ -1711,5 +1735,79 @@ extension WorklaneSectionView: NSMenuDelegate {
       let input = lastInput
     else { return }
     input.onPaneAction(payload.actionId, payload.paneId)
+  }
+
+  /// Build the column-row context menu. Operates entirely through
+  /// palette actions that already understand `focusedColumnIndex`
+  /// (Toggle Fold, New Browser / Terminal / Finder Pane, Move
+  /// Column Left / Right). `dispatchColumnMenuAction` on the
+  /// container does the focus transfer first so the right column
+  /// receives the call. The trailing "Close All Panes in Column"
+  /// is a menu-only sentinel that routes through `onColumnClose`
+  /// directly (no chord, no palette presence — the worklane row's
+  /// hover-revealed × button is its other entry point).
+  private func buildColumnMenu(
+    _ menu: NSMenu, columnNode: WorklaneColumnNode, input: ReloadInput
+  ) {
+    let columnId = columnNode.id
+    appendColumnAction(to: menu, actionId: "toggle_fold", columnId: columnId, input: input)
+    menu.addItem(.separator())
+    appendColumnAction(to: menu, actionId: "new_browser_pane", columnId: columnId, input: input)
+    appendColumnAction(to: menu, actionId: "new_terminal_pane", columnId: columnId, input: input)
+    appendColumnAction(to: menu, actionId: "new_finder_pane", columnId: columnId, input: input)
+    menu.addItem(.separator())
+    appendColumnAction(to: menu, actionId: "move_column_left", columnId: columnId, input: input)
+    appendColumnAction(to: menu, actionId: "move_column_right", columnId: columnId, input: input)
+    menu.addItem(.separator())
+    appendColumnCloseAll(to: menu, columnId: columnId)
+  }
+
+  /// Same shape as ``appendPaletteAction`` but bound to the
+  /// column-action dispatcher. Skipped when the action id is
+  /// missing from the snapshot (catches typos at development time).
+  private func appendColumnAction(
+    to menu: NSMenu, actionId: String, columnId: ULID, input: ReloadInput
+  ) {
+    guard let action = input.paneActionsProvider()
+      .first(where: { $0.id == actionId })
+    else { return }
+    let item = NSMenuItem(
+      title: action.menuTitle ?? action.title,
+      action: #selector(handleColumnMenuAction(_:)),
+      keyEquivalent: "")
+    item.target = self
+    if let key = action.keyEquivalent, !key.isEmpty {
+      item.keyEquivalent = key
+      item.keyEquivalentModifierMask = action.modifierMask
+    }
+    item.representedObject = WorklaneColumnMenuPayload(
+      actionId: actionId, columnId: columnId)
+    menu.addItem(item)
+  }
+
+  /// "Close All Panes in Column" doesn't have a palette
+  /// counterpart; the worklane row's hover-revealed × button is
+  /// the other entry point and it shares the same
+  /// `container.closeColumn(id:)` call site. Wired through
+  /// `_close_column` sentinel so the container's dispatcher can
+  /// special-case it ahead of the palette-action focus dance.
+  private func appendColumnCloseAll(
+    to menu: NSMenu, columnId: ULID
+  ) {
+    let item = NSMenuItem(
+      title: "Close All Panes in Column",
+      action: #selector(handleColumnMenuAction(_:)),
+      keyEquivalent: "")
+    item.target = self
+    item.representedObject = WorklaneColumnMenuPayload(
+      actionId: "_close_column", columnId: columnId)
+    menu.addItem(item)
+  }
+
+  @objc private func handleColumnMenuAction(_ sender: NSMenuItem) {
+    guard let payload = sender.representedObject as? WorklaneColumnMenuPayload,
+      let input = lastInput
+    else { return }
+    input.onColumnAction(payload.actionId, payload.columnId)
   }
 }

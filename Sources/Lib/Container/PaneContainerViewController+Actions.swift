@@ -26,6 +26,7 @@ extension PaneContainerViewController {
       Action(
         id: "new_terminal_pane",
         title: "New Terminal Pane",
+        menuTitle: "New Terminal Pane Here",
         // No keyboard shortcut: ⌘T is now claimed by
         // `new_browser_pane` because a browser pane is the more
         // common new-tab gesture. Terminal panes are still
@@ -407,6 +408,7 @@ extension PaneContainerViewController {
       Action(
         id: "new_browser_pane",
         title: "New Browser Pane",
+        menuTitle: "New Browser Pane Here",
         keyEquivalent: "t",
         handler: { [weak self] in
           self?.addColumn(address: .newPaneHome)
@@ -416,6 +418,7 @@ extension PaneContainerViewController {
       Action(
         id: "new_finder_pane",
         title: "New Finder Pane",
+        menuTitle: "New Finder Pane Here",
         // No keyboard shortcut: ⌥⌃F is taken by Toggle Fold and ⌘F by
         // Find in Page. The palette is the discovery surface for now;
         // a binding can be added once the customisation phase exposes

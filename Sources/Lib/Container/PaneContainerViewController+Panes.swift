@@ -1519,6 +1519,80 @@ extension PaneContainerViewController {
     "undo_close"
   ]
 
+  /// Resolved coordinate of a column found by id. Carries the
+  /// surrounding workspace index alongside the column reference so
+  /// the worklane column-menu dispatcher can transfer focus to the
+  /// right slot before invoking palette actions that read
+  /// `focusedColumnIndex`.
+  public struct ColumnLocation {
+    public let workspaceIndex: Int
+    public let columnIndex: Int
+    public let column: ColumnModel
+  }
+
+  /// Like ``locatePane(id:)`` but for columns: returns the workspace
+  /// index, column index, and column reference so the
+  /// worklane-menu dispatcher can route focus before invoking the
+  /// palette action. ``locateColumn(id:)`` (private, returns just
+  /// the model) stays as the cheap "I only need the model" path the
+  /// existing close-column / drag-drop call sites depend on.
+  public func locateColumnLocation(id columnId: ULID) -> ColumnLocation? {
+    for (wsIdx, ws) in workspaces.enumerated() {
+      if let colIdx = ws.columns.firstIndex(where: { $0.id == columnId }) {
+        return ColumnLocation(
+          workspaceIndex: wsIdx,
+          columnIndex: colIdx,
+          column: ws.columns[colIdx])
+      }
+    }
+    return nil
+  }
+
+  /// Route a worklane column-row menu action against the targeted
+  /// column. The `_close_column` sentinel short-circuits to
+  /// ``closeColumn(id:)`` — column close already locates the
+  /// column by id and runs through its own confirmation /
+  /// cascade path, so the focus dance the palette-action branch
+  /// needs would be wasted work. Every other id is treated as a
+  /// palette action that reads `focusedColumnIndex`: switch to the
+  /// column's workspace if needed, refocus the column's focused
+  /// pane so palette actions land on it, then invoke the action's
+  /// `handler()` through `menuActionsSnapshot`. Locations are
+  /// re-resolved at invocation time so a column that drifted
+  /// during the workspace switch animation still routes
+  /// correctly.
+  public func dispatchColumnMenuAction(_ actionId: String, columnId: ULID) {
+    if actionId == "_close_column" {
+      closeColumn(id: columnId)
+      return
+    }
+    guard let initialTarget = locateColumnLocation(id: columnId) else { return }
+    let invoke: () -> Void = { [weak self] in
+      guard let self,
+        let current = self.locateColumnLocation(id: columnId)
+      else { return }
+      // Column invariant: panes is never empty (single-pane is the
+      // collapsed form, multi-pane is the only other shape). Guard
+      // here so the clamp below stays a straight `min` instead of a
+      // `max(0, min(..., -1))` dance — and so an invariant violation
+      // (column briefly empty during a model mutation race) returns
+      // cleanly rather than falling through to setFocus's silent
+      // bounds-check fallback.
+      guard !current.column.panes.isEmpty else { return }
+      let paneIndex = min(
+        current.column.focusedPaneIndex, current.column.panes.count - 1)
+      self.setFocus(
+        columnIndex: current.columnIndex, paneIndex: paneIndex)
+      self.menuActionsSnapshot
+        .first(where: { $0.id == actionId })?.handler()
+    }
+    if initialTarget.workspaceIndex == focusedWorkspaceIndex {
+      invoke()
+    } else {
+      switchWorkspace(to: initialTarget.workspaceIndex) { invoke() }
+    }
+  }
+
   /// Apply `muted` to every already-open browser pane whose current
   /// URL host matches `host` (case-insensitive). The site-mute menu
   /// uses this so a "Mute this Site" toggle takes effect on every

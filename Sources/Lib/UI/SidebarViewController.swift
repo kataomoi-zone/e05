@@ -370,6 +370,9 @@ final class SidebarViewController: NSViewController {
         },
         onPaneAction: { [weak container] actionId, paneId in
           container?.dispatchPaneMenuAction(actionId, paneId: paneId)
+        },
+        onColumnAction: { [weak container] actionId, columnId in
+          container?.dispatchColumnMenuAction(actionId, columnId: columnId)
         }
       ))
   }
