@@ -483,10 +483,19 @@ extension PaneContainerViewController {
     let sourceVC = workspaceVCs[sourceIndex]
     let column = sourceWs.columns[sourceColumnIndex]
     let pane = column.panes[sourcePaneIndex]
+    // Snapshot the entry-point focused workspace once. The remove
+    // path further down may have to re-anchor
+    // `focusedWorkspaceIndex` so observers reading
+    // `workspaces[focusedWorkspaceIndex]` while we mutate the array
+    // don't crash with an out-of-range subscript; the *original*
+    // index is still the right signal for downstream "was the
+    // source currently visible?" branching (slide animation,
+    // scrollX snapshot).
+    let originalFocusedIndex = focusedWorkspaceIndex
     // Dismissals only matter for the currently-visible workspace.
     // For a sidebar drag where the dragged pane sits in a background
     // workspace, there's no find bar / URL bar suggestion to chase.
-    if sourceIndex == focusedWorkspaceIndex {
+    if sourceIndex == originalFocusedIndex {
       dismissAllFindSessions(in: sourceWs)
       focusedPane?.urlBar.dismissSuggestionDropdown()
     }
@@ -511,7 +520,7 @@ extension PaneContainerViewController {
     // Snapshot the live scroll offset only when source is currently
     // visible — for a background source the persisted `scrollX` is
     // already accurate (last switch away captured it).
-    if sourceIndex == focusedWorkspaceIndex {
+    if sourceIndex == originalFocusedIndex {
       sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     }
     preserveSurfaces(in: sourceWs)
@@ -549,6 +558,27 @@ extension PaneContainerViewController {
           workspaceVCs.remove(at: sourceIndex)
           sourceDestroyed = true
           if adjustedTarget > sourceIndex { adjustedTarget -= 1 }
+          // Re-anchor `focusedWorkspaceIndex` immediately. The
+          // remainder of this method still has to detach the
+          // moved pane, build the destination column, and rebuild
+          // the target stack view — every one of those AppKit-
+          // level mutations can fire a synchronous notification
+          // that walks the responder chain back into observers
+          // reading `workspaces[focusedWorkspaceIndex]` (the
+          // worklane's `outlineViewSelectionDidChange` →
+          // `focusPane(id:)` → `switchWorkspace` chain was the
+          // first symptom). Leaving the index pointing at the
+          // just-removed slot leaves a half-completed array
+          // visible to those observers and crashes them with an
+          // out-of-range subscript. The final adjustment below
+          // (`focusedWorkspaceIndex = adjustedTarget`) is
+          // idempotent so this preliminary re-anchor doesn't
+          // double-write.
+          if focusedWorkspaceIndex >= workspaces.count {
+            focusedWorkspaceIndex = max(0, workspaces.count - 1)
+          } else if sourceIndex < focusedWorkspaceIndex {
+            focusedWorkspaceIndex -= 1
+          }
         }
       } else {
         sourceWs.focusedColumnIndex = min(sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
@@ -576,18 +606,6 @@ extension PaneContainerViewController {
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]
-    // Match `addColumn`: pin the new column's height to the target
-    // workspace stack so the layout is never ambiguous, and store the
-    // constraint on the column model so the gap preset can rewrite it
-    // live. Skipping this leaves the height up to AppKit's
-    // ambiguity-resolution fallback and produces an arbitrary value
-    // on mid-session moves.
-    let heightPin = newColumn.containerView.heightAnchor.constraint(
-      equalTo: targetVC.stackView.heightAnchor,
-      constant: -(WorkspaceViewController.outerMargin * 2)
-    )
-    heightPin.isActive = true
-    newColumn.heightPin = heightPin
     // Same-workspace splits where source column collapsed shrink
     // the target columns array on the same axis the drop position
     // refers to: AppKit gave us a child index computed against the
@@ -610,11 +628,34 @@ extension PaneContainerViewController {
 
     rebuildStackView(in: targetVC)
 
+    // Match `addColumn`: pin the new column's height to the target
+    // workspace stack so the layout is never ambiguous, and store the
+    // constraint on the column model so the gap preset can rewrite it
+    // live. Skipping this leaves the height up to AppKit's
+    // ambiguity-resolution fallback and produces an arbitrary value
+    // on mid-session moves. **Activation must follow
+    // `rebuildStackView(in: targetVC)`** so both anchor ends share a
+    // common ancestor before the constraint engine sees them — the
+    // same NSInternalInconsistencyException risk `addColumn`
+    // documents at its own heightPin call site applies here, and the
+    // pre-rebuild placement that the original landing of this code
+    // used to do was silently dropping the heightPin without raising
+    // (likely because the orphan `containerView` left the engine in
+    // an unsatisfiable state), starving the new column of a usable
+    // height and freezing every cross-workspace move into a blank
+    // viewport.
+    let heightPin = newColumn.containerView.heightAnchor.constraint(
+      equalTo: targetVC.stackView.heightAnchor,
+      constant: -(WorkspaceViewController.outerMargin * 2)
+    )
+    heightPin.isActive = true
+    newColumn.heightPin = heightPin
+
     let toastLabel =
       isSameWs
       ? "Move Pane"
       : "Move Pane to Workspace \(adjustedTarget + 1)"
-    if sourceIndex == focusedWorkspaceIndex, !isSameWs {
+    if sourceIndex == originalFocusedIndex, !isSameWs {
       // Cross-workspace move from the currently visible workspace —
       // run the slide animation that palette / IPC `Move Pane`
       // actions use, then shift focus over to the new pane.
@@ -639,7 +680,7 @@ extension PaneContainerViewController {
       // viewport isn't switching workspaces. Re-focus on the new
       // column so the moved pane stays the active surface.
       showToast(toastLabel)
-      if sourceIndex == focusedWorkspaceIndex {
+      if sourceIndex == originalFocusedIndex {
         setFocus(columnIndex: insertIndex, paneIndex: 0)
       } else {
         notifySidebarWorklaneDidChange()
@@ -653,16 +694,15 @@ extension PaneContainerViewController {
       // already current. `restoreScroll` is intentionally skipped
       // here: the visible workspace's live scroll offset is already
       // the authoritative state.
-      let focusedWsId = workspaces[safe: focusedWorkspaceIndex]?.id
       if sourceDestroyed {
         sourceVC.view.removeFromSuperview()
         sourceVC.removeFromParent()
       }
-      if let focusedWsId,
-        let liveIndex = workspaces.firstIndex(where: { $0.id == focusedWsId })
-      {
-        focusedWorkspaceIndex = liveIndex
-      }
+      // No focus re-resolve here: when `sourceDestroyed` is true the
+      // remove-source block above already shifted
+      // `focusedWorkspaceIndex` to keep pointing at the same
+      // workspace identity (the snapshot+`firstIndex` dance the old
+      // code did is now redundant with that sync re-anchor).
       // When target = current, the new column is now sitting in the
       // visible workspace. Refocus on it so the drop lands the user
       // on the moved pane. When target != current, the new column
