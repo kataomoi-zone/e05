@@ -347,17 +347,17 @@ final class SidebarViewController: NSViewController {
           container?.showCrossPrivateBoundaryToast()
         },
         onAddPaneToWorkspace: { [weak container] wsId in
-          container?.addColumn(.newPaneHome, toWorkspaceId: wsId)
-          container?.showToast("New Browser Pane")
+          container?.addColumnAndToast(
+            .newPaneHome, toWorkspaceId: wsId, toastLabel: "New Browser Pane")
         },
         onAddTerminalPaneToWorkspace: { [weak container] wsId in
-          container?.addColumn(.terminal, toWorkspaceId: wsId)
-          container?.showToast("New Terminal Pane")
+          container?.addColumnAndToast(
+            .terminal, toWorkspaceId: wsId, toastLabel: "New Terminal Pane")
         },
         onAddFinderPaneToWorkspace: { [weak container] wsId in
-          container?.addColumn(
-            PaneAddress.finder(path: ""), toWorkspaceId: wsId)
-          container?.showToast("New Finder Pane")
+          container?.addColumnAndToast(
+            PaneAddress.finder(path: ""), toWorkspaceId: wsId,
+            toastLabel: "New Finder Pane")
         },
         onCreateWorkspace: { [weak container] in
           container?.createWorkspace()
@@ -373,6 +373,10 @@ final class SidebarViewController: NSViewController {
         },
         onColumnAction: { [weak container] actionId, columnId in
           container?.dispatchColumnMenuAction(actionId, columnId: columnId)
+        },
+        onWorkspaceAction: { [weak container] actionId, workspaceId in
+          container?.dispatchWorkspaceMenuAction(
+            actionId, workspaceId: workspaceId)
         }
       ))
   }

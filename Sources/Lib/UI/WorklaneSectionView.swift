@@ -298,6 +298,16 @@ final class WorklaneSectionView: NSView {
     // serves every row kind (pane / column / workspace).
     let contextMenu = NSMenu()
     contextMenu.delegate = self
+    // `autoenablesItems = false` so each builder's explicit
+    // `item.isEnabled = …` is authoritative. The AppKit default of
+    // `true` runs the responder-chain validator (`validateMenuItem:`
+    // / `validateUserInterfaceItem:`); since our handlers always
+    // respond to the selector and we don't implement a validator,
+    // every item would be re-enabled and our deliberate disables
+    // (e.g. "Close Workspace" on the only workspace) would silently
+    // fire as if enabled. Submenus need to opt out of auto-validation
+    // independently — `NSMenu` doesn't propagate the flag.
+    contextMenu.autoenablesItems = false
     outlineView.menu = contextMenu
     outlineView.registerForDraggedTypes(
       [Self.workspaceDragType, Self.paneDragType])
@@ -434,6 +444,13 @@ final class WorklaneSectionView: NSView {
     /// menu-only shortcut that routes through ``onColumnClose``
     /// without going through the focus transfer dance.
     let onColumnAction: (_ actionId: String, _ columnId: ULID) -> Void
+    /// Dispatch a workspace-row menu action against a specific
+    /// workspace. The menu uses sentinel ids that the container's
+    /// ``dispatchWorkspaceMenuAction`` interprets directly — no
+    /// palette-action overlap, since every entry already has a
+    /// workspace-id end-to-end path (`addColumn(_:toWorkspaceId:)`,
+    /// `createWorkspace(after:)`, `closeWorkspace(at:)`).
+    let onWorkspaceAction: (_ actionId: String, _ workspaceId: ULID) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -1488,6 +1505,20 @@ private final class WorklaneColumnMenuPayload: NSObject {
   }
 }
 
+/// Same-shape payload for workspace-row menu items. Sentinel-only
+/// `actionId` (no palette overlap) since workspace operations always
+/// route through ``PaneContainerViewController.dispatchWorkspaceMenuAction``.
+@MainActor
+private final class WorklaneWorkspaceMenuPayload: NSObject {
+  let actionId: String
+  let workspaceId: ULID
+  init(actionId: String, workspaceId: ULID) {
+    self.actionId = actionId
+    self.workspaceId = workspaceId
+    super.init()
+  }
+}
+
 extension WorklaneSectionView: NSMenuDelegate {
   func menuNeedsUpdate(_ menu: NSMenu) {
     menu.removeAllItems()
@@ -1500,8 +1531,9 @@ extension WorklaneSectionView: NSMenuDelegate {
       buildPaneMenu(menu, paneNode: paneNode, input: input)
     } else if let columnNode = node as? WorklaneColumnNode {
       buildColumnMenu(menu, columnNode: columnNode, input: input)
+    } else if let workspaceNode = node as? WorklaneWorkspaceNode {
+      buildWorkspaceMenu(menu, workspaceNode: workspaceNode, input: input)
     }
-    // Workspace rows ship their menu in P5.
   }
 
   /// Dispatch the menu by pane content kind. Per-kind builders make
@@ -1809,5 +1841,68 @@ extension WorklaneSectionView: NSMenuDelegate {
       let input = lastInput
     else { return }
     input.onColumnAction(payload.actionId, payload.columnId)
+  }
+
+  /// Build the workspace-row context menu. Every entry routes
+  /// through sentinel ids (prefix `_ws_`) that the container's
+  /// ``dispatchWorkspaceMenuAction`` interprets directly — none of
+  /// these overlap with palette actions, since workspace operations
+  /// always have a workspace-id end-to-end path that doesn't need
+  /// the focus-transfer dance the column menu uses. The `_ws_`
+  /// prefix distances these from the column menu's palette-id
+  /// neighbours (`new_browser_pane`, …) so an `actionId` lookup
+  /// can't confuse the two namespaces.
+  private func buildWorkspaceMenu(
+    _ menu: NSMenu, workspaceNode: WorklaneWorkspaceNode, input: ReloadInput
+  ) {
+    let workspaceId = workspaceNode.id
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_browser_pane",
+      title: "New Browser Pane", workspaceId: workspaceId)
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_terminal_pane",
+      title: "New Terminal Pane", workspaceId: workspaceId)
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_finder_pane",
+      title: "New Finder Pane", workspaceId: workspaceId)
+    menu.addItem(.separator())
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_workspace_after",
+      title: "New Workspace After This", workspaceId: workspaceId)
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_private_workspace_after",
+      title: "New Private Workspace After This", workspaceId: workspaceId)
+    menu.addItem(.separator())
+    // Close on the only workspace would route into
+    // `closeCurrentWorkspace`'s window-close branch — a single
+    // gesture that closes the whole window. Disable rather than
+    // hide so the affordance remains discoverable (greyed out
+    // signals "this is the wrong path; use ⌘Q / window close").
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_close_workspace",
+      title: "Close Workspace", workspaceId: workspaceId,
+      isEnabled: input.workspaces.count > 1)
+  }
+
+  private func appendWorkspaceItem(
+    to menu: NSMenu, sentinel: String, title: String, workspaceId: ULID,
+    isEnabled: Bool = true
+  ) {
+    let item = NSMenuItem(
+      title: title,
+      action: #selector(handleWorkspaceMenuAction(_:)),
+      keyEquivalent: "")
+    item.target = self
+    item.isEnabled = isEnabled
+    item.representedObject = WorklaneWorkspaceMenuPayload(
+      actionId: sentinel, workspaceId: workspaceId)
+    menu.addItem(item)
+  }
+
+  @objc private func handleWorkspaceMenuAction(_ sender: NSMenuItem) {
+    guard let payload = sender.representedObject as? WorklaneWorkspaceMenuPayload,
+      let input = lastInput
+    else { return }
+    input.onWorkspaceAction(payload.actionId, payload.workspaceId)
   }
 }

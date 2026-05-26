@@ -49,6 +49,29 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Add a column of `address` kind to the workspace identified by
+  /// `wsId` and surface the matching toast, but only when the
+  /// workspace still exists at call time. Both worklane entry points
+  /// for "add new pane to a specific workspace" (the workspace cell's
+  /// chevron split-menu and the workspace-row right-click sentinels)
+  /// route through here so a stale workspace id never produces a
+  /// "New … Pane" toast without an actual pane creation.
+  /// ``addColumn(_:toWorkspaceId:)`` already silently returns on
+  /// stale ids; this wrapper keeps the toast in lockstep with that
+  /// outcome and consolidates the (address, toast label) tuple in
+  /// one place.
+  public func addColumnAndToast(
+    _ address: PaneAddress, toWorkspaceId wsId: ULID, toastLabel: String
+  ) {
+    guard workspaces.contains(where: { $0.id == wsId }) else {
+      logger.debug(
+        "[panes/add] addColumnAndToast stale workspace id=\(wsId, privacy: .public) toast=\(toastLabel, privacy: .public)")
+      return
+    }
+    addColumn(address, toWorkspaceId: wsId)
+    showToast(toastLabel)
+  }
+
   @discardableResult
   func insertColumn(
     with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
@@ -1590,6 +1613,84 @@ extension PaneContainerViewController {
       invoke()
     } else {
       switchWorkspace(to: initialTarget.workspaceIndex) { invoke() }
+    }
+  }
+
+  /// Route a worklane workspace-row menu action against the targeted
+  /// workspace. Every action carries the workspace id end-to-end —
+  /// not the index — so a workspace reordered between menu-open and
+  /// menu-click still routes to the original target. Sentinel ids
+  /// share a `_ws_` prefix to keep them out of the column menu's
+  /// palette-id namespace (`new_browser_pane`, …):
+  ///
+  /// - `_ws_new_browser_pane` / `_ws_new_terminal_pane` /
+  ///   `_ws_new_finder_pane`: append a new column of the given kind
+  ///   to the workspace. Routes through
+  ///   ``addColumnAndToast(_:toWorkspaceId:toastLabel:)`` which
+  ///   includes its own stale-id guard so the toast and the actual
+  ///   column creation stay in lockstep.
+  /// - `_ws_new_workspace_after` / `_ws_new_private_workspace_after`:
+  ///   create a fresh workspace immediately after the targeted one.
+  ///   The new workspace becomes current and slides into view.
+  /// - `_ws_close_workspace`: tear down the targeted workspace via
+  ///   ``closeWorkspace(at:)``. Guarded against the last-workspace
+  ///   race where the menu's `isEnabled` gate is open at build time
+  ///   but a parallel close drops the count to 1 before the click
+  ///   commits — without the guard the dispatcher would walk into
+  ///   `closeCurrentWorkspace`'s `view.window?.close()` branch and
+  ///   shut the window from a menu the user thought was disabled.
+  public func dispatchWorkspaceMenuAction(
+    _ actionId: String, workspaceId: ULID
+  ) {
+    // Resolve the workspace up front so a stale id (workspace torn
+    // down between menu open and click) short-circuits every branch
+    // uniformly with a single `[worklane/menu]` debug trace. The
+    // resolved index is only needed by `_ws_close_workspace`; the
+    // other branches operate on the id directly. Keeping the
+    // resolve here (rather than per-branch) means the stale guard
+    // sits in one obvious place at the dispatcher's entry.
+    guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == workspaceId })
+    else {
+      logger.debug(
+        "[worklane/menu] stale workspace id=\(workspaceId.string, privacy: .public) action=\(actionId, privacy: .public)")
+      return
+    }
+    switch actionId {
+    case "_ws_new_browser_pane":
+      addColumnAndToast(
+        .newPaneHome, toWorkspaceId: workspaceId,
+        toastLabel: "New Browser Pane")
+    case "_ws_new_terminal_pane":
+      addColumnAndToast(
+        .terminal, toWorkspaceId: workspaceId,
+        toastLabel: "New Terminal Pane")
+    case "_ws_new_finder_pane":
+      addColumnAndToast(
+        PaneAddress.finder(path: ""), toWorkspaceId: workspaceId,
+        toastLabel: "New Finder Pane")
+    case "_ws_new_workspace_after":
+      createWorkspace(after: workspaceId)
+    case "_ws_new_private_workspace_after":
+      createWorkspace(isPrivate: true, after: workspaceId)
+    case "_ws_close_workspace":
+      // Last-workspace race: the menu's `isEnabled = workspaces.count > 1`
+      // gate (see `WorklaneSectionView.buildWorkspaceMenu`) only
+      // covers the state at menu-build time. A parallel close
+      // between build and click could leave the dispatcher invoked
+      // on the now-only workspace, where `closeWorkspace(at:)` →
+      // `closeCurrentWorkspace` would route into the
+      // `view.window?.close()` branch. Re-check here so the
+      // menu-driven path stays bounded to "leaves at least one
+      // workspace standing" regardless of intervening state.
+      guard workspaces.count > 1 else {
+        logger.debug(
+          "[worklane/menu] _ws_close_workspace ignored: only workspace remaining")
+        return
+      }
+      closeWorkspace(at: workspaceIndex)
+    default:
+      logger.warning(
+        "[worklane/menu] unknown workspace action id=\(actionId, privacy: .public)")
     }
   }
 

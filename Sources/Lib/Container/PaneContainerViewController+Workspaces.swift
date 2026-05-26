@@ -212,12 +212,25 @@ extension PaneContainerViewController {
   // MARK: - Creation
 
   /// Create a new workspace with an auto-assigned accent color and an
-  /// initial terminal column, then slide it up into view. `isPrivate`
+  /// initial terminal column, then slide it into view. `isPrivate`
   /// propagates to the new workspace's panes: browser panes use an
   /// ephemeral `WKWebsiteDataStore`, history recording is skipped,
   /// closed-pane undo is disabled, and the focus border renders as
   /// a dotted line so the workspace reads as set apart at a glance.
-  public func createWorkspace(isPrivate: Bool = false) {
+  ///
+  /// `after` lets callers (the worklane workspace-row context menu)
+  /// pin the new workspace immediately after a specific reference id
+  /// rather than appending at the trailing edge. Unknown ids fall back
+  /// to the append path so a stale menu click can't strand the new
+  /// workspace at an arbitrary slot — the fallback is logged when
+  /// `after` was non-nil so race-debugging traces can distinguish a
+  /// stale menu click from a caller that always passes `nil`. The
+  /// slide direction tracks the new workspace's position relative to
+  /// the currently focused one: an after-insert that lands above
+  /// current focus slides down (reads as "appearing from above") and
+  /// one that lands below slides up (which is also the `after == nil`
+  /// append case, since the new tail is always below current focus).
+  public func createWorkspace(isPrivate: Bool = false, after: ULID? = nil) {
     logger.info("createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)")
 
     dismissAllFindSessions(in: currentWorkspace)
@@ -234,17 +247,50 @@ extension PaneContainerViewController {
     installWorkspaceView(newVC, makeCurrent: false)
 
     let fromVC = currentWorkspaceVC
-    workspaces.append(newWorkspace)
-    workspaceVCs.append(newVC)
-    let newIndex = workspaces.count - 1
+    // Snapshot the focus index *before* the array insert below so
+    // the slide-direction comparison below stays anchored to the
+    // workspace the user was on. The pair `installWorkspaceView`
+    // above and any future caller of this method must not mutate
+    // `focusedWorkspaceIndex` between these two lines — if they do,
+    // the comparison silently flips.
+    let previousFocusedIndex = focusedWorkspaceIndex
+    let insertIndex: Int
+    if let after {
+      if let refIdx = workspaces.firstIndex(where: { $0.id == after }) {
+        insertIndex = refIdx + 1
+      } else {
+        logger.debug(
+          "[workspaces/create] after id=\(after.string, privacy: .public) not found; falling back to append")
+        insertIndex = workspaces.count
+      }
+    } else {
+      insertIndex = workspaces.count
+    }
+    workspaces.insert(newWorkspace, at: insertIndex)
+    workspaceVCs.insert(newVC, at: insertIndex)
+
+    // Debug-only sanity check: if `installWorkspaceView` or the array
+    // inserts above gain a side effect that mutates
+    // `focusedWorkspaceIndex` in a future revision, the snapshot
+    // captured for the slide-direction comparison would silently
+    // disagree with reality and the new workspace would slide from
+    // the wrong axis. Panic in debug so the regression surfaces
+    // before it's released; release builds compile this away.
+    assert(
+      focusedWorkspaceIndex == previousFocusedIndex,
+      "createWorkspace: focusedWorkspaceIndex mutated between snapshot and slide-direction comparison")
 
     // Advance focus so `addColumn` / `rebuildStackView` target the new
     // workspace's stackView via the computed accessors.
-    focusedWorkspaceIndex = newIndex
+    focusedWorkspaceIndex = insertIndex
     addColumn(address: .terminal)
     showToast(isPrivate ? "New Private Workspace" : "New Workspace")
 
-    animateSlide(fromVC: fromVC, toVC: newVC, slidingUp: true) { [weak self] in
+    // Direction: matches `switchWorkspace`'s spatial convention so
+    // the slide reads "the new workspace lives at index N relative
+    // to the previously focused one" rather than always sliding up.
+    let slidingUp = insertIndex > previousFocusedIndex
+    animateSlide(fromVC: fromVC, toVC: newVC, slidingUp: slidingUp) { [weak self] in
       self?.restoreFocusInCurrentWorkspace()
     }
   }
