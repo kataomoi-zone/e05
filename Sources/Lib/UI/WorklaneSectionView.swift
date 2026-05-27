@@ -1563,34 +1563,74 @@ extension WorklaneSectionView: NSMenuDelegate {
   ) {
     let paneId = paneNode.id
     let pane = paneNode.model
+    // Snapshot the clicked pane's view tree once and let every gate
+    // / label read from the same values. AppKit validators target
+    // focused state; the row under the cursor often isn't focused,
+    // and re-reading the same property mid-build would also risk
+    // inconsistent enabled/title for items that share inputs (e.g.
+    // `_mute_site`'s host and `_copy_url`'s url both come from the
+    // same `webView.url`).
+    //
+    // Gating rule for items below: pass `isEnabled:` only when a
+    // clicked-row probe can prove the action would actually do
+    // something. Items left at the default `true` are intentionally
+    // browser-pane-always-valid (reload / hard_reload / inspector /
+    // keep_active toggles) or have no cheap clicked-row probe
+    // (toggle_bookmark — needs a BookmarksStore lookup every menu
+    // open).
+    let browser = pane.browserView
+    let webView = browser?.webView
+    let url = webView?.url
     appendPaletteAction(to: menu, actionId: "browser_reload", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "browser_hard_reload", paneId: paneId, input: input)
-    appendPaletteAction(to: menu, actionId: "browser_back", paneId: paneId, input: input)
-    appendPaletteAction(to: menu, actionId: "browser_forward", paneId: paneId, input: input)
+    appendPaletteAction(
+      to: menu, actionId: "browser_back", paneId: paneId, input: input,
+      isEnabled: webView?.canGoBack ?? false)
+    appendPaletteAction(
+      to: menu, actionId: "browser_forward", paneId: paneId, input: input,
+      isEnabled: webView?.canGoForward ?? false)
     menu.addItem(.separator())
     appendPaletteAction(to: menu, actionId: "toggle_bookmark", paneId: paneId, input: input)
-    appendSyntheticItem(to: menu, sentinel: "_copy_url", title: "Copy URL", paneId: paneId)
+    appendSyntheticItem(
+      to: menu, sentinel: "_copy_url", title: "Copy URL", paneId: paneId,
+      isEnabled: url != nil)
     appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
     // State-dependent labels reflect the *clicked* pane (not the
     // focused one) so the user reads what the next click will do.
-    // `Action.validate` is a focused-state probe and can't answer
-    // for the row under the cursor when those differ.
-    let paneIsMuted = pane.browserView?.isMuted ?? false
+    let paneIsMuted = browser?.isMuted ?? false
     appendSyntheticItem(
       to: menu, sentinel: "_mute_pane",
       title: paneIsMuted ? "Unmute Pane" : "Mute Pane", paneId: paneId)
-    let host = pane.browserView?.webView.url?.host(percentEncoded: false)
+    let host = url?.host(percentEncoded: false)
     let siteIsMuted = host.map { MutedSitesStore.shared.isMuted(host: $0) } ?? false
     appendSyntheticItem(
       to: menu, sentinel: "_mute_site",
-      title: siteIsMuted ? "Unmute Site" : "Mute Site", paneId: paneId)
-    appendPaletteAction(to: menu, actionId: "browser_suspend", paneId: paneId, input: input)
+      title: siteIsMuted ? "Unmute Site" : "Mute Site", paneId: paneId,
+      isEnabled: host != nil)
+    // `canSuspend` is the action's own three-condition guard
+    // (suspended / extension-hosted / never-loaded). Without
+    // surfacing it here, right-clicking a pane that's already
+    // suspended showed "Suspend Pane" enabled but the action no-ops
+    // silently — exactly the toast-after-click problem this gating
+    // pass was meant to fix.
+    appendPaletteAction(
+      to: menu, actionId: "browser_suspend", paneId: paneId, input: input,
+      isEnabled: browser?.canSuspend ?? false)
     appendPaletteAction(
       to: menu, actionId: "browser_keep_active", paneId: paneId, input: input,
       titleOverride: pane.isSuspendExempt ? "Allow Suspension" : "Keep Pane Active")
     menu.addItem(.separator())
-    appendPaletteAction(to: menu, actionId: "browser_zoom_reset", paneId: paneId, input: input)
+    // `pageZoom` (⌘+ / ⌘-) and `magnification` (pinch gesture) are
+    // independent inputs and `resetFocusedBrowserZoom` clears both.
+    // Gate on both being at baseline, with a small tolerance to
+    // absorb the floating-point drift left by equal-count ⌘+ / ⌘-
+    // round-trips through the 1.1× multiplicative step.
+    let pageZoomAtBaseline = abs((webView?.pageZoom ?? 1.0) - 1.0) < 0.001
+    let magAtBaseline = abs((webView?.magnification ?? 1.0) - 1.0) < 0.001
+    appendPaletteAction(
+      to: menu, actionId: "browser_zoom_reset", paneId: paneId, input: input,
+      isEnabled: !(pageZoomAtBaseline && magAtBaseline))
     appendPaletteAction(to: menu, actionId: "toggle_inspector", paneId: paneId, input: input)
     menu.addItem(.separator())
     appendCommonPaneFooter(menu, paneNode: paneNode, input: input)
@@ -1733,9 +1773,19 @@ extension WorklaneSectionView: NSMenuDelegate {
   /// here because `validate` is a *focused*-state probe; the
   /// worklane menu needs the *clicked-row* state, which often
   /// differs from focus.
+  ///
+  /// `isEnabled` similarly lets the builder gate items on the
+  /// clicked-row's state (e.g. `browser_back` requires
+  /// `canGoBack` on the clicked pane). `Action.validate`'s first
+  /// element is unusable for the same focused-vs-clicked reason —
+  /// the row under the cursor may not be focused. Default is
+  /// enabled to keep the common case noise-free; pass an explicit
+  /// `false` only when a probe has determined the action would
+  /// no-op or fall through to an error toast.
   private func appendPaletteAction(
     to menu: NSMenu, actionId: String, paneId: ULID,
-    input: ReloadInput, titleOverride: String? = nil
+    input: ReloadInput, titleOverride: String? = nil,
+    isEnabled: Bool = true
   ) {
     guard let action = input.paneActionsProvider()
       .first(where: { $0.id == actionId })
@@ -1745,6 +1795,7 @@ extension WorklaneSectionView: NSMenuDelegate {
       action: #selector(handlePaneMenuAction(_:)),
       keyEquivalent: "")
     item.target = self
+    item.isEnabled = isEnabled
     if let key = action.keyEquivalent, !key.isEmpty {
       item.keyEquivalent = key
       item.keyEquivalentModifierMask = action.modifierMask
@@ -1759,13 +1810,15 @@ extension WorklaneSectionView: NSMenuDelegate {
   /// `dispatchPaneMenuAction` matches the sentinel and routes to the
   /// right helper.
   private func appendSyntheticItem(
-    to menu: NSMenu, sentinel: String, title: String, paneId: ULID
+    to menu: NSMenu, sentinel: String, title: String, paneId: ULID,
+    isEnabled: Bool = true
   ) {
     let item = NSMenuItem(
       title: title,
       action: #selector(handlePaneMenuAction(_:)),
       keyEquivalent: "")
     item.target = self
+    item.isEnabled = isEnabled
     item.representedObject = WorklanePaneMenuPayload(
       actionId: sentinel, paneId: paneId)
     menu.addItem(item)
