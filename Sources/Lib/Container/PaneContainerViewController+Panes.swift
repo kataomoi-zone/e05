@@ -239,19 +239,27 @@ extension PaneContainerViewController {
 
       tv.onClose = { [weak self, weak pane] in
         guard let self, let pane else { return }
-        // TODO(cross-workspace cleanup): scans the current
-        // workspace only. `removePane` assumes current-WS state
-        // (columns[safe:], stackView, closeCurrentWorkspace,
-        // setFocus). A terminal exiting in a non-current workspace
-        // leaves a dead pane until the user switches to that WS
-        // and closes it manually. Full fix requires a
-        // `removePane(in:workspace:)` variant.
-        for (colIdx, col) in self.columns.enumerated() {
-          if let paneIdx = col.panes.firstIndex(where: { $0.id == pane.id }) {
-            self.removePane(columnIndex: colIdx, paneIndex: paneIdx)
-            return
-          }
+        // libghostty fires this when the surface's underlying
+        // process exits. The pane can sit in any workspace at
+        // that moment (long-running commands in background ws
+        // are common), so resolve by id across every workspace
+        // rather than scanning the current one. The dispatch
+        // helper handles the current / background split and the
+        // last-pane → workspace cascade (matching ghostty's
+        // multi-window convention where the last tab's exit
+        // takes the window down with it).
+        guard let loc = self.locatePane(id: pane.id) else {
+          // A close from another path (⌘W / worklane × /
+          // closeColumn / cross-WS drag drain) already removed the
+          // pane; this onClose is the libghostty-side echo. The
+          // debug trace distinguishes that benign race from a real
+          // state-corruption case (id mismatch / nodes desync) when
+          // the cleanup goes wrong downstream.
+          logger.debug(
+            "[panes/close] onClose: pane already gone id=\(pane.id, privacy: .public)")
+          return
         }
+        self.performBackgroundOrCurrentClose(at: loc)
       }
 
       // file:// URLs land in a finder pane; everything else routes
