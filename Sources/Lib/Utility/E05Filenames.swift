@@ -7,6 +7,7 @@ public enum E05Filenames {
   public static let bookmarks = "bookmarks.db"
   public static let downloads = "downloads.db"
   public static let history = "history.db"
+  public static let inputHistory = "input-history.db"
   public static let mutedSites = "muted-sites.json"
   public static let permissions = "permissions.json"
   public static let suspendExempt = "suspend-exempt.json"
