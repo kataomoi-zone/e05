@@ -18,36 +18,37 @@ extension PaneContainerViewController {
   /// meaningfully past that limit, hoist this onto a background
   /// Task to avoid main-thread blocking while typing.
   func searchSuggestions(query: String) -> [Suggestion] {
+    let now = Date()
     // Folder rows in the bookmarks store have a `nil` url; suggestion
     // ranking only deals with destinations, so drop them up front.
     let bookmarkEntries = bookmarks.all().filter { !$0.isFolder }
-    let historyEntries = browsingHistory.mostRecentAggregated()
-    let bookmarkURLs = Set(bookmarkEntries.compactMap(\.url))
+    // Fold history across canonical-key-equivalent URLs (trailing
+    // slash / utm / www variants) so a page reached through many of
+    // them ranks as one popular entry rather than several diluted rows.
+    let foldedHistory = Self.foldHistoryByCanonicalKey(browsingHistory.mostRecentAggregated())
 
-    var candidates: [Suggestion] = bookmarkEntries
-      .filter { !Self.isErrorTitle($0.title) }
-      .compactMap { entry in
-        guard let url = entry.url else { return nil }
-        return Suggestion(url: url, title: entry.title, isBookmark: true)
-      }
-    candidates.append(
-      contentsOf: historyEntries.compactMap { entry in
-        if bookmarkURLs.contains(entry.url) { return nil }
-        if Self.isErrorTitle(entry.title) { return nil }
-        return Suggestion(url: entry.url, title: entry.title, isBookmark: false)
-      })
+    // Bookmarks first, deduped by canonical key; track the keys so a
+    // page that's already starred is dropped from the history pass and
+    // appears once, as a bookmark.
+    var seenKeys: Set<String> = []
+    var candidates: [Suggestion] = []
+    for entry in bookmarkEntries {
+      guard let url = entry.url, !Self.isErrorTitle(entry.title) else { continue }
+      let key = URLCanonicalizer.canonicalKey(url) ?? url
+      guard seenKeys.insert(key).inserted else { continue }
+      candidates.append(Suggestion(url: url, title: entry.title, isBookmark: true))
+    }
 
-    let now = Date()
-    let frecencyByURL = Dictionary(
-      uniqueKeysWithValues: historyEntries.map { entry in
-        (
-          entry.url,
-          Frecency.score(
-            visits: entry.visits, typedVisits: entry.typedVisits,
-            lastVisit: entry.lastVisit, now: now)
-        )
-      }
-    )
+    var frecencyByURL: [String: Int] = [:]
+    for entry in foldedHistory where !Self.isErrorTitle(entry.title) {
+      let key = URLCanonicalizer.canonicalKey(entry.url) ?? entry.url
+      guard seenKeys.insert(key).inserted else { continue }
+      candidates.append(Suggestion(url: entry.url, title: entry.title, isBookmark: false))
+      frecencyByURL[entry.url] = Frecency.score(
+        visits: entry.visits, typedVisits: entry.typedVisits,
+        lastVisit: entry.lastVisit, now: now)
+    }
+
     var results = Suggestion.rank(
       query: query,
       candidates: candidates,
@@ -148,6 +149,48 @@ extension PaneContainerViewController {
     }
 
     return results
+  }
+
+  /// One page's history rolled up across canonical-key-equivalent URLs
+  /// (trailing-slash / utm / www variants). Visit counts sum so a page
+  /// reached through many variants ranks as one popular entry;
+  /// representative `url` / `title` come from the most recent visit.
+  struct FoldedHistoryEntry: Equatable {
+    let url: String
+    let title: String
+    let visits: Int
+    let typedVisits: Int
+    let lastVisit: Date
+  }
+
+  /// Fold URL-exact aggregated history into canonical-key groups,
+  /// preserving the input's recency order — one entry per key, at the
+  /// position of its first member (the most recent, since the input is
+  /// last-visit descending).
+  nonisolated static func foldHistoryByCanonicalKey(
+    _ entries: [BrowsingHistory.AggregatedEntry]
+  ) -> [FoldedHistoryEntry] {
+    var byKey: [String: FoldedHistoryEntry] = [:]
+    var order: [String] = []
+    for entry in entries {
+      let key = URLCanonicalizer.canonicalKey(entry.url) ?? entry.url
+      if let existing = byKey[key] {
+        let entryIsNewer = entry.lastVisit > existing.lastVisit
+        byKey[key] = FoldedHistoryEntry(
+          url: entryIsNewer ? entry.url : existing.url,
+          title: entryIsNewer ? entry.title : existing.title,
+          visits: existing.visits + entry.visits,
+          typedVisits: existing.typedVisits + entry.typedVisits,
+          lastVisit: max(existing.lastVisit, entry.lastVisit)
+        )
+      } else {
+        byKey[key] = FoldedHistoryEntry(
+          url: entry.url, title: entry.title, visits: entry.visits,
+          typedVisits: entry.typedVisits, lastVisit: entry.lastVisit)
+        order.append(key)
+      }
+    }
+    return order.compactMap { byKey[$0] }
   }
 
   /// Map every pane's canonical URL key to its pane id. Cross-workspace

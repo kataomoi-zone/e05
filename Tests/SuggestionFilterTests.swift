@@ -57,4 +57,38 @@ struct SuggestionFilterTests {
       ) == nil
     )
   }
+
+  @Test("folds canonical-key-equivalent history and sums visit counts")
+  func foldHistorySumsVisits() {
+    let now = Date()
+    let entries = [
+      BrowsingHistory.AggregatedEntry(
+        url: "https://example.com/?utm_source=x", title: "Newer",
+        visits: 2, typedVisits: 1, lastVisit: now),
+      BrowsingHistory.AggregatedEntry(
+        url: "https://example.com", title: "Older",
+        visits: 3, typedVisits: 2, lastVisit: now.addingTimeInterval(-100)),
+    ]
+    let folded = PaneContainerViewController.foldHistoryByCanonicalKey(entries)
+    #expect(folded.count == 1)
+    #expect(folded[0].visits == 5)
+    #expect(folded[0].typedVisits == 3)
+    // The most recent member is the representative url/title.
+    #expect(folded[0].url == "https://example.com/?utm_source=x")
+    #expect(folded[0].title == "Newer")
+  }
+
+  @Test("fold keeps distinct pages and preserves recency order")
+  func foldKeepsDistinctOrder() {
+    let now = Date()
+    let entries = [
+      BrowsingHistory.AggregatedEntry(
+        url: "https://a.com", title: "A", visits: 1, typedVisits: 0, lastVisit: now),
+      BrowsingHistory.AggregatedEntry(
+        url: "https://b.com", title: "B", visits: 1, typedVisits: 0,
+        lastVisit: now.addingTimeInterval(-50)),
+    ]
+    let folded = PaneContainerViewController.foldHistoryByCanonicalKey(entries)
+    #expect(folded.map(\.url) == ["https://a.com", "https://b.com"])
+  }
 }
