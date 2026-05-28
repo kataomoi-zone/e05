@@ -88,6 +88,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// committed suggestion reinforces the typed prefix rather than the
   /// auto-filled host.
   private var lastUserTypedText = ""
+  /// Whether the previous change applied an inline completion, so the
+  /// next change can tell "backspaced the completion away" (a rejection)
+  /// from an ordinary deletion.
+  private var hadInlineCompletion = false
 
   /// Inline zoom indicator (percent label + -/+/Reset). Hidden while
   /// `pageZoom` is at 1.0 so the URL field claims the full trailing
@@ -198,8 +202,12 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   private var currentHost: String?
   /// Called when user presses ESC to dismiss URL field.
   public var onCancel: (() -> Void)?
-  /// Called when text changes in the URL field. Return suggestions to display.
-  public var onTextChanged: ((String) -> [Suggestion])?
+  /// Called when text changes in the URL field. Returns suggestions to
+  /// display. The Bool is true when the user just backspaced an inline
+  /// completion away — the host then floats a search row to the top so
+  /// a rejected autofill becomes a search instead of re-surfacing the
+  /// same destination.
+  public var onTextChanged: ((String, Bool) -> [Suggestion])?
   /// Called when the URL bar is clicked (for pane focus management).
   public var onClicked: (() -> Void)?
   /// Called when user clicks the fold button.
@@ -1497,6 +1505,10 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // so a completion being backspaced away isn't re-applied.
     lastUserTypedText = text
     let isDeletion = text.count < lastFieldLength
+    // Backspacing away a just-applied completion reads as rejecting that
+    // destination; the host floats a search row to the top in response.
+    let rejectedCompletion = isDeletion && hadInlineCompletion
+    hadInlineCompletion = false
     lastFieldLength = text.count
     guard !text.isEmpty else {
       dismissSuggestions()
@@ -1509,7 +1521,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     ) { [weak self] _ in
       DispatchQueue.main.async {
         guard let self else { return }
-        let suggestions = self.onTextChanged?(text) ?? []
+        let suggestions = self.onTextChanged?(text, rejectedCompletion) ?? []
         self.currentSuggestions = suggestions
         self.suggestionList.update(
           items: suggestions.map { Self.cellModel(from: $0, query: text) }
@@ -1545,6 +1557,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // back at the typed length we'd recorded, looks like no deletion,
     // and the completion immediately reappears.
     lastFieldLength = (typed + suffix).count
+    hadInlineCompletion = true
   }
 
   public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {

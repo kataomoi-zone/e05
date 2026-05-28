@@ -17,7 +17,7 @@ extension PaneContainerViewController {
   /// `PaneURLBar`'s ~150ms debounce. If the history cap ever grows
   /// meaningfully past that limit, hoist this onto a background
   /// Task to avoid main-thread blocking while typing.
-  func searchSuggestions(query: String) -> [Suggestion] {
+  func searchSuggestions(query: String, preferSearchTop: Bool = false) -> [Suggestion] {
     let now = Date()
     // Folder rows in the bookmarks store have a `nil` url; suggestion
     // ranking only deals with destinations, so drop them up front.
@@ -105,7 +105,10 @@ extension PaneContainerViewController {
         title: "\(query) \u{2014} Search",
         isBookmark: false
       )
-      let insertAt = min(Self.searchEntryInsertOffset, results.count)
+      // After the user rejects an inline completion, lead with search
+      // (Brave-style) rather than re-floating the destination they just
+      // dismissed; otherwise keep search below the top few strong hits.
+      let insertAt = preferSearchTop ? 0 : min(Self.searchEntryInsertOffset, results.count)
       results.insert(searchEntry, at: insertAt)
     }
 

@@ -600,9 +600,9 @@ extension PaneContainerViewController {
     }
 
     // URL bar: fuzzy find suggestions from history + bookmarks
-    pane.urlBar.onTextChanged = { [weak self] query in
+    pane.urlBar.onTextChanged = { [weak self] query, preferSearchTop in
       guard let self, !query.isEmpty else { return [] }
-      return self.searchSuggestions(query: query)
+      return self.searchSuggestions(query: query, preferSearchTop: preferSearchTop)
     }
 
     // Sync URL bar visibility with the window-global toggle so a
