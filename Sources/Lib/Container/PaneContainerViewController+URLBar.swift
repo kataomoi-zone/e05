@@ -82,7 +82,24 @@ extension PaneContainerViewController {
     // DuckDuckGo search fallback below. Any existing row with the
     // same URL is removed first so the entry doesn't appear twice
     // when the typed URL is also present in history/bookmarks.
-    if let direct = directOpenSuggestion(query: query) {
+    let direct = directOpenSuggestion(query: query)
+    // Origin autofill (Brave/Firefox): when the typed text is a prefix
+    // of a host-root candidate's host, float that origin to the top so
+    // the inline completion (which fills the top candidate's host) and
+    // the auto-selected default match point at the same page. Without it
+    // a deeper page ranked #1 by frecency stays selected while the field
+    // shows only its origin, and Enter would open the deep page instead
+    // of the completed host. Skipped when the input is itself a direct
+    // URL — the Open URL row leads there.
+    if direct == nil,
+      let originIdx = results.firstIndex(where: { sugg in
+        !sugg.isSearch && sugg.openPaneID == nil
+          && URLBarInlineCompletion.hostSuffix(forQuery: query, candidateURL: sugg.url) != nil
+      }), originIdx != 0
+    {
+      results.insert(results.remove(at: originIdx), at: 0)
+    }
+    if let direct {
       // Dedup on the canonical key, matching the candidate pool's own
       // folding — otherwise a history entry that differs only by
       // trailing slash / scheme from the typed URL surfaces twice (the
@@ -103,7 +120,8 @@ extension PaneContainerViewController {
       let searchEntry = Suggestion(
         url: searchAddr.url.absoluteString,
         title: "\(query) \u{2014} Search",
-        isBookmark: false
+        isBookmark: false,
+        isSearch: true
       )
       // After the user rejects an inline completion, lead with search
       // (Brave-style) rather than re-floating the destination they just

@@ -92,6 +92,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// next change can tell "backspaced the completion away" (a rejection)
   /// from an ordinary deletion.
   private var hadInlineCompletion = false
+  /// Whether the field currently shows a previewed suggestion (from ↑/↓
+  /// navigation) rather than the user's own text. Esc restores the typed
+  /// text; continued editing clears it.
+  private var isPreviewingSelection = false
+  /// True for the first change after focusing, so the all-select replace
+  /// that ⌘L sets up isn't misread as a deletion (which would suppress
+  /// the inline completion on the first keystroke).
+  private var justBeganEditing = false
+  /// Last URL pushed through `setDisplayURL` (the pane's live address),
+  /// so a selection preview can revert to it on blur instead of leaving
+  /// an unrelated previewed URL in the field.
+  private var lastDisplayedURL = ""
 
   /// Inline zoom indicator (percent label + -/+/Reset). Hidden while
   /// `pageZoom` is at 1.0 so the URL field claims the full trailing
@@ -1154,6 +1166,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// Update the displayed URL text.
   public func setDisplayURL(_ urlString: String) {
     writeURLFieldText(urlString)
+    lastDisplayedURL = urlString
     if let url = URL(string: urlString),
       let host = url.host(percentEncoded: false), !host.isEmpty
     {
@@ -1493,6 +1506,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   public func controlTextDidBeginEditing(_ notification: Notification) {
     // User started editing the URL field — treat as pane focus
     onClicked?()
+    // Reset inline-completion / preview state for the new editing
+    // session so a stale field length (from a previously completed URL)
+    // doesn't misread the first keystroke and suppress completion.
+    lastFieldLength = urlField.stringValue.count
+    lastUserTypedText = urlField.stringValue
+    hadInlineCompletion = false
+    isPreviewingSelection = false
+    justBeganEditing = true
   }
 
   public func controlTextDidChange(_ notification: Notification) {
@@ -1500,11 +1521,16 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // would recurse and try to complete the completion.
     if isApplyingInlineCompletion { return }
     let text = urlField.stringValue
+    // A real edit ends any selection preview.
+    isPreviewingSelection = false
     // Remember what the user actually typed (pre-completion) so a
     // committed suggestion learns the typed prefix, and detect deletion
-    // so a completion being backspaced away isn't re-applied.
+    // so a completion being backspaced away isn't re-applied. The first
+    // change after focusing is the ⌘L all-select replacement, not a
+    // deletion, so it must not suppress the completion.
     lastUserTypedText = text
-    let isDeletion = text.count < lastFieldLength
+    let isDeletion = !justBeganEditing && text.count < lastFieldLength
+    justBeganEditing = false
     // Backspacing away a just-applied completion reads as rejecting that
     // destination; the host floats a search row to the top in response.
     let rejectedCompletion = isDeletion && hadInlineCompletion
@@ -1560,6 +1586,65 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     hadInlineCompletion = true
   }
 
+  /// Reflect the highlighted suggestion in the URL field (Brave/Safari
+  /// selection preview). A destination row fills its full URL; the
+  /// synthetic search row keeps the typed query; the top row restores
+  /// the typed text plus its inline completion. `lastUserTypedText` holds
+  /// the original input, so Esc — and continued editing on the search or
+  /// top row — recovers it; editing a destination-row preview continues
+  /// from the filled URL, matching Brave/Safari.
+  private func previewSelectedSuggestion() {
+    guard let index = suggestionList.selectedIndex,
+      currentSuggestions.indices.contains(index)
+    else { return }
+    let suggestion = currentSuggestions[index]
+    isPreviewingSelection = true
+    isApplyingInlineCompletion = true
+    defer { isApplyingInlineCompletion = false }
+    if suggestion.isSearch {
+      // Search row: a search-engine URL in the field would be confusing;
+      // keep the query the user typed.
+      writeURLFieldText(lastUserTypedText)
+      lastFieldLength = lastUserTypedText.count
+      hadInlineCompletion = false
+    } else if index == 0 {
+      // Back at the top row: restore typed text + its inline completion
+      // when an editor is attached and the host completes (origin root);
+      // otherwise just the typed text — never the bare origin URL.
+      if let editor = urlField.currentEditor() as? NSTextView,
+        let suffix = URLBarInlineCompletion.hostSuffix(
+          forQuery: lastUserTypedText, candidateURL: suggestion.url)
+      {
+        writeURLFieldText(lastUserTypedText + suffix)
+        editor.selectedRange = NSRange(
+          location: (lastUserTypedText as NSString).length,
+          length: (suffix as NSString).length)
+        lastFieldLength = (lastUserTypedText + suffix).count
+        hadInlineCompletion = true
+      } else {
+        writeURLFieldText(lastUserTypedText)
+        lastFieldLength = lastUserTypedText.count
+        hadInlineCompletion = false
+      }
+    } else {
+      // Destination row: show the full URL it would navigate to.
+      writeURLFieldText(suggestion.url)
+      lastFieldLength = suggestion.url.count
+      hadInlineCompletion = false
+    }
+  }
+
+  /// Restore the user's typed text after a selection preview (Esc), so
+  /// the field reads what they entered rather than a previewed URL.
+  private func restoreTypedText() {
+    isApplyingInlineCompletion = true
+    defer { isApplyingInlineCompletion = false }
+    writeURLFieldText(lastUserTypedText)
+    lastFieldLength = lastUserTypedText.count
+    hadInlineCompletion = false
+    isPreviewingSelection = false
+  }
+
   public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
     if selector == #selector(insertNewline(_:)) {
       if !suggestionList.isHidden,
@@ -1574,16 +1659,27 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       return true
     }
     if selector == #selector(cancelOperation(_:)) {
+      // First Esc backs out of a selection preview to the typed text and
+      // keeps the list open; a second Esc (no preview) dismisses.
+      if isPreviewingSelection {
+        restoreTypedText()
+        return true
+      }
       dismissSuggestions()
       onCancel?()
       return true
     }
     if selector == #selector(moveUp(_:)) {
+      // Let the field editor move the caret when there's no list to walk.
+      guard !suggestionList.isHidden else { return false }
       suggestionList.selectPrevious()
+      previewSelectedSuggestion()
       return true
     }
     if selector == #selector(moveDown(_:)) {
+      guard !suggestionList.isHidden else { return false }
       suggestionList.selectNext()
+      previewSelectedSuggestion()
       return true
     }
     return false
@@ -1613,6 +1709,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
         responder.isDescendant(of: self.suggestionList)
       {
         return
+      }
+      // A selection preview replaced the field with a candidate URL the
+      // user never committed; on real blur restore the pane's live URL
+      // rather than leaving the unrelated preview text behind.
+      if self.isPreviewingSelection {
+        self.writeURLFieldText(self.lastDisplayedURL)
+        self.isPreviewingSelection = false
       }
       self.dismissSuggestions()
       // Tell the host editing has ended with the cursor outside the

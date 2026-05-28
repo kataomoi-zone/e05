@@ -22,9 +22,15 @@ public enum URLBarInlineCompletion {
     guard !lowerQuery.contains("/"), !lowerQuery.contains(":"), !lowerQuery.contains(" ")
     else { return nil }
 
-    guard
-      let host = URLComponents(string: candidateURL)?.host
-        ?? URL(string: candidateURL)?.host
+    guard let comps = URLComponents(string: candidateURL),
+      let host = comps.host, !host.isEmpty,
+      // Complete only to an origin root. Filling a deep page's host
+      // would point the field at the origin while a different, deeper
+      // row stays selected — completion and default match must agree, so
+      // the caller (searchSuggestions) floats a matching origin to the
+      // top and a deep page simply gets no completion.
+      comps.query == nil, comps.fragment == nil,
+      comps.path.isEmpty || comps.path == "/"
     else { return nil }
     let lowerHost = host.lowercased()
 

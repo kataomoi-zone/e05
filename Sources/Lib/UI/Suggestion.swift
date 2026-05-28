@@ -11,12 +11,20 @@ public struct Suggestion: Equatable {
   /// (across workspaces if needed) instead of triggering a fresh
   /// navigation in the active pane.
   public let openPaneID: ULID?
+  /// True for the synthetic search-engine row. Selection preview keeps
+  /// the typed query in the field for this row rather than filling the
+  /// engine's query URL.
+  public let isSearch: Bool
 
-  public init(url: String, title: String, isBookmark: Bool, openPaneID: ULID? = nil) {
+  public init(
+    url: String, title: String, isBookmark: Bool, openPaneID: ULID? = nil,
+    isSearch: Bool = false
+  ) {
     self.url = url
     self.title = title
     self.isBookmark = isBookmark
     self.openPaneID = openPaneID
+    self.isSearch = isSearch
   }
 
   public var displayTitle: String {

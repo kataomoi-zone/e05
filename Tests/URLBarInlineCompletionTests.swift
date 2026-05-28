@@ -22,7 +22,20 @@ struct URLBarInlineCompletionTests {
   func preservesCase() {
     #expect(
       URLBarInlineCompletion.hostSuffix(
-        forQuery: "git", candidateURL: "https://GitHub.com/x") == "Hub.com")
+        forQuery: "git", candidateURL: "https://GitHub.com/") == "Hub.com")
+  }
+
+  @Test("completes only to an origin root, not a deep page")
+  func originRootOnly() {
+    #expect(
+      URLBarInlineCompletion.hostSuffix(
+        forQuery: "app", candidateURL: "https://applech2.com/archives/1") == nil)
+    #expect(
+      URLBarInlineCompletion.hostSuffix(
+        forQuery: "ex", candidateURL: "https://example.com/?q=x") == nil)
+    #expect(
+      URLBarInlineCompletion.hostSuffix(
+        forQuery: "ex", candidateURL: "https://example.com/") == "ample.com")
   }
 
   @Test("no completion once a slash, scheme, or space is typed")
