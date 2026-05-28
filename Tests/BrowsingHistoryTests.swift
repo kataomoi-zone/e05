@@ -108,4 +108,37 @@ struct BrowsingHistoryTests {
     #expect(remaining.count == 1)
     #expect(remaining[0].url == "https://a.com")
   }
+
+  @Test("aggregates typed-visit counts per URL")
+  func typedVisitAggregation() {
+    let history = BrowsingHistory(inMemory: true)
+    history.deleteAll()
+
+    // Interleave to dodge the consecutive-dup guard; `a.com` gets
+    // two typed visits, `b.com` a single link visit.
+    history.recordVisit(url: "https://a.com", title: "A", transition: .typed)
+    history.recordVisit(url: "https://b.com", title: "B", transition: .link)
+    history.recordVisit(url: "https://a.com", title: "A", transition: .typed)
+
+    let aggregated = history.mostRecentAggregated(limit: 10)
+    let aRow = try? #require(aggregated.first { $0.url == "https://a.com" })
+    let bRow = try? #require(aggregated.first { $0.url == "https://b.com" })
+    #expect(aRow?.visits == 2)
+    #expect(aRow?.typedVisits == 2)
+    #expect(bRow?.visits == 1)
+    #expect(bRow?.typedVisits == 0)
+  }
+
+  @Test("defaulted transition records as a non-typed visit")
+  func defaultTransitionNotTyped() {
+    let history = BrowsingHistory(inMemory: true)
+    history.deleteAll()
+
+    history.recordVisit(url: "https://a.com", title: "A")
+
+    let aggregated = history.mostRecentAggregated(limit: 10)
+    let aRow = try? #require(aggregated.first { $0.url == "https://a.com" })
+    #expect(aRow?.visits == 1)
+    #expect(aRow?.typedVisits == 0)
+  }
 }

@@ -303,7 +303,7 @@ public final class NotificationDeliveryDelegate: NSObject {
       if allowRedirect, Self.isDeepLink(url),
         pane.address.url.absoluteString != url.absoluteString
       {
-        pane.browserView?.navigate(to: url.absoluteString)
+        pane.browserView?.navigate(to: url.absoluteString, transition: .link)
       }
       return
     }

@@ -53,6 +53,10 @@ public final class BrowsingHistory {
     public let url: String
     public let title: String
     public let visits: Int
+    /// Of those visits, how many were `VisitTransition.typed`. Lets
+    /// the ranking layer weight address-bar navigations far above
+    /// incidental link follows without re-querying per-row.
+    public let typedVisits: Int
     public let lastVisit: Date
   }
 
@@ -138,7 +142,8 @@ public final class BrowsingHistory {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           url TEXT NOT NULL,
           title TEXT NOT NULL DEFAULT '',
-          visited_at REAL NOT NULL
+          visited_at REAL NOT NULL,
+          visit_type INTEGER NOT NULL DEFAULT 1
       );
       CREATE INDEX IF NOT EXISTS idx_history_visited_at ON history(visited_at DESC);
       CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
@@ -146,17 +151,50 @@ public final class BrowsingHistory {
     if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
       logger.error("Failed to create history table: \(String(cString: sqlite3_errmsg(db)))")
     }
+    addVisitTypeColumnIfMissing()
+  }
+
+  /// Databases created before `visit_type` existed carry the old
+  /// 4-column schema, and `CREATE TABLE IF NOT EXISTS` leaves them
+  /// untouched. Add the column in place — defaulting pre-existing
+  /// rows to `.link` (raw 1), the most common provenance — so prior
+  /// history survives the upgrade instead of being discarded.
+  private func addVisitTypeColumnIfMissing() {
+    guard let db else { return }
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(db, "PRAGMA table_info(history)", -1, &stmt, nil) == SQLITE_OK,
+      let stmt
+    else { return }
+    var hasColumn = false
+    while sqlite3_step(stmt) == SQLITE_ROW {
+      if let namePtr = sqlite3_column_text(stmt, 1),
+        String(cString: namePtr) == "visit_type"
+      {
+        hasColumn = true
+        break
+      }
+    }
+    sqlite3_finalize(stmt)
+    guard !hasColumn else { return }
+    if sqlite3_exec(
+      db, "ALTER TABLE history ADD COLUMN visit_type INTEGER NOT NULL DEFAULT 1", nil, nil, nil
+    ) != SQLITE_OK {
+      logger.error(
+        "Failed to add visit_type column: \(String(cString: sqlite3_errmsg(db)))")
+    }
   }
 
   // MARK: - Write
 
   /// Record a page visit. Deduplicates consecutive visits to the same URL.
-  public func recordVisit(url: String, title: String) {
+  /// `transition` records how the visit was reached so frecency can
+  /// weight typed navigations above incidental link follows.
+  public func recordVisit(url: String, title: String, transition: VisitTransition = .link) {
     guard let db else { return }
     // Skip consecutive duplicates (KVO noise avoidance)
     if lastRecordedURL == url { return }
 
-    let sql = "INSERT INTO history (url, title, visited_at) VALUES (?, ?, ?)"
+    let sql = "INSERT INTO history (url, title, visited_at, visit_type) VALUES (?, ?, ?, ?)"
     var stmt: OpaquePointer?
     guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
       let stmt
@@ -166,6 +204,7 @@ public final class BrowsingHistory {
     _ = url.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
     _ = title.withCString { sqlite3_bind_text(stmt, 2, $0, -1, SQLITE_TRANSIENT) }
     sqlite3_bind_double(stmt, 3, Date().timeIntervalSince1970)
+    sqlite3_bind_int(stmt, 4, Int32(transition.rawValue))
 
     if sqlite3_step(stmt) != SQLITE_DONE {
       logger.error("Failed to insert history: \(String(cString: sqlite3_errmsg(db)))")
@@ -207,11 +246,15 @@ public final class BrowsingHistory {
   /// top of the substring-match score.
   public func mostRecentAggregated(limit: Int = defaultAggregatedLimit) -> [AggregatedEntry] {
     guard let db else { return [] }
+    // `visit_type = 0` is `VisitTransition.typed`; counted here so
+    // the ranker gets typed-visit totals in the same pass.
     let sql = """
-      SELECT h.url, h.title, agg.visits, agg.last_visit
+      SELECT h.url, h.title, agg.visits, agg.typed_visits, agg.last_visit
       FROM history h
       INNER JOIN (
-          SELECT url, COUNT(*) AS visits, MAX(visited_at) AS last_visit
+          SELECT url, COUNT(*) AS visits,
+                 SUM(CASE WHEN visit_type = 0 THEN 1 ELSE 0 END) AS typed_visits,
+                 MAX(visited_at) AS last_visit
           FROM history GROUP BY url
       ) agg ON h.url = agg.url AND h.visited_at = agg.last_visit
       ORDER BY agg.last_visit DESC LIMIT ?
@@ -231,9 +274,12 @@ public final class BrowsingHistory {
       let url = String(cString: urlPtr)
       let title = String(cString: titlePtr)
       let visits = Int(sqlite3_column_int(stmt, 2))
-      let lastVisit = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+      let typedVisits = Int(sqlite3_column_int(stmt, 3))
+      let lastVisit = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4))
       entries.append(
-        AggregatedEntry(url: url, title: title, visits: visits, lastVisit: lastVisit)
+        AggregatedEntry(
+          url: url, title: title, visits: visits, typedVisits: typedVisits,
+          lastVisit: lastVisit)
       )
     }
     return entries

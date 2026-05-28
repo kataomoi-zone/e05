@@ -75,7 +75,12 @@ extension PaneContainerViewController {
     // same URL is removed first so the entry doesn't appear twice
     // when the typed URL is also present in history/bookmarks.
     if let direct = directOpenSuggestion(query: query) {
-      results.removeAll { $0.url == direct.url }
+      // Dedup on the canonical key, matching the candidate pool's own
+      // folding — otherwise a history entry that differs only by
+      // trailing slash / scheme from the typed URL surfaces twice (the
+      // "Open URL" row plus its history twin).
+      let directKey = URLCanonicalizer.canonicalKey(direct.url) ?? direct.url
+      results.removeAll { (URLCanonicalizer.canonicalKey($0.url) ?? $0.url) == directKey }
       results.insert(direct, at: 0)
     }
 
@@ -117,7 +122,8 @@ extension PaneContainerViewController {
       augmented.reserveCapacity(results.count)
       for suggestion in results {
         augmented.append(suggestion)
-        if let paneID = openByURL[suggestion.url] {
+        let key = URLCanonicalizer.canonicalKey(suggestion.url) ?? suggestion.url
+        if let paneID = openByURL[key] {
           augmented.append(
             Suggestion(
               url: suggestion.url,
@@ -139,30 +145,35 @@ extension PaneContainerViewController {
     return results
   }
 
-  /// Map every pane's current URL to its pane id. Cross-workspace
+  /// Map every pane's canonical URL key to its pane id. Cross-workspace
   /// because the URL bar suggestion list spans every browser pane in
-  /// the window, not just the current workspace's. The optional
-  /// `excluding` filter drops a single pane (typically the focused
-  /// one) so the URL bar doesn't offer to "switch" to itself when
-  /// the user types their own address.
+  /// the window, not just the current workspace's. The key folds
+  /// trailing-slash / fragment / tracking-param differences
+  /// (`URLCanonicalizer`) so a suggestion still matches an open pane
+  /// whose URL differs only in those incidentals; panes whose URL
+  /// doesn't canonicalize (e05://, extension pages) fall back to their
+  /// raw absolute string. The optional `excluding` filter drops a
+  /// single pane (typically the focused one) so the URL bar doesn't
+  /// offer to "switch" to itself when the user types their own address.
   private func openPanesByURL(excluding excludedID: ULID?) -> [String: ULID] {
-    var byURL: [String: ULID] = [:]
+    var byKey: [String: ULID] = [:]
     for workspace in workspaces {
       for column in workspace.columns {
         for pane in column.panes {
           if pane.id == excludedID { continue }
           let url = pane.address.url.absoluteString
           guard !url.isEmpty else { continue }
-          // First write wins. Multiple panes on the same URL is
+          let key = URLCanonicalizer.canonicalKey(url) ?? url
+          // First write wins. Multiple panes on the same page is
           // rare but possible; arbitrary tie-breaking is fine here
           // since the user gets focused at one of them either way.
-          if byURL[url] == nil {
-            byURL[url] = pane.id
+          if byKey[key] == nil {
+            byKey[key] = pane.id
           }
         }
       }
     }
-    return byURL
+    return byKey
   }
 
   /// Focus the pane with `id`, switching workspaces if the pane
@@ -211,10 +222,14 @@ extension PaneContainerViewController {
   /// `nonisolated` so the `Set<String>` literal can be reached as a
   /// default-argument value from the nonisolated `searchEngineQueryKey`;
   /// the class's MainActor isolation would otherwise capture it.
+  /// Stored as base domains; `searchEngineQueryKey` matches them by
+  /// suffix so subdomains and locale hosts (`html.duckduckgo.com`,
+  /// `www.google.com`) collapse onto the same engine without being
+  /// enumerated here.
   nonisolated static let searchEngineHosts: Set<String> = [
-    "duckduckgo.com", "www.duckduckgo.com",
-    "google.com", "www.google.com",
-    "bing.com", "www.bing.com",
+    "duckduckgo.com",
+    "google.com",
+    "bing.com",
     "search.brave.com",
   ]
 
@@ -258,7 +273,10 @@ extension PaneContainerViewController {
   ) -> String? {
     guard let url = URL(string: urlString),
       let host = url.host(percentEncoded: false)?.lowercased(),
-      hosts.contains(host)
+      // Suffix match so subdomains / locale hosts collapse onto the
+      // same base engine as the bare host; key off `base` (not the
+      // raw host) so `www.google.com` and `google.com` share one key.
+      let base = hosts.first(where: { host == $0 || host.hasSuffix("." + $0) })
     else {
       return nil
     }
@@ -267,7 +285,7 @@ extension PaneContainerViewController {
       .queryItems?
       .first(where: { $0.name == "q" })?
       .value ?? ""
-    return "\(host)|\(q)"
+    return "\(base)|\(q)"
   }
 
   /// Whether `title` looks like an HTTP error page that the user
@@ -393,7 +411,7 @@ extension PaneContainerViewController {
       // to (handles symlinks and trailing-slash normalisation).
       pane.address = newAddress
       if let bv = pane.browserView {
-        bv.navigate(to: newAddress.url.absoluteString)
+        bv.navigate(to: newAddress.url.absoluteString, transition: .typed)
       } else if let fv = pane.finderView, newAddress.kind == .finder {
         let path = newAddress.currentPath
         if !path.isEmpty {

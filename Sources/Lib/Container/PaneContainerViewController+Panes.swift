@@ -295,7 +295,7 @@ extension PaneContainerViewController {
         }
         ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .title)
       }
-      bv.onURLChange = { [weak self, weak pane] url in
+      bv.onURLChange = { [weak self, weak pane] url, transition in
         guard let url else { return }
         let urlString = url.absoluteString
         pane?.address = PaneAddress(url)
@@ -310,7 +310,8 @@ extension PaneContainerViewController {
           let workspace = self.workspaceContaining(pane: pane),
           !workspace.isPrivate
         {
-          self.browsingHistory.recordVisit(url: urlString, title: pane.title)
+          self.browsingHistory.recordVisit(
+            url: urlString, title: pane.title, transition: transition)
         }
         if let pane {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .URL)

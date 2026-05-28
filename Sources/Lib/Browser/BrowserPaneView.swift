@@ -96,8 +96,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   /// Called when page title changes.
   public var onTitleChange: ((String) -> Void)?
-  /// Called when URL changes.
-  public var onURLChange: ((URL?) -> Void)?
+  /// Called when URL changes. The second argument is how the visit
+  /// was reached, so the history store can weight typed navigations.
+  public var onURLChange: ((URL?, VisitTransition) -> Void)?
   /// Called when back/forward availability changes.
   public var onNavigationStateChange: ((Bool, Bool) -> Void)?
   /// Called when the page's loading state flips. `true` means a
@@ -217,6 +218,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// populated for every code path) and `webView.url` has already
   /// been cleared after a provisional failure.
   private var lastAttemptedURL: URL?
+
+  /// Provenance of the in-flight navigation, captured at decision time
+  /// (`decidePolicyFor` for WebKit-classified types,
+  /// `navigate(to:transition:)` for programmatic loads) and consumed
+  /// by the `\.url` KVO observer when it records the visit. Reset to
+  /// `.link` after each consume so SPA navigations that bypass
+  /// `decidePolicyFor` don't inherit a stale `.typed`.
+  private var pendingTransition: VisitTransition = .link
 
   /// Whether this pane was constructed for a `WKWebExtensionContext`
   /// (e.g. an extension's options page). The flag gates services that
@@ -710,7 +719,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       guard let url = change.newValue ?? nil else { return }
       DispatchQueue.main.async {
         guard let self else { return }
-        self.onURLChange?(url)
+        self.onURLChange?(url, self.pendingTransition)
+        // Reset so a subsequent SPA `pushState` URL change — which
+        // never reaches `decidePolicyFor` — records as an ordinary
+        // link instead of inheriting this navigation's type.
+        self.pendingTransition = .link
         self.foldSPAURLChangeIntoRestoredHistory(url)
         // Warm the favicon cache so sidebar worklane rows and URL
         // bar suggestions can stop showing the generic `globe`
@@ -1304,7 +1317,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   // MARK: - Navigation
 
-  public func navigate(to urlString: String) {
+  public func navigate(to urlString: String, transition: VisitTransition = .other) {
     var normalized = urlString.trimmingCharacters(in: .whitespaces)
     // about: scheme uses "about:blank" format (no "://")
     if !normalized.contains("://"), !normalized.hasPrefix("about:") {
@@ -1314,6 +1327,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       let scheme = url.scheme,
       ["https", "http", "about", PaneAddress.extensionScheme].contains(scheme)
     else { return }
+    // WebKit reports programmatic loads as `.other`; record the
+    // caller's intent (URL bar entry = `.typed`) so the `\.url` KVO
+    // observer attributes the visit correctly.
+    pendingTransition = transition
     webView.load(URLRequest(url: url))
   }
 
@@ -1643,6 +1660,22 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       let candidate = navigationAction.request.url
     {
       lastAttemptedURL = candidate
+    }
+    // Capture provenance for the visit the `\.url` KVO observer will
+    // record. `.other` covers programmatic loads (including the URL
+    // bar's `navigate(to:transition:)`), so leave whatever `navigate`
+    // set intact in that case and only overwrite for the types WebKit
+    // can classify. Main-frame only — a subframe navigation must not
+    // clobber the pending type before the main-frame URL settles.
+    if navigationAction.targetFrame?.isMainFrame ?? true {
+      switch navigationAction.navigationType {
+      case .linkActivated: pendingTransition = .link
+      case .formSubmitted, .formResubmitted: pendingTransition = .formSubmitted
+      case .backForward: pendingTransition = .backForward
+      case .reload: pendingTransition = .reload
+      case .other: break
+      @unknown default: break
+      }
     }
     // Drop / fold the cross-launch shadow stack when a navigation
     // happens that wasn't kicked by `goBackEffective` /
