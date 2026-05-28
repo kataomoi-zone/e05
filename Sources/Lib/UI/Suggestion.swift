@@ -44,12 +44,15 @@ public struct Suggestion: Equatable {
   ///     and frecency only (recency-decayed visit count).
   ///   - candidates: pre-built suggestion pool.
   ///   - bookmarkBonus: score added to `isBookmark == true` items.
-  ///     Default 100 sits between a word-start match (100) and a
-  ///     host-start match (200), so a starred page leads similarly-
-  ///     scored history without overpowering a strong host match.
-  ///   - frecencyByURL: optional per-URL bonus (typically derived
-  ///     from history visit count + recency). Capped internally so
-  ///     a runaway visit count can't dominate exact-name matches.
+  ///     Default 100 lifts a starred page above similarly-scored
+  ///     history without overpowering a strong host match.
+  ///   - frecencyByURL: optional per-URL raw frecency
+  ///     (`Frecency.score`). Mapped through
+  ///     `Frecency.rankingContribution` to a bucketed bonus large
+  ///     enough that a frequently-visited page can outrank a
+  ///     stronger-matching but rarely-visited one, while the bucket
+  ///     ceiling keeps a runaway visit count from burying fresh
+  ///     matches.
   ///   - maxResults: cap on returned suggestions.
   public static func rank(
     query: String,
@@ -64,7 +67,7 @@ public struct Suggestion: Equatable {
       let scored = candidates.enumerated().map { index, item -> (Suggestion, Int, Int) in
         let total =
           (item.isBookmark ? bookmarkBonus : 0)
-          + min(frecencyByURL[item.url] ?? 0, 200)
+          + Frecency.rankingContribution(raw: frecencyByURL[item.url] ?? 0)
         return (item, total, index)
       }
       return
@@ -90,7 +93,7 @@ public struct Suggestion: Equatable {
     let scored: [Scored] = ranked.enumerated().map { index, pair in
       var total = pair.match.score
       if pair.item.isBookmark { total += bookmarkBonus }
-      total += min(frecencyByURL[pair.item.url] ?? 0, 200)
+      total += Frecency.rankingContribution(raw: frecencyByURL[pair.item.url] ?? 0)
       return Scored(item: pair.item, score: total, order: index)
     }
     return

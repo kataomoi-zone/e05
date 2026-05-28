@@ -43,4 +43,20 @@ public enum Frecency {
     let factor = recencyFactor(ageSeconds: now.timeIntervalSince(lastVisit))
     return Int((weighted * factor).rounded())
   }
+
+  /// Map a raw `score` to a bounded ranking contribution the URL-bar
+  /// ranker adds on top of the match-quality score. The bucket ceiling
+  /// lets a frequently-visited page outrank a stronger-matching but
+  /// rarely-visited one — so results feel ordered by how often the
+  /// user goes somewhere — while capping the contribution so a runaway
+  /// visit count can't bury every fresh match.
+  public static func rankingContribution(raw: Int) -> Int {
+    switch raw {
+    case ..<1: return 0
+    case 1..<10: return 100
+    case 10..<50: return 200
+    case 50..<150: return 300
+    default: return 400
+    }
+  }
 }

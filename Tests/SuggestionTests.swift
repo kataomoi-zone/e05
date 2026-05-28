@@ -122,6 +122,22 @@ struct SuggestionTests {
     #expect(result.first?.url == "https://b.example.com")
   }
 
+  @Test("a popular page outranks a stronger-matching rarely-visited one")
+  func frecencyLeadsOverMatchTier() {
+    // `example.com` matches the query at host start (strong); the
+    // other matches only mid-path (weak). With enough frecency the
+    // weak-but-popular page should still win — ranking is led by how
+    // often the user goes there, not match position alone.
+    let strongFreshMatch = history("https://example.com", "Example")
+    let weakPopularMatch = history("https://other.com/example-page", "Other")
+    let result = Suggestion.rank(
+      query: "example",
+      candidates: [strongFreshMatch, weakPopularMatch],
+      frecencyByURL: ["https://other.com/example-page": 200]
+    )
+    #expect(result.first?.url == "https://other.com/example-page")
+  }
+
   // MARK: - Result cap
 
   @Test("respects maxResults cap")
