@@ -78,6 +78,17 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   private var searchDebounceTimer: Timer?
   private static let searchDebounceInterval: TimeInterval = 0.15
 
+  /// Guards `controlTextDidChange` against the synthetic change our own
+  /// inline-completion edit posts, which would otherwise recurse.
+  private var isApplyingInlineCompletion = false
+  /// Field length at the previous change, used to detect deletion so a
+  /// completion the user is backspacing away isn't re-applied.
+  private var lastFieldLength = 0
+  /// What the user actually typed, sans inline completion, so a
+  /// committed suggestion reinforces the typed prefix rather than the
+  /// auto-filled host.
+  private var lastUserTypedText = ""
+
   /// Inline zoom indicator (percent label + -/+/Reset). Hidden while
   /// `pageZoom` is at 1.0 so the URL field claims the full trailing
   /// space; revealed and updated via `setZoomPercent(_:)` whenever the
@@ -1257,9 +1268,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   // MARK: - Suggestions
 
   func acceptSuggestion(_ suggestion: Suggestion) {
-    // Capture the typed text before `writeURLFieldText` overwrites it,
-    // so the host can reinforce the input→selection association.
-    let typedInput = urlField.stringValue
+    // Reinforce learning with what the user actually typed, not the
+    // inline-completed field text (which holds the filled host).
+    let typedInput = lastUserTypedText.isEmpty ? urlField.stringValue : lastUserTypedText
     writeURLFieldText(suggestion.url)
     dismissSuggestions()
     onSuggestionAccepted?(typedInput, suggestion.url)
@@ -1477,7 +1488,16 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   }
 
   public func controlTextDidChange(_ notification: Notification) {
+    // Ignore the change our own inline-completion edit posts, or it
+    // would recurse and try to complete the completion.
+    if isApplyingInlineCompletion { return }
     let text = urlField.stringValue
+    // Remember what the user actually typed (pre-completion) so a
+    // committed suggestion learns the typed prefix, and detect deletion
+    // so a completion being backspaced away isn't re-applied.
+    lastUserTypedText = text
+    let isDeletion = text.count < lastFieldLength
+    lastFieldLength = text.count
     guard !text.isEmpty else {
       dismissSuggestions()
       return
@@ -1495,8 +1515,36 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
           items: suggestions.map { Self.cellModel(from: $0, query: text) }
         )
         self.positionSuggestionList()
+        self.applyInlineCompletion(typed: text, suggestions: suggestions, allowed: !isDeletion)
       }
     }
+  }
+
+  /// Extend the field with the top suggestion's host suffix, selected so
+  /// the next keystroke replaces it and Enter commits the top row.
+  /// Skipped on deletion, during IME composition, when the user kept
+  /// typing past the debounce, or when no anchored host completion
+  /// applies.
+  private func applyInlineCompletion(typed: String, suggestions: [Suggestion], allowed: Bool) {
+    guard allowed,
+      urlField.stringValue == typed,
+      let editor = urlField.currentEditor() as? NSTextView,
+      !editor.hasMarkedText(),
+      editor.selectedRange == NSRange(location: (typed as NSString).length, length: 0),
+      let top = suggestions.first,
+      let suffix = URLBarInlineCompletion.hostSuffix(forQuery: typed, candidateURL: top.url)
+    else { return }
+    isApplyingInlineCompletion = true
+    defer { isApplyingInlineCompletion = false }
+    urlField.stringValue = typed + suffix
+    editor.selectedRange = NSRange(
+      location: (typed as NSString).length, length: (suffix as NSString).length)
+    // Record the *completed* length, not the typed length, so when the
+    // user backspaces the selected completion away the next change reads
+    // as a deletion. Otherwise deleting the completion lands the field
+    // back at the typed length we'd recorded, looks like no deletion,
+    // and the completion immediately reappears.
+    lastFieldLength = (typed + suffix).count
   }
 
   public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
