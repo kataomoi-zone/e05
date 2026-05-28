@@ -87,22 +87,37 @@ public struct Suggestion: Equatable {
     )
     struct Scored {
       let item: Suggestion
-      let score: Int
+      let matchScore: Int
+      let bookmarkBonus: Int
+      let frecency: Int
       let order: Int
+      var total: Int { matchScore + bookmarkBonus + frecency }
     }
     let scored: [Scored] = ranked.enumerated().map { index, pair in
-      var total = pair.match.score
-      if pair.item.isBookmark { total += bookmarkBonus }
-      total += Frecency.rankingContribution(raw: frecencyByURL[pair.item.url] ?? 0)
-      return Scored(item: pair.item, score: total, order: index)
+      Scored(
+        item: pair.item,
+        matchScore: pair.match.score,
+        bookmarkBonus: pair.item.isBookmark ? bookmarkBonus : 0,
+        frecency: Frecency.rankingContribution(raw: frecencyByURL[pair.item.url] ?? 0),
+        order: index)
     }
-    return
-      scored
-      .sorted { lhs, rhs in
-        lhs.score != rhs.score ? lhs.score > rhs.score : lhs.order < rhs.order
+    let ordered = scored.sorted { lhs, rhs in
+      lhs.total != rhs.total ? lhs.total > rhs.total : lhs.order < rhs.order
+    }
+    // Opt-in ranking breakdown for verifying "popularity-led" ordering
+    // before browsing history accumulates enough to show in feel.
+    // Enable with E05_SUGGEST_DEBUG=1; dev builds pipe stderr straight
+    // through (`./scripts/dev.sh`).
+    if ProcessInfo.processInfo.environment["E05_SUGGEST_DEBUG"] != nil {
+      var report = "[suggest] query=\"\(query)\" matched=\(ordered.count)\n"
+      for s in ordered.prefix(maxResults) {
+        report +=
+          "  total=\(s.total) match=\(s.matchScore) frec=\(s.frecency) "
+          + "bm=\(s.bookmarkBonus)  \(s.item.url)\n"
       }
-      .prefix(maxResults)
-      .map(\.item)
+      FileHandle.standardError.write(Data(report.utf8))
+    }
+    return ordered.prefix(maxResults).map(\.item)
   }
 }
 
