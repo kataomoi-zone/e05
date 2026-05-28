@@ -53,12 +53,18 @@ public struct Suggestion: Equatable {
   ///     stronger-matching but rarely-visited one, while the bucket
   ///     ceiling keeps a runaway visit count from burying fresh
   ///     matches.
+  ///   - inputBoosts: optional per-URL boost from learned
+  ///     input→selection associations (`InputHistoryStore.boosts`),
+  ///     added on top so a page the user repeatedly picks for this
+  ///     text leads. Only affects candidates that already match the
+  ///     query — there's no unmatched-destination injection.
   ///   - maxResults: cap on returned suggestions.
   public static func rank(
     query: String,
     candidates: [Suggestion],
     bookmarkBonus: Int = 100,
     frecencyByURL: [String: Int] = [:],
+    inputBoosts: [String: Int] = [:],
     maxResults: Int = 8  // keep in sync with SuggestionListView.maxVisibleRows
   ) -> [Suggestion] {
     if query.isEmpty {
@@ -68,6 +74,7 @@ public struct Suggestion: Equatable {
         let total =
           (item.isBookmark ? bookmarkBonus : 0)
           + Frecency.rankingContribution(raw: frecencyByURL[item.url] ?? 0)
+          + (inputBoosts[item.url] ?? 0)
         return (item, total, index)
       }
       return
@@ -90,8 +97,9 @@ public struct Suggestion: Equatable {
       let matchScore: Int
       let bookmarkBonus: Int
       let frecency: Int
+      let inputBoost: Int
       let order: Int
-      var total: Int { matchScore + bookmarkBonus + frecency }
+      var total: Int { matchScore + bookmarkBonus + frecency + inputBoost }
     }
     let scored: [Scored] = ranked.enumerated().map { index, pair in
       Scored(
@@ -99,6 +107,7 @@ public struct Suggestion: Equatable {
         matchScore: pair.match.score,
         bookmarkBonus: pair.item.isBookmark ? bookmarkBonus : 0,
         frecency: Frecency.rankingContribution(raw: frecencyByURL[pair.item.url] ?? 0),
+        inputBoost: inputBoosts[pair.item.url] ?? 0,
         order: index)
     }
     let ordered = scored.sorted { lhs, rhs in
@@ -113,7 +122,7 @@ public struct Suggestion: Equatable {
       for s in ordered.prefix(maxResults) {
         report +=
           "  total=\(s.total) match=\(s.matchScore) frec=\(s.frecency) "
-          + "bm=\(s.bookmarkBonus)  \(s.item.url)\n"
+          + "bm=\(s.bookmarkBonus) learn=\(s.inputBoost)  \(s.item.url)\n"
       }
       FileHandle.standardError.write(Data(report.utf8))
     }

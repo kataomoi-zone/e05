@@ -25,14 +25,14 @@ public final class InputHistoryStore {
   /// Ranking boost floor for a destination whose learned input the
   /// current query is a prefix of. Sits in the frecency band so a
   /// learned page leads without an exact match's authority.
-  static let prefixBoostBase = 400
+  nonisolated static let prefixBoostBase = 400
   /// Ranking boost floor for an exact input match. Set above the
   /// match-quality + frecency ceiling so "I always pick this for this
   /// text" wins outright — Firefox's "infinite frecency" lane.
-  static let exactBoostBase = 800
+  nonisolated static let exactBoostBase = 800
   /// Per-use-count increment layered on the base so a more-reinforced
   /// association edges out a weaker one at the same tier.
-  static let useCountWeight = 10
+  nonisolated static let useCountWeight = 10
 
   public convenience init(inMemory: Bool = false) {
     if inMemory {

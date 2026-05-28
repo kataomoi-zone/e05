@@ -138,6 +138,23 @@ struct SuggestionTests {
     #expect(result.first?.url == "https://other.com/example-page")
   }
 
+  // MARK: - Input learning
+
+  @Test("a learned input boost leads among matching candidates")
+  func inputBoostLeads() {
+    // Both match "ex" at host start; `exhibit` is popular, but the
+    // learned exact-input boost on `example` should win outright.
+    let learned = history("https://example.com", "Example")
+    let popular = history("https://exhibit.com", "Exhibit")
+    let result = Suggestion.rank(
+      query: "ex",
+      candidates: [popular, learned],
+      frecencyByURL: ["https://exhibit.com": 200],
+      inputBoosts: ["https://example.com": InputHistoryStore.exactBoostBase]
+    )
+    #expect(result.first?.url == "https://example.com")
+  }
+
   // MARK: - Result cap
 
   @Test("respects maxResults cap")

@@ -49,10 +49,12 @@ extension PaneContainerViewController {
         lastVisit: entry.lastVisit, now: now)
     }
 
+    let inputBoosts = InputHistoryStore.shared.boosts(forQueryPrefix: query)
     var results = Suggestion.rank(
       query: query,
       candidates: candidates,
-      frecencyByURL: frecencyByURL
+      frecencyByURL: frecencyByURL,
+      inputBoosts: inputBoosts
     )
 
     // Collapse search-engine results that point at the same query

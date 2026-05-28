@@ -103,4 +103,39 @@ struct PaneURLBarTests {
     bar.setReloadEnabled(true)
     #expect(bar.reloadButton.isEnabled)
   }
+
+  @Test("accepting a suggestion with no open pane navigates")
+  @MainActor func acceptNavigates() {
+    let bar = PaneURLBar(frame: .zero)
+    var navigated: String?
+    var switched: ULID?
+    bar.onNavigate = { navigated = $0 }
+    bar.onSwitchToPane = { switched = $0 }
+    bar.acceptSuggestion(Suggestion(url: "https://x.com", title: "X", isBookmark: false))
+    #expect(navigated == "https://x.com")
+    #expect(switched == nil)
+  }
+
+  @Test("accepting a suggestion open elsewhere switches instead of navigating")
+  @MainActor func acceptSwitches() {
+    let bar = PaneURLBar(frame: .zero)
+    var navigated: String?
+    var switched: ULID?
+    let paneID = ULID()
+    bar.onNavigate = { navigated = $0 }
+    bar.onSwitchToPane = { switched = $0 }
+    bar.acceptSuggestion(
+      Suggestion(url: "https://x.com", title: "X", isBookmark: false, openPaneID: paneID))
+    #expect(switched == paneID)
+    #expect(navigated == nil)
+  }
+
+  @Test("accepting a suggestion reports the chosen url for learning")
+  @MainActor func acceptReportsLearning() {
+    let bar = PaneURLBar(frame: .zero)
+    var recordedURL: String?
+    bar.onSuggestionAccepted = { _, url in recordedURL = url }
+    bar.acceptSuggestion(Suggestion(url: "https://k.com", title: "K", isBookmark: false))
+    #expect(recordedURL == "https://k.com")
+  }
 }

@@ -145,6 +145,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
+    // Age out stale URL-bar input-history associations once per day.
+    // Gated on wall-clock rather than every launch so a burst of
+    // restarts doesn't over-decay the counters.
+    let inputHistoryLastDecayKey = "inputHistoryLastDecay"
+    let nowEpoch = Date().timeIntervalSince1970
+    if nowEpoch - UserDefaults.standard.double(forKey: inputHistoryLastDecayKey) >= 86_400 {
+      InputHistoryStore.shared.decay()
+      UserDefaults.standard.set(nowEpoch, forKey: inputHistoryLastDecayKey)
+    }
+
     // Prime the built-in content rule list. On first launch the
     // filterlist is downloaded and compiled in the background, so
     // panes created before compilation completes get no blocker this

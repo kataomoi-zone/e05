@@ -209,6 +209,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// open in another pane. The host focuses that pane (cross-WS if
   /// needed) instead of triggering a duplicate navigation.
   public var onSwitchToPane: ((ULID) -> Void)?
+  /// Called when the user commits a suggestion, with the text they had
+  /// typed and the chosen URL, so the host can reinforce the
+  /// input→selection association. Fires for both navigate and
+  /// switch-to-pane picks.
+  public var onSuggestionAccepted: ((_ input: String, _ url: String) -> Void)?
 
   /// Cursor entered the URL bar's bounds. The hover scheduler in
   /// `PaneContainerViewController` uses this to keep a peek alive
@@ -1251,9 +1256,13 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
   // MARK: - Suggestions
 
-  private func acceptSuggestion(_ suggestion: Suggestion) {
+  func acceptSuggestion(_ suggestion: Suggestion) {
+    // Capture the typed text before `writeURLFieldText` overwrites it,
+    // so the host can reinforce the input→selection association.
+    let typedInput = urlField.stringValue
     writeURLFieldText(suggestion.url)
     dismissSuggestions()
+    onSuggestionAccepted?(typedInput, suggestion.url)
     if let paneID = suggestion.openPaneID {
       onSwitchToPane?(paneID)
     } else {

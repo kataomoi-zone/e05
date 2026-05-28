@@ -574,6 +574,16 @@ extension PaneContainerViewController {
       self?.switchToPane(id: paneID)
     }
 
+    // URL bar: reinforce input→selection learning when a suggestion is
+    // committed. Private workspaces are excluded, mirroring the history
+    // recordVisit skip — a private session shouldn't leave a trail.
+    pane.urlBar.onSuggestionAccepted = { [weak self, weak pane] input, url in
+      guard let self, let pane,
+        let workspace = self.workspaceContaining(pane: pane), !workspace.isPrivate
+      else { return }
+      InputHistoryStore.shared.record(input: input, url: url)
+    }
+
     // URL bar: clicking moves focus to this pane
     pane.urlBar.onClicked = { [weak self, weak pane] in
       guard let self, let pane else { return }
