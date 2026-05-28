@@ -196,4 +196,29 @@ struct SuggestionTests {
     let result = Suggestion.rank(query: "anything", candidates: [])
     #expect(result.isEmpty)
   }
+
+  // MARK: - nsRanges UTF-16 conversion
+
+  @Test("nsRanges maps character ranges across a surrogate pair")
+  func nsRangesSurrogatePair() {
+    // chars: a, 😀 (2 UTF-16 units), b, c. Character range [2,4) = "bc"
+    // → UTF-16 location 3 (a=1 + 😀=2), length 2.
+    let ranges = nsRanges(from: [2..<4], in: "a😀bc")
+    #expect(ranges == [NSRange(location: 3, length: 2)])
+  }
+
+  @Test("nsRanges converts a leading ASCII range directly")
+  func nsRangesLeading() {
+    #expect(nsRanges(from: [0..<2], in: "abc") == [NSRange(location: 0, length: 2)])
+  }
+
+  @Test("nsRanges drops empty and out-of-bounds ranges")
+  func nsRangesInvalid() {
+    #expect(nsRanges(from: [1..<1, 0..<10, -1..<2], in: "abc").isEmpty)
+  }
+
+  @Test("nsRanges returns empty for no input ranges")
+  func nsRangesEmpty() {
+    #expect(nsRanges(from: [], in: "abc").isEmpty)
+  }
 }

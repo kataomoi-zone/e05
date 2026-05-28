@@ -189,6 +189,13 @@ public struct SuggestionCellModel {
 public func nsRanges(from characterRanges: [Range<Int>], in text: String) -> [NSRange] {
   guard !characterRanges.isEmpty else { return [] }
   let chars = Array(text)
+  // Prefix sum of UTF-16 lengths so each range converts in O(1). The
+  // previous per-range `String(chars[0..<lower]).utf16.count` rebuilt a
+  // prefix string every time, making the whole pass O(ranges · length).
+  var utf16Offsets = [Int](repeating: 0, count: chars.count + 1)
+  for i in chars.indices {
+    utf16Offsets[i + 1] = utf16Offsets[i] + chars[i].utf16.count
+  }
   var result: [NSRange] = []
   result.reserveCapacity(characterRanges.count)
   for range in characterRanges {
@@ -196,10 +203,8 @@ public func nsRanges(from characterRanges: [Range<Int>], in text: String) -> [NS
       range.upperBound <= chars.count,
       range.lowerBound < range.upperBound
     else { continue }
-    let prefix = String(chars[0..<range.lowerBound])
-    let slice = String(chars[range.lowerBound..<range.upperBound])
-    let location = prefix.utf16.count
-    let length = slice.utf16.count
+    let location = utf16Offsets[range.lowerBound]
+    let length = utf16Offsets[range.upperBound] - location
     result.append(NSRange(location: location, length: length))
   }
   return result
