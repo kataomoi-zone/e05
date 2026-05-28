@@ -40,7 +40,12 @@ extension PaneContainerViewController {
     let now = Date()
     let frecencyByURL = Dictionary(
       uniqueKeysWithValues: historyEntries.map { entry in
-        (entry.url, frecencyScore(visits: entry.visits, lastVisit: entry.lastVisit, now: now))
+        (
+          entry.url,
+          Frecency.score(
+            visits: entry.visits, typedVisits: entry.typedVisits,
+            lastVisit: entry.lastVisit, now: now)
+        )
       }
     )
     var results = Suggestion.rank(
@@ -317,26 +322,6 @@ extension PaneContainerViewController {
     guard s.count == 3, s.allSatisfy(\.isNumber) else { return false }
     let first = s.first!
     return first == "4" || first == "5"
-  }
-
-  /// Frecency bonus for a single history URL. Combines the visit
-  /// count with a recency-decay factor so the URL bar surfaces
-  /// frequently-visited recent pages at the top of similarly-
-  /// matched candidates. The bucketed decay (rather than a smooth
-  /// half-life) keeps the score reproducible without depending on
-  /// floating-point precision. The caller caps the result at 200
-  /// inside `Suggestion.rank` so a runaway visit count can't
-  /// outvote an exact host-start match.
-  func frecencyScore(visits: Int, lastVisit: Date, now: Date) -> Int {
-    let age = now.timeIntervalSince(lastVisit)
-    let factor: Double
-    switch age {
-    case ..<86_400: factor = 1.0  // < 1 day
-    case ..<604_800: factor = 0.7  // < 1 week
-    case ..<2_592_000: factor = 0.4  // < 1 month
-    default: factor = 0.15
-    }
-    return Int(Double(visits) * factor * 30)
   }
 
   /// Build the optional "Open URL" suggestion shown at the top of the
