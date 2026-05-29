@@ -217,7 +217,7 @@ extension FinderIconCollectionView: NSMenuItemValidation {
 }
 
 /// `NSCollectionViewItem` for one icon-grid cell. A 48pt icon sits
-/// centered above a 2-line truncating-middle name label, matching
+/// centered above a single-line truncating-middle name label, matching
 /// Finder's icon-view proportions at the small zoom level. The
 /// selection highlight is rendered as a rounded translucent fill on
 /// the item's root view rather than via AppKit's default focus ring,
@@ -246,8 +246,8 @@ final class FinderIconItem: NSCollectionViewItem {
 
   /// Cell box: 96pt wide leaves room for the label + a few px of
   /// breathing room around the icon; 88pt tall fits a 48pt icon, a
-  /// 4pt gap, and two text rows at 11pt without truncating common
-  /// filenames. Tweaked together with `FinderPaneView+IconView`'s
+  /// 4pt gap, and the 11pt single-line label with headroom. Tweaked
+  /// together with `FinderPaneView+IconView`'s
   /// flow-layout insets — change one and the grid spacing shifts.
   static let itemSize = NSSize(width: 96, height: 88)
 

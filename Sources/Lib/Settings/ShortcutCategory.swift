@@ -3,7 +3,7 @@ import Foundation
 /// Display-side grouping for the Shortcuts settings tab. The
 /// registry order in ``PaneContainerViewController/actions()`` is
 /// already segmented by `separatorBefore`; this enum widens those
-/// segments into six user-facing buckets so the sub-sidebar stays
+/// segments into seven user-facing buckets so the sub-sidebar stays
 /// short and the right-hand list of customisable rows stays
 /// scannable.
 ///
