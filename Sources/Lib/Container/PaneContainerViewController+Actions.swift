@@ -91,8 +91,8 @@ extension PaneContainerViewController {
         id: "split_vertical",
         title: "Split Vertical",
         menuTitle: "Split Vertically",
-        keyEquivalent: "v",
-        modifierMask: [.option, .control],
+        keyEquivalent: "d",
+        modifierMask: [.command, .shift],
         handler: { [weak self] in self?.splitVertical() }
       ),
       Action(
@@ -452,6 +452,8 @@ extension PaneContainerViewController {
       Action(
         id: "toggle_hidden_files",
         title: "Toggle Hidden Files",
+        keyEquivalent: ".",
+        modifierMask: [.command, .shift],
         // Flip the global finder-pane "show hidden files" setting.
         // Static label mirrors the other `toggle_*` actions that
         // read the action by intent ("Toggle Fold", "Toggle URL
@@ -543,16 +545,21 @@ extension PaneContainerViewController {
       Action(
         id: "open_bookmarks",
         title: "Open Bookmarks",
+        keyEquivalent: "b",
+        modifierMask: [.command, .option],
         handler: { [weak self] in self?.sidebarVC?.openMode(.bookmarks) }
       ),
       Action(
         id: "open_history",
         title: "Open History",
+        keyEquivalent: "y",
         handler: { [weak self] in self?.sidebarVC?.openMode(.history) }
       ),
       Action(
         id: "open_downloads",
         title: "Open Downloads",
+        keyEquivalent: "l",
+        modifierMask: [.command, .option],
         handler: { [weak self] in self?.sidebarVC?.openMode(.downloads) }
       ),
       Action(
