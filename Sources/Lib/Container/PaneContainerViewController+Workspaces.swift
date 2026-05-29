@@ -145,7 +145,7 @@ extension PaneContainerViewController {
     toTop.constant = slidingUp ? h : -h
     toVC.view.isHidden = false
     // Resync every terminal surface on the incoming workspace.
-    // `updateSize` skips forwarding to ghostty while the view's
+    // `syncMetrics` skips forwarding to ghostty while the view's
     // ancestor chain is hidden (scrollback-preservation guard), so
     // any window resize that happened while this workspace was
     // parked stays unsent. Without this reseed,

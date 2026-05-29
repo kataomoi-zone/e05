@@ -545,9 +545,9 @@ extension PaneContainerViewController {
       }
       // Force a layout pass before resyncing terminal surfaces so
       // bounds reflect the restored column width; then push the
-      // live size into ghostty. The `updateSize` inside
+      // live size into ghostty. The `syncMetrics` inside
       // `setFrameSize` may not re-fire if the pane's own bounds
-      // happen to match its pre-fold value, and `updateSize` was
+      // happen to match its pre-fold value, and `syncMetrics` was
       // suppressed by the hidden-ancestor guard throughout the
       // fold, so an explicit resync is the safest way to redraw
       // the preserved scrollback at full width.
