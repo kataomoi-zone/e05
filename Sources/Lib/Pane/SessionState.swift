@@ -60,6 +60,13 @@ public struct SessionState: Codable {
     public var backHistory: [String]?
     /// Browser forward history URLs. Empty for non-browser panes.
     public var forwardHistory: [String]?
+    /// `WKWebView.interactionState` blob captured at save time for a
+    /// live browser pane. Restores the full native back/forward list
+    /// plus scroll/form/SPA state in one shot (Direction X). `nil` for
+    /// non-browser panes, suspended panes (no live web view to read),
+    /// and sessions written before this field existed — those fall
+    /// back to the URL-only `backHistory`/`forwardHistory` path.
+    public var interactionState: Data?
   }
 
   // MARK: - File Path

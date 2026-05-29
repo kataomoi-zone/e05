@@ -53,19 +53,27 @@ public struct PaneDependencies {
   /// ``BrowserPaneView/installRestoredHistory(back:current:forward:)``
   /// consumes it.
   public var initialForwardHistory: [URL]
+  /// Cross-launch `WKWebView.interactionState` blob (Direction X).
+  /// When present, the pane restores its full native back/forward
+  /// list + scroll/form via `setInteractionState` instead of the
+  /// URL-only shadow stack, so `initialBackHistory`/`initialForwardHistory`
+  /// are ignored. Only meaningful for browser panes.
+  public var initialInteractionState: Data?
 
   public init(
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
     initialTitle: String? = nil,
     initialBackHistory: [URL] = [],
-    initialForwardHistory: [URL] = []
+    initialForwardHistory: [URL] = [],
+    initialInteractionState: Data? = nil
   ) {
     self.dataStore = dataStore
     self.startSuspended = startSuspended
     self.initialTitle = initialTitle
     self.initialBackHistory = initialBackHistory
     self.initialForwardHistory = initialForwardHistory
+    self.initialInteractionState = initialInteractionState
   }
 }
 
@@ -273,6 +281,7 @@ public final class PaneModel {
     let initialTitle = dependencies.initialTitle
     let initialBackHistory = dependencies.initialBackHistory
     let initialForwardHistory = dependencies.initialForwardHistory
+    let initialInteractionState = dependencies.initialInteractionState
     self.address = address
     switch address.kind {
     case .terminal:
@@ -362,6 +371,19 @@ public final class PaneModel {
     {
       if isUnresolvedExtensionURL {
         bv.loadExtensionUnavailableError(for: address.url)
+      } else if let initialInteractionState {
+        // Direction X: restore the full native back/forward list +
+        // scroll/form from the captured interaction state. Build the
+        // pane suspended (placeholder) and let `restore()` apply the
+        // blob via setInteractionState on first focus — the same path
+        // runtime suspend/restore already exercises. Skip the shadow
+        // stack so the two don't conflict.
+        if let initialTitle, !initialTitle.isEmpty {
+          self.title = initialTitle
+        }
+        bv.suspendInitially(
+          url: address.url, title: initialTitle,
+          interactionState: initialInteractionState)
       } else if startSuspended {
         // Title is captured before the placeholder render so sidebar
         // worklane rows can show the saved title verbatim instead of

@@ -39,33 +39,33 @@ extension PaneContainerViewController {
           var state = SessionState.PaneState(address: pane.address.description)
           if let bv = pane.browserView {
             if !pane.title.isEmpty { state.title = pane.title }
-            // Source the back/forward list from the cross-launch
-            // shadow stack while it's still active — a pane that
-            // restored from session but was never focused (or
-            // focused but never abandoned the shadow stack) has
-            // an empty `WKBackForwardList`, and reading from there
-            // would drop the saved history across the next quit.
-            // Once the shadow stack is abandoned (user navigated
-            // outside the saved cursor) the live list is the
-            // source of truth.
-            //
-            // The cursor between back and forward is `pane.address`,
-            // mirrored from `bv.restoredHistoryCurrentURL` via
-            // `onURLChange`. Both update synchronously on the main
-            // queue inside `recordUserNavigation` /
-            // `foldSPAURLChangeIntoRestoredHistory`, so the two stay
-            // in lock-step.
-            let backList: [String]
-            let forwardList: [String]
-            if bv.usesRestoredSessionHistory {
-              backList = bv.restoredBackHistoryURLs
-              forwardList = bv.restoredForwardHistoryURLs
+            // Direction X: interactionState restores the full native
+            // back/forward list + scroll/form in one blob. Read it
+            // off the live web view, or carry forward the snapshot
+            // blob for a pane that hasn't been refocused since restore
+            // (no live web view) so its history survives the next save.
+            let interactionState =
+              bv.isSuspended
+              ? bv.suspendedInteractionState
+              : bv.webView.interactionState as? Data
+            if let interactionState {
+              state.interactionState = interactionState
             } else {
-              backList = bv.webView.backForwardList.backList.map(\.url.absoluteString)
-              forwardList = bv.webView.backForwardList.forwardList.map(\.url.absoluteString)
+              // No interaction state yet (never loaded / capture
+              // failed): fall back to the URL-only shadow history so
+              // the back/forward affordance survives the next quit.
+              let backList: [String]
+              let forwardList: [String]
+              if bv.usesRestoredSessionHistory {
+                backList = bv.restoredBackHistoryURLs
+                forwardList = bv.restoredForwardHistoryURLs
+              } else {
+                backList = bv.webView.backForwardList.backList.map(\.url.absoluteString)
+                forwardList = bv.webView.backForwardList.forwardList.map(\.url.absoluteString)
+              }
+              if !backList.isEmpty { state.backHistory = backList }
+              if !forwardList.isEmpty { state.forwardHistory = forwardList }
             }
-            if !backList.isEmpty { state.backHistory = backList }
-            if !forwardList.isEmpty { state.forwardHistory = forwardList }
           }
           return state
         }
@@ -213,7 +213,8 @@ extension PaneContainerViewController {
             startSuspended: !firstIsLive,
             initialTitle: firstPaneState.title,
             initialBackHistory: Self.urls(from: firstPaneState.backHistory),
-            initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory)
+            initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory),
+            initialInteractionState: firstPaneState.interactionState
           ),
           focusOnInsert: false,
           id: columnId
@@ -240,7 +241,8 @@ extension PaneContainerViewController {
               startSuspended: !isLive,
               initialTitle: paneState.title,
               initialBackHistory: Self.urls(from: paneState.backHistory),
-              initialForwardHistory: Self.urls(from: paneState.forwardHistory)
+              initialForwardHistory: Self.urls(from: paneState.forwardHistory),
+              initialInteractionState: paneState.interactionState
             )
           )
           if let title = paneState.title { pane.title = title }

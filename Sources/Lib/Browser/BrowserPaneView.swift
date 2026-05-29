@@ -1084,6 +1084,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// by ``suspend()`` and ``restore()`` has not yet rebuilt it).
   public var isSuspended: Bool { suspendedSnapshot != nil }
 
+  /// The interaction-state blob held by the current suspended
+  /// snapshot, if any. Lets `captureSession` re-persist the history
+  /// of a pane that hasn't been refocused since restore and so has
+  /// no live `WKWebView` to read `interactionState` from.
+  public var suspendedInteractionState: Data? {
+    suspendedSnapshot?.interactionState
+  }
+
   /// View that should receive first-responder status when the host
   /// focuses this pane. Returns the live `WKWebView` for a normal
   /// pane and the placeholder while the pane is suspended. Handing
@@ -1257,12 +1265,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// sidebar reads the row's initial state synchronously through
   /// `ReloadInput.paneIsSuspended` instead. Inverting that order
   /// would also work; the current sequence keeps the wiring simpler.
-  public func suspendInitially(url: URL, title: String?) {
+  public func suspendInitially(
+    url: URL, title: String?, interactionState: Data? = nil
+  ) {
     guard !isSuspended else { return }
     guard !isExtensionHosted else { return }
 
     let snapshot = BrowserPaneSnapshot(
-      url: url, title: title, interactionState: nil)
+      url: url, title: title, interactionState: interactionState)
 
     webView.stopLoading()
     webView.pauseAllMediaPlayback(completionHandler: nil)
