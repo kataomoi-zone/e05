@@ -1126,7 +1126,17 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     guard !isExtensionHosted else { return false }
     guard let url = webView.url ?? lastAttemptedURL else { return false }
 
-    let rawInteractionState = webView.interactionState
+    // Panes restored from a previous session drive back/forward
+    // through the shadow URL stack, not WebKit's own list. Capturing
+    // `interactionState` for them would make `restore()` reinstate it
+    // via a `.backForward` navigation that `handleShadowStackAbandonment`
+    // drops the shadow stack on — losing the saved history. Keep the
+    // snapshot URL-only for those panes (so `restore()` takes the same
+    // plain-`load` path as `suspendInitially`) and only capture
+    // `interactionState` when the live `WKBackForwardList` is the
+    // source of truth, where the abandon handler is a no-op.
+    let rawInteractionState =
+      usesRestoredSessionHistory ? nil : webView.interactionState
     if let raw = rawInteractionState, !(raw is Data) {
       // `WKWebView.interactionState` is typed `Any?` (NS_REFINED_FOR_SWIFT)
       // because WebKit refuses to expose the underlying opaque type, but
@@ -1210,17 +1220,15 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // life is not "the user navigated away from the saved cursor"
     // — they just focused the pane.
     //
-    // Currently `interactionState` is always nil (`suspendInitially`
-    // is the only construction path and it stores `nil`), so the
-    // reachable load is the `else` branch's plain `load(URLRequest:)`
-    // which arrives at `decidePolicyFor` as `.other` and gets
-    // absorbed by the counter. If a future caller invokes `suspend()`
-    // mid-session and produces a non-nil `interactionState`, the
-    // reinstated load fires `WKNavigationType.backForward` instead;
-    // `handleShadowStackAbandonment` drops the stack on that type
-    // without consulting the counter, so this guard would need an
-    // accompanying `.backForward` carve-out before that path is
-    // wired up.
+    // `interactionState` is only ever non-nil here for panes whose
+    // live `WKBackForwardList` is the source of truth (`suspend()`
+    // skips the capture when `usesRestoredSessionHistory` is set).
+    // For those panes `handleShadowStackAbandonment` early-returns,
+    // so the `.backForward` navigation the reinstated state kicks is
+    // harmless and no `.backForward` carve-out is needed. The `else`
+    // branch's plain `load(URLRequest:)` — used by shadow-stack panes
+    // and pre-suspended (`suspendInitially`) panes — arrives as
+    // `.other` and is absorbed by the counter bumped here.
     inShadowStackNavigationCount += 1
     if let data = snapshot.interactionState {
       // Assigning `interactionState` reinstates the back/forward
