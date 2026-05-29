@@ -24,11 +24,9 @@ public enum PaneContent {
 
 /// Optional construction inputs for ``PaneModel``. Grouped into a
 /// struct so the init does not grow a column-wide named-arg list as
-/// new optional hooks (cross-launch shadow stack, suspend-deferred
-/// boot, future Web Notifications icon URL, etc.) accumulate. Every
-/// field carries a sensible default so the historical
-/// `PaneModel(address:, ghosttyApp:)` call site keeps compiling
-/// unchanged.
+/// new optional hooks accumulate. Every field carries a sensible
+/// default so the historical `PaneModel(address:, ghosttyApp:)`
+/// call site keeps compiling unchanged.
 @MainActor
 public struct PaneDependencies {
   /// Workspace-scoped ephemeral website data store. Non-nil for
@@ -44,35 +42,21 @@ public struct PaneDependencies {
   /// worklane row before the live page settles its title KVO. Only
   /// meaningful for browser panes.
   public var initialTitle: String?
-  /// Cross-launch back history seeded into the browser pane's
-  /// shadow URL stack so the URL bar's back affordance works before
-  /// the user navigates past the saved cursor. Oldest entry first.
-  public var initialBackHistory: [URL]
-  /// Cross-launch forward history, mirror of ``initialBackHistory``.
-  /// Stored nearest-to-current at the end, matching how
-  /// ``BrowserPaneView/installRestoredHistory(back:current:forward:)``
-  /// consumes it.
-  public var initialForwardHistory: [URL]
-  /// Cross-launch `WKWebView.interactionState` blob (Direction X).
+  /// `WKWebView.interactionState` blob to restore on first focus.
   /// When present, the pane restores its full native back/forward
-  /// list + scroll/form via `setInteractionState` instead of the
-  /// URL-only shadow stack, so `initialBackHistory`/`initialForwardHistory`
-  /// are ignored. Only meaningful for browser panes.
+  /// list + scroll/form via `setInteractionState`. Only meaningful
+  /// for browser panes.
   public var initialInteractionState: Data?
 
   public init(
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
     initialTitle: String? = nil,
-    initialBackHistory: [URL] = [],
-    initialForwardHistory: [URL] = [],
     initialInteractionState: Data? = nil
   ) {
     self.dataStore = dataStore
     self.startSuspended = startSuspended
     self.initialTitle = initialTitle
-    self.initialBackHistory = initialBackHistory
-    self.initialForwardHistory = initialForwardHistory
     self.initialInteractionState = initialInteractionState
   }
 }
@@ -258,19 +242,9 @@ public final class PaneModel {
   /// sessions still load without crashing.
   ///
   /// Optional inputs live on ``PaneDependencies`` (private-workspace
-  /// data store, suspend-on-construct flag, initial title, and
-  /// cross-launch back / forward history). All of them apply only
-  /// to browser panes; non-browser kinds and blank /
+  /// data store, suspend-on-construct flag, and initial title). All
+  /// of them apply only to browser panes; non-browser kinds and blank /
   /// unresolved-extension browsers ignore the values entirely.
-  ///
-  /// Live-restore (`dependencies.startSuspended == false`) installs
-  /// the shadow back / forward stack and calls `expectAnchorLoad()`
-  /// so the immediately following `navigate(to: address.url)` is
-  /// absorbed as the stack's anchor load rather than abandoning the
-  /// stack. The suspended branch installs the stack without
-  /// `expectAnchorLoad` because no load runs until `restore()`
-  /// later — and `restore()` already increments the counter for
-  /// its own load.
   public init(
     address: PaneAddress,
     ghosttyApp: GhosttyApp?,
@@ -279,8 +253,6 @@ public final class PaneModel {
     let dataStore = dependencies.dataStore
     let startSuspended = dependencies.startSuspended
     let initialTitle = dependencies.initialTitle
-    let initialBackHistory = dependencies.initialBackHistory
-    let initialForwardHistory = dependencies.initialForwardHistory
     let initialInteractionState = dependencies.initialInteractionState
     self.address = address
     switch address.kind {
@@ -393,25 +365,7 @@ public final class PaneModel {
           self.title = initialTitle
         }
         bv.suspendInitially(url: address.url, title: initialTitle)
-        if !initialBackHistory.isEmpty || !initialForwardHistory.isEmpty {
-          bv.installRestoredHistory(
-            back: initialBackHistory,
-            current: address.url,
-            forward: initialForwardHistory)
-        }
       } else {
-        if !initialBackHistory.isEmpty || !initialForwardHistory.isEmpty {
-          bv.installRestoredHistory(
-            back: initialBackHistory,
-            current: address.url,
-            forward: initialForwardHistory)
-          // Mark the upcoming `navigate(to:)` as the shadow stack
-          // anchor load — without this the abandon trigger would
-          // see `.other` with counter=0 and treat the load as a
-          // fresh user-initiated navigation, wiping the stack we
-          // just installed.
-          bv.expectAnchorLoad()
-        }
         bv.navigate(to: address.url.absoluteString)
       }
     }

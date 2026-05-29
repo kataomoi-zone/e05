@@ -39,33 +39,14 @@ extension PaneContainerViewController {
           var state = SessionState.PaneState(address: pane.address.description)
           if let bv = pane.browserView {
             if !pane.title.isEmpty { state.title = pane.title }
-            // Direction X: interactionState restores the full native
-            // back/forward list + scroll/form in one blob. Read it
-            // off the live web view, or carry forward the snapshot
-            // blob for a pane that hasn't been refocused since restore
-            // (no live web view) so its history survives the next save.
-            let interactionState =
+            // interactionState restores the full native back/forward
+            // list + scroll/form. Read it off the live web view, or
+            // carry the snapshot blob forward for a pane that hasn't
+            // been refocused since restore.
+            state.interactionState =
               bv.isSuspended
               ? bv.suspendedInteractionState
               : bv.webView.interactionState as? Data
-            if let interactionState {
-              state.interactionState = interactionState
-            } else {
-              // No interaction state yet (never loaded / capture
-              // failed): fall back to the URL-only shadow history so
-              // the back/forward affordance survives the next quit.
-              let backList: [String]
-              let forwardList: [String]
-              if bv.usesRestoredSessionHistory {
-                backList = bv.restoredBackHistoryURLs
-                forwardList = bv.restoredForwardHistoryURLs
-              } else {
-                backList = bv.webView.backForwardList.backList.map(\.url.absoluteString)
-                forwardList = bv.webView.backForwardList.forwardList.map(\.url.absoluteString)
-              }
-              if !backList.isEmpty { state.backHistory = backList }
-              if !forwardList.isEmpty { state.forwardHistory = forwardList }
-            }
           }
           return state
         }
@@ -122,16 +103,6 @@ extension PaneContainerViewController {
   /// Save current session to disk.
   public func saveSession() {
     captureSession().save()
-  }
-
-  /// Map a `SessionState.PaneState` back/forward URL strings array
-  /// to a `[URL]`, silently dropping entries that no longer parse
-  /// (e.g. a malformed line edited into session.json by hand). Nil
-  /// input — pre-history-restore session files or non-browser
-  /// panes — yields an empty array.
-  private static func urls(from strings: [String]?) -> [URL] {
-    guard let strings else { return [] }
-    return strings.compactMap { URL(string: $0) }
   }
 
   /// Restore session from a saved state.
@@ -212,8 +183,6 @@ extension PaneContainerViewController {
           dependencies: PaneDependencies(
             startSuspended: !firstIsLive,
             initialTitle: firstPaneState.title,
-            initialBackHistory: Self.urls(from: firstPaneState.backHistory),
-            initialForwardHistory: Self.urls(from: firstPaneState.forwardHistory),
             initialInteractionState: firstPaneState.interactionState
           ),
           focusOnInsert: false,
@@ -240,8 +209,6 @@ extension PaneContainerViewController {
             dependencies: PaneDependencies(
               startSuspended: !isLive,
               initialTitle: paneState.title,
-              initialBackHistory: Self.urls(from: paneState.backHistory),
-              initialForwardHistory: Self.urls(from: paneState.forwardHistory),
               initialInteractionState: paneState.interactionState
             )
           )

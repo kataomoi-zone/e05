@@ -56,16 +56,12 @@ public struct SessionState: Codable {
     /// fallback before WKWebView's title KVO settles after page load.
     /// Omitted for terminal panes — ghostty resets titles on restart.
     public var title: String?
-    /// Browser back history URLs (oldest first). Empty for non-browser panes.
-    public var backHistory: [String]?
-    /// Browser forward history URLs. Empty for non-browser panes.
-    public var forwardHistory: [String]?
     /// `WKWebView.interactionState` blob captured at save time for a
     /// live browser pane. Restores the full native back/forward list
-    /// plus scroll/form/SPA state in one shot (Direction X). `nil` for
-    /// non-browser panes, suspended panes (no live web view to read),
-    /// and sessions written before this field existed — those fall
-    /// back to the URL-only `backHistory`/`forwardHistory` path.
+    /// plus scroll/form/SPA state in one shot. `nil` for non-browser
+    /// panes, suspended panes (no live web view to read), and sessions
+    /// written before this field existed — those fall back to a plain
+    /// URL load.
     public var interactionState: Data?
   }
 

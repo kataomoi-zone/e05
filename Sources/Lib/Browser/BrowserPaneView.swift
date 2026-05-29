@@ -724,7 +724,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         // never reaches `decidePolicyFor` — records as an ordinary
         // link instead of inheriting this navigation's type.
         self.pendingTransition = .link
-        self.foldSPAURLChangeIntoRestoredHistory(url)
         // Warm the favicon cache so sidebar worklane rows and URL
         // bar suggestions can stop showing the generic `globe`
         // placeholder for this host. Synchronous main-thread call
@@ -740,330 +739,18 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        // `…Effective` properties OR the live `WKBackForwardList`
-        // with the restored shadow stack so the URL bar's
-        // back/forward affordances stay enabled while either
-        // source has a step. The plain `webView.canGoBack` /
-        // `canGoForward` here would be wrong for a freshly
-        // restored pane (live list is empty until the first
-        // native navigation).
-        self.onNavigationStateChange?(self.canGoBackEffective, self.canGoForwardEffective)
+        self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
       }
     }
     canGoForwardObservation = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
-        self.onNavigationStateChange?(self.canGoBackEffective, self.canGoForwardEffective)
+        self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
       }
     }
     isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, change in
       guard let isLoading = change.newValue else { return }
       DispatchQueue.main.async { self?.onLoadingStateChange?(isLoading) }
-    }
-  }
-
-  // MARK: - Restored Session History (cross-launch back/forward)
-
-  /// Saved back history loaded from session.json. Oldest at index 0,
-  /// nearest-to-current at the end so `popLast()` yields the
-  /// step-back target. Empty unless the pane was constructed via
-  /// `installRestoredHistory(...)`.
-  private var restoredBackHistoryStack: [URL] = []
-
-  /// Saved forward history. Stored with the nearest-to-current
-  /// entry at the end (= the on-disk order reversed) so `popLast()`
-  /// yields the step-forward target. Empty unless the pane was
-  /// constructed via `installRestoredHistory(...)`.
-  private var restoredForwardHistoryStack: [URL] = []
-
-  /// Current URL of the restored session history cursor. Tracked so
-  /// `goBackEffective` / `goForwardEffective` can push the
-  /// outgoing entry onto the opposite stack when navigating.
-  private var restoredHistoryCurrentURL: URL?
-
-  /// True while at least one restored history entry is still in
-  /// play. Cleared by `abandonRestoredSessionHistory()` once the
-  /// user kicks off a navigation outside the saved cursor (link
-  /// click, URL bar entry, etc.). Drives `canGoBackEffective` /
-  /// `canGoForwardEffective` so the URL bar's back/forward
-  /// affordances stay enabled while the cross-launch history is
-  /// still usable.
-  public private(set) var usesRestoredSessionHistory: Bool = false
-
-  /// Count of in-flight shadow-protected navigations: every
-  /// `goBackEffective` / `goForwardEffective` hop, the
-  /// `restore()` anchor load, and the live-target's initial
-  /// `installRestoredHistory` + `navigate(to:)` pair each bump
-  /// this. The abandon trigger decrements it for every `.other`
-  /// `decidePolicyFor` it sees and only abandons when the count
-  /// is already zero.
-  ///
-  /// A counter rather than a `Bool` so two back/forward presses
-  /// landing before the first `decidePolicyFor` fires don't lose
-  /// one of them — under the Bool model the second press would
-  /// see "flag already true", do nothing, and the second
-  /// `.other` callback would then find the flag freshly reset
-  /// and wipe the shadow stack.
-  private var inShadowStackNavigationCount: Int = 0
-
-  /// Seed the cross-launch back/forward shadow stack from a
-  /// restored `PaneState`. `back` is oldest-first (matches
-  /// `WKBackForwardList.backList` order); `forward` is
-  /// nearest-first (matches `WKBackForwardList.forwardList` order)
-  /// — both consistent with how `captureSession` writes them.
-  /// `current` is the URL the WKWebView is being loaded with as the
-  /// restore anchor; it lives in `restoredHistoryCurrentURL` so the
-  /// back/forward helpers can move it between stacks.
-  public func installRestoredHistory(back: [URL], current: URL, forward: [URL]) {
-    restoredBackHistoryStack = back
-    restoredForwardHistoryStack = Array(forward.reversed())
-    restoredHistoryCurrentURL = current
-    usesRestoredSessionHistory = !back.isEmpty || !forward.isEmpty
-    notifyNavigationStateChange()
-  }
-
-  /// Push the current `canGoBackEffective` / `canGoForwardEffective`
-  /// to the URL bar. Called from every mutation of the shadow stack
-  /// — the `WKBackForwardList` KVO that drives the same callback
-  /// only fires for live-list changes and would miss shadow-stack
-  /// updates.
-  private func notifyNavigationStateChange() {
-    let back = canGoBackEffective
-    let fwd = canGoForwardEffective
-    onNavigationStateChange?(back, fwd)
-  }
-
-  /// True when the URL bar's back affordance should be enabled.
-  /// While the restored shadow stack is active, only the shadow
-  /// stack counts — each shadow pop's `load(URLRequest:)` appends
-  /// to the live `WKBackForwardList`, so OR-ing the two would let
-  /// native goBack walk the user back through their own shadow-pop
-  /// trail and produce a confusing "cbabc" loop. Once the shadow
-  /// stack is abandoned the live list takes over.
-  public var canGoBackEffective: Bool {
-    if usesRestoredSessionHistory {
-      return !restoredBackHistoryStack.isEmpty
-    }
-    return webView.canGoBack
-  }
-
-  /// True when the URL bar's forward affordance should be enabled.
-  /// Same shadow-only / live-only split as `canGoBackEffective`.
-  public var canGoForwardEffective: Bool {
-    if usesRestoredSessionHistory {
-      return !restoredForwardHistoryStack.isEmpty
-    }
-    return webView.canGoForward
-  }
-
-  /// Navigate back. Prefers the live `WKBackForwardList` when it
-  /// has real entries (so bfcache and in-process state work as
-  /// normal), and falls back to popping from the restored shadow
-  /// stack with a fresh `load(URLRequest:)`. Returns false when
-  /// there is nothing to go back to.
-  @discardableResult
-  public func goBackEffective() -> Bool {
-    // While the shadow stack is active, use ONLY the shadow stack
-    // — falling through to `webView.goBack()` after the shadow
-    // back stack drained would walk back through the load entries
-    // each shadow pop had to append to the live
-    // `WKBackForwardList`, producing the "cbabc" loop the user
-    // observed. Once the shadow stack is abandoned the live list
-    // takes over.
-    if usesRestoredSessionHistory {
-      guard !restoredBackHistoryStack.isEmpty else {
-        return false
-      }
-      let target = restoredBackHistoryStack.popLast()!
-      if let outgoing = restoredHistoryCurrentURL {
-        restoredForwardHistoryStack.append(outgoing)
-      }
-      restoredHistoryCurrentURL = target
-      inShadowStackNavigationCount += 1
-      notifyNavigationStateChange()
-      webView.load(URLRequest(url: target))
-      return true
-    }
-    if webView.canGoBack {
-      webView.goBack()
-      return true
-    }
-    return false
-  }
-
-  /// Mirror of `goBackEffective` for the forward direction.
-  @discardableResult
-  public func goForwardEffective() -> Bool {
-    if usesRestoredSessionHistory {
-      guard !restoredForwardHistoryStack.isEmpty else {
-        return false
-      }
-      let target = restoredForwardHistoryStack.popLast()!
-      if let outgoing = restoredHistoryCurrentURL {
-        restoredBackHistoryStack.append(outgoing)
-      }
-      restoredHistoryCurrentURL = target
-      inShadowStackNavigationCount += 1
-      notifyNavigationStateChange()
-      webView.load(URLRequest(url: target))
-      return true
-    }
-    if webView.canGoForward {
-      webView.goForward()
-      return true
-    }
-    return false
-  }
-
-  /// The current shadow back history as URL strings, in the same
-  /// "oldest first" order `WKBackForwardList.backList` would yield
-  /// (and the same order `PaneState.backHistory` is written in by
-  /// `captureSession`). Empty when no shadow stack is installed.
-  public var restoredBackHistoryURLs: [String] {
-    restoredBackHistoryStack.map { $0.absoluteString }
-  }
-
-  /// The current shadow forward history as URL strings, in the
-  /// same "nearest first" order `WKBackForwardList.forwardList`
-  /// would yield. Internally the stack is stored reversed for
-  /// pop-friendliness, so this accessor reverses it back before
-  /// emitting.
-  public var restoredForwardHistoryURLs: [String] {
-    restoredForwardHistoryStack.reversed().map { $0.absoluteString }
-  }
-
-  /// Caller declares that the very next `webView.load(URLRequest:)`
-  /// is the anchor load matching the shadow stack's current URL —
-  /// not a user-initiated navigation. Bumps
-  /// `inShadowStackNavigationCount` so the abandon trigger absorbs
-  /// the resulting `.other` callback instead of wiping the just-
-  /// installed shadow stack. `PaneModel.init`'s live-restore branch
-  /// calls this immediately before `navigate(to:)`; the suspended
-  /// branch doesn't because no load runs until `restore()`, which
-  /// counts its own load already.
-  public func expectAnchorLoad() {
-    inShadowStackNavigationCount += 1
-  }
-
-  /// Record a user-initiated navigation into the shadow stack:
-  /// the outgoing `restoredHistoryCurrentURL` becomes the newest
-  /// back entry, the forward stack is cleared (the user steered
-  /// away from whatever was queued there — that's how browsers'
-  /// back/forward semantics work), and `newCurrent` becomes the
-  /// cursor. Called from the abandon-trigger replacement when
-  /// a `.linkActivated` / `.formSubmitted` / user-driven
-  /// `.other` arrives, so the shadow stack tracks the live
-  /// content cursor instead of being dropped wholesale.
-  private func recordUserNavigation(newCurrent: URL) {
-    guard usesRestoredSessionHistory else { return }
-    if let outgoing = restoredHistoryCurrentURL, outgoing != newCurrent {
-      restoredBackHistoryStack.append(outgoing)
-    }
-    restoredForwardHistoryStack.removeAll()
-    restoredHistoryCurrentURL = newCurrent
-    notifyNavigationStateChange()
-  }
-
-  /// Drop the restored shadow stack outright (back/forward/current
-  /// all cleared). Used by `handleShadowStackAbandonment` for paths
-  /// that can't be folded into the stack: native back/forward gesture
-  /// swipes (which bypass our URL bar buttons and arrive as
-  /// `.backForward`), and the `.other` fallback where the action
-  /// carries no usable URL. Regular link/form/URL-bar navigations
-  /// take the `recordUserNavigation` path instead — they get folded
-  /// into the stack rather than dropping it.
-  public func abandonRestoredSessionHistory() {
-    guard usesRestoredSessionHistory else { return }
-    restoredBackHistoryStack.removeAll()
-    restoredForwardHistoryStack.removeAll()
-    restoredHistoryCurrentURL = nil
-    usesRestoredSessionHistory = false
-    notifyNavigationStateChange()
-  }
-
-  /// Fold a `webView.url` KVO change into the shadow stack when it
-  /// represents an SPA navigation (e.g. astro View Transitions,
-  /// Next.js Link routing) that `decidePolicyFor` cannot see because
-  /// the page used `history.pushState` / `replaceState` rather than a
-  /// real HTTP navigation. The early returns are written so the cost
-  /// for a pane without a restored shadow stack is a single Bool
-  /// check — that's almost every pane after the first user-initiated
-  /// navigation past the saved cursor.
-  ///
-  /// We rely on `decidePolicyFor` for HTTP-level navigations: those
-  /// fire `recordUserNavigation` *before* `webView.url` updates, so by
-  /// the time this observer runs `restoredHistoryCurrentURL` already
-  /// equals the new URL and the equality check short-circuits the
-  /// double-fold. Only SPA pushStates reach the `recordUserNavigation`
-  /// call below.
-  private func foldSPAURLChangeIntoRestoredHistory(_ newURL: URL) {
-    guard usesRestoredSessionHistory else { return }
-    guard inShadowStackNavigationCount == 0 else { return }
-    guard restoredHistoryCurrentURL != newURL else { return }
-    recordUserNavigation(newCurrent: newURL)
-  }
-
-  /// Decide whether a main-frame navigation should drop the
-  /// restored shadow stack. Called from
-  /// `webView(_:decidePolicyFor navigationAction:)`. The shadow
-  /// stack only exists to cover the gap between session restore
-  /// and the first live navigation; once the user steers away
-  /// from the saved cursor — by clicking a link, submitting a
-  /// form, typing in the URL bar, or entering native
-  /// back/forward via gesture — the live `WKBackForwardList`
-  /// takes over and the saved list would only diverge.
-  ///
-  /// User-initiated navigations (link click, form submit, URL bar
-  /// entry, palette navigate, …) get folded into the shadow stack
-  /// instead of dropping it: the current URL becomes the newest
-  /// back entry, the forward list is cleared, and the new URL
-  /// becomes the cursor. This keeps the shadow stack as the sole
-  /// source of truth for back/forward across the pane's lifetime
-  /// — `WKBackForwardList` would otherwise be polluted by every
-  /// `goBackEffective`/`goForwardEffective` `load(URLRequest:)`
-  /// and a user-typed navigation past a shadow-popped page would
-  /// leave the previously-forward entries visible in the live
-  /// list ("a → b → d → c" symptom).
-  ///
-  /// The exception is the navigation our own
-  /// `goBackEffective` / `goForwardEffective` /
-  /// `installRestoredHistory` anchor load kicks via
-  /// `load(URLRequest:)`. Those arrive as `.other` and we count
-  /// them with `inShadowStackNavigationCount` so this method can
-  /// distinguish "our shadow-stack hop" from "user-initiated
-  /// other-navigation". `.backForward` is a defensive abandon
-  /// path for native gesture swipes that bypass our buttons.
-  private func handleShadowStackAbandonment(for action: WKNavigationAction) {
-    guard usesRestoredSessionHistory else { return }
-    switch action.navigationType {
-    case .linkActivated, .formSubmitted, .formResubmitted:
-      if let url = action.request.url {
-        recordUserNavigation(newCurrent: url)
-      }
-    case .backForward:
-      // Native gesture (two-finger swipe) — bypasses our URL bar
-      // back/forward buttons, so the shadow stack can't track it.
-      // Drop and let the live list take over.
-      abandonRestoredSessionHistory()
-    case .reload:
-      // No-op: reload doesn't move either cursor.
-      break
-    case .other:
-      if inShadowStackNavigationCount > 0 {
-        // Our own goBackEffective / goForwardEffective /
-        // installRestoredHistory anchor load.
-        inShadowStackNavigationCount -= 1
-      } else if let url = action.request.url {
-        // Plain URL-bar entry, palette navigate, `navigate(to:)`
-        // from elsewhere. Fold into the shadow stack instead of
-        // abandoning so the forward list reflects this user
-        // navigation's "no forward yet" state.
-        recordUserNavigation(newCurrent: url)
-      } else {
-        abandonRestoredSessionHistory()
-      }
-    @unknown default:
-      abandonRestoredSessionHistory()
     }
   }
 
@@ -1134,17 +821,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     guard !isExtensionHosted else { return false }
     guard let url = webView.url ?? lastAttemptedURL else { return false }
 
-    // Panes restored from a previous session drive back/forward
-    // through the shadow URL stack, not WebKit's own list. Capturing
-    // `interactionState` for them would make `restore()` reinstate it
-    // via a `.backForward` navigation that `handleShadowStackAbandonment`
-    // drops the shadow stack on — losing the saved history. Keep the
-    // snapshot URL-only for those panes (so `restore()` takes the same
-    // plain-`load` path as `suspendInitially`) and only capture
-    // `interactionState` when the live `WKBackForwardList` is the
-    // source of truth, where the abandon handler is a no-op.
-    let rawInteractionState =
-      usesRestoredSessionHistory ? nil : webView.interactionState
+    let rawInteractionState = webView.interactionState
     if let raw = rawInteractionState, !(raw is Data) {
       // `WKWebView.interactionState` is typed `Any?` (NS_REFINED_FOR_SWIFT)
       // because WebKit refuses to expose the underlying opaque type, but
@@ -1223,25 +900,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     setupObservers()
     observeAdBlockerReady()
 
-    // Suppress the shadow-stack abandon trigger for the load
-    // `restore()` kicks below: bringing a suspended pane back to
-    // life is not "the user navigated away from the saved cursor"
-    // — they just focused the pane.
-    //
-    // `interactionState` is only ever non-nil here for panes whose
-    // live `WKBackForwardList` is the source of truth (`suspend()`
-    // skips the capture when `usesRestoredSessionHistory` is set).
-    // For those panes `handleShadowStackAbandonment` early-returns,
-    // so the `.backForward` navigation the reinstated state kicks is
-    // harmless and no `.backForward` carve-out is needed. The `else`
-    // branch's plain `load(URLRequest:)` — used by shadow-stack panes
-    // and pre-suspended (`suspendInitially`) panes — arrives as
-    // `.other` and is absorbed by the counter bumped here.
-    inShadowStackNavigationCount += 1
     if let data = snapshot.interactionState {
-      // Assigning `interactionState` reinstates the back/forward
-      // list, scroll position, and form values, and kicks off a
-      // load of the current entry — no separate `load()` call.
+      // Reinstates the back/forward list, scroll position, and form
+      // values, and kicks off a load of the current entry.
       webView.interactionState = data
     } else {
       webView.load(URLRequest(url: snapshot.url))
@@ -1695,21 +1356,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       @unknown default: break
       }
     }
-    // Drop / fold the cross-launch shadow stack when a navigation
-    // happens that wasn't kicked by `goBackEffective` /
-    // `goForwardEffective`. The live `WKBackForwardList` is now
-    // the source of truth and the saved URL list would only get
-    // out of sync. Deferred until *after* modifier-flag handling
-    // below so Shift/Cmd-clicks — which we cancel and forward to
-    // a different pane/workspace — don't mutate this pane's
-    // shadow stack with a URL that never actually loads here.
-    let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+    // Shift/Cmd-clicks on links are cancelled and re-dispatched to a
+    // different pane/workspace; everything else is allowed.
     guard navigationAction.navigationType == .linkActivated,
       let url = navigationAction.request.url
     else {
-      if isMainFrame {
-        handleShadowStackAbandonment(for: navigationAction)
-      }
       decisionHandler(.allow)
       return
     }
@@ -1723,9 +1374,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       decisionHandler(.cancel)
       onOpenInNewPane?(url)
       return
-    }
-    if isMainFrame {
-      handleShadowStackAbandonment(for: navigationAction)
     }
     decisionHandler(.allow)
   }
@@ -1924,18 +1572,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   }
 
   public func webView(_ webView: WKWebView, didCommit _: WKNavigation!) {
-    // A navigation just committed — bleed one shadow-protected
-    // navigation off the counter. Zeroing it outright would also
-    // erase the protection of any *in-flight* hop whose
-    // `decidePolicyFor` has not arrived yet (e.g. a user pressing
-    // back twice in quick succession during the anchor load of a
-    // suspended-pane restore); the second hop's `.other` callback
-    // would then be misread as a user-initiated navigation and
-    // fold into the stack instead of being absorbed. Consuming a
-    // single slot still drains a leaked counter from a cancelled
-    // `decidePolicyFor` — it just takes one commit per leak
-    // instead of one commit for the whole queue.
-    inShadowStackNavigationCount = max(0, inShadowStackNavigationCount - 1)
     // The committed URL determines whether the adblocker rule
     // lists belong on this pane. A subsequent commit (link click,
     // history navigation) re-evaluates the host so a whitelisted

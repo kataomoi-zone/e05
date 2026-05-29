@@ -325,16 +325,7 @@ extension PaneContainerViewController {
       bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
         pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
       }
-      // Push the current effective state once the callback is
-      // wired — `installRestoredHistory` fires from
-      // `PaneModel.init`, which runs before `setupPaneCallbacks`
-      // attaches this closure, so its `notifyNavigationStateChange`
-      // call would otherwise land on a nil handler and the URL
-      // bar's back/forward buttons would boot disabled even when
-      // the shadow stack has entries.
-      let initialBack = bv.canGoBackEffective
-      let initialFwd = bv.canGoForwardEffective
-      pane.urlBar.setNavigationEnabled(back: initialBack, forward: initialFwd)
+      pane.urlBar.setNavigationEnabled(back: bv.webView.canGoBack, forward: bv.webView.canGoForward)
       bv.onLoadingStateChange = { [weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
         if let pane {
@@ -526,14 +517,14 @@ extension PaneContainerViewController {
     // (a directory listing has nothing to interrupt).
     pane.urlBar.onBack = { [weak pane] in
       if let bv = pane?.browserView {
-        bv.goBackEffective()
+        bv.webView.goBack()
       } else if let fv = pane?.finderView {
         fv.goBack()
       }
     }
     pane.urlBar.onForward = { [weak pane] in
       if let bv = pane?.browserView {
-        bv.goForwardEffective()
+        bv.webView.goForward()
       } else if let fv = pane?.finderView {
         fv.goForward()
       }
