@@ -1651,8 +1651,24 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
         let index = suggestionList.selectedIndex,
         currentSuggestions.indices.contains(index)
       {
-        acceptSuggestion(currentSuggestions[index])
+        let selected = currentSuggestions[index]
+        if selected.isSearch, let liveSearch = PaneAddress.searchURL(query: urlField.stringValue) {
+          // Search the live field text. The list is rebuilt on a debounce,
+          // so the auto-selected search row can encode a query a keystroke
+          // or word behind the field — live text searches exactly what was
+          // typed. Build the search URL here rather than passing the bare
+          // query to `onNavigate`: the host's URL-vs-search test is looser
+          // than the one that produced this search row, so a no-space query
+          // containing "." or "/" (e.g. "foo/bar") would otherwise be
+          // navigated to instead of searched.
+          onNavigate?(liveSearch.url.absoluteString)
+        } else {
+          // URL / history / pane rows carry a concrete destination.
+          acceptSuggestion(selected)
+        }
       } else {
+        // No selection (list still hidden inside the debounce window):
+        // hand the host the live text and let it decide URL vs search.
         onNavigate?(urlField.stringValue)
       }
       dismissSuggestions()

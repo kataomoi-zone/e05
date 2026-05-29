@@ -403,6 +403,19 @@ struct PaneAddressTests {
     #expect(PaneAddress.asDirectNavigation("hello") == nil)
   }
 
+  @Test("asDirectNavigation rejects a slashed path with no dotted host")
+  func directNavRejectsSlashWithoutHost() {
+    // A path separator but no dotted/IP host: not direct navigation, so
+    // the URL bar surfaces it as a search row. `fromUserInput` is
+    // deliberately looser (it prepends https://), which is why the URL
+    // bar's Enter path builds the search URL from the live query for a
+    // selected search row instead of handing the bare text back to the
+    // navigation heuristic — otherwise these would navigate, not search.
+    #expect(PaneAddress.asDirectNavigation("foo/bar") == nil)
+    #expect(PaneAddress.asDirectNavigation("path/to/thing") == nil)
+    #expect(PaneAddress.fromUserInput("foo/bar") != nil)
+  }
+
   @Test("asDirectNavigation tolerates surrounding whitespace")
   func directNavTrimsWhitespace() {
     #expect(PaneAddress.asDirectNavigation("  https://example.com  ") != nil)
