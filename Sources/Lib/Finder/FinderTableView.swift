@@ -67,7 +67,15 @@ final class FinderTableView: NSTableView {
       return
     }
 
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    // Strip `.function` / `.numericPad` — AppKit sets both on arrow
+    // keys, so the naive `.deviceIndependentFlagsMask` intersection
+    // would never produce an empty set in the ← / → cases below and
+    // their handlers (go up, open selected row) would never fire.
+    // `.capsLock` is also dropped (the allow-list excludes it) so a
+    // CapsLock-on user still gets j/k row nav — matches how
+    // ShortcutsSettingsView treats CapsLock as not-a-chord.
+    let flags = event.modifierFlags
+      .intersection([.command, .shift, .control, .option])
 
     switch event.keyCode {
     case KeyCode.space:

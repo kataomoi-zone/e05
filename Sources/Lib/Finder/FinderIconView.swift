@@ -87,7 +87,14 @@ final class FinderIconCollectionView: NSCollectionView {
       return
     }
 
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    // Same allow-list `FinderTableView.keyDown` uses — see there for
+    // the `.function` / `.numericPad` / `.capsLock` rationale. The
+    // switch below currently has no arrow-key cases (NSCollectionView
+    // handles those natively), so this is predictive: keeping the
+    // masks aligned avoids re-introducing the trap if a future
+    // binding ever pulls arrow keys into this scope.
+    let flags = event.modifierFlags
+      .intersection([.command, .shift, .control, .option])
 
     switch event.keyCode {
     case KeyCode.space:
