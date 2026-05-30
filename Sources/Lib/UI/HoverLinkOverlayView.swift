@@ -15,7 +15,7 @@ public final class HoverLinkOverlayView: NSView {
   private let urlLabel: NSTextField = {
     let label = NSTextField(labelWithString: "")
     label.font = .systemFont(ofSize: 11, weight: .regular)
-    label.textColor = NSColor(white: 1.0, alpha: 0.92)
+    label.textColor = .labelColor
     label.lineBreakMode = .byTruncatingMiddle
     label.maximumNumberOfLines = 1
     label.translatesAutoresizingMaskIntoConstraints = false
