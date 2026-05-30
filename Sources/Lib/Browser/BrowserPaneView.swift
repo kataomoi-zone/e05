@@ -153,6 +153,19 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private var canGoBackObservation: NSKeyValueObservation?
   private var canGoForwardObservation: NSKeyValueObservation?
   private var isLoadingObservation: NSKeyValueObservation?
+  /// Reveal timer for the top-edge progress bar. Started on every
+  /// `isLoading: true`, cancelled on `false` — so fast loads
+  /// (anything under `LoadingProgressBarView.revealDelay`) finish
+  /// before the bar would fade in, keeping it invisible noise.
+  private var progressBarRevealTimer: DispatchSourceTimer?
+  /// Indeterminate loading bar pinned above the pane. WebKit only
+  /// emits `estimatedProgress` 0 → 1 transitions for most pages, so
+  /// driving a determinate fill from KVO sat the bar at 0% for the
+  /// entire load before snapping to 100%; the indeterminate shuttle
+  /// inside the view makes "still loading" legible without a
+  /// percentage. `public` so the host (`PaneModel` / container) can
+  /// reach it for layout installation.
+  public let progressBar = LoadingProgressBarView()
   private var adblockerObserverTask: Task<Void, Never>?
   private var adblockerWhitelistObserverTask: Task<Void, Never>?
   /// Token for the ``ExtensionController/didChangeNotification``
@@ -749,6 +762,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       hoverLinkOverlay.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.7),
     ])
 
+    // The progress bar lives on `PaneModel.containerView` so it sits
+    // inside the focus-border ring — see `PaneModel` setup. KVO and
+    // timer logic still hang off this view because they own the
+    // `WKWebView.estimatedProgress` source of truth.
+    progressBar.translatesAutoresizingMaskIntoConstraints = false
+
     attachWebView()
   }
 
@@ -880,7 +899,31 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, change in
       guard let isLoading = change.newValue else { return }
-      DispatchQueue.main.async { self?.onLoadingStateChange?(isLoading) }
+      DispatchQueue.main.async {
+        self?.applyLoadingStateForProgressBar(isLoading: isLoading)
+        self?.onLoadingStateChange?(isLoading)
+      }
+    }
+  }
+
+  /// Schedule the top-edge bar's reveal on a load start, cancel it on
+  /// a load end. Owns the timer lifecycle in one spot so the reveal
+  /// timer can't outlive the load it was started for — that would
+  /// otherwise fade the bar in moments after the page already settled.
+  private func applyLoadingStateForProgressBar(isLoading: Bool) {
+    progressBarRevealTimer?.cancel()
+    progressBarRevealTimer = nil
+    if isLoading {
+      let timer = DispatchSource.makeTimerSource(queue: .main)
+      timer.schedule(deadline: .now() + LoadingProgressBarView.revealDelay)
+      timer.setEventHandler { [weak self] in
+        self?.progressBar.reveal()
+        self?.progressBarRevealTimer = nil
+      }
+      timer.resume()
+      progressBarRevealTimer = timer
+    } else {
+      progressBar.dismiss()
     }
   }
 
@@ -968,12 +1011,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       interactionState: rawInteractionState as? Data
     )
 
+    // `webView.stopLoading()` only emits the `isLoading: false` KVO
+    // asynchronously, but `tearDownWebViewObservations()` invalidates
+    // the observation on the next line — so an in-flight load gets
+    // suspended without ever notifying the sidebar that loading
+    // stopped, and the worklane spinner keeps spinning on a detached
+    // pane. Forcing the notification here keeps the spinner in lock-
+    // step with the (now-dead) `WKWebView`.
+    let wasLoading = webView.isLoading
     webView.stopLoading()
     webView.pauseAllMediaPlayback(completionHandler: nil)
     tearDownWebViewObservations()
     webView.navigationDelegate = nil
     webView.uiDelegate = nil
     webView.removeFromSuperview()
+
+    if wasLoading {
+      onLoadingStateChange?(false)
+    }
 
     suspendedSnapshot = snapshot
     showPlaceholder(title: snapshot.title, url: snapshot.url)
@@ -1099,6 +1154,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     canGoForwardObservation = nil
     isLoadingObservation?.invalidate()
     isLoadingObservation = nil
+    progressBarRevealTimer?.cancel()
+    progressBarRevealTimer = nil
+    progressBar.dismiss()
     adblockerObserverTask?.cancel()
     adblockerObserverTask = nil
     adblockerWhitelistObserverTask?.cancel()

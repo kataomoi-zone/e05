@@ -425,6 +425,10 @@ public final class PaneModel {
     containerView.addSubview(urlBar)
     containerView.addSubview(urlBarTopEdgeHitZone)
     containerView.addSubview(headerView)
+    // The browser progress bar is *not* a subview of `containerView`.
+    // It's anchored above the pane (in the column's stack view) so
+    // it reads as chrome, not as page-rendered content — see
+    // `ensureProgressBarAttached(pane:in:)` in the container.
 
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)
     let urlBarHeight = urlBar.heightAnchor.constraint(equalToConstant: PaneURLBar.barHeight)

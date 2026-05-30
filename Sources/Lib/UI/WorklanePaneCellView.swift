@@ -34,6 +34,33 @@ final class WorklanePaneCellView: NSTableCellView {
   private var baseIconAlpha: CGFloat = 1.0
   private var baseLabelAlpha: CGFloat = 1.0
 
+  /// Fixed-size NSView that hosts the two CAShapeLayers comprising
+  /// the spinner — a faint halo + a bright rotating arc. The host
+  /// view is constrained to ``loadingHostSize`` square and centred on
+  /// the favicon, so the layer geometry stays independent of
+  /// `iconView.frame` (which is `.zero` for cells vended before their
+  /// first layout pass — the "new pane just opened and is loading
+  /// its first URL" path that previously rendered an eccentric ellipse).
+  /// Toggled via `isHidden` to keep cell reuse cheap.
+  private let loadingHostView: NSView = {
+    let v = NSView()
+    v.translatesAutoresizingMaskIntoConstraints = false
+    v.wantsLayer = true
+    v.isHidden = true
+    return v
+  }()
+  private var loadingHaloLayer: CAShapeLayer?
+  private var loadingArcLayer: CAShapeLayer?
+  private var isLoadingState = false
+  private static let loadingHostSize: CGFloat = 20
+  private static let loadingRingLineWidth: CGFloat = 1.5
+  private static let loadingHaloAlpha: CGFloat = 0.22
+  /// Fraction of the circumference covered by the rotating arc.
+  /// A quarter circle reads as "spinning" without the heavier
+  /// silhouette a wider arc produces at the 16pt favicon size.
+  private static let loadingArcStrokeEnd: CGFloat = 0.25
+  private static let loadingRingRotationDuration: CFTimeInterval = 0.9
+
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -91,6 +118,9 @@ final class WorklanePaneCellView: NSTableCellView {
     setHovered(false)
     suspendedRingLayer?.isHidden = true
     isSuspendedState = false
+    loadingHostView.isHidden = true
+    loadingArcLayer?.removeAllAnimations()
+    isLoadingState = false
     focusDot.isHidden = true
   }
 
@@ -121,6 +151,9 @@ final class WorklanePaneCellView: NSTableCellView {
     audioIndicator.action = #selector(audioTapped(_:))
     addSubview(audioIndicator)
 
+    addSubview(loadingHostView)
+    installLoadingLayers()
+
     let labelToIcon = titleLabel.leadingAnchor.constraint(
       equalTo: iconView.trailingAnchor, constant: 6)
     let labelToAudio = titleLabel.leadingAnchor.constraint(
@@ -140,6 +173,11 @@ final class WorklanePaneCellView: NSTableCellView {
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
       iconView.widthAnchor.constraint(equalToConstant: Self.iconSize),
       iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
+
+      loadingHostView.centerXAnchor.constraint(equalTo: iconView.centerXAnchor),
+      loadingHostView.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
+      loadingHostView.widthAnchor.constraint(equalToConstant: Self.loadingHostSize),
+      loadingHostView.heightAnchor.constraint(equalToConstant: Self.loadingHostSize),
 
       audioIndicator.leadingAnchor.constraint(
         equalTo: iconView.trailingAnchor, constant: 4),
@@ -202,6 +240,7 @@ final class WorklanePaneCellView: NSTableCellView {
       isMuted: audio.isMuted, isPlayingAudio: audio.isPlayingAudio,
       hasActiveMedia: audio.hasActiveMedia)
     applySuspendedState(input.paneIsSuspended(pane))
+    applyLoadingState(input.paneIsLoading(pane), accent: accent)
 
     let paneId = pane.id
     onCloseHandler = {
@@ -280,6 +319,82 @@ final class WorklanePaneCellView: NSTableCellView {
     CATransaction.commit()
   }
 
+  /// Toggle the loading affordance: faint accent halo + bright
+  /// rotating arc around the favicon. Mutually exclusive with the
+  /// suspended ring — a suspended pane has no live `WKWebView` so it
+  /// can't load.
+  func applyLoadingState(_ isLoading: Bool, accent: NSColor) {
+    isLoadingState = isLoading
+    loadingHostView.isHidden = !isLoading
+    if isLoading {
+      loadingHaloLayer?.strokeColor =
+        accent.withAlphaComponent(Self.loadingHaloAlpha).cgColor
+      loadingArcLayer?.strokeColor = accent.cgColor
+      ensureLoadingRingAnimation()
+    } else {
+      loadingArcLayer?.removeAllAnimations()
+    }
+  }
+
+  /// Install the halo + arc layers once at cell setup time so their
+  /// geometry never depends on Auto-Layout-resolved frames. Bounds
+  /// and the elliptic path are pinned to the host view's intrinsic
+  /// size constants — the host's NSView frame may still be `.zero`
+  /// before first layout, but the layers render at a fixed 20×20
+  /// regardless and inherit the host view's eventual position once
+  /// Auto Layout resolves it.
+  private func installLoadingLayers() {
+    let size = Self.loadingHostSize
+    let pathRect = CGRect(x: 0, y: 0, width: size, height: size)
+    let path = CGPath(ellipseIn: pathRect, transform: nil)
+    let center = CGPoint(x: size / 2, y: size / 2)
+
+    let halo = CAShapeLayer()
+    halo.fillColor = nil
+    halo.lineWidth = Self.loadingRingLineWidth
+    halo.lineCap = .round
+    // Full circle baseline so the user sees an anchor even at the
+    // instant the arc lands on the gap — also reads as "loading is
+    // happening" before progress would otherwise tick.
+    halo.strokeStart = 0
+    halo.strokeEnd = 1
+    halo.path = path
+    halo.bounds = pathRect
+    halo.position = center
+    halo.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    loadingHostView.layer?.addSublayer(halo)
+    loadingHaloLayer = halo
+
+    let arc = CAShapeLayer()
+    arc.fillColor = nil
+    arc.lineWidth = Self.loadingRingLineWidth
+    arc.lineCap = .round
+    arc.strokeStart = 0
+    arc.strokeEnd = Self.loadingArcStrokeEnd
+    arc.path = path
+    arc.bounds = pathRect
+    arc.position = center
+    arc.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    loadingHostView.layer?.addSublayer(arc)
+    loadingArcLayer = arc
+  }
+
+  private func ensureLoadingRingAnimation() {
+    guard let arc = loadingArcLayer,
+      arc.animation(forKey: "spin") == nil
+    else { return }
+    let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+    spin.fromValue = 0
+    spin.toValue = -CGFloat.pi * 2
+    spin.duration = Self.loadingRingRotationDuration
+    spin.repeatCount = .infinity
+    // `isRemovedOnCompletion = false` keeps the animation running
+    // across off-screen / re-attached transitions; AppKit would
+    // otherwise drop it when the layer briefly detaches during scroll.
+    spin.isRemovedOnCompletion = false
+    arc.add(spin, forKey: "spin")
+  }
+
   override func layout() {
     super.layout()
     updateSuspendedRingFrame()
@@ -287,10 +402,13 @@ final class WorklanePaneCellView: NSTableCellView {
 
   override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    guard let ring = suspendedRingLayer else { return }
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+    if let ring = suspendedRingLayer {
+      effectiveAppearance.performAsCurrentDrawingAppearance {
+        ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+      }
     }
+    // Loading ring uses the workspace accent (passed at apply time),
+    // which is appearance-independent — nothing to re-resolve here.
   }
 
   override func updateTrackingAreas() {

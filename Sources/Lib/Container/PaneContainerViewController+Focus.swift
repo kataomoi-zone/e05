@@ -565,6 +565,26 @@ extension PaneContainerViewController {
     if column.foldedLabelView.superview === sv {
       sv.addSubview(column.foldedLabelView, positioned: .above, relativeTo: nil)
     }
+
+    // Detach progress bars whose owning pane is no longer in this
+    // column — a drag-move leaves the bar attached to the source
+    // column even though its constraints now reference a pane that
+    // belongs to a different column, which Auto Layout flags between
+    // the source rebuild and the target rebuild.
+    for sub in sv.subviews where sub is LoadingProgressBarView {
+      let owned = column.panes.contains { $0.browserView?.progressBar === sub }
+      if !owned {
+        sub.removeFromSuperview()
+      }
+    }
+
+    // Re-anchor each browser pane's progress bar to the rebuilt
+    // column. Drag-moves between columns and `splitVertical` both
+    // route through here, so this is the single chokepoint that
+    // keeps the bar following its pane across structural changes.
+    for pane in column.panes {
+      ensureProgressBarAttached(pane: pane, in: column)
+    }
   }
 
   private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int) -> PaneResizeHandle {

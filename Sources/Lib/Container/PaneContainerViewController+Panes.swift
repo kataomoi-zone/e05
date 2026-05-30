@@ -88,6 +88,7 @@ extension PaneContainerViewController {
       cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
       cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
     ])
+    ensureProgressBarAttached(pane: pane, in: column)
 
     // Folded label overlay — shown only when column is folded
     attachFoldedLabel(to: column)
@@ -196,6 +197,41 @@ extension PaneContainerViewController {
       setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
     }
     return column
+  }
+
+  /// Attach the browser pane's loading progress bar to its column's
+  /// container view as a non-arranged subview. Anchors the bar
+  /// *above* the pane (negative offset from `pane.containerView.top`)
+  /// at 80% width centred so it can't be mistaken for a
+  /// page-rendered progress indicator that would live inside the
+  /// content box. Resolves the workspace accent through the
+  /// container so the bar matches the focus border and the worklane
+  /// spinner. Idempotent: re-running on a pane already attached to
+  /// the same column refreshes the accent without piling up
+  /// constraints.
+  func ensureProgressBarAttached(pane: PaneModel, in column: ColumnModel) {
+    guard let bv = pane.browserView else { return }
+    let bar = bv.progressBar
+    // Always refresh the accent — workspace moves end up here via
+    // `rebuildColumnView`, and the bar's existing tint would be one
+    // workspace behind otherwise.
+    if let loc = locatePane(id: pane.id) {
+      bar.accent = Self.accentColor(forWorkspaceAt: loc.workspaceIndex)
+    }
+    if bar.superview === column.containerView { return }
+    // `removeFromSuperview` drops every constraint that referenced
+    // this view, so the re-attach below builds a clean set.
+    bar.removeFromSuperview()
+    column.containerView.addSubview(bar)
+    NSLayoutConstraint.activate([
+      bar.bottomAnchor.constraint(
+        equalTo: pane.containerView.topAnchor, constant: -2),
+      bar.centerXAnchor.constraint(equalTo: pane.containerView.centerXAnchor),
+      bar.widthAnchor.constraint(
+        equalTo: pane.containerView.widthAnchor, multiplier: 0.8),
+      bar.heightAnchor.constraint(
+        equalToConstant: LoadingProgressBarView.height),
+    ])
   }
 
   /// Attach the folded label overlay to a column's containerView with full-bounds
@@ -326,10 +362,15 @@ extension PaneContainerViewController {
         pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
       }
       pane.urlBar.setNavigationEnabled(back: bv.webView.canGoBack, forward: bv.webView.canGoForward)
-      bv.onLoadingStateChange = { [weak pane] isLoading in
+      bv.onLoadingStateChange = { [weak self, weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
         if let pane {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .loading)
+          // Targeted row update so the worklane spinner can flip
+          // without a full reload. Same pattern as the audio /
+          // suspended state forwarding above.
+          self?.sidebarVC?.updatePaneLoadingState(
+            paneId: pane.id, isLoading: isLoading)
         }
       }
       bv.onAudioStateChanged = { [weak self, weak pane, weak bv] in
@@ -1171,6 +1212,7 @@ extension PaneContainerViewController {
         cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
         cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
       ])
+      ensureProgressBarAttached(pane: pane, in: column)
 
       // Folded label overlay — same setup as insertColumn(with:)
       attachFoldedLabel(to: column)

@@ -358,6 +358,7 @@ final class WorklaneSectionView: NSView {
     let paneAudioState:
       (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
     let paneIsSuspended: (PaneModel) -> Bool
+    let paneIsLoading: (PaneModel) -> Bool
     /// Persisted collapse predicate. Receives either a workspace or
     /// a column ULID — NSOutlineView treats both as expandable items
     /// and the persistence layer carries one merged set of ids.
@@ -696,6 +697,12 @@ final class WorklaneSectionView: NSView {
   /// Per-pane suspended-state flip without a full reload.
   func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
     visibleCell(forPaneId: paneId)?.applySuspendedState(isSuspended)
+  }
+
+  /// Per-pane loading-state flip without a full reload. Off-screen
+  /// rows pick up the latest state from the next `viewFor:` vend.
+  func updatePaneLoadingState(paneId: ULID, isLoading: Bool, accent: NSColor) {
+    visibleCell(forPaneId: paneId)?.applyLoadingState(isLoading, accent: accent)
   }
 
   private func visibleCell(forPaneId paneId: ULID) -> WorklanePaneCellView? {

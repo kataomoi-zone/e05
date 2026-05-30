@@ -310,6 +310,13 @@ final class SidebarViewController: NSViewController {
         paneIsSuspended: { pane in
           pane.browserView?.isSuspended ?? false
         },
+        paneIsLoading: { pane in
+          // Suspended panes have no live `WKWebView` and can't be
+          // loading; the predicate short-circuits there so the cell
+          // never tries to draw both rings at once.
+          guard let bv = pane.browserView, !bv.isSuspended else { return false }
+          return bv.webView.isLoading
+        },
         isCollapsed: { [weak self] id in
           self?.collapsedIds.contains(id) ?? false
         },
@@ -401,6 +408,18 @@ final class SidebarViewController: NSViewController {
   func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
     overlay.worklane.updatePaneSuspendedState(
       paneId: paneId, isSuspended: isSuspended)
+  }
+
+  /// Per-pane loading-state flip — drives the spinner ring around the
+  /// favicon. Resolves the workspace accent through the container so
+  /// the ring picks up the same colour as the focus dot.
+  func updatePaneLoadingState(paneId: ULID, isLoading: Bool) {
+    let accent: NSColor =
+      container?.locatePane(id: paneId).map {
+        PaneContainerViewController.accentColor(forWorkspaceAt: $0.workspaceIndex)
+      } ?? .labelColor
+    overlay.worklane.updatePaneLoadingState(
+      paneId: paneId, isLoading: isLoading, accent: accent)
   }
 
   private func toggleCollapsed(_ id: ULID) {
