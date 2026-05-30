@@ -82,11 +82,6 @@ enum AppColors {
     light: NSColor(white: 0.0, alpha: 0.08),
     dark: NSColor(white: 1.0, alpha: 0.08))
 
-  /// Toast container border.
-  static let toastBorder = dynamic(
-    light: NSColor(white: 0.0, alpha: 0.18),
-    dark: NSColor(white: 1.0, alpha: 0.18))
-
   // MARK: - Hover / active overlays
 
   /// Standard row-hover highlight — used by PaneRow, WorkspaceHeaderRow,

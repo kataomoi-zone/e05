@@ -135,7 +135,10 @@ public final class ToastPillView: NSView {
     self.owner = owner
     let l = NSTextField(labelWithString: message)
     l.font = .systemFont(ofSize: 12, weight: .medium)
-    l.textColor = NSColor(white: 1.0, alpha: 0.95)
+    // Pick the foreground from the accent's perceived brightness so
+    // bright pastels (the light entries in `unicorn`) flip to black
+    // text instead of bleeding into the fill.
+    l.textColor = accent.toastContrastingText.withAlphaComponent(0.95)
     l.lineBreakMode = .byTruncatingTail
     l.maximumNumberOfLines = 1
     l.translatesAutoresizingMaskIntoConstraints = false
@@ -147,8 +150,6 @@ public final class ToastPillView: NSView {
     layer?.cornerCurve = .continuous
     layer?.masksToBounds = false
     layer?.backgroundColor = accent.withAlphaComponent(0.92).cgColor
-    layer?.borderWidth = 0.5
-    layer?.borderColor = AppColors.toastBorder.cgColor
     // Faint glow so the pill stays visible even over high-contrast
     // pane content like dark code editors with bright syntax tokens.
     layer?.shadowColor = accent.cgColor
@@ -242,5 +243,26 @@ public final class ToastPillView: NSView {
     anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0)
     layer?.add(anim, forKey: "shift")
     layer?.transform = CATransform3DIdentity
+  }
+}
+
+extension NSColor {
+  /// Black or white — whichever yields better contrast on top of this
+  /// color in the toast pill chrome. Uses the YIQ luma formula (Rec.
+  /// 601 weights). The 0.75 cutoff is well above the WCAG-strict 0.179
+  /// and the perception-neutral 0.5 because the pill carries an
+  /// accent-colored shadow plus glow plus 0.92-alpha fill, which give
+  /// white text enough surround buffer to read through mid-tone
+  /// accents — only pure pastels (the bright entries in `unicorn`)
+  /// need black. Falls back to `.white` when the color can't be
+  /// resolved to sRGB — pattern / catalog colors — preserving the
+  /// previous default for unexpected inputs.
+  fileprivate var toastContrastingText: NSColor {
+    guard let srgb = usingColorSpace(.sRGB) else { return .white }
+    let luma =
+      0.299 * srgb.redComponent
+      + 0.587 * srgb.greenComponent
+      + 0.114 * srgb.blueComponent
+    return luma > 0.75 ? .black : .white
   }
 }
