@@ -130,9 +130,11 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
         "open_settings",
         "command_palette",
         "toggle_sidebar_pin",
+        "open_tabs",
         "open_bookmarks",
         "open_history",
         "open_downloads",
+        "open_extensions",
       ]
     ),
     (

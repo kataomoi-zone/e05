@@ -543,6 +543,13 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "open_tabs",
+        title: "Open Tabs",
+        keyEquivalent: "t",
+        modifierMask: [.command, .option],
+        handler: { [weak self] in self?.sidebarVC?.openMode(.tabs) }
+      ),
+      Action(
         id: "open_bookmarks",
         title: "Open Bookmarks",
         keyEquivalent: "b",
@@ -561,6 +568,13 @@ extension PaneContainerViewController {
         keyEquivalent: "l",
         modifierMask: [.command, .option],
         handler: { [weak self] in self?.sidebarVC?.openMode(.downloads) }
+      ),
+      Action(
+        id: "open_extensions",
+        title: "Open Extensions",
+        keyEquivalent: "e",
+        modifierMask: [.command, .option],
+        handler: { [weak self] in self?.sidebarVC?.openMode(.extensions) }
       ),
       Action(
         id: "workspace_new",
