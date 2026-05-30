@@ -61,7 +61,18 @@ extension FinderPaneView {
   public func goUp() {
     let parent = currentURL.deletingLastPathComponent()
     guard parent != currentURL else { return }
-    loadDirectory(url: parent, pushHistory: true, announce: true)
+    // Select the directory we just left inside the parent — matches
+    // Finder's own ⌘↑ behaviour and lets the user keep navigating
+    // up/down a tree without losing their place. Captured before
+    // `loadDirectory` reassigns `currentURL`. The post-load lookup
+    // is silent on no-match (departed folder hidden when
+    // `showHiddenFiles` is off, or filtered out by an active find
+    // needle) — the pane lands in the parent with no row selected,
+    // same as before this hook existed.
+    let departed = currentURL
+    loadDirectory(
+      url: parent, pushHistory: true, announce: true,
+      selectAfterLoad: [departed])
   }
 
   /// Force a contents re-read. The directory monitor already triggers
@@ -85,7 +96,10 @@ extension FinderPaneView {
 
   // MARK: - Directory load + reload
 
-  func loadDirectory(url: URL, pushHistory: Bool, announce: Bool) {
+  func loadDirectory(
+    url: URL, pushHistory: Bool, announce: Bool,
+    selectAfterLoad: [URL]? = nil
+  ) {
     if pushHistory && url != currentURL {
       backStack.append(currentURL)
       forwardStack.removeAll()
@@ -136,7 +150,7 @@ extension FinderPaneView {
     filterNeedle = nil
     reloadAllRows()
     updateStatusBar()
-    reloadItems(preservingSelection: false)
+    reloadItems(preservingSelection: false, selectAfterLoad: selectAfterLoad)
     directoryMonitor.start(at: url)
 
     if announce {
