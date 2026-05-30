@@ -273,6 +273,34 @@ extension PaneContainerViewController {
         validate: { [weak self] in (self?.isFocusedPaneBrowser ?? false, nil) }
       ),
       Action(
+        id: "browser_stop",
+        title: "Stop Loading",
+        menuTitle: "Stop",
+        // ⌘. is the macOS cancel idiom. Disabled-at-rest lets the
+        // keystroke fall through to `cancelOperation:` instead of
+        // firing a no-op through the menu/key path.
+        keyEquivalent: ".",
+        handler: { [weak self] in
+          guard let self, self.isFocusedPaneBrowser else { return }
+          // Re-check inside the handler too: the palette dispatch
+          // path (`+Panes.swift:625`) ignores `validate`, so without
+          // this guard an idle-time palette selection would emit a
+          // misleading "Stop Loading" toast for a no-op stopLoading().
+          if self.isFocusedBrowserLoading {
+            self.stopFocusedBrowser()
+            self.showToast("Stop Loading")
+          } else {
+            self.showToast("Nothing to stop", style: .error)
+          }
+        },
+        validate: { [weak self] in
+          let enabled =
+            (self?.isFocusedPaneBrowser ?? false)
+            && (self?.isFocusedBrowserLoading ?? false)
+          return (enabled, nil)
+        }
+      ),
+      Action(
         id: "browser_back",
         title: "Back",
         keyEquivalent: "[",

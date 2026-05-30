@@ -645,6 +645,16 @@ extension PaneContainerViewController {
     focusedPane?.browserView?.webView.reloadFromOrigin()
   }
 
+  /// Stop in-flight loading on the focused browser pane.
+  public func stopFocusedBrowser() {
+    focusedPane?.browserView?.webView.stopLoading()
+  }
+
+  /// Whether the focused browser pane has a load in flight.
+  public var isFocusedBrowserLoading: Bool {
+    focusedPane?.browserView?.webView.isLoading ?? false
+  }
+
   /// Navigate back in the focused browser pane's session history.
   public func goBackFocusedBrowser() {
     focusedPane?.browserView?.goBack()

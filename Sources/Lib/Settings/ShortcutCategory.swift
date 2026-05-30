@@ -105,6 +105,7 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
         "toggle_inspector",
         "browser_reload",
         "browser_hard_reload",
+        "browser_stop",
         "browser_back",
         "browser_forward",
         "browser_zoom_in",
