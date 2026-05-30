@@ -647,12 +647,12 @@ extension PaneContainerViewController {
 
   /// Navigate back in the focused browser pane's session history.
   public func goBackFocusedBrowser() {
-    focusedPane?.browserView?.webView.goBack()
+    focusedPane?.browserView?.goBack()
   }
 
   /// Navigate forward in the focused browser pane's session history.
   public func goForwardFocusedBrowser() {
-    focusedPane?.browserView?.webView.goForward()
+    focusedPane?.browserView?.goForward()
   }
 
   /// Whether the focused browser pane has any back history.

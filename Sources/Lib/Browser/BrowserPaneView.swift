@@ -259,6 +259,53 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// and we only correlate it after the fact.
   public func noteNativeBackForwardPressed(isBack: Bool) {
     pendingNativeNavDirection = (isBack: isBack, at: Date())
+    recentBackForwardAt = Date()
+  }
+
+  /// URLs of entries in the back/forward list that came in through
+  /// `setInteractionState` and so don't have a live document in the
+  /// current process. Navigating back/forward to one via WebKit's
+  /// native goBack/goForward path fires popstate against a fresh
+  /// document with no SPA JS state to handle it — the URL updates,
+  /// the DOM doesn't. The url observer reloads when it spots a
+  /// transition into one of these URLs that started from an e05-
+  /// initiated back/forward (toolbar button, action handler, or
+  /// ⌘←/⌘→), matching Chromium's RESTORE→needs_reload behaviour.
+  /// In-session entries the user navigated to during this session
+  /// stay out of the set and keep the fast popstate path.
+  private var restoredEntryURLs: Set<URL> = []
+
+  /// Timestamp of the most recent e05-initiated back/forward
+  /// invocation on this pane. Set by ``goBack()`` / ``goForward()``
+  /// (used by URL bar buttons and the menu/IPC action handlers) and
+  /// by ``noteNativeBackForwardPressed(isBack:)`` (⌘←/⌘→). Pairs
+  /// with ``restoredEntryURLs`` in the url observer to decide whether
+  /// the imminent url change needs a forced reload.
+  private var recentBackForwardAt: Date?
+
+  /// Window used to pair a recent back/forward initiation with the
+  /// url change it produced. Same value as
+  /// ``nativeBackForwardToastWindow`` but kept separate so the two
+  /// can be tuned independently if needed.
+  private static let recentBackForwardWindow: TimeInterval = 0.5
+
+  /// Navigate back via the live `WKBackForwardList` and mark the
+  /// pane as having just initiated back/forward, so the url observer
+  /// can apply the cross-launch SPA reload fix if the destination is
+  /// a restored entry. Callers (URL bar button, menu action, IPC
+  /// bridge) should go through this rather than touching
+  /// `webView.goBack()` directly; the ⌘←/⌘→ monitor uses
+  /// ``noteNativeBackForwardPressed(isBack:)`` instead because WebKit
+  /// drives the actual navigation in that path.
+  public func goBack() {
+    recentBackForwardAt = Date()
+    webView.goBack()
+  }
+
+  /// Forward counterpart to ``goBack()``.
+  public func goForward() {
+    recentBackForwardAt = Date()
+    webView.goForward()
   }
 
   /// Whether this pane was constructed for a `WKWebExtensionContext`
@@ -772,6 +819,41 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
             self.onNativeBackForward?(pending.isBack)
           }
         }
+        // SPA same-document back/forward into a previous-session entry
+        // updates the URL via popstate but leaves the DOM untouched —
+        // the fresh document has no SPA JS state to react. When the
+        // url change comes from an e05-initiated back/forward and
+        // lands on one of the restored URLs, reload so the page
+        // actually renders. Chromium does the equivalent through its
+        // RESTORE→needs_reload flag. In-session entries the user
+        // navigated to live during this session aren't in the set,
+        // so the fast native popstate path keeps working there.
+        let bfAt = self.recentBackForwardAt
+        // Consume the marker on every url change, not only when this
+        // one triggers the reload — otherwise a back/forward to an
+        // in-session URL would leave the marker live for another
+        // ~500ms and a subsequent unrelated nav into a restored URL
+        // (programmatic redirect, link click) would mis-fire reload.
+        self.recentBackForwardAt = nil
+        if let bfAt,
+          Date().timeIntervalSince(bfAt) < Self.recentBackForwardWindow,
+          self.restoredEntryURLs.contains(url)
+        {
+          // After reload the document is fresh — its SPA JS state
+          // gets built up by the actual page load — so a future
+          // back/forward to the same URL can take the fast native
+          // popstate path instead of paying for another reload.
+          // Chromium's RESTORE→needs_reload is also a one-shot.
+          self.restoredEntryURLs.remove(url)
+          // Defer reload to the next runloop tick so we don't kick
+          // a fresh WebKit navigation from inside the url KVO
+          // callback that just fired for the previous one — WebKit
+          // is mid-dispatch and re-entering its delegate chain from
+          // here has surprising failure modes.
+          DispatchQueue.main.async { [weak self] in
+            self?.webView.reload()
+          }
+        }
         // Warm the favicon cache so sidebar worklane rows and URL
         // bar suggestions can stop showing the generic `globe`
         // placeholder for this host. Synchronous main-thread call
@@ -952,8 +1034,20 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       // Reinstates the back/forward list, scroll position, and form
       // values, and kicks off a load of the current entry.
       webView.interactionState = data
+      // Snapshot the URLs WebKit just put into the back/forward list.
+      // The url observer uses this to spot back/forward navigations
+      // into entries whose document was never alive in this process
+      // (SPA pushState entries restored from a previous session or a
+      // runtime suspend) and force a reload — popstate alone leaves
+      // the URL updated but the DOM untouched there.
+      let list = webView.backForwardList
+      var urls = Set(
+        list.backList.map(\.url) + list.forwardList.map(\.url))
+      if let current = list.currentItem?.url { urls.insert(current) }
+      restoredEntryURLs = urls
     } else {
       webView.load(URLRequest(url: snapshot.url))
+      restoredEntryURLs = []
     }
 
     suspendedSnapshot = nil

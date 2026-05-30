@@ -523,14 +523,14 @@ extension PaneContainerViewController {
     // (a directory listing has nothing to interrupt).
     pane.urlBar.onBack = { [weak pane] in
       if let bv = pane?.browserView {
-        bv.webView.goBack()
+        bv.goBack()
       } else if let fv = pane?.finderView {
         fv.goBack()
       }
     }
     pane.urlBar.onForward = { [weak pane] in
       if let bv = pane?.browserView {
-        bv.webView.goForward()
+        bv.goForward()
       } else if let fv = pane?.finderView {
         fv.goForward()
       }

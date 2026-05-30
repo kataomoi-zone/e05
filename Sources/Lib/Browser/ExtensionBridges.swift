@@ -315,7 +315,7 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     for _: WKWebExtensionContext,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    pane?.browserView?.webView.goBack()
+    pane?.browserView?.goBack()
     completionHandler(nil)
   }
 
@@ -323,7 +323,7 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     for _: WKWebExtensionContext,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    pane?.browserView?.webView.goForward()
+    pane?.browserView?.goForward()
     completionHandler(nil)
   }
 }
