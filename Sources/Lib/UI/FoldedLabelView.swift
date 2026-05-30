@@ -7,7 +7,7 @@ public final class FoldedLabelView: NSView {
   private let label: NSTextField = {
     let tf = NSTextField(labelWithString: "")
     tf.font = .systemFont(ofSize: 11, weight: .medium)
-    tf.textColor = NSColor(white: 0.8, alpha: 1.0)
+    tf.textColor = .secondaryLabelColor
     tf.lineBreakMode = .byTruncatingTail
     tf.alignment = .center
     tf.isBezeled = false
@@ -33,7 +33,7 @@ public final class FoldedLabelView: NSView {
     }
     btn.bezelStyle = .inline
     btn.isBordered = false
-    btn.contentTintColor = NSColor(white: 0.7, alpha: 1.0)
+    btn.contentTintColor = .secondaryLabelColor
     btn.toolTip = "Expand column"
     btn.translatesAutoresizingMaskIntoConstraints = false
     return btn

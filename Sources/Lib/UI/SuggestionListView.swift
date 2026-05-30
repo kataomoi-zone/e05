@@ -477,7 +477,7 @@ private final class SuggestionCellView: NSView {
       to: secondaryLabel,
       text: model.secondary,
       font: .systemFont(ofSize: 11),
-      color: NSColor(white: 0.75, alpha: 1.0),
+      color: .secondaryLabelColor,
       highlights: model.secondaryHighlights
     )
     secondaryLabel.isHidden = model.secondary.isEmpty
@@ -514,7 +514,7 @@ private final class SuggestionCellView: NSView {
     primaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
     secondaryLabel.font = .systemFont(ofSize: 11)
-    secondaryLabel.textColor = NSColor(white: 0.75, alpha: 1.0)
+    secondaryLabel.textColor = .secondaryLabelColor
     secondaryLabel.lineBreakMode = .byTruncatingTail
     secondaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -522,7 +522,7 @@ private final class SuggestionCellView: NSView {
     // shortcut hints in the coming command-palette mode. Kept dim and
     // shorter than the primary text so it reads as metadata.
     accessoryLabel.font = .systemFont(ofSize: 11)
-    accessoryLabel.textColor = NSColor(white: 0.6, alpha: 1.0)
+    accessoryLabel.textColor = .tertiaryLabelColor
     accessoryLabel.alignment = .right
     accessoryLabel.lineBreakMode = .byTruncatingTail
     accessoryLabel.translatesAutoresizingMaskIntoConstraints = false
