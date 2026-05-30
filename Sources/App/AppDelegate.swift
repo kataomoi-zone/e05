@@ -32,6 +32,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// and the keystroke just rings the system bell.
   private var extensionCommandMonitor: Any?
 
+  /// Same handle pattern as `tabKeyMonitor` but for the WebKit-native
+  /// ⌘← / ⌘→ back/forward keypress observer. The monitor does NOT
+  /// swallow the event — WebKit drives the actual navigation in
+  /// context-sensitive fashion (back/forward when web content is
+  /// focused, line-start/end when a text input is) — it only records
+  /// the press on the focused pane so the url observer can fire a
+  /// matching toast once the navigation lands.
+  private var nativeBackForwardMonitor: Any?
+
   /// Unix-socket IPC listener. External `e05` CLI invocations land
   /// here; the handler closure runs on the main actor so it can touch
   /// `paneContainer` directly. Held strongly so the listener keeps
@@ -326,6 +335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     setupMenuKeyBindings()
     installTabKeyMonitor()
     installExtensionCommandMonitor()
+    installNativeBackForwardMonitor()
     installControlSocket()
   }
 
@@ -626,6 +636,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       if ExtensionController.shared.performExtensionCommand(for: event) {
         return nil
       }
+      return event
+    }
+  }
+
+  /// Mark a ⌘← / ⌘→ press on the focused browser pane so the pane's
+  /// url observer can fire a "Back" / "Forward" toast once the
+  /// resulting navigation lands. The event passes through unchanged —
+  /// WebKit is the one driving cross-document back/forward and SPA
+  /// popstate, and importantly also the cursor-to-line-start /
+  /// cursor-to-line-end behaviour inside a focused text input, which
+  /// we must not pre-empt.
+  ///
+  /// Detection (not interception) means the toast naturally suppresses
+  /// itself in cases where WebKit doesn't navigate: pressing ⌘← with
+  /// no back history, or inside a focused web-page text input. The
+  /// url observer never fires, the marker expires, no spurious toast.
+  private func installNativeBackForwardMonitor() {
+    if let existing = nativeBackForwardMonitor {
+      NSEvent.removeMonitor(existing)
+      nativeBackForwardMonitor = nil
+    }
+    nativeBackForwardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard let self,
+        event.keyCode == KeyCode.leftArrow || event.keyCode == KeyCode.rightArrow
+      else { return event }
+      // App-global monitor; only mark while the main window owns
+      // focus so a ⌘← struck in Settings (where it can mean "back in
+      // the navigation tree") never registers as a browser nav.
+      guard self.window?.isKeyWindow == true else { return event }
+      // Strip `.function` / `.numericPad` — AppKit sets both on arrow
+      // keys, so the naive `.deviceIndependentFlagsMask` intersection
+      // never equals `.command` alone. Restrict the comparison to the
+      // user-meaningful modifiers and require exactly ⌘.
+      let mods = event.modifierFlags
+        .intersection([.command, .shift, .control, .option])
+      guard mods == .command else { return event }
+      guard let pc = self.paneContainer else { return event }
+      // Don't mark while text input owns first responder — ⌘← in the
+      // URL bar field editor means "cursor to beginning of line", not
+      // "go back". Web-page text inputs land with the WKWebView as
+      // first responder (not NSText); for those we still mark, and
+      // WebKit's own context check decides whether to navigate. The
+      // url observer fires only on actual navigation, so the editing
+      // case naturally drops the marker without a spurious toast.
+      if let responder = pc.view.window?.firstResponder, responder is NSText {
+        return event
+      }
+      pc.noteNativeBackForwardPressedOnFocusedBrowser(
+        isBack: event.keyCode == KeyCode.leftArrow
+      )
       return event
     }
   }

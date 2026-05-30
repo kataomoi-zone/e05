@@ -139,6 +139,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// affordance without a full worklane rebuild — the same targeted-
   /// update pattern as ``onAudioStateChanged``.
   public var onSuspendedStateChanged: (() -> Void)?
+  /// Called when a ⌘← / ⌘→ keypress lands an actual navigation in the
+  /// live web view — both full back/forward and SPA same-document
+  /// popstate. Lets the container surface the same "Back"/"Forward"
+  /// toast the ⌘[ / ⌘] action handlers show so feedback is symmetric.
+  /// `true` means a back step. WebKit owns the keypress entirely; the
+  /// callback fires only after the url actually moves, so a no-op press
+  /// (no back history, or cursor-in-text-input) never triggers a toast.
+  public var onNativeBackForward: ((_ isBack: Bool) -> Void)?
 
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
@@ -226,6 +234,32 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `.link` after each consume so SPA navigations that bypass
   /// `decidePolicyFor` don't inherit a stale `.typed`.
   private var pendingTransition: VisitTransition = .link
+
+  /// Timestamped marker for the most recent ⌘← / ⌘→ keypress on this
+  /// pane (set by `AppDelegate`'s native back/forward monitor, which
+  /// passes the event through rather than swallowing it). The url KVO
+  /// observer pairs it with the next imminent navigation to fire
+  /// `onNativeBackForward`; if no navigation lands inside
+  /// ``nativeBackForwardToastWindow`` the marker is dropped so an
+  /// unrelated link click long after the press never gets retroactively
+  /// labelled "Back".
+  private var pendingNativeNavDirection: (isBack: Bool, at: Date)?
+
+  /// Recency window for pairing a ⌘← / ⌘→ keypress with the actual
+  /// navigation it produced. Long enough to cover a normal full-page
+  /// load over the network, short enough that ⌘← in a focused web
+  /// text input (line-start move, no navigation) won't paint the next
+  /// independent user action with a stale back/forward label.
+  private static let nativeBackForwardToastWindow: TimeInterval = 0.5
+
+  /// Record a ⌘← / ⌘→ keypress so the next imminent url change can
+  /// fire a "Back" / "Forward" toast through ``onNativeBackForward``.
+  /// Called from the app-level keyDown monitor in `AppDelegate`, which
+  /// does not swallow the event — WebKit drives the actual navigation
+  /// and we only correlate it after the fact.
+  public func noteNativeBackForwardPressed(isBack: Bool) {
+    pendingNativeNavDirection = (isBack: isBack, at: Date())
+  }
 
   /// Whether this pane was constructed for a `WKWebExtensionContext`
   /// (e.g. an extension's options page). The flag gates services that
@@ -724,6 +758,20 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         // never reaches `decidePolicyFor` — records as an ordinary
         // link instead of inheriting this navigation's type.
         self.pendingTransition = .link
+        // Pair a recent ⌘← / ⌘→ keypress with this url change to
+        // surface the matching toast. Covers both full back/forward
+        // (where `decidePolicyFor` saw `.backForward`) and SPA same-
+        // document popstate (where it didn't). Expire stale markers
+        // unconditionally so a press that produced no navigation
+        // doesn't paint the next unrelated nav as back/forward.
+        if let pending = self.pendingNativeNavDirection {
+          self.pendingNativeNavDirection = nil
+          if Date().timeIntervalSince(pending.at)
+            < Self.nativeBackForwardToastWindow
+          {
+            self.onNativeBackForward?(pending.isBack)
+          }
+        }
         // Warm the favicon cache so sidebar worklane rows and URL
         // bar suggestions can stop showing the generic `globe`
         // placeholder for this host. Synchronous main-thread call

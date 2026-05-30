@@ -362,6 +362,12 @@ extension PaneContainerViewController {
         self?.sidebarVC?.updatePaneSuspendedState(
           paneId: pane.id, isSuspended: bv.isSuspended)
       }
+      bv.onNativeBackForward = { [weak self] isBack in
+        // Mirror the ⌘[ / ⌘] action handlers' toast so ⌘← / ⌘→ gives
+        // the same feedback even though WebKit, not e05's action
+        // registry, drives the navigation itself.
+        self?.showToast(isBack ? "Back" : "Forward")
+      }
       pane.urlBar.onMuteToggle = { [weak bv] in
         bv?.toggleMute()
       }

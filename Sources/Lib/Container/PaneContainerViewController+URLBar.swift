@@ -665,6 +665,16 @@ extension PaneContainerViewController {
     focusedPane?.browserView?.webView.canGoForward ?? false
   }
 
+  /// Forward a ⌘← / ⌘→ keypress notification to the focused browser
+  /// pane so its url observer can fire a "Back" / "Forward" toast once
+  /// WebKit lands the resulting navigation. Called from the app-level
+  /// keyDown monitor; `focusedPane` is module-internal so a public
+  /// hop through the container keeps `AppDelegate` from depending on
+  /// pane-model internals.
+  public func noteNativeBackForwardPressedOnFocusedBrowser(isBack: Bool) {
+    focusedPane?.browserView?.noteNativeBackForwardPressed(isBack: isBack)
+  }
+
   // MARK: - Browser Zoom
 
   /// Multiplicative step applied to `WKWebView.pageZoom` per zoom
