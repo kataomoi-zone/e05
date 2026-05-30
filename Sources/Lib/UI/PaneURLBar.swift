@@ -75,6 +75,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// originals here and translate between index ↔ `Suggestion` at the
   /// boundary.
   private var currentSuggestions: [Suggestion] = []
+  /// The user-typed text that produced ``currentSuggestions`` at the
+  /// last debounce fire. Compared against ``lastUserTypedText`` on
+  /// Enter to detect "the list is lagging behind the field" (= user
+  /// kept typing past the 150ms debounce window), in which case the
+  /// auto-selected URL row encodes a query a keystroke or word older
+  /// than the live text and the host re-classification of the live
+  /// text is preferred over `acceptSuggestion`.
+  private var lastBuiltSuggestionsText = ""
   private var searchDebounceTimer: Timer?
   private static let searchDebounceInterval: TimeInterval = 0.15
 
@@ -1059,7 +1067,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     }
     // Wire up suggestion click handler. The list reports an index into
     // the cell model array — we look up the matching Suggestion in our
-    // own backing array before acting on it.
+    // own backing array before acting on it. No lag check here on
+    // purpose: a click is the user pointing at a specific visible row,
+    // so the row's URL is exactly what they asked for. The Enter path
+    // handles the typed-past-debounce case where the auto-selected row
+    // may no longer reflect the live field text.
     suggestionList.onSelectIndex = { [weak self] index in
       guard let self, self.currentSuggestions.indices.contains(index) else { return }
       self.acceptSuggestion(self.currentSuggestions[index])
@@ -1549,6 +1561,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
         guard let self else { return }
         let suggestions = self.onTextChanged?(text, rejectedCompletion) ?? []
         self.currentSuggestions = suggestions
+        self.lastBuiltSuggestionsText = text
         self.suggestionList.update(
           items: suggestions.map { Self.cellModel(from: $0, query: text) }
         )
@@ -1652,18 +1665,36 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
         currentSuggestions.indices.contains(index)
       {
         let selected = currentSuggestions[index]
-        if selected.isSearch, let liveSearch = PaneAddress.searchURL(query: urlField.stringValue) {
-          // Search the live field text. The list is rebuilt on a debounce,
-          // so the auto-selected search row can encode a query a keystroke
-          // or word behind the field — live text searches exactly what was
-          // typed. Build the search URL here rather than passing the bare
-          // query to `onNavigate`: the host's URL-vs-search test is looser
-          // than the one that produced this search row, so a no-space query
-          // containing "." or "/" (e.g. "foo/bar") would otherwise be
-          // navigated to instead of searched.
+        if lastUserTypedText != lastBuiltSuggestionsText {
+          // The list is lagging behind the live typing — the user
+          // pressed Enter past the 150ms debounce. The row was built
+          // from a query one keystroke or word older than the field,
+          // so its URL-vs-search classification doesn't apply to what
+          // was actually typed. Hand the live text to the host and let
+          // it re-classify: a fast-typed full URL routes to itself
+          // rather than to the row's one-keystroke-older URL, and a
+          // query whose trailing character flips an invalid TLD into a
+          // valid one (search row built mid-typing, live text is a real
+          // URL) correctly navigates instead of searching. Ambiguous
+          // live text like "foo/bar" gets URL-classified by the host's
+          // looser heuristic (matches Chrome/Brave); pausing for the
+          // debounce keeps the search path (next branch). With a row
+          // preview active (↓ before Enter past the debounce), the
+          // field already holds the previewed URL, so the host
+          // navigates to what the user could see — same outcome.
+          onNavigate?(urlField.stringValue)
+        } else if selected.isSearch, let liveSearch = PaneAddress.searchURL(query: urlField.stringValue) {
+          // No-lag search row: build the search URL directly so the
+          // suggestion builder's stricter URL-vs-search classification
+          // wins over the host's looser one — without this, a no-space
+          // query containing "." or "/" (e.g. "foo/bar") that the
+          // builder flagged as search would be navigated to instead.
           onNavigate?(liveSearch.url.absoluteString)
         } else {
-          // URL / history / pane rows carry a concrete destination.
+          // No-lag URL / history / pane row: trust the row. Also feeds
+          // the learning store the typed → URL mapping via
+          // `onSuggestionAccepted` and dispatches pane rows as
+          // switch-to-pane.
           acceptSuggestion(selected)
         }
       } else {
