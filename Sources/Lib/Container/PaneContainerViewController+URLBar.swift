@@ -611,6 +611,35 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Restore a column to a folded state from a persisted session.
+  /// Differs from the fold branch of `toggleFold` by not capturing the
+  /// current `widthConstraint.constant` into `unfoldedWidth` — the
+  /// pre-fold width has already been preserved in the session file and
+  /// is being threaded back in. The width constraint itself is pinned
+  /// to `foldedColumnWidth` (rather than trusting the persisted
+  /// `width`) so a malformed session file with a non-narrow `width`
+  /// alongside `isFolded == true` still lands in a consistent visual
+  /// state.
+  public func applyRestoredFoldState(unfoldedWidth: CGFloat, to column: ColumnModel) {
+    column.isFolded = true
+    column.unfoldedWidth = unfoldedWidth
+    column.widthConstraint?.constant = Self.foldedColumnWidth
+    let base: String
+    if let pane = column.focusedPane ?? column.panes.first {
+      base = pane.title.isEmpty ? pane.address.description : pane.title
+    } else {
+      base = ""
+    }
+    column.foldedLabelView.text =
+      column.panes.count > 1
+      ? "\(base) (\(column.panes.count))"
+      : base
+    column.foldedLabelView.isHidden = false
+    for sub in column.containerView.arrangedSubviews {
+      sub.isHidden = true
+    }
+  }
+
   // MARK: - Browser Navigation
 
   /// Reload the focused browser pane's current page.

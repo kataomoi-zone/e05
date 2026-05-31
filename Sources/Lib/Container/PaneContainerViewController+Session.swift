@@ -64,7 +64,9 @@ extension PaneContainerViewController {
           panes: paneStates,
           focusedPaneIndex: column.focusedPaneIndex,
           width: width,
-          heightRatios: heightRatios
+          heightRatios: heightRatios,
+          isFolded: column.isFolded,
+          unfoldedWidth: Double(column.unfoldedWidth)
         )
       }
       return SessionState.WorkspaceState(
@@ -237,6 +239,18 @@ extension PaneContainerViewController {
 
         if (0..<column.panes.count).contains(colState.focusedPaneIndex) {
           column.focusedPaneIndex = colState.focusedPaneIndex
+        }
+
+        // Apply persisted fold state after every pane is in place so
+        // the folded-label text can read the right pane count and
+        // title. Focus border placement on the folded label is
+        // handled by the normal restore-focus path that runs later
+        // (already keyed off `column.isFolded`).
+        if colState.isFolded {
+          applyRestoredFoldState(
+            unfoldedWidth: CGFloat(colState.unfoldedWidth),
+            to: column
+          )
         }
       }
 

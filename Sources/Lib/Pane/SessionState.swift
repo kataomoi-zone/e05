@@ -47,6 +47,13 @@ public struct SessionState: Codable {
     public var width: Double
     /// Height ratios relative to the first pane. Empty for single-pane columns.
     public var heightRatios: [Double]
+    /// Fold flag at save time. Folded columns persist with `width`
+    /// already at the narrow strip value; the pre-fold width lives
+    /// in `unfoldedWidth` so a restore can return the column to its
+    /// original size on unfold. Defaults make a session file written
+    /// before fold persistence existed decode without the flag.
+    public var isFolded: Bool = false
+    public var unfoldedWidth: Double = 0
   }
 
   public struct PaneState: Codable {
