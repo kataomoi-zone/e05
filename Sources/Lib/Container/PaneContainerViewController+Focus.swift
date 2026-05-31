@@ -284,28 +284,58 @@ extension PaneContainerViewController {
     applyPreset(preset, to: column)
     view.layoutSubtreeIfNeeded()
     scrollToColumn(at: focusedColumnIndex)
-    showToast("Cycle Width")
+    showToast("Cycle Width (\(preset.displayLabel))")
   }
 
-  private func applyPreset(_ preset: PaneWidthPreset, to column: ColumnModel) {
+  func applyPreset(_ preset: PaneWidthPreset, to column: ColumnModel) {
     guard let constraint = column.widthConstraint else { return }
     switch preset {
-    case .columns(let n):
-      guard let pane = column.focusedPane,
-        let surface = pane.terminalView?.surface,
-        let scale = pane.terminalView?.window?.backingScaleFactor
-      else { return }
-      let size = ghostty_surface_size(surface)
-      guard size.cell_width_px > 0 else { return }
-      constraint.constant = CGFloat(n) * CGFloat(size.cell_width_px) / scale
+    case .points(let p):
+      constraint.constant = p
     case .fraction(let f):
-      // Fraction is taken against the user-visible region (post-
-      // sidebar-inset), matching `viewDidLayout`'s width sync — a
-      // raw clip-width fraction would overflow past the pinned
-      // sidebar.
+      // `.fraction` is the column's share of the workspace's content
+      // area: the visible region (`effectiveVisibleWidth` strips the
+      // pinned-sidebar inset) minus the workspace stack's
+      // `outerMargin` perimeter on each side. The naive formula
+      // `usableWidth * f` looks right for a single column but
+      // overflows by handle width for every extra column at the same
+      // fraction — two `.fraction(0.5)` panes at `usableWidth/2`
+      // each plus a resize handle between them and a perimeter on
+      // each side end up `handle` wider than the visible region, and
+      // the right pane gets clipped past the workspace edge.
+      //
+      // Correct tiling for N adjacent columns at fraction `f = 1/N`:
+      //     col*N + handle*(N-1) + 2*perimeter = window
+      //   → col   = usableWidth*f - (1 - f)*handle
+      // so each column "donates" `(1 - f) * handle` of its share to
+      // the (N-1) inter-column gaps. At `f = 1.0` the correction is
+      // 0 and a single 100% column still fills the full content
+      // area; at smaller `f` the donation grows toward `handle`.
+      //
+      // Concrete numbers for a 1000pt window, 6pt perimeter / handle:
+      //   100% → 988pt   (one column, flush inside the perimeter)
+      //   50%  → 491pt   (two columns: 6 + 491 + 6 + 491 + 6 = 1000)
+      //   33%  → 322pt   (three columns: 6 + 322*3 + 6*2 + 6 = 990,
+      //                   ~10pt slack — the Settings UI renders the
+      //                   fraction as an integer percentage, so the
+      //                   default cycle stores `.fraction(0.33)`
+      //                   rather than the exact 1/3 a pixel-perfect
+      //                   tile would need. The visible slack at the
+      //                   right perimeter is the deliberate cost of
+      //                   keeping "33%" addressable from the editor.)
+      //
+      // Once committed, the constant stays put. `viewDidLayout`
+      // intentionally does NOT re-evaluate `.fraction` — a pane
+      // carries live HTML / terminal output, and reflowing those
+      // surfaces every sidebar peek / window resize is worse than
+      // letting the column extend past the visible region (scroll
+      // reaches the rest). The next Cycle Width press picks up the
+      // current visible region.
       let visibleWidth = effectiveVisibleWidth(in: scrollView)
-      guard visibleWidth > 0 else { return }
-      constraint.constant = visibleWidth * f
+      let perimeter = WorkspaceViewController.outerMargin
+      let usableWidth = visibleWidth - 2 * perimeter
+      guard usableWidth > 0 else { return }
+      constraint.constant = usableWidth * f - (1 - f) * perimeter
     }
   }
 
@@ -449,7 +479,7 @@ extension PaneContainerViewController {
     // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
     handle.onDrag = { [weak self, weak column] deltaX in
       guard let self, let column, let constraint = column.widthConstraint else { return }
-      let newWidth = max(self.minPaneWidth, constraint.constant + deltaX)
+      let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX)
       constraint.constant = newWidth
       column.currentPreset = nil
     }
@@ -466,7 +496,7 @@ extension PaneContainerViewController {
       let focusedColumn = isLeftFocused ? leftColumn : rightColumn
       guard let constraint = focusedColumn.widthConstraint else { return }
       let sign: CGFloat = isLeftFocused ? 1 : -1
-      let newWidth = max(self.minPaneWidth, constraint.constant + deltaX * sign)
+      let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX * sign)
       let actualDelta = newWidth - constraint.constant
       constraint.constant = newWidth
       focusedColumn.currentPreset = nil

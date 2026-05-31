@@ -105,6 +105,15 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// hand-edited preferences file with a typo does not quarantine.
   public var adblockerCustomSources: [AdblockerCustomSource]?
 
+  /// Ordered list the Cycle Width action steps through. `nil` keeps
+  /// the built-in default (`PaneContainerViewController
+  /// .defaultWidthCycle`); an empty list also falls back to the
+  /// default with a warning so a hand-edited preferences file does
+  /// not permanently disable the action. Entries below the 450pt
+  /// floor are still kept in cycle order — Auto Layout clamps them
+  /// silently via the column's minimum-width constraint.
+  public var widthCyclePresets: [PaneWidthPreset]?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -120,7 +129,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     adblockerEnabledSources: [String]? = nil,
     adblockerAutoUpdateIntervalHours: Int? = nil,
     adblockerLastRefreshedAt: Date? = nil,
-    adblockerCustomSources: [AdblockerCustomSource]? = nil
+    adblockerCustomSources: [AdblockerCustomSource]? = nil,
+    widthCyclePresets: [PaneWidthPreset]? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -137,6 +147,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.adblockerAutoUpdateIntervalHours = adblockerAutoUpdateIntervalHours
     self.adblockerLastRefreshedAt = adblockerLastRefreshedAt
     self.adblockerCustomSources = adblockerCustomSources
+    self.widthCyclePresets = widthCyclePresets
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

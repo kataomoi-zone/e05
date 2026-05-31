@@ -1,4 +1,7 @@
 import AppKit
+import os.log
+
+private let logger = Logger(subsystem: LogSubsystem.app, category: "Actions")
 
 extension PaneContainerViewController {
   // MARK: - Action Registry
@@ -173,7 +176,10 @@ extension PaneContainerViewController {
         menuTitle: "Cycle Width Preset",
         keyEquivalent: "/",
         modifierMask: [.option, .control],
-        handler: { [weak self] in self?.cycleWidthPreset(Self.defaultWidthCycle) },
+        handler: { [weak self] in
+          guard let self else { return }
+          self.cycleWidthPreset(Self.resolvedWidthCycle())
+        },
         separatorBefore: true
       ),
       Action(
@@ -704,9 +710,24 @@ extension PaneContainerViewController {
   }
 
   static let defaultWidthCycle: [PaneWidthPreset] = [
-    .columns(80),
-    .columns(120),
-    .fraction(1.0 / 2.0),
-    .fraction(1.0 / 3.0),
+    .points(640),
+    .fraction(0.5),
+    .fraction(0.33),
   ]
+
+  /// Pick the cycle list the user is bound to: their explicit
+  /// `widthCyclePresets` when present and non-empty, otherwise the
+  /// built-in default. An empty user list falls through with a warning
+  /// rather than disabling the action — the Settings UI prevents
+  /// emptying via the delete button, but a hand-edited
+  /// preferences.json can still arrive in that state.
+  static func resolvedWidthCycle() -> [PaneWidthPreset] {
+    let user = PreferencesStore.shared.preferences.widthCyclePresets
+    if let user, !user.isEmpty { return user }
+    if user != nil {
+      logger.warning(
+        "[settings/widthCycle] preset list empty, falling back to default")
+    }
+    return defaultWidthCycle
+  }
 }

@@ -1,6 +1,55 @@
 import AppKit
 import SwiftUI
 
+/// Selectable kind for a `PaneWidthPreset` row in the Settings UI.
+/// Kept separate from the persisted enum because the picker needs a
+/// `Hashable` tag that survives a type flip while the row's numeric
+/// value is being edited.
+fileprivate enum PaneWidthPresetKind: String, Hashable, CaseIterable {
+  case points
+  case fraction
+}
+
+/// View-local representation of a single cycle-width preset row.
+/// Carries a stable `id` for `ForEach`, the picker selection, and the
+/// raw numeric value the user typed. The `points` branch reads the
+/// value as points directly; the `fraction` branch interprets it as a
+/// percentage (0-100) so the user sees `50` instead of `0.5` in the
+/// field, then divides by 100 on write-back.
+fileprivate struct WidthCycleRow: Identifiable, Equatable {
+  let id: UUID
+  var kind: PaneWidthPresetKind
+  var value: Double
+
+  init(id: UUID = UUID(), kind: PaneWidthPresetKind, value: Double) {
+    self.id = id
+    self.kind = kind
+    self.value = value
+  }
+
+  init(preset: PaneWidthPreset) {
+    self.id = UUID()
+    switch preset {
+    case .points(let p):
+      self.kind = .points
+      self.value = Double(p).rounded()
+    case .fraction(let f):
+      self.kind = .fraction
+      self.value = (Double(f) * 100).rounded()
+    }
+  }
+
+  var preset: PaneWidthPreset {
+    let rounded = value.rounded()
+    switch kind {
+    case .points:
+      return .points(CGFloat(rounded))
+    case .fraction:
+      return .fraction(CGFloat(rounded / 100))
+    }
+  }
+}
+
 /// Appearance settings tab — workspace accent palette plus pane
 /// border presets. Each preset writes through to
 /// ``PreferencesStore``; the active preset survives a restart and
@@ -12,6 +61,7 @@ struct AppearanceSettingsView: View {
   @State private var paneBorderWidthPreset: PaneBorderWidthPreset
   @State private var paneGapPreset: PaneGapPreset
   @State private var cornerPreset: CornerRadiusPreset
+  @State private var widthCycleRows: [WidthCycleRow]
   @State private var listenerToken: UUID?
 
   init() {
@@ -24,6 +74,10 @@ struct AppearanceSettingsView: View {
     _paneGapPreset = State(initialValue: PaneGapPreset.resolve(prefs.paneGap))
     _cornerPreset = State(
       initialValue: CornerRadiusPreset.resolve(prefs.surfaceCornerRadius))
+    let prefsCycle = prefs.widthCyclePresets
+      ?? PaneContainerViewController.defaultWidthCycle
+    _widthCycleRows = State(
+      initialValue: prefsCycle.map { WidthCycleRow(preset: $0) })
   }
 
   var body: some View {
@@ -33,6 +87,7 @@ struct AppearanceSettingsView: View {
       paneBorderSection
       paneGapSection
       surfaceCornersSection
+      widthCycleSection
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -188,6 +243,73 @@ struct AppearanceSettingsView: View {
     }
   }
 
+  // MARK: - Cycle Width Presets
+
+  private var widthCycleSection: some View {
+    Section {
+      ForEach($widthCycleRows) { $row in
+        widthCycleRowView(row: $row)
+      }
+      Button {
+        addPreset()
+      } label: {
+        Label("Add Preset", systemImage: "plus")
+      }
+    } header: {
+      Text("Cycle Width Presets")
+    } footer: {
+      Text(
+        "Widths the Cycle Width action steps through. Points are taken literally and floored at the 450pt pane minimum on save; fractions multiply the visible workspace width and clamp to 10–100%."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  @ViewBuilder
+  private func widthCycleRowView(row: Binding<WidthCycleRow>) -> some View {
+    WidthCycleRowView(
+      row: row,
+      canRemove: widthCycleRows.count > 1,
+      onRemove: { remove(rowId: row.wrappedValue.id) },
+      onCommit: writeBackPresets)
+  }
+
+  private func addPreset() {
+    widthCycleRows.append(
+      WidthCycleRow(
+        kind: .points,
+        value: Double(PaneContainerViewController.minPaneWidth)))
+    writeBackPresets()
+  }
+
+  private func remove(rowId: UUID) {
+    guard widthCycleRows.count > 1 else { return }
+    widthCycleRows.removeAll { $0.id == rowId }
+    writeBackPresets()
+  }
+
+  private func writeBackPresets() {
+    // Clamp each entry into its valid range so the visible field
+    // reflects the value actually persisted. `.points` is floored at
+    // the 450pt pane minimum (matching the `minimumWidthConstraint`
+    // Auto Layout enforces); `.fraction` is clamped to 10–100% so
+    // pathologically small values can't slip past the percentage UI
+    // and over 100% is not a meaningful fraction of the workspace.
+    let pointsFloor = Double(PaneContainerViewController.minPaneWidth)
+    for idx in widthCycleRows.indices {
+      let rounded = widthCycleRows[idx].value.rounded()
+      switch widthCycleRows[idx].kind {
+      case .points:
+        widthCycleRows[idx].value = max(rounded, pointsFloor)
+      case .fraction:
+        widthCycleRows[idx].value = min(max(rounded, 10), 100)
+      }
+    }
+    let presets = widthCycleRows.map(\.preset)
+    PreferencesStore.shared.update { $0.widthCyclePresets = presets }
+  }
+
   // MARK: - Store subscription
 
   /// Pull external mutations (Import / Reset / future tabs) into the
@@ -202,6 +324,16 @@ struct AppearanceSettingsView: View {
         new.paneBorderWidth)
       paneGapPreset = PaneGapPreset.resolve(new.paneGap)
       cornerPreset = CornerRadiusPreset.resolve(new.surfaceCornerRadius)
+      // Re-sync the cycle rows only when the persisted list actually
+      // differs from what the view already shows. Otherwise an inline
+      // edit (which writes through this view) would re-issue fresh
+      // row ids on every keystroke, dropping TextField focus mid-typing.
+      let externalPresets = new.widthCyclePresets
+        ?? PaneContainerViewController.defaultWidthCycle
+      let currentPresets = widthCycleRows.map(\.preset)
+      if externalPresets != currentPresets {
+        widthCycleRows = externalPresets.map { WidthCycleRow(preset: $0) }
+      }
     }
   }
 
@@ -209,6 +341,78 @@ struct AppearanceSettingsView: View {
     if let token = listenerToken {
       PreferencesStore.shared.removeListener(token)
       listenerToken = nil
+    }
+  }
+}
+
+/// Single editable row inside the Cycle Width Presets section.
+/// Lives in its own view so each row owns a `@FocusState` for the
+/// TextField — focus loss commits the value back to preferences,
+/// which is how the 450pt floor on `.points` becomes visible in the
+/// field the instant the user clicks elsewhere instead of waiting on
+/// the next Settings interaction.
+@MainActor
+fileprivate struct WidthCycleRowView: View {
+  @Binding var row: WidthCycleRow
+  let canRemove: Bool
+  let onRemove: () -> Void
+  let onCommit: () -> Void
+
+  @FocusState private var isValueFocused: Bool
+
+  var body: some View {
+    HStack {
+      Picker("Type", selection: $row.kind) {
+        Text("Points").tag(PaneWidthPresetKind.points)
+        Text("Fraction").tag(PaneWidthPresetKind.fraction)
+      }
+      .pickerStyle(.segmented)
+      .labelsHidden()
+      .frame(width: 160)
+      .onChange(of: row.kind) { _, _ in onCommit() }
+
+      TextField(
+        "",
+        value: $row.value,
+        format: .number.precision(.fractionLength(0))
+      )
+      .textFieldStyle(.roundedBorder)
+      .frame(width: 80)
+      .focused($isValueFocused)
+      .onSubmit { onCommit() }
+      .onChange(of: isValueFocused) { _, focused in
+        // Commit when the field loses focus so a user who clicks
+        // elsewhere instead of pressing Return still sees the
+        // 450pt floor applied to the visible number.
+        if !focused { onCommit() }
+      }
+
+      Text(row.kind == .points ? "pt" : "%")
+        .foregroundStyle(.secondary)
+        .frame(width: 24, alignment: .leading)
+
+      Spacer()
+
+      // Plain Image instead of a Button: SwiftUI on macOS blocks
+      // `.help` from surfacing inside a `.disabled` Button (and even a
+      // Button's enabled label sometimes drops the hover layer), so
+      // the tap-to-remove affordance is implemented with
+      // `onTapGesture` and the disabled state is expressed via
+      // foreground opacity. The Image itself receives hover, which
+      // lets `.help` show the hint over both states.
+      Image(systemName: "minus.circle")
+        .foregroundStyle(
+          canRemove ? Color.secondary : Color.secondary.opacity(0.35)
+        )
+        .help(
+          canRemove
+            ? "Remove preset"
+            : "Cycle Width needs at least one preset"
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+          if canRemove { onRemove() }
+        }
     }
   }
 }

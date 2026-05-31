@@ -24,7 +24,7 @@ extension PaneContainerViewController {
     column.widthConstraint = wc
 
     let minWC = column.containerView.widthAnchor.constraint(
-      greaterThanOrEqualToConstant: minPaneWidth
+      greaterThanOrEqualToConstant: Self.minPaneWidth
     )
     minWC.priority = .required
     minWC.isActive = true

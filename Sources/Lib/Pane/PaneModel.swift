@@ -4,10 +4,31 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "PaneModel")
 
-/// Preset for pane width. Each cycle action defines an ordered list of these.
-public enum PaneWidthPreset: Equatable {
-  case columns(Int)
+/// Preset for column width, used by the Cycle Width action and the
+/// user-editable preset list in Appearance settings.
+///
+/// `points` is an absolute width in points; `fraction` multiplies the
+/// visible workspace width at the moment the preset applies. Either
+/// case can resolve below the `minPaneWidth` floor (450pt) — Auto
+/// Layout silently clamps via the column's `minimumWidthConstraint`
+/// rather than skipping the entry, so cycle ordering stays
+/// deterministic regardless of the window size.
+public enum PaneWidthPreset: Equatable, Codable, Sendable {
+  case points(CGFloat)
   case fraction(CGFloat)
+
+  /// Human-readable label for the post-cycle toast. Both branches
+  /// render with rounded integers so a saved `0.5` reads as `50%` and
+  /// a `640.0` reads as `640pt` — keeps the toast text predictable
+  /// when the user is mid-tuning the preset list.
+  public var displayLabel: String {
+    switch self {
+    case .points(let p):
+      return "\(Int(p.rounded()))pt"
+    case .fraction(let f):
+      return "\(Int((f * 100).rounded()))%"
+    }
+  }
 }
 
 /// The content type of a pane.

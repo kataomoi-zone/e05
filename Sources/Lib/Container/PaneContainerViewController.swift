@@ -117,9 +117,13 @@ public final class PaneContainerViewController: NSViewController {
   /// on the lower bound because a window manager that tiles panes
   /// rewards packing density. Folded columns (30pt strip) bypass this
   /// floor by deactivating the column's `minimumWidthConstraint`;
-  /// cycle-width presets below the floor are silently clamped here by
-  /// Auto Layout.
-  let minPaneWidth: CGFloat = 450
+  /// cycle-width presets below the floor are clamped — the Settings
+  /// row pre-clamps `.points` entries on commit (so the user sees the
+  /// floor reflected in the field), and Auto Layout still floors
+  /// `.fraction` entries that resolve under the floor at apply time.
+  /// `static` so the Settings UI can read the floor without a VC
+  /// reference.
+  static let minPaneWidth: CGFloat = 450
   let minPaneHeight: CGFloat = 50
   var focusBorderWidth: CGFloat { AppMetrics.focusedPaneBorderWidth }
   var focusBorderColor: NSColor {
@@ -709,20 +713,21 @@ public final class PaneContainerViewController: NSViewController {
     // workspace that was mid-switch got its column stranded at the
     // narrower, pinned-width value.
     for vc in workspaceVCs where vc.isViewLoaded {
-      // `.fraction` is anchored to the user-visible portion of the
-      // scroll view, not its raw clip width — pinning the sidebar
-      // inflates `contentInsets.left` and the visible region shrinks
-      // by that much, so a `.fraction(1.0)` column has to shrink to
-      // match or it overflows past the sidebar inset.
-      let visibleWidth = effectiveVisibleWidth(in: vc.scrollView)
+      // `.fraction` is intentionally not re-evaluated here. Cycle
+      // Width resolves the fraction to an absolute point value at
+      // press time (against the visible region minus the perimeter)
+      // and writes that to the constraint; from then on the column
+      // stays at its committed width. A pane is a live HTML / terminal
+      // surface and any width churn from a sidebar peek or a window
+      // resize would re-flow the page or thrash the terminal cell
+      // grid, which is worse than letting the column extend past the
+      // visible region (scrolling reaches the rest).
+      //
+      // The `setFrameSize` poke below is a separate concern — it
+      // re-syncs each pane's host view with its own frame so the
+      // terminal surface metric stays in step with any layout pass,
+      // independent of the column width preset.
       for column in vc.workspace.columns {
-        // Folded columns keep their fixed strip width regardless
-        // of window size — the saved unfoldedWidth is what the
-        // fraction preset will restore to.
-        if column.isFolded { continue }
-        if case .fraction(let f) = column.currentPreset, visibleWidth > 0 {
-          column.widthConstraint?.constant = visibleWidth * f
-        }
         for pane in column.panes {
           pane.containerView.setFrameSize(pane.containerView.frame.size)
         }
