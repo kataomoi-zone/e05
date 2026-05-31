@@ -108,7 +108,18 @@ public final class PaneContainerViewController: NSViewController {
   }
 
   let defaultPaneWidth: CGFloat = 640
-  let minPaneWidth: CGFloat = 100
+  /// Floor for browser and terminal column widths. Matches the floor
+  /// the two major browsers hard-code for their own windows so a single
+  /// pane stays as usable as a freshly-resized browser window: Brave
+  /// pins `NSWindow.contentMinSize` to 500pt via Chromium's
+  /// `kMainBrowserContentsMinimumWidth`; Zen (Firefox base) pins
+  /// `NSWindow.minSize` to 450pt via the root `min-width` rule. We sit
+  /// on the lower bound because a window manager that tiles panes
+  /// rewards packing density. Folded columns (30pt strip) bypass this
+  /// floor by deactivating the column's `minimumWidthConstraint`;
+  /// cycle-width presets below the floor are silently clamped here by
+  /// Auto Layout.
+  let minPaneWidth: CGFloat = 450
   let minPaneHeight: CGFloat = 50
   var focusBorderWidth: CGFloat { AppMetrics.focusedPaneBorderWidth }
   var focusBorderColor: NSColor {

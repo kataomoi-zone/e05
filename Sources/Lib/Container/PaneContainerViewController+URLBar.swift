@@ -537,6 +537,7 @@ extension PaneContainerViewController {
 
     if column.isFolded {
       // Unfold: restore previous width and show panes + handles
+      column.minimumWidthConstraint?.isActive = true
       constraint.constant = column.unfoldedWidth
       column.isFolded = false
       column.foldedLabelView.isHidden = true
@@ -583,6 +584,7 @@ extension PaneContainerViewController {
     } else {
       // Fold: save current width, shrink column, hide panes + vertical handles
       column.unfoldedWidth = constraint.constant
+      column.minimumWidthConstraint?.isActive = false
       constraint.constant = Self.foldedColumnWidth
       column.isFolded = true
       // Prefer the focused pane's title; fall back to its address when
@@ -623,6 +625,7 @@ extension PaneContainerViewController {
   public func applyRestoredFoldState(unfoldedWidth: CGFloat, to column: ColumnModel) {
     column.isFolded = true
     column.unfoldedWidth = unfoldedWidth
+    column.minimumWidthConstraint?.isActive = false
     column.widthConstraint?.constant = Self.foldedColumnWidth
     let base: String
     if let pane = column.focusedPane ?? column.panes.first {

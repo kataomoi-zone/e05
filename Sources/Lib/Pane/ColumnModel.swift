@@ -10,8 +10,16 @@ public final class ColumnModel {
   public var panes: [PaneModel]
   public var focusedPaneIndex: Int = 0
 
-  /// Width constraint for the column's container view.
+  /// Width constraint for the column's container view. Created at
+  /// `required - 1` priority so the minimum-width floor below wins
+  /// when the requested constant is below the floor; this constraint
+  /// then expresses the column's preferred width.
   public var widthConstraint: NSLayoutConstraint?
+  /// Minimum-width floor enforced by Auto Layout regardless of which
+  /// path writes to `widthConstraint.constant` (drag handles, cycle-
+  /// width preset, session restore). Deactivated by the fold path so
+  /// the 30pt folded strip is allowed; reactivated on unfold.
+  public var minimumWidthConstraint: NSLayoutConstraint?
   /// Height constraint pinning the column to its hosting workspace's
   /// stack view, with the constant set to `-(outerMargin * 2)` so the
   /// outer perimeter reserves room on top and bottom. Held weakly

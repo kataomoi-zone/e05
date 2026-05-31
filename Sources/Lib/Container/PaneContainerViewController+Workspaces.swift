@@ -646,9 +646,7 @@ extension PaneContainerViewController {
       cv.trailingAnchor.constraint(equalTo: newColumn.containerView.trailingAnchor),
     ])
     attachFoldedLabel(to: newColumn)
-    let wc = newColumn.containerView.widthAnchor.constraint(equalToConstant: defaultPaneWidth)
-    wc.isActive = true
-    newColumn.widthConstraint = wc
+    installColumnWidthConstraints(on: newColumn, initial: defaultPaneWidth)
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]

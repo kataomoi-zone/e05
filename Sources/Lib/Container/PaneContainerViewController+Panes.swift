@@ -5,6 +5,33 @@ import os.log
 private let logger = Logger(subsystem: LogSubsystem.app, category: "Panes")
 
 extension PaneContainerViewController {
+  // MARK: - Column Width Constraints
+
+  /// Install width + minimum-width constraints on a freshly-created
+  /// column. The minimum is the floor enforced by Auto Layout
+  /// regardless of which path writes to `widthConstraint.constant`
+  /// (drag handles, cycle-width preset, session restore); the fold
+  /// path toggles `minimumWidthConstraint.isActive` so the 30pt
+  /// folded strip is allowed. The width equality runs at
+  /// `required - 1` so the minimum (`required`) wins when the
+  /// requested constant is below the floor; values above the floor
+  /// solve unambiguously with both.
+  @discardableResult
+  func installColumnWidthConstraints(on column: ColumnModel, initial: CGFloat) -> NSLayoutConstraint {
+    let wc = column.containerView.widthAnchor.constraint(equalToConstant: initial)
+    wc.priority = NSLayoutConstraint.Priority(rawValue: 999)
+    wc.isActive = true
+    column.widthConstraint = wc
+
+    let minWC = column.containerView.widthAnchor.constraint(
+      greaterThanOrEqualToConstant: minPaneWidth
+    )
+    minWC.priority = .required
+    minWC.isActive = true
+    column.minimumWidthConstraint = minWC
+    return wc
+  }
+
   // MARK: - Column Management
 
   /// Build a pane via `makePane` and append a column for it. Optional
@@ -101,11 +128,7 @@ extension PaneContainerViewController {
     // layout pass below resolves the final frame. `animateScroll(toX:)`
     // reads that frame to compute the scroll target; launching the
     // scroll from a width-0 start would land on the wrong X.
-    let wc = column.containerView.widthAnchor.constraint(
-      equalToConstant: defaultPaneWidth
-    )
-    wc.isActive = true
-    column.widthConstraint = wc
+    let wc = installColumnWidthConstraints(on: column, initial: defaultPaneWidth)
 
     if animated {
       // Hide the new column's contents while the slot expands so
@@ -1221,11 +1244,7 @@ extension PaneContainerViewController {
       let animated = view.window != nil
       // Start at the saved width so the layout pass below can
       // resolve the final frame for `animateScroll(toX:)`.
-      let wc = column.containerView.widthAnchor.constraint(
-        equalToConstant: targetWidth
-      )
-      wc.isActive = true
-      column.widthConstraint = wc
+      let wc = installColumnWidthConstraints(on: column, initial: targetWidth)
 
       if animated {
         // Hide the restored column's contents through the width
