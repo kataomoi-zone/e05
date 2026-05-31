@@ -795,10 +795,29 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   public override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    effectiveAppearance.performAsCurrentDrawingAppearance {
+    refreshAppearance()
+  }
+
+  /// Re-resolve dynamic colors against the given appearance (or self
+  /// when nil), and propagate into the hover-link overlay. The fan-out
+  /// path additionally stamps `webView.appearance` so WebKit re-
+  /// resolves the HTML `prefers-color-scheme` (e.g. the `about:blank`
+  /// body fill) and its own scrollbar palette — neither follows a
+  /// `window.appearance` push reliably on its own. The stamp is gated
+  /// on the fan-out path so view-tree notifications do not undo the
+  /// just-pushed appearance by writing `nil` back into `webView
+  /// .appearance`. See ``PaneContainerViewController/applyThemeChrome(under:)``
+  /// for the shared rationale on passing an explicit appearance.
+  public func refreshAppearance(under appearance: NSAppearance? = nil) {
+    let target = appearance ?? effectiveAppearance
+    target.performAsCurrentDrawingAppearance {
       layer?.backgroundColor = AppColors.paneSurface.cgColor
       webView.underPageBackgroundColor = AppColors.paneSurface
     }
+    if let appearance {
+      webView.appearance = appearance
+    }
+    hoverLinkOverlay.refreshAppearance(under: appearance)
   }
 
   public override func layout() {

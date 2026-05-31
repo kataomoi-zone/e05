@@ -388,6 +388,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ghosttyApp.setColorScheme(scheme)
     paneContainer?.applyTerminalColorScheme(scheme)
 
+    // Push the just-installed appearance into every pane chrome view.
+    // The `window.appearance` write above does not synchronously
+    // update each subview's `effectiveAppearance` reader, so the fan-
+    // out resolves dynamic colors against the explicit target.
+    // `NSApp.effectiveAppearance` is the resolved value, which also
+    // handles the `ThemePreset.system` → nil case where the OS
+    // preference takes over.
+    paneContainer?.applyThemeChrome(under: NSApp.effectiveAppearance)
+
     // Evict in-memory favicons on actual light ↔ dark transitions so
     // theme-aware SVGs re-decode under the new appearance on the
     // next sidebar / URL bar draw. The on-disk raw bytes are

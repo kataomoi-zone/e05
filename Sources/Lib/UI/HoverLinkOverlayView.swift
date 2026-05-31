@@ -34,7 +34,15 @@ public final class HoverLinkOverlayView: NSView {
 
   public override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    effectiveAppearance.performAsCurrentDrawingAppearance {
+    refreshAppearance()
+  }
+
+  /// Re-resolve dynamic colors against the given appearance (or self
+  /// when nil). See ``PaneContainerViewController/applyThemeChrome(under:)``
+  /// for why the fan-out path passes an explicit appearance.
+  public func refreshAppearance(under appearance: NSAppearance? = nil) {
+    let target = appearance ?? effectiveAppearance
+    target.performAsCurrentDrawingAppearance {
       layer?.backgroundColor = AppColors.hoverLinkSurface.cgColor
     }
   }

@@ -21,6 +21,30 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Force every pane chrome view to re-resolve its dynamic NSColor
+  /// caches against the supplied appearance, and stamp `webView
+  /// .appearance` so WebKit follows the flip on its own surface.
+  ///
+  /// The caller passes the *target* appearance (the one just installed
+  /// on `NSApp.appearance`), not the view's `effectiveAppearance`:
+  /// AppKit does not synchronously propagate a `window.appearance`
+  /// swap to every subview's `effectiveAppearance` reader, so a fan-
+  /// out that read `effectiveAppearance` would resolve dynamic colors
+  /// against the *previous* theme and leave layers painted with the
+  /// stale palette. Symptoms include an `about:blank` pane that stays
+  /// white after a dark switch and a URL bar that keeps its light fill.
+  public func applyThemeChrome(under appearance: NSAppearance) {
+    for workspace in workspaces {
+      for column in workspace.columns {
+        for pane in column.panes {
+          pane.urlBar.refreshAppearance(under: appearance)
+          pane.headerView.refreshAppearance(under: appearance)
+          pane.browserView?.refreshAppearance(under: appearance)
+        }
+      }
+    }
+  }
+
   /// Re-apply the workspace accent palette: reload the worklane so
   /// the sidebar stripes / pane row colors paint with the new colors,
   /// and refresh the focused-pane border on every workspace because
