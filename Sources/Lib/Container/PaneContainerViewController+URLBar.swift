@@ -536,7 +536,10 @@ extension PaneContainerViewController {
     else { return }
 
     if column.isFolded {
-      // Unfold: restore previous width and show panes + handles
+      // Unfold: restore the previous width. Drop `widthConstraint`
+      // back to its live priority so `minimumWidthConstraint`
+      // (required) preempts it under user resize / cycle width.
+      column.widthConstraint?.priority = NSLayoutConstraint.Priority(rawValue: 999)
       column.minimumWidthConstraint?.isActive = true
       constraint.constant = column.unfoldedWidth
       column.isFolded = false
@@ -582,9 +585,16 @@ extension PaneContainerViewController {
       // direct focus would.
       scrollToColumn(at: focusedColumnIndex)
     } else {
-      // Fold: save current width, shrink column, hide panes + vertical handles
+      // Fold: save the current width, shrink the column, hide
+      // panes + vertical handles. Promote `widthConstraint` to
+      // `.required` so the fold target overrides the pane subtree's
+      // intrinsic floor (URL bar buttons etc. ship at required
+      // compression resistance). The matching demotion is in the
+      // unfold branch above; without this priority swap fold cannot
+      // actually shrink the column down to the strip width.
       column.unfoldedWidth = constraint.constant
       column.minimumWidthConstraint?.isActive = false
+      column.widthConstraint?.priority = .required
       constraint.constant = Self.foldedColumnWidth
       column.isFolded = true
       // Prefer the focused pane's title; fall back to its address when
@@ -611,6 +621,11 @@ extension PaneContainerViewController {
     if let pane = column.focusedPane {
       applyFocusBorder(pane)
     }
+    // Refresh the neighbouring resize handles — `updateHandleActiveStates`
+    // gates them on `column.isFolded`, so a fold/unfold transition has
+    // to repaint the active flag (otherwise the arrow chrome and
+    // mouseDown gate stay tied to the pre-toggle state).
+    updateHandleActiveStates()
   }
 
   /// Restore a column to a folded state from a persisted session.
@@ -626,6 +641,9 @@ extension PaneContainerViewController {
     column.isFolded = true
     column.unfoldedWidth = unfoldedWidth
     column.minimumWidthConstraint?.isActive = false
+    // Promote to `.required` for the same reason `toggleFold` does
+    // on the fold path — see that comment for the chain explanation.
+    column.widthConstraint?.priority = .required
     column.widthConstraint?.constant = Self.foldedColumnWidth
     let base: String
     if let pane = column.focusedPane ?? column.panes.first {

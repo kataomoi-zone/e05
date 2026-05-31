@@ -41,8 +41,19 @@ public final class ColumnModel {
     stack.orientation = .vertical
     stack.spacing = 0  // vertical resize handles serve as spacing
     stack.distribution = .fill
-    // Keep hidden panes in the arrangedSubviews when folded so equal-height
-    // constraints stay intact and unfold restores the original ratios.
+    // Keep hidden panes in the arrangedSubviews when folded so
+    // `equalHeightConstraints` between pane hosts stay intact for
+    // unfold (the alternative — auto-detach + reattach — would risk
+    // dropping those user-managed constraints because AppKit only
+    // re-derives the stack's own auto-pins). The intrinsic-width
+    // leak this introduces (pane subtree at required compression
+    // resistance raising the stack floor) is contained by the fold
+    // path as a pair: cv pins sit one priority notch below the
+    // column's `widthConstraint` so they yield when the fold path
+    // promotes `widthConstraint` to `.required` (see the cv pin
+    // priority in `+Panes.swift`), and the cv hosts are themselves
+    // `isHidden` during the fold so the residual overflow never
+    // renders. Removing either half breaks the fold strip.
     stack.detachesHiddenViews = false
     stack.translatesAutoresizingMaskIntoConstraints = false
     return stack

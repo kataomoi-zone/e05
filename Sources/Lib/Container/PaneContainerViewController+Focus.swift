@@ -248,8 +248,12 @@ extension PaneContainerViewController {
   // MARK: - Width Preset Cycle
 
   /// Cycle the focused column's width through the given preset list.
+  /// No-op when the column is folded — fold owns the column's
+  /// width, and a cycle write would either be ignored by Auto
+  /// Layout or survive past unfold as a stale `currentPreset`.
   public func cycleWidthPreset(_ cycle: [PaneWidthPreset]) {
     guard !cycle.isEmpty, let column = columns[safe: focusedColumnIndex] else { return }
+    guard !column.isFolded else { return }
 
     let nextIndex: Int
     if let current = column.currentPreset,
@@ -460,6 +464,11 @@ extension PaneContainerViewController {
     // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
     handle.onDrag = { [weak self, weak column] deltaX in
       guard let self, let column, let constraint = column.widthConstraint else { return }
+      // Folded columns are pinned by an upgraded-to-required
+      // `widthConstraint`; mutating the constant from drag would
+      // either no-op or write a value that survives past unfold.
+      // Fold owns the column's width.
+      guard !column.isFolded else { return }
       let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX)
       constraint.constant = newWidth
       column.currentPreset = nil
@@ -476,6 +485,9 @@ extension PaneContainerViewController {
       guard isLeftFocused || isRightFocused else { return }
       let focusedColumn = isLeftFocused ? leftColumn : rightColumn
       guard let constraint = focusedColumn.widthConstraint else { return }
+      // Same fold guard as `makeTrailingResizeHandle` — a folded
+      // column's width belongs to the fold path, not to drag.
+      guard !focusedColumn.isFolded else { return }
       let sign: CGFloat = isLeftFocused ? 1 : -1
       let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX * sign)
       let actualDelta = newWidth - constraint.constant
@@ -650,6 +662,9 @@ extension PaneContainerViewController {
   }
 
   /// Update which resize handles are active based on focused column.
+  /// A folded column suppresses its neighbouring handles entirely —
+  /// the strip's width is owned by the fold path, so the resize
+  /// affordance has nothing to grab.
   func updateHandleActiveStates() {
     guard let focusedColumn = columns[safe: focusedColumnIndex] else { return }
     for v in stackView.arrangedSubviews {
@@ -658,8 +673,9 @@ extension PaneContainerViewController {
       let leftView = stackView.arrangedSubviews[safe: handleIndex - 1]
       let rightView = stackView.arrangedSubviews[safe: handleIndex + 1]
       handle.isActive =
-        leftView === focusedColumn.containerView
-        || rightView === focusedColumn.containerView
+        !focusedColumn.isFolded
+        && (leftView === focusedColumn.containerView
+          || rightView === focusedColumn.containerView)
     }
   }
 

@@ -109,12 +109,25 @@ extension PaneContainerViewController {
 
     let cv = pane.containerView
 
-    // Add pane's containerView to column's containerView
+    // Add pane's containerView to column's containerView. The pins
+    // sit one priority notch below the column's `widthConstraint`
+    // so the fold path (which promotes `widthConstraint` to
+    // `.required`) can shrink the column to its narrow strip
+    // without these pins forcing the pane subtree's intrinsic
+    // width back onto the stack. At unfolded widths the pin's
+    // equality and the pane subtree's intrinsic `>=` are both
+    // satisfiable simultaneously, so the cv lines up with the
+    // stack edges. At the fold's strip width the equality loses
+    // and the cv overflows — `isHidden` on the cv during the fold
+    // keeps that overflow invisible.
     column.containerView.addArrangedSubview(cv)
-    NSLayoutConstraint.activate([
-      cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-      cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
-    ])
+    let cvLeading = cv.leadingAnchor.constraint(
+      equalTo: column.containerView.leadingAnchor)
+    let cvTrailing = cv.trailingAnchor.constraint(
+      equalTo: column.containerView.trailingAnchor)
+    cvLeading.priority = NSLayoutConstraint.Priority(rawValue: 998)
+    cvTrailing.priority = NSLayoutConstraint.Priority(rawValue: 998)
+    NSLayoutConstraint.activate([cvLeading, cvTrailing])
     ensureProgressBarAttached(pane: pane, in: column)
 
     // Folded label overlay — shown only when column is folded
@@ -1227,10 +1240,15 @@ extension PaneContainerViewController {
 
       let cv = pane.containerView
       column.containerView.addArrangedSubview(cv)
-      NSLayoutConstraint.activate([
-        cv.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-        cv.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
-      ])
+      // Same priority-below-`widthConstraint` rationale as
+      // `insertColumn(with:)`.
+      let cvLeading = cv.leadingAnchor.constraint(
+        equalTo: column.containerView.leadingAnchor)
+      let cvTrailing = cv.trailingAnchor.constraint(
+        equalTo: column.containerView.trailingAnchor)
+      cvLeading.priority = NSLayoutConstraint.Priority(rawValue: 998)
+      cvTrailing.priority = NSLayoutConstraint.Priority(rawValue: 998)
+      NSLayoutConstraint.activate([cvLeading, cvTrailing])
       ensureProgressBarAttached(pane: pane, in: column)
 
       // Folded label overlay — same setup as insertColumn(with:)
