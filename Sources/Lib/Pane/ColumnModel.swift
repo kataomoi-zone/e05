@@ -51,6 +51,14 @@ public final class ColumnModel {
     return label
   }()
 
+  /// Keeps `foldedLabelView.layer.cornerRadius` in sync with the
+  /// active `CornerRadiusPreset`. Without this observer the folded
+  /// strip kept the OS default (no rounding) and visibly diverged
+  /// from the rest of the pane chrome after a preset change. Held
+  /// as a stored property so the listener stays registered for the
+  /// column's lifetime; the observer unregisters itself in `deinit`.
+  private let foldedLabelCornerObserver: SurfaceCornerObserver
+
   public var focusedPane: PaneModel? {
     panes[safe: focusedPaneIndex]
   }
@@ -58,5 +66,6 @@ public final class ColumnModel {
   public init(pane: PaneModel, id: ULID = ULID()) {
     self.id = id
     self.panes = [pane]
+    self.foldedLabelCornerObserver = SurfaceCornerObserver(applyingTo: foldedLabelView)
   }
 }

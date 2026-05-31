@@ -76,6 +76,10 @@ public final class FoldedLabelView: NSView {
   private func setup() {
     wantsLayer = true
     layer?.backgroundColor = AppColors.popoverSurface.cgColor
+    // Clip the rounded corner so the rotated label and the expand
+    // button don't bleed past the rounded edge installed by the
+    // column's `SurfaceCornerObserver`.
+    layer?.masksToBounds = true
 
     // Rotate label -90° (clockwise) so text reads top-to-bottom (Watchtower-style).
     label.frameCenterRotation = -90
