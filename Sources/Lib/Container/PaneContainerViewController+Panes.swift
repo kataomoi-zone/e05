@@ -211,11 +211,11 @@ extension PaneContainerViewController {
 
     // The animation already owns the scroll — tell setFocus to
     // leave it alone so scrollToColumn doesn't fire a second
-    // tween after the insert's completion handler. Skipping
-    // entirely (`focusOnInsert: false`) is the bulk-insert escape
-    // hatch — `setFocus` would otherwise route through
-    // `restoreIfSuspended()` for every column added, defeating any
-    // `startSuspended: true` pane the caller just created.
+    // tween after the insert's completion handler. `focusOnInsert:
+    // false` skips the call entirely; bulk-insert callers like
+    // `restoreSession` apply their own focus target after every
+    // pane is in place rather than thrashing through `setFocus`
+    // for each addColumn.
     if focusOnInsert {
       setFocus(columnIndex: insertIndex, paneIndex: 0, scroll: false)
     }
@@ -601,7 +601,7 @@ extension PaneContainerViewController {
     }
     pane.urlBar.onReload = { [weak pane] in
       if let bv = pane?.browserView {
-        bv.webView.reload()
+        bv.reload()
       } else if let fv = pane?.finderView {
         fv.reload()
       }
@@ -691,11 +691,11 @@ extension PaneContainerViewController {
       self.cachedActionResults[index].handler()
     }
     commandPalette.onDismiss = { [weak self] in
-      // Re-arm the responder chain on the focused pane without
-      // un-suspending it: a "Suspend Pane" action would otherwise
-      // reverse itself when the palette closes and the implicit
-      // re-focus routes through `restoreIfSuspended`.
-      self?.focusCurrentPane(restoreSuspended: false)
+      // Re-arm the responder chain on the focused pane. Focus alone
+      // never wakes a suspended pane (see `setFocus`), so the
+      // palette can re-focus freely without reversing a just-fired
+      // `Suspend Pane` action.
+      self?.focusCurrentPane()
     }
   }
 
@@ -723,17 +723,13 @@ extension PaneContainerViewController {
   /// because `becomeFirstResponder` never re-fired to re-arm the
   /// guard. Re-entering `setFocus` here clears every surface in the
   /// focused workspace and re-arms exactly one.
-  ///
-  /// `restoreSuspended` is forwarded straight to `setFocus`; see
-  /// `setFocus(columnIndex:paneIndex:scroll:restoreSuspended:)` for
-  /// what the flag means and which call sites pass `false`.
-  func focusCurrentPane(restoreSuspended: Bool = true) {
+  func focusCurrentPane() {
     guard columns.indices.contains(focusedColumnIndex) else { return }
     let column = columns[focusedColumnIndex]
     guard column.panes.indices.contains(column.focusedPaneIndex) else { return }
     setFocus(
       columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex,
-      scroll: false, restoreSuspended: restoreSuspended)
+      scroll: false)
   }
 
   /// Search the action registry for the command palette.

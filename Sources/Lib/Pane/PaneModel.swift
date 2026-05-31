@@ -233,13 +233,6 @@ public final class PaneModel {
     browserView?.isSuspended ?? false
   }
 
-  /// Bring a suspended browser pane back to a live `WKWebView`,
-  /// re-applying its captured `interactionState`. No-op for
-  /// non-browser panes and for browser panes that are already live.
-  public func restoreIfSuspended() {
-    browserView?.restore()
-  }
-
   /// The view that should become first responder when this pane is focused.
   public var preferredFirstResponder: NSView {
     switch content {

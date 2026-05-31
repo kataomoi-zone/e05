@@ -999,6 +999,37 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     return true
   }
 
+  /// Reload the pane's current page. Branches on suspend state so a
+  /// single user-facing "Reload" gesture (URL bar button, shortcut,
+  /// palette action, placeholder Reload button) means the same
+  /// thing regardless of whether the `WKWebView` is live: a live
+  /// pane reloads in place, a suspended pane restores from its
+  /// snapshot (which itself triggers a load of the captured URL).
+  public func reload() {
+    if isSuspended {
+      restore()
+    } else {
+      webView.reload()
+    }
+  }
+
+  /// HTTP-cache-bypassing variant of ``reload()`` for a live pane.
+  /// The suspended branch defers cache control to WebKit's
+  /// `interactionState` restore — the cache policy WebKit uses for
+  /// that load is private SPI, so the ignore-cache guarantee from
+  /// `WKWebView.reloadFromOrigin()` is not preserved here. In
+  /// practice a freshly-suspended snapshot rarely carries cache
+  /// state worth bypassing, and forcing a follow-up
+  /// `reloadFromOrigin` after `restore` would double-load the page
+  /// without a clear user benefit.
+  public func reloadFromOrigin() {
+    if isSuspended {
+      restore()
+    } else {
+      webView.reloadFromOrigin()
+    }
+  }
+
   /// Detach the `WKWebView`, drop it, and show the placeholder.
   /// Returns `false` (and changes nothing) for:
   /// - panes already in the suspended state — idempotent no-op,
@@ -1185,13 +1216,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private func showPlaceholder(title: String?, url: URL) {
     let view = placeholderView ?? BrowserPanePlaceholderView()
     view.configure(title: title, url: url)
-    // Route placeholder clicks through the pane's normal focus
-    // callback so the host's `setFocus` path runs and triggers
-    // `restoreIfSuspended()`. Without this the suspended pane is
-    // unclickable: the `WKWebView` is detached and there's no
-    // other responder on the pane to swallow `mouseDown`.
+    // Body click → focus only. `setFocus` no longer wakes a
+    // suspended pane on its own (intentional — see the doc comment
+    // on `setFocus`), so the body click stays cheap: it just moves
+    // the focus border to the placeholder's column. Without this
+    // the placeholder would otherwise be inert to mouseDown because
+    // the `WKWebView` is detached.
     view.onClick = { [weak self] in
       self?.onFocusChanged?()
+    }
+    // Reload button → the user's explicit "wake this pane" gesture.
+    // Mirrors the URL bar reload button, the global Reload shortcut,
+    // the palette `Reload` action, and the chrome.tabs.reload
+    // extension API, all of which route through `BrowserPaneView
+    // .reload()` for the same suspended → live restore branch. The
+    // suspended/live split lives in `reload()` itself rather than
+    // here so the four entry points share one decision site.
+    view.onReload = { [weak self] in
+      self?.reload()
     }
     if view.superview == nil {
       view.translatesAutoresizingMaskIntoConstraints = false

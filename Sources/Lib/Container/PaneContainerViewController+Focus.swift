@@ -9,21 +9,14 @@ extension PaneContainerViewController {
 
   /// Move the focused pane to `(columnIndex, paneIndex)`.
   ///
-  /// `restoreSuspended` decides whether a suspended incoming pane
-  /// is woken up before responder routing. Default
-  /// `true` is correct for direct user navigation (arrow keys,
-  /// sidebar click, palette `Focus: <other>` action) — a detached
-  /// `WKWebView` rejects `makeFirstResponder` so the suspended
-  /// state has to drop before we hand off. Passing `false` is
-  /// reserved for "we want to re-arm the responder chain on the
-  /// already-focused pane without disturbing its suspend state",
-  /// currently the command-palette dismiss handler: the user just
-  /// fired `Suspend Pane` on the focused pane and the implicit
-  /// re-focus on palette close would otherwise reverse the action
-  /// the user just took.
+  /// Focus alone never wakes a suspended browser pane — the user has
+  /// to ask explicitly through a reload action (URL bar reload
+  /// button, shortcut, palette `Reload` action, or the placeholder's
+  /// Reload button). A suspended pane that takes focus stays on its
+  /// placeholder; the responder chain routes through the placeholder
+  /// view, which `acceptsFirstResponder` for exactly this reason.
   public func setFocus(
-    columnIndex: Int, paneIndex: Int, scroll: Bool = true,
-    restoreSuspended: Bool = true
+    columnIndex: Int, paneIndex: Int, scroll: Bool = true
   ) {
     logger.info("setFocus entry col=\(columnIndex) pane=\(paneIndex) scroll=\(scroll ? "yes" : "no", privacy: .public) currentWs=\(self.focusedWorkspaceIndex)")
     guard columns.indices.contains(columnIndex) else {
@@ -99,18 +92,6 @@ extension PaneContainerViewController {
 
     let pane = column.panes[paneIndex]
     logger.info("setFocus applying pane=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
-    // Bring a suspended browser pane back to a live `WKWebView`
-    // before responder routing: a detached `WKWebView` rejects
-    // `makeFirstResponder` (returns false without changing the
-    // first responder), and `preferredFirstResponder` would
-    // otherwise hand back the detached instance. No-op for
-    // non-browser panes and already-live browsers. Skipped when
-    // the caller passed `restoreSuspended: false` — the palette
-    // dismiss path needs to re-arm the responder chain without
-    // undoing a user-driven `Suspend Pane` action.
-    if restoreSuspended {
-      pane.restoreIfSuspended()
-    }
     // Inform the WKWebExtension bridge of the focus change up front
     // so the sticky "active browser pane" tracker stays current
     // regardless of what subsequent UI work (popup webView, find bar,

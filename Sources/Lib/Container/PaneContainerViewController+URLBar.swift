@@ -645,9 +645,11 @@ extension PaneContainerViewController {
 
   // MARK: - Browser Navigation
 
-  /// Reload the focused browser pane's current page.
+  /// Reload the focused browser pane's current page. Routes through
+  /// `BrowserPaneView.reload()` so the suspended → restore branch
+  /// stays centralised.
   public func reloadFocusedBrowser() {
-    focusedPane?.browserView?.webView.reload()
+    focusedPane?.browserView?.reload()
   }
 
   /// Manually suspend the focused browser pane. Mirrors what the 1
@@ -673,8 +675,10 @@ extension PaneContainerViewController {
   }
 
   /// Reload the focused browser pane bypassing the HTTP cache.
+  /// Routes through `BrowserPaneView.reloadFromOrigin()` for the
+  /// same reason `reloadFocusedBrowser` does.
   public func reloadFocusedBrowserFromOrigin() {
-    focusedPane?.browserView?.webView.reloadFromOrigin()
+    focusedPane?.browserView?.reloadFromOrigin()
   }
 
   /// Stop in-flight loading on the focused browser pane.

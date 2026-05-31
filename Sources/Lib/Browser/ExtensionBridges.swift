@@ -275,22 +275,25 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     completionHandler(nil)
   }
 
-  /// `chrome.tabs.reload()` — defer to the underlying WKWebView so
-  /// the existing reload pipeline (loading-state callback, URL bar
-  /// stop button, network observers) fires uniformly.
+  /// `chrome.tabs.reload()` — route through `BrowserPaneView`'s
+  /// reload helpers so a suspended pane wakes up via the same
+  /// single-decision-site branch that the URL bar reload button,
+  /// the global Reload action, and the placeholder Reload button
+  /// use. Reloading the bare `WKWebView` directly would silently
+  /// no-op on a suspended pane because the web view is detached.
   func reload(
     fromOrigin: Bool,
     for _: WKWebExtensionContext,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    guard let webView = pane?.browserView?.webView else {
+    guard let bv = pane?.browserView else {
       completionHandler(nil)
       return
     }
     if fromOrigin {
-      webView.reloadFromOrigin()
+      bv.reloadFromOrigin()
     } else {
-      webView.reload()
+      bv.reload()
     }
     completionHandler(nil)
   }

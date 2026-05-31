@@ -2,10 +2,14 @@ import AppKit
 
 /// Stand-in shown by ``BrowserPaneView`` while its `WKWebView` is
 /// detached by `suspend()`. Renders the captured title and URL plus
-/// a "suspended" affordance so the user knows the pane is alive
-/// but unloaded; clicking anywhere on the placeholder fires
-/// ``onClick`` so the host can route the click through the normal
-/// focus handler and trigger a `restore()`.
+/// a "Suspended" badge and an explicit Reload button.
+///
+/// Clicking the body of the placeholder fires ``onClick`` — wired by
+/// the host to its focus handler so the pane can take focus without
+/// waking up. Clicking the Reload button fires ``onReload``, the
+/// only path that drops the suspended state on user demand (mirrors
+/// the URL bar reload button, the Reload shortcut, and the palette
+/// `Reload` action).
 ///
 /// Intentionally lightweight: no favicon, no progress affordance, no
 /// thumbnail. Richer presentation (favicon, dimmed thumbnail) can
@@ -23,12 +27,32 @@ final class BrowserPanePlaceholderView: NSView {
   }()
   private let titleLabel = NSTextField(labelWithString: "")
   private let urlLabel = NSTextField(labelWithString: "")
-  private let suspendedLabel = NSTextField(labelWithString: "Suspended · Focus to load")
+  private let suspendedLabel = NSTextField(labelWithString: "Suspended")
+  private let reloadButton: NSButton = {
+    let btn = NSButton(title: "Reload", target: nil, action: nil)
+    let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+    if let image = NSImage(
+      systemSymbolName: "arrow.clockwise",
+      accessibilityDescription: "Reload"
+    )?.withSymbolConfiguration(config) {
+      btn.image = image
+      btn.imagePosition = .imageLeading
+    }
+    btn.bezelStyle = .rounded
+    btn.translatesAutoresizingMaskIntoConstraints = false
+    return btn
+  }()
 
-  /// Fired by a click anywhere on the placeholder's bounds. The host
-  /// wires this to its focus handler so the pane lands in the normal
-  /// focus path that already calls `restoreIfSuspended()`.
+  /// Fired by a click on the placeholder body (not the Reload
+  /// button). The host wires this to its focus handler — focus
+  /// alone never wakes the pane, so the click only moves the focus
+  /// border to this placeholder's hosting column.
   var onClick: (() -> Void)?
+
+  /// Fired by the Reload button. The host calls `BrowserPaneView
+  /// .restore()` from here, the same path the URL bar reload
+  /// button and the global Reload action use for a suspended pane.
+  var onReload: (() -> Void)?
 
   /// `BrowserPaneView.firstResponderTarget` hands this view back as
   /// the first-responder destination while the pane is suspended,
@@ -75,6 +99,10 @@ final class BrowserPanePlaceholderView: NSView {
     suspendedLabel.alignment = .center
     addSubview(suspendedLabel)
 
+    reloadButton.target = self
+    reloadButton.action = #selector(reloadAction)
+    addSubview(reloadButton)
+
     NSLayoutConstraint.activate([
       iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
       iconView.bottomAnchor.constraint(equalTo: titleLabel.topAnchor, constant: -12),
@@ -93,6 +121,9 @@ final class BrowserPanePlaceholderView: NSView {
 
       suspendedLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
       suspendedLabel.topAnchor.constraint(equalTo: urlLabel.bottomAnchor, constant: 12),
+
+      reloadButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+      reloadButton.topAnchor.constraint(equalTo: suspendedLabel.bottomAnchor, constant: 12),
     ])
   }
 
@@ -112,6 +143,13 @@ final class BrowserPanePlaceholderView: NSView {
   }
 
   override func mouseDown(with event: NSEvent) {
+    // The Reload button consumes its own clicks (standard `NSButton`
+    // hit testing), so reaching this point means the user clicked
+    // the body — that's focus-only.
     onClick?()
+  }
+
+  @objc private func reloadAction() {
+    onReload?()
   }
 }
