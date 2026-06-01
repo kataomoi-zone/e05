@@ -149,7 +149,7 @@ public final class ExtensionController {
     // `isLoading` stays true forever).
     //
     // applicationNameForUserAgent appends to the WebKit base UA, so
-    // the final string ends with `Version/17.0 Chrome/120.0.0.0
+    // the final string ends with `Version/17.0 Chrome/140.0.0.0
     // Safari/605.1.15`. Both tokens are needed:
     // - `Version/…` + `Safari/…` keeps the Bitwarden Angular DI
     //   bootstrap happy (its api service constructor expects a
@@ -161,9 +161,16 @@ public final class ExtensionController {
     //   messaging path that desktop_proxy actually serves instead of
     //   the Safari App-Group/XPC path that only the real Mac App
     //   Store extension can reach.
+    //
+    // The Chrome major has to stay ahead of 1Password's published
+    // minimum — older majors trip the "your Chrome is no longer
+    // supported, please update" banner in the popup even though the
+    // extension keeps functioning. Bumping the string here is the
+    // only mitigation; the banner is gated on a pure UA-major
+    // comparison in the popup bundle.
     let extConfig = WKWebExtensionController.Configuration.default()
     extConfig.webViewConfiguration.applicationNameForUserAgent =
-      "Version/17.0 Chrome/120.0.0.0 Safari/605.1.15"
+      "Version/17.0 Chrome/140.0.0.0 Safari/605.1.15"
 
     // Forward popup / background / content script console output to
     // os.Logger so a popup webView that hangs after some user input
