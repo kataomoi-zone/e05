@@ -1,5 +1,3 @@
-use flake
-
 # Release distribution: Developer ID signing + Apple notarisation.
 # Copy this file to .envrc and fill in the values for your Apple
 # Developer account, then run `direnv allow`. .envrc is gitignored

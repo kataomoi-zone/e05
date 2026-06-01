@@ -24,7 +24,6 @@ Alpha. macOS 26+ only. Dark-mode only.
 - macOS 26 (Tahoe) or later
 - Swift 6 toolchain (Xcode 16 or Swift 6 CLI)
 - A locally-built `GhosttyKit.xcframework` at the repo root (see [CONTRIBUTING.md](./CONTRIBUTING.md#building-ghosttykit))
-- Optional: [Nix](https://nixos.org/) for the provided `flake.nix` devShell
 
 ## Build & Run
 
