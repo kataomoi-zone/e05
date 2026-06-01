@@ -645,14 +645,31 @@ enum ManifestRewriter {
   /// keyword right after the `script-src` token keeps the rest of
   /// the directive (host allowlists, hashes) intact.
   fileprivate static func enrichCSP(_ csp: String) -> String {
-    if csp.contains("'unsafe-eval'") { return csp }
-    if csp.contains("script-src") {
-      return csp.replacingOccurrences(
-        of: "script-src",
-        with: "script-src 'unsafe-eval'"
-      )
+    var result = csp
+    // Inject `'unsafe-eval'` into script-src so the bg-shim's
+    // importScripts polyfill (sync XHR + indirect eval) is allowed.
+    if !result.contains("'unsafe-eval'") {
+      if result.contains("script-src") {
+        result = result.replacingOccurrences(
+          of: "script-src",
+          with: "script-src 'unsafe-eval'"
+        )
+      } else {
+        result = "script-src 'self' 'unsafe-eval'; \(result)"
+      }
     }
-    return "script-src 'self' 'unsafe-eval'; \(csp)"
+    // Extension manifests with `default-src 'none'` and no
+    // object-src silently block `<object data="...">` embeds.
+    // Inject a minimal `object-src 'self'` so embeds from the
+    // extension's own origin load. Note: this directive applies
+    // to every extension we rewrite, so the directive stays
+    // intentionally narrow — extensions that need `data:` (such
+    // as 1Password's popup inline SVG) get that allowance from a
+    // per-extension patch, not from this broad shim.
+    if !result.contains("object-src") {
+      result = "\(result); object-src 'self'"
+    }
+    return result
   }
 
   /// Source for `_e05_bg_shim.js`. Loaded as a classic blocking
@@ -1074,6 +1091,118 @@ enum ManifestRewriter {
           console.log('[e05/bg-shim] chrome.privacy stubbed at', location.href);
         }
       } catch (e) { console.warn('[e05/bg-shim] chrome.privacy stub failed:', e); }
+      // chrome.tabs.remove: Apple WKWebExtension does not implement
+      // closing a tab via this entry point. 1Password's bg calls
+      // it once the migration / welcome tab work is done; the
+      // "not implemented" rejection then surfaces as a noisy
+      // unhandled-rejection log line. Match the specific error
+      // shape so unrelated future failures (permission denied,
+      // tab does not exist, …) keep propagating; log every
+      // swallow at debug so a regression that pivots root cause
+      // is still visible in a grep.
+      try {
+        if (chrome.tabs && typeof chrome.tabs.remove === 'function') {
+          var origTabsRemove = chrome.tabs.remove.bind(chrome.tabs);
+          var swallowNotImpl = function(e) {
+            var msg = (e && e.message) || String(e);
+            if (msg.indexOf('not implemented') >= 0
+                || msg.indexOf('Invalid call to tabs.remove') >= 0) {
+              console.debug('[e05/bg-shim] tabs.remove swallowed:', msg);
+              return undefined;
+            }
+            throw e;
+          };
+          chrome.tabs.remove = function(tabIds, cb) {
+            try {
+              var p = origTabsRemove(tabIds, cb);
+              if (p && typeof p.catch === 'function') {
+                return p.catch(function(e) {
+                  swallowNotImpl(e);
+                  if (typeof cb === 'function') cb();
+                });
+              }
+              return p;
+            } catch (e) {
+              swallowNotImpl(e);
+              if (typeof cb === 'function') cb();
+              return Promise.resolve();
+            }
+          };
+          console.log('[e05/bg-shim] chrome.tabs.remove wrapped at', location.href);
+        }
+      } catch (e) { console.warn('[e05/bg-shim] tabs.remove wrap failed:', e); }
+      // chrome.action.openPopup: WebKit rejects the call when the
+      // popover is already on-screen ("Another popup is already
+      // open"). 1Password calls it again after vault unlock to
+      // refresh popup content; the redundant call is a no-op when
+      // a popup already exists, so swallow that specific message.
+      try {
+        ['action', 'browserAction'].forEach(function(ns) {
+          var api = chrome[ns];
+          if (!api || typeof api.openPopup !== 'function') return;
+          var origOpen = api.openPopup.bind(api);
+          var swallowAlreadyOpen = function(e) {
+            var msg = (e && e.message) || String(e);
+            if (msg.indexOf('Another popup is already open') >= 0) {
+              console.debug('[e05/bg-shim] action.openPopup swallowed:', msg);
+              return undefined;
+            }
+            throw e;
+          };
+          api.openPopup = function(opts, cb) {
+            try {
+              var p = origOpen(opts, cb);
+              if (p && typeof p.catch === 'function') {
+                return p.catch(function(e) {
+                  swallowAlreadyOpen(e);
+                  if (typeof cb === 'function') cb();
+                });
+              }
+              return p;
+            } catch (e) {
+              swallowAlreadyOpen(e);
+              if (typeof cb === 'function') cb();
+              return Promise.resolve();
+            }
+          };
+        });
+      } catch (e) { console.warn('[e05/bg-shim] action.openPopup wrap failed:', e); }
+      // chrome.contextMenus.update: WebKit throws "Menu item not
+      // found" when 1Password updates an entry that has not been
+      // created (a race during init where the update fires before
+      // create). The error is non-fatal — just swallow that one
+      // shape so it stops surfacing as an unhandled-rejection.
+      try {
+        if (chrome.contextMenus && typeof chrome.contextMenus.update === 'function') {
+          var origCmUpdate = chrome.contextMenus.update.bind(chrome.contextMenus);
+          var swallowNotFound = function(e) {
+            var msg = (e && e.message) || String(e);
+            if (msg.indexOf('Menu item not found') >= 0
+                || msg.indexOf('Invalid call to menus.update') >= 0) {
+              console.debug('[e05/bg-shim] contextMenus.update swallowed:', msg);
+              return undefined;
+            }
+            throw e;
+          };
+          chrome.contextMenus.update = function(id, props, cb) {
+            try {
+              var p = origCmUpdate(id, props, cb);
+              if (p && typeof p.catch === 'function') {
+                return p.catch(function(e) {
+                  swallowNotFound(e);
+                  if (typeof cb === 'function') cb();
+                });
+              }
+              return p;
+            } catch (e) {
+              swallowNotFound(e);
+              if (typeof cb === 'function') cb();
+              return Promise.resolve();
+            }
+          };
+          console.log('[e05/bg-shim] chrome.contextMenus.update wrapped at', location.href);
+        }
+      } catch (e) { console.warn('[e05/bg-shim] contextMenus.update wrap failed:', e); }
     })();
     """
 }
