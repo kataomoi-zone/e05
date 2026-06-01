@@ -354,14 +354,90 @@ public final class ExtensionController {
         console.log('[e05/polyfill] chrome.scripting.ExecutionWorld stubbed at', location.href);
       }
       // chrome.webNavigation.onCreatedNavigationTarget: present in
-      // Chrome but absent from WebKit. stubEvent() returns a fresh
-      // object whose addListener is a no-op — WebKit doesn't track
-      // this event in any internal routing path, so synthesizing it
-      // is safe.
-      if (!disabled('webNavigation') && chrome.webNavigation
-          && !chrome.webNavigation.onCreatedNavigationTarget) {
-        chrome.webNavigation.onCreatedNavigationTarget = stubEvent();
-        console.log('[e05/polyfill] chrome.webNavigation.onCreatedNavigationTarget stubbed at', location.href);
+      // Chrome but absent from WebKit. WKWebExtension appears to
+      // reinitialise chrome.webNavigation between document parse
+      // and the deferred module script's execution, so any value
+      // we stash there at install time is gone by the time 1Password's
+      // background.js reads it ~250ms later (verified via diagnostic
+      // logs that showed `present=true` followed by a TypeError on
+      // the same property a few hundred ms later). Solve it by
+      // installing a `get` trap on `chrome.webNavigation` itself
+      // (and, as a deeper fallback, on `globalThis.chrome`) so
+      // every access returns a fresh proxy that synthesises the
+      // missing event surface on demand. The descriptor log makes
+      // a future regression in WKWebExtension's binding visible.
+      if (!disabled('webNavigation') && chrome.webNavigation) {
+        var wnDesc = Object.getOwnPropertyDescriptor(chrome, 'webNavigation') || {};
+        var alreadyPatched = !!(chrome.webNavigation.onCreatedNavigationTarget
+          && chrome.webNavigation.onCreatedNavigationTarget.addListener);
+        console.log('[e05/polyfill] chrome.webNavigation descriptor at', location.href,
+          'writable=', wnDesc.writable, 'configurable=', wnDesc.configurable,
+          'hasGetter=', !!wnDesc.get, 'alreadyPatched=', alreadyPatched);
+        if (!alreadyPatched) {
+          var stubEv = stubEvent();
+          var makeWNProxy = function(target) {
+            return new Proxy(target, {
+              get: function(t, p) {
+                if (p === 'onCreatedNavigationTarget') return stubEv;
+                var v = Reflect.get(t, p);
+                return (typeof v === 'function') ? v.bind(t) : v;
+              },
+            });
+          };
+          var installed = false;
+          // Strategy 1: defineProperty getter on chrome itself —
+          // returns the proxy every time chrome.webNavigation is
+          // read, so WKWebExtension reinitialising the underlying
+          // value is harmless.
+          try {
+            var origWN = chrome.webNavigation;
+            Object.defineProperty(chrome, 'webNavigation', {
+              get: function() { return makeWNProxy(origWN); },
+              configurable: true, enumerable: true,
+            });
+            installed = !!(chrome.webNavigation
+              && chrome.webNavigation.onCreatedNavigationTarget
+              && chrome.webNavigation.onCreatedNavigationTarget.addListener);
+          } catch (e) {
+            console.warn('[e05/polyfill] chrome.webNavigation getter define failed:', e);
+          }
+          // Strategy 2: replace globalThis.chrome with a proxy that
+          // hooks webNavigation access — last resort when the chrome
+          // property descriptor itself is non-configurable.
+          if (!installed) {
+            try {
+              var chromeOrig = chrome;
+              var chromeWrap = new Proxy(chromeOrig, {
+                get: function(t, p) {
+                  if (p === 'webNavigation') {
+                    var w = Reflect.get(t, p);
+                    return w ? makeWNProxy(w) : w;
+                  }
+                  return Reflect.get(t, p);
+                },
+              });
+              Object.defineProperty(globalThis, 'chrome', {
+                value: chromeWrap, writable: true, configurable: true,
+              });
+              installed = !!(globalThis.chrome.webNavigation
+                && globalThis.chrome.webNavigation.onCreatedNavigationTarget
+                && globalThis.chrome.webNavigation.onCreatedNavigationTarget.addListener);
+            } catch (e) {
+              console.warn('[e05/polyfill] globalThis.chrome proxy failed:', e);
+            }
+          }
+          console.log('[e05/polyfill] chrome.webNavigation.onCreatedNavigationTarget patched at', location.href,
+            'installed=', installed);
+          // Re-check after the deferred module script has had time
+          // to run — log `survives=` so a future regression where
+          // the late binding still wins is immediately visible.
+          setTimeout(function() {
+            var live = !!(chrome.webNavigation
+              && chrome.webNavigation.onCreatedNavigationTarget
+              && chrome.webNavigation.onCreatedNavigationTarget.addListener);
+            console.log('[e05/polyfill] chrome.webNavigation +500ms at', location.href, 'survives=', live);
+          }, 500);
+        }
       }
       if (!disabled('declarativeNetRequest') && !chrome.declarativeNetRequest) {
         chrome.declarativeNetRequest = {

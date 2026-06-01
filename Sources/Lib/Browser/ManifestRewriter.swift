@@ -689,12 +689,64 @@ enum ManifestRewriter {
         };
         console.log('[e05/bg-shim] chrome.scripting.ExecutionWorld stubbed at', location.href);
       }
-      // chrome.webNavigation.onCreatedNavigationTarget: present in
-      // Chrome but absent from WebKit's chrome.webNavigation.
-      // 1Password attaches a listener at startup unconditionally.
-      if (chrome.webNavigation && !chrome.webNavigation.onCreatedNavigationTarget) {
-        chrome.webNavigation.onCreatedNavigationTarget = stubEvent();
-        console.log('[e05/bg-shim] chrome.webNavigation.onCreatedNavigationTarget stubbed at', location.href);
+      // chrome.webNavigation.onCreatedNavigationTarget: see the
+      // matching block in ExtensionController.chromeMV3PolyfillScript
+      // for the full rationale. Apple's WKWebExtension reinitialises
+      // chrome.webNavigation between parse-time stub install and the
+      // deferred module script's read, so we install a `get` trap on
+      // chrome.webNavigation here too in case the user-script-level
+      // polyfill was skipped (env-disabled / R&D mode).
+      if (chrome.webNavigation) {
+        var wnAlreadyPatched = !!(chrome.webNavigation.onCreatedNavigationTarget
+          && chrome.webNavigation.onCreatedNavigationTarget.addListener);
+        if (!wnAlreadyPatched) {
+          var wnStubEv = stubEvent();
+          var wnMakeProxy = function(target) {
+            return new Proxy(target, {
+              get: function(t, p) {
+                if (p === 'onCreatedNavigationTarget') return wnStubEv;
+                var v = Reflect.get(t, p);
+                return (typeof v === 'function') ? v.bind(t) : v;
+              },
+            });
+          };
+          var wnInstalled = false;
+          try {
+            var wnOrig = chrome.webNavigation;
+            Object.defineProperty(chrome, 'webNavigation', {
+              get: function() { return wnMakeProxy(wnOrig); },
+              configurable: true, enumerable: true,
+            });
+            wnInstalled = !!(chrome.webNavigation
+              && chrome.webNavigation.onCreatedNavigationTarget
+              && chrome.webNavigation.onCreatedNavigationTarget.addListener);
+          } catch (e) {
+            console.warn('[e05/bg-shim] chrome.webNavigation getter define failed:', e);
+          }
+          if (!wnInstalled) {
+            try {
+              var chromeOrig = chrome;
+              var chromeWrap = new Proxy(chromeOrig, {
+                get: function(t, p) {
+                  if (p === 'webNavigation') {
+                    var w = Reflect.get(t, p);
+                    return w ? wnMakeProxy(w) : w;
+                  }
+                  return Reflect.get(t, p);
+                },
+              });
+              Object.defineProperty(globalThis, 'chrome', {
+                value: chromeWrap, writable: true, configurable: true,
+              });
+              wnInstalled = !!(globalThis.chrome.webNavigation
+                && globalThis.chrome.webNavigation.onCreatedNavigationTarget);
+            } catch (e) {
+              console.warn('[e05/bg-shim] globalThis.chrome proxy failed:', e);
+            }
+          }
+          console.log('[e05/bg-shim] chrome.webNavigation.onCreatedNavigationTarget patched at', location.href,
+            'installed=', wnInstalled);
+        }
       }
       if (!chrome.notifications) {
         try {
@@ -972,6 +1024,56 @@ enum ManifestRewriter {
           console.log('[e05/bg-shim] chrome.commands.onCommand wrapped for diagnostics at', location.href);
         }
       } catch (e) { console.warn('[e05/bg-shim] commands wrap failed:', e); }
+      // chrome.privacy: Apple's WKWebExtension does not bridge the
+      // API at all, but 1Password's bg unconditionally touches
+      // `chrome.privacy.services.{passwordSavingEnabled,
+      // autofillEnabled, autofillAddressEnabled,
+      // autofillCreditCardEnabled}` during init to negotiate
+      // password-saving / autofill ownership with the host browser.
+      // Without a stub the first property access throws TypeError,
+      // the rejection bubbles up unhandled, bg init halts mid-way,
+      // and the popup hangs forever waiting for a config message
+      // that bg never gets around to sending. Default each value to
+      // false with `controllable_by_this_extension` so callers see
+      // "browser is not saving passwords / autofilling — feel free
+      // to take over"; set/clear are no-ops since there is no real
+      // preference store to mutate.
+      try {
+        if (!chrome.privacy) {
+          var makeChromeSetting = function(defaultValue) {
+            return {
+              get: function(_details, cb) {
+                var resp = {
+                  value: defaultValue,
+                  levelOfControl: 'controllable_by_this_extension',
+                };
+                if (typeof cb === 'function') cb(resp);
+                return Promise.resolve(resp);
+              },
+              set: function(_details, cb) {
+                if (typeof cb === 'function') cb();
+                return Promise.resolve();
+              },
+              clear: function(_details, cb) {
+                if (typeof cb === 'function') cb();
+                return Promise.resolve();
+              },
+              onChange: stubEvent(),
+            };
+          };
+          chrome.privacy = {
+            network: {},
+            services: {
+              passwordSavingEnabled: makeChromeSetting(false),
+              autofillEnabled: makeChromeSetting(false),
+              autofillAddressEnabled: makeChromeSetting(false),
+              autofillCreditCardEnabled: makeChromeSetting(false),
+            },
+            websites: {},
+          };
+          console.log('[e05/bg-shim] chrome.privacy stubbed at', location.href);
+        }
+      } catch (e) { console.warn('[e05/bg-shim] chrome.privacy stub failed:', e); }
     })();
     """
 }
