@@ -175,14 +175,44 @@ trap - ERR
 # without per-component entitlements; release turns it on with
 # the minimum entitlements needed by libghostty / WKWebView /
 # .appex extensions to mirror what a distributed bundle uses.
+#
+# `E05_SIGN_IDENTITY` opts release builds into a real Developer ID
+# identity. The default empty value keeps the ad-hoc path so an
+# unsigned rebuild needs no extra setup. When set, the script
+# adds Apple's Timestamp Server attestation that notarisation
+# requires; identity-not-found surfaces through codesign's own
+# error message. The dev flavor always ignores the variable so a
+# deliberate `flavor=dev` stays unsigned-by-author even when the
+# env happens to be exported.
+SIGN_IDENTITY="${E05_SIGN_IDENTITY:-}"
 case "$FLAVOR" in
     release)
-        codesign --force --sign - --options runtime \
-            --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
-            "$APP_DIR" || {
-            echo "build_app.sh: codesign (release) failed at $APP_DIR" >&2
-            exit 1
-        }
+        if [[ -n "$SIGN_IDENTITY" ]]; then
+            # Inside-out signing: nested Mach-O binaries must carry a
+            # Developer ID seal + Hardened Runtime + secure timestamp
+            # before the bundle is sealed, otherwise notarisation
+            # rejects them as ad-hoc and runtime-disabled. The `open`
+            # shim alongside it is a bash script (not Mach-O) so
+            # codesign would refuse it; we skip it deliberately.
+            codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+                "$CONTENTS/Resources/bin/e05" || {
+                echo "build_app.sh: codesign (release / Developer ID) failed for bundled CLI binary" >&2
+                exit 1
+            }
+            codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+                --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
+                "$APP_DIR" || {
+                echo "build_app.sh: codesign (release / Developer ID) failed at $APP_DIR — identity \"$SIGN_IDENTITY\" missing, invalid, or timestamp server unreachable" >&2
+                exit 1
+            }
+        else
+            codesign --force --sign - --options runtime \
+                --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
+                "$APP_DIR" || {
+                echo "build_app.sh: codesign (release / ad-hoc) failed at $APP_DIR" >&2
+                exit 1
+            }
+        fi
         # Verify the seal is consistent across every nested
         # framework / helper bundle. An ad-hoc identity passes
         # --strict as long as the hash chain is intact, so a
@@ -193,11 +223,13 @@ case "$FLAVOR" in
             echo "build_app.sh: codesign --verify failed for $APP_DIR" >&2
             exit 1
         }
-        # Gatekeeper assessment is informational: ad-hoc bundles
-        # without notarization are always rejected, so the output
-        # confirms the rejection reason matches expectations
-        # (`source=No matching credential`, etc.) rather than
-        # surfacing a blocking error.
+        # Gatekeeper assessment is informational. Ad-hoc bundles
+        # always report `source=No matching credential`; an
+        # unnotarised Developer ID build reports
+        # `source=Unnotarized Developer ID`; only a notarised +
+        # stapled bundle reports `source=Notarized Developer ID`.
+        # All three are expected at different stages of the flow,
+        # so the assessment is logged rather than enforced here.
         spctl --assess --type execute --verbose=2 "$APP_DIR" 2>&1 | tail -5 || true
         ;;
     *)
