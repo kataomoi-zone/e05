@@ -35,7 +35,7 @@ Notes:
 
 ```bash
 swift build
-swift test --disable-sandbox    # 216 tests, ~0.3s
+swift test --disable-sandbox    # unit tests
 ```
 
 The `--disable-sandbox` flag is required because tests access `~/.config/e05/` paths, which SwiftPM's default sandbox denies.
@@ -51,6 +51,27 @@ AppleScript integration tests for key input:
 
 ```bash
 ./scripts/test-key-input.sh       # requires GUI + Accessibility permission
+```
+
+## Formatting
+
+Code is formatted with [swift-format](https://github.com/swiftlang/swift-format) (bundled with the Swift toolchain) in its **default configuration** — `.swift-format` pins only the schema `version` and overrides no rules (100-column limit, 2-space indent, etc.).
+
+```bash
+swift format -i -r Sources/ Tests/        # format in place
+swift format lint -r -p Sources/ Tests/   # lint only
+```
+
+A pre-commit hook in `.githooks/` rejects commits that violate the rules. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The bulk-reformat commit is recorded in `.git-blame-ignore-revs`; to skip it in local `git blame`:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
 ## Commit conventions
@@ -102,6 +123,6 @@ Sources/
                             +Workspaces, +URLBar, +Actions, +Session, +Sidebar)
     UI/                   — Sidebar, URL bar, command palette, suggestions, list panes
     Utility/              — FuzzyMatcher, ULID, Action registry, Collection+safe
-Tests/                    — unit tests (216)
+Tests/                    — unit tests
 Package.swift             — SwiftPM manifest with GhosttyKit binary target
 ```

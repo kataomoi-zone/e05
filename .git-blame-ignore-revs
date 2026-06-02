@@ -1,0 +1,6 @@
+# Commits excluded from git blame (bulk reformatting, no semantic change).
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: adopt swift-format with its default configuration
+efa0f550a4ca4af3bbcd77ceba3800bae256bbd4

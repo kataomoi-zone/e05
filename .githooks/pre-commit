@@ -1,0 +1,13 @@
+#!/bin/sh
+# Block commits that violate swift-format (swiftlang/swift-format, default config).
+# Enable once per clone with:
+#   git config core.hooksPath .githooks
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.swift')
+[ -z "$staged" ] && exit 0
+
+if ! swift format lint --strict $staged; then
+  echo
+  echo "swift-format found violations in staged Swift files."
+  echo "Fix with: swift format -i -r Sources/ Tests/"
+  exit 1
+fi
