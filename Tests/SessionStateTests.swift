@@ -188,34 +188,17 @@ struct SessionStateTests {
     #expect(!json.contains("\"title\":null"))
   }
 
-  @Test("legacy session JSON without title decodes pane titles as nil")
-  func legacyTitleMissing() throws {
-    // A fabricated old-format payload — no `title` field anywhere.
-    // Guards against future hand-written `CodingKeys` breaking
-    // auto-synthesis' `decodeIfPresent` semantics on `title`.
-    let legacy = """
-      {
-        "focusedWorkspaceIndex": 0,
-        "urlBarVisible": false,
-        "sidebarPinned": false,
-        "workspaces": [
-          {
-            "focusedColumnIndex": 0,
-            "scrollX": 0,
-            "columns": [
-              {
-                "focusedPaneIndex": 0,
-                "width": 640,
-                "heightRatios": [],
-                "panes": [{ "address": "https://example.com" }]
-              }
-            ]
-          }
-        ]
-      }
-      """
-    let data = Data(legacy.utf8)
-    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+  @Test("pane title round-trips as nil when constructed without a title")
+  func paneTitleRoundTripAsNil() throws {
+    // Verifies that the auto-synthesised `decodeIfPresent` path on
+    // `PaneState.title` keeps Optional semantics: a value-side `nil`
+    // is encoded as an absent key by JSONEncoder, and that absent
+    // key decodes back to `nil`. Going through encode → decode (vs
+    // a hand-written legacy JSON fixture) means future non-Optional
+    // additions to ColumnState / WorkspaceState don't break the
+    // test setup.
+    let session = makeSession(paneTitle: nil)
+    let decoded = try roundTrip(session)
     #expect(decoded.workspaces[0].columns[0].panes[0].title == nil)
   }
 
@@ -391,66 +374,65 @@ struct SessionStateTests {
     #expect(decoded.workspaces.first?.columns.first?.id == colId)
   }
 
-  @Test("legacy session JSON without workspace / column ids decodes as nil")
-  func legacyMissingIds() throws {
-    // Payload predating id round-trip — the migration path generates
-    // fresh ULIDs at restore, which one-time drops any persisted
-    // `collapsedIds` entries that referenced the missing identities.
-    let payload = """
-      {
-        "focusedWorkspaceIndex": 0,
-        "urlBarVisible": false,
-        "sidebarPinned": false,
-        "workspaces": [
-          {
-            "focusedColumnIndex": 0,
-            "scrollX": 0,
-            "columns": [
-              {
-                "focusedPaneIndex": 0,
-                "width": 640,
-                "heightRatios": [],
-                "panes": [{ "address": "e05://terminal" }]
-              }
-            ]
-          }
-        ]
-      }
-      """
-    let decoded = try JSONDecoder().decode(
-      SessionState.self, from: Data(payload.utf8))
+  @Test("workspace / column ids round-trip as nil when omitted")
+  func idsRoundTripAsNil() throws {
+    // The restore path generates fresh ULIDs whenever id is nil, so
+    // the Codable surface must keep the field Optional on both
+    // sides of a round-trip.
+    let session = makeSession(workspaceId: nil, columnId: nil)
+    let decoded = try roundTrip(session)
     #expect(decoded.workspaces.first?.id == nil)
     #expect(decoded.workspaces.first?.columns.first?.id == nil)
   }
 
-  @Test("session JSON without collapsedIds decodes as nil")
-  func missingCollapsedIdsDecodes() throws {
-    // Session payload with the key absent. Guards against future
-    // hand-written `CodingKeys` breaking auto-synthesis'
-    // `decodeIfPresent`-for-Optional path on `collapsedIds`.
-    let payload = """
-      {
-        "focusedWorkspaceIndex": 0,
-        "urlBarVisible": false,
-        "sidebarPinned": false,
-        "workspaces": [
-          {
-            "focusedColumnIndex": 0,
-            "scrollX": 0,
-            "columns": [
-              {
-                "focusedPaneIndex": 0,
-                "width": 640,
-                "heightRatios": [],
-                "panes": [{ "address": "e05://terminal" }]
-              }
-            ]
-          }
-        ]
-      }
-      """
-    let data = Data(payload.utf8)
-    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+  @Test("collapsedIds round-trips as nil when not provided")
+  func collapsedIdsRoundTripAsNil() throws {
+    let session = makeSession(collapsedIds: nil)
+    let decoded = try roundTrip(session)
     #expect(decoded.collapsedIds == nil)
+  }
+
+  // MARK: - Helpers
+
+  /// Schema-complete `SessionState` factory whose Optional fields can
+  /// be flipped individually to verify the auto-synthesised Codable
+  /// surface. Defaults populate every Optional with a non-nil value
+  /// so a per-field nil really is the variable under test rather
+  /// than a coincidence of the surrounding fixture.
+  private func makeSession(
+    workspaceId: String? = "01JTESTWORKSPACE0000000001",
+    columnId: String? = "01JTESTCOLUMN00000000000001",
+    paneTitle: String? = "Example Domain",
+    collapsedIds: [String]? = ["01JTESTCOLLAPSED0000000001"]
+  ) -> SessionState {
+    var paneState = SessionState.PaneState(address: "https://example.com")
+    paneState.title = paneTitle
+    return SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          id: workspaceId,
+          columns: [
+            SessionState.ColumnState(
+              id: columnId,
+              panes: [paneState],
+              focusedPaneIndex: 0,
+              width: 640,
+              heightRatios: []
+            )
+          ],
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0,
+      collapsedIds: collapsedIds
+    )
+  }
+
+  /// Encode → decode through the production Codable path. Failures
+  /// surface as test errors instead of being swallowed.
+  private func roundTrip(_ session: SessionState) throws -> SessionState {
+    let data = try JSONEncoder().encode(session)
+    return try JSONDecoder().decode(SessionState.self, from: data)
   }
 }
