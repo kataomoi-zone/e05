@@ -426,7 +426,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private func startAdblockerAutoUpdateSchedule() {
     adblockerScheduleTask?.cancel()
     adblockerScheduleTask = Task { @MainActor [weak self] in
-      while let self, !Task.isCancelled {
+      // `self` is captured weakly so the schedule loop tears down
+      // with the AppDelegate; the unwrap is purely a liveness check
+      // (no body site needs the instance) so use a `!= nil` form
+      // that does not trip "unused let self" diagnostics.
+      while self != nil, !Task.isCancelled {
         let prefs = PreferencesStore.shared.preferences
         let configured = prefs.adblockerAutoUpdateIntervalHours
           ?? AdBlocker.defaultAutoUpdateIntervalHours
@@ -775,8 +779,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // auto-disable and ⌘+V falls through to ghostty's own keybind.
     let editMenuItem = NSMenuItem()
     let editMenu = NSMenu(title: "Edit")
-    editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-    let redoItem = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+    // `NSSelectorFromString` is the documented way to obtain a
+    // responder-chain selector when no compile-time type carries the
+    // method — `#selector` cannot resolve `undo:` / `redo:` here
+    // because NSResponder does not declare them.
+    editMenu.addItem(
+      withTitle: "Undo", action: NSSelectorFromString("undo:"), keyEquivalent: "z")
+    let redoItem = editMenu.addItem(
+      withTitle: "Redo", action: NSSelectorFromString("redo:"), keyEquivalent: "z")
     redoItem.keyEquivalentModifierMask = [.command, .shift]
     editMenu.addItem(.separator())
     editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")

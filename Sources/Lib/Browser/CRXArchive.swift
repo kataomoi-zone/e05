@@ -69,7 +69,10 @@ enum CRXArchive {
     let start = data.startIndex + offset
     let slice = data[start..<(start + 4)]
     var value: UInt32 = 0
-    withUnsafeMutableBytes(of: &value) { buf in
+    // Discarded return value is intentional: the closure mutates
+    // `value` in place via `slice.copyBytes`, and the byte count
+    // returned by `withUnsafeMutableBytes` is not needed here.
+    _ = withUnsafeMutableBytes(of: &value) { buf in
       slice.copyBytes(to: buf, count: 4)
     }
     return UInt32(littleEndian: value)

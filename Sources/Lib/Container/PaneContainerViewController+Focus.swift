@@ -463,7 +463,11 @@ extension PaneContainerViewController {
     // Active state is managed by updateHandleActiveStates (left-side neighbor === focused column).
     // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
     handle.onDrag = { [weak self, weak column] deltaX in
-      guard let self, let column, let constraint = column.widthConstraint else { return }
+      // `self` is captured weakly to break the retain cycle with the
+      // handle's stored closure; the body site only reaches for the
+      // type via `Self.minPaneWidth`, so a `!= nil` liveness check
+      // is sufficient.
+      guard self != nil, let column, let constraint = column.widthConstraint else { return }
       // Folded columns are pinned by an upgraded-to-required
       // `widthConstraint`; mutating the constant from drag would
       // either no-op or write a value that survives past unfold.

@@ -125,7 +125,7 @@ public final class Bookmarks {
   }
 
   private func runMigrations() {
-    guard let db else { return }
+    guard db != nil else { return }
     var current = readSchemaVersion()
 
     // v0 → v1: introduce folders. Pre-v1 schemas have either no

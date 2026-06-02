@@ -212,7 +212,16 @@ func locateBundleIdentifier() -> String? {
   var bufSize: UInt32 = 4096
   var buf = [CChar](repeating: 0, count: Int(bufSize))
   guard _NSGetExecutablePath(&buf, &bufSize) == 0 else { return nil }
-  let exePath = String(cString: buf)
+  // The `[CChar]` form of `String(cString:)` is deprecated; the
+  // pointer-taking overload still works for null-terminated buffers
+  // straight out of a Darwin call. Empty-buffer is theoretically
+  // impossible here (we allocated 4096 bytes above), but route
+  // through a guard so the assumption is local and not a forced
+  // unwrap on every read.
+  guard let exePath = (buf.withUnsafeBufferPointer { ptr -> String? in
+    guard let base = ptr.baseAddress else { return nil }
+    return String(cString: base)
+  }) else { return nil }
   guard let resolved = realpath(exePath, nil) else { return nil }
   defer { free(resolved) }
   var url = URL(fileURLWithPath: String(cString: resolved))

@@ -1926,11 +1926,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // Resolution order: NSError userInfo (most precise when set) →
     // tracker captured in `decidePolicyFor` (covers errors that don't
     // populate userInfo) → live `webView.url` (cleared on some
-    // provisional failures, so it's the weakest signal).
+    // provisional failures, so it's the weakest signal). The legacy
+    // `NSURLErrorFailingURLStringErrorKey` fallback was dropped after
+    // its macOS 15.4 deprecation; the URL-typed
+    // `NSURLErrorFailingURLErrorKey` carries the same value on
+    // anything we still target.
     let attemptedURL: URL? =
       (nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
-      ?? (nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String)
-        .flatMap(URL.init(string:))
       ?? lastAttemptedURL
       ?? webView.url
     // Reload after an unresolvable `webkit-extension://` URL stays on

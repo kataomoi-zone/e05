@@ -214,7 +214,9 @@ extension PaneContainerViewController {
     }
 
     animatePaneLayoutChange(
-      completion: animated ? { [column] in column.containerView.alphaValue = 1 } : nil
+      completion: animated
+        ? { @MainActor @Sendable [column] in column.containerView.alphaValue = 1 }
+        : nil
     ) {
       wc.animator().constant = defaultPaneWidth
     }
@@ -1309,7 +1311,9 @@ extension PaneContainerViewController {
       }
 
       animatePaneLayoutChange(
-        completion: animated ? { [column] in column.containerView.alphaValue = 1 } : nil
+        completion: animated
+          ? { @MainActor @Sendable [column] in column.containerView.alphaValue = 1 }
+          : nil
       ) {
         wc.animator().constant = targetWidth
       }

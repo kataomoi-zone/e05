@@ -461,9 +461,15 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
     }, completionHandler: { [weak self] in
       // A `show` arriving mid-fade bumps the generation; bail when
       // ours doesn't match so we don't blank out the just-revealed
-      // panel.
-      guard let self, self.hideGeneration == myGeneration else { return }
-      self.panel?.orderOut(nil)
+      // panel. `NSAnimationContext` documents that the completion
+      // fires on the main thread, but the closure type is
+      // `@Sendable` at the API boundary — bridge once into
+      // MainActor isolation so the reads of `hideGeneration` /
+      // `panel` are statically expressible.
+      MainActor.assumeIsolated {
+        guard let self, self.hideGeneration == myGeneration else { return }
+        self.panel?.orderOut(nil)
+      }
     })
     if let token = scrollObserver {
       NotificationCenter.default.removeObserver(token)
