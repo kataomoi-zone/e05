@@ -1203,6 +1203,34 @@ enum ManifestRewriter {
           console.log('[e05/bg-shim] chrome.contextMenus.update wrapped at', location.href);
         }
       } catch (e) { console.warn('[e05/bg-shim] contextMenus.update wrap failed:', e); }
+      // chrome.tabs.create: 1Password (and likely other Chrome-first
+      // extensions) reopen their first-run migration / welcome pages
+      // on every bg init because the in-extension storage flag they
+      // use to gate the redirect does not persist the same way as in
+      // Chrome. The user-visible result is two extension tabs
+      // sprouting on every e05 launch. Suppress only calls that
+      // target an extension's own `/page/migration` or
+      // `/page/welcome` route — anything else (including extension
+      // settings pages with a different fragment) passes through.
+      try {
+        if (chrome.tabs && typeof chrome.tabs.create === 'function') {
+          var origTabsCreate = chrome.tabs.create.bind(chrome.tabs);
+          chrome.tabs.create = function(opts, cb) {
+            var url = (opts && opts.url) || '';
+            var isExtPage = url.indexOf('webkit-extension://') === 0
+              || url.indexOf('chrome-extension://') === 0;
+            var isOnboarding = url.indexOf('/page/migration') >= 0
+              || url.indexOf('/page/welcome') >= 0;
+            if (isExtPage && isOnboarding) {
+              console.log('[e05/bg-shim] tabs.create onboarding suppressed:', url);
+              if (typeof cb === 'function') cb({});
+              return Promise.resolve({});
+            }
+            return origTabsCreate(opts, cb);
+          };
+          console.log('[e05/bg-shim] chrome.tabs.create onboarding suppressor wrapped at', location.href);
+        }
+      } catch (e) { console.warn('[e05/bg-shim] tabs.create suppressor failed:', e); }
     })();
     """
 }
