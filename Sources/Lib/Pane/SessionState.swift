@@ -50,8 +50,12 @@ public struct SessionState: Codable {
     /// Fold flag at save time. Folded columns persist with `width`
     /// already at the narrow strip value; the pre-fold width lives
     /// in `unfoldedWidth` so a restore can return the column to its
-    /// original size on unfold. Defaults make a session file written
-    /// before fold persistence existed decode without the flag.
+    /// original size on unfold. Both are required keys at decode
+    /// time — Codable's auto-synthesised init treats missing
+    /// non-Optional keys as an error regardless of the source-level
+    /// default, so pre-fold session.json is dropped by `SessionState.load`'s
+    /// decode `catch` (logs + returns nil) rather than being decoded
+    /// with the defaults filled in.
     public var isFolded: Bool = false
     public var unfoldedWidth: Double = 0
   }
@@ -118,8 +122,30 @@ public struct SessionState: Codable {
 
   public static func load() -> SessionState? {
     let path = sessionFilePath
-    guard let data = try? Data(contentsOf: path) else { return nil }
-    return try? JSONDecoder().decode(SessionState.self, from: data)
+    // Read + decode are wrapped in explicit do/catch so an
+    // unreadable / unparseable session.json leaves an audit trail
+    // instead of silently disappearing. Returning nil is the
+    // existing contract (caller falls back to a fresh layout); the
+    // log gives the next launch's investigator a starting point.
+    let data: Data
+    do {
+      data = try Data(contentsOf: path)
+    } catch {
+      if (error as? CocoaError)?.code != .fileReadNoSuchFile {
+        logger.warning(
+          "[session/load] could not read \(path.lastPathComponent): \(error.localizedDescription)"
+        )
+      }
+      return nil
+    }
+    do {
+      return try JSONDecoder().decode(SessionState.self, from: data)
+    } catch {
+      logger.warning(
+        "[session/load] dropping unreadable session.json: \(error.localizedDescription)"
+      )
+      return nil
+    }
   }
 
   // MARK: - Delete
