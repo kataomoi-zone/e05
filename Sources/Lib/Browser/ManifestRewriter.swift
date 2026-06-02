@@ -519,6 +519,54 @@ enum ManifestRewriter {
       )
     }
 
+    // 1Password popup CSP: popup/index.html ships its own inline
+    // `<meta http-equiv="Content-Security-Policy">` that overrides
+    // the manifest-level CSP. The inline policy declares
+    // `default-src 'none'` without an object-src, which blocks the
+    // popup's `<object data="data:image/svg+xml;…">` inline icon
+    // embeds (visible as "Refused to load data:image/svg+xml" in
+    // the popup console, with icons missing from the rendered UI).
+    // enrichCSP's manifest-side object-src patch does not reach the
+    // popup because the inline meta wins, so patch the meta string
+    // here too. Idempotent — the rewritten substring carries
+    // `object-src` so the next run skips.
+    let popupHTMLURL = dir.appendingPathComponent("popup/index.html")
+    if fm.fileExists(atPath: popupHTMLURL.path) {
+      // Read / write are wrapped in an explicit do/catch so an I/O
+      // failure (disk full, attribute change between runs, …)
+      // surfaces in the log instead of leaving an un-patched popup
+      // running silently with broken inline SVG icons.
+      do {
+        var html = try String(contentsOf: popupHTMLURL, encoding: .utf8)
+        if html.contains("Content-Security-Policy")
+          && !html.contains("object-src 'self' data:")
+        {
+          // The original CSP ends with `script-src 'self';` —
+          // append `object-src 'self' data:` right after so inline
+          // SVG via <object> loads. If the anchor is gone the
+          // patch is skipped with an error log so the regression
+          // is observable.
+          let needle = "script-src 'self';"
+          let replacement = "script-src 'self'; object-src 'self' data:;"
+          if let range = html.range(of: needle) {
+            html.replaceSubrange(range, with: replacement)
+            try Data(html.utf8).write(to: popupHTMLURL, options: [.atomic])
+            logger.info(
+              "Patched popup/index.html CSP with object-src 'self' data: at \(dir.lastPathComponent, privacy: .public)"
+            )
+          } else {
+            logger.error(
+              "popup/index.html CSP patch skipped: expected 'script-src 'self';' anchor not found at \(dir.lastPathComponent, privacy: .public) — 1Password may have changed the policy shape"
+            )
+          }
+        }
+      } catch {
+        logger.error(
+          "popup/index.html CSP patch failed at \(dir.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
+        )
+      }
+    }
+
     // Before stripping `key`, compute the Chrome-style extension ID
     // it would have produced and save it next to the manifest as
     // `_e05_caller_origin`. Native messaging hosts (1Password
