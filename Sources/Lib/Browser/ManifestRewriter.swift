@@ -1090,19 +1090,19 @@ enum ManifestRewriter {
         }
       } catch (e) { console.warn('[e05/bg-shim] commands wrap failed:', e); }
       // chrome.privacy: Apple's WKWebExtension does not bridge the
-      // API at all, but 1Password's bg unconditionally touches
-      // `chrome.privacy.services.{passwordSavingEnabled,
-      // autofillEnabled, autofillAddressEnabled,
-      // autofillCreditCardEnabled}` during init to negotiate
-      // password-saving / autofill ownership with the host browser.
-      // Without a stub the first property access throws TypeError,
-      // the rejection bubbles up unhandled, bg init halts mid-way,
-      // and the popup hangs forever waiting for a config message
-      // that bg never gets around to sending. Default each value to
-      // false with `controllable_by_this_extension` so callers see
-      // "browser is not saving passwords / autofilling — feel free
-      // to take over"; set/clear are no-ops since there is no real
-      // preference store to mutate.
+      // API at all. 1Password touches `chrome.privacy.services.*`
+      // during init, but other extensions reach for different keys
+      // (chrome.privacy.network.networkPredictionEnabled,
+      // chrome.privacy.services.safeBrowsingEnabled, …). Hard-coding
+      // 4 keys would re-introduce the original TypeError as soon as
+      // a second extension is installed. Wrap each namespace in a
+      // Proxy whose `get` trap lazily materialises a ChromeSetting
+      // stub for any unknown key — the seeded 1Password keys stay
+      // pre-instantiated so the common path skips the trap. Default
+      // each value to false with `controllable_by_this_extension` so
+      // callers read "browser is not handling, feel free to take
+      // over"; set/clear are no-ops since there is no preference
+      // store behind the stub.
       try {
         if (!chrome.privacy) {
           var makeChromeSetting = function(defaultValue) {
@@ -1126,15 +1126,30 @@ enum ManifestRewriter {
               onChange: stubEvent(),
             };
           };
+          var privacyHandler = {
+            get: function(target, prop) {
+              if (prop in target) return target[prop];
+              // Symbol access (debugger / inspector internals) must
+              // not generate a stub — return undefined so the host
+              // sees a plain object shape.
+              if (typeof prop === 'symbol') return undefined;
+              var stub = makeChromeSetting(false);
+              target[prop] = stub;
+              console.debug('[e05/bg-shim] chrome.privacy auto-stub:', prop);
+              return stub;
+            },
+          };
           chrome.privacy = {
-            network: {},
-            services: {
+            network: new Proxy({}, privacyHandler),
+            services: new Proxy({
+              // Pre-seed 1Password's known keys so the common path
+              // doesn't pay the trap cost on every read.
               passwordSavingEnabled: makeChromeSetting(false),
               autofillEnabled: makeChromeSetting(false),
               autofillAddressEnabled: makeChromeSetting(false),
               autofillCreditCardEnabled: makeChromeSetting(false),
-            },
-            websites: {},
+            }, privacyHandler),
+            websites: new Proxy({}, privacyHandler),
           };
           console.log('[e05/bg-shim] chrome.privacy stubbed at', location.href);
         }
