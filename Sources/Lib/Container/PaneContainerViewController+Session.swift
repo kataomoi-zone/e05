@@ -33,9 +33,26 @@ extension PaneContainerViewController {
       return priorCount > 0 ? priorCount - 1 : 0
     }()
 
-    let workspaceStates = persistedWorkspaces.map { _, ws -> SessionState.WorkspaceState in
-      let columnStates = ws.columns.map { column -> SessionState.ColumnState in
-        let paneStates = column.panes.map { pane -> SessionState.PaneState in
+    // Build workspace states with extension-internal URLs pruned.
+    // WKWebExtension rotates the `<uuid>` in `webkit-extension://`
+    // every launch, so persisting one would point at a dead UUID on
+    // the next run and surface as an ERR_EXTENSION_NOT_FOUND ghost
+    // pane the user can't recover. Drop those panes at save time;
+    // legacy session.json contents already on disk fall through to
+    // the restore-side `loadExtensionUnavailableError` path and are
+    // self-cleaning on the next save round-trip.
+    var persistedIds = Set<ULID>()
+    let workspaceStates = persistedWorkspaces.compactMap {
+      _, ws -> SessionState.WorkspaceState? in
+      var columnStates: [SessionState.ColumnState] = []
+      var keptColumnOriginalIndexes: [Int] = []
+      for (colIdx, column) in ws.columns.enumerated() {
+        var paneStates: [SessionState.PaneState] = []
+        var keptPaneOriginalIndexes: [Int] = []
+        for (paneIdx, pane) in column.panes.enumerated() {
+          if pane.address.url.scheme == PaneAddress.extensionScheme {
+            continue
+          }
           var state = SessionState.PaneState(address: pane.address.description)
           if let bv = pane.browserView {
             if !pane.title.isEmpty { state.title = pane.title }
@@ -48,46 +65,66 @@ extension PaneContainerViewController {
               ? bv.suspendedInteractionState
               : bv.webView.interactionState as? Data
           }
-          return state
+          paneStates.append(state)
+          keptPaneOriginalIndexes.append(paneIdx)
         }
+        if paneStates.isEmpty { continue }
+
         let width = Double(column.widthConstraint?.constant ?? defaultPaneWidth)
 
+        // Height ratios are computed against the first surviving pane
+        // after the prune, not the original first pane, so the ratio
+        // chain stays consistent with the column being restored.
         var heightRatios: [Double] = []
-        if column.panes.count > 1, let firstHeight = column.panes.first?.containerView.frame.height, firstHeight > 0 {
-          heightRatios = column.panes.dropFirst().map { pane in
+        let survivors = keptPaneOriginalIndexes.map { column.panes[$0] }
+        if survivors.count > 1,
+          let firstHeight = survivors.first?.containerView.frame.height,
+          firstHeight > 0
+        {
+          heightRatios = survivors.dropFirst().map { pane in
             pane.containerView.frame.height / firstHeight
           }
         }
 
-        return SessionState.ColumnState(
-          id: column.id.string,
-          panes: paneStates,
-          focusedPaneIndex: column.focusedPaneIndex,
-          width: width,
-          heightRatios: heightRatios,
-          isFolded: column.isFolded,
-          unfoldedWidth: Double(column.unfoldedWidth)
-        )
+        // Clamp focusedPaneIndex onto the survivor array. If the
+        // focused pane was itself pruned, fall back to 0 — there is
+        // no meaningful "next-closest" survivor to favour.
+        let clampedPaneFocus =
+          keptPaneOriginalIndexes.firstIndex(of: column.focusedPaneIndex) ?? 0
+
+        columnStates.append(
+          SessionState.ColumnState(
+            id: column.id.string,
+            panes: paneStates,
+            focusedPaneIndex: clampedPaneFocus,
+            width: width,
+            heightRatios: heightRatios,
+            isFolded: column.isFolded,
+            unfoldedWidth: Double(column.unfoldedWidth)
+          ))
+        keptColumnOriginalIndexes.append(colIdx)
+        persistedIds.insert(column.id)
       }
+      if columnStates.isEmpty { return nil }
+
+      // Clamp focusedColumnIndex symmetrically with the pane-level
+      // logic above.
+      let clampedColFocus =
+        keptColumnOriginalIndexes.firstIndex(of: ws.focusedColumnIndex) ?? 0
+
+      persistedIds.insert(ws.id)
       return SessionState.WorkspaceState(
         id: ws.id.string,
         columns: columnStates,
-        focusedColumnIndex: ws.focusedColumnIndex,
+        focusedColumnIndex: clampedColFocus,
         scrollX: Double(ws.scrollX)
       )
     }
 
-    // Filter the in-memory collapsed set down to ids that belong to
-    // a persisted (= non-private) workspace or one of its columns.
-    // Private-workspace ids are skipped because the workspace itself
-    // isn't persisted; restoring such an id would be a dead entry.
-    var persistedIds = Set<ULID>()
-    for (_, ws) in persistedWorkspaces {
-      persistedIds.insert(ws.id)
-      for column in ws.columns {
-        persistedIds.insert(column.id)
-      }
-    }
+    // Filter the in-memory collapsed set down to ids that survived
+    // the persistence filters. Private-workspace ids and pruned
+    // column ids are dropped because their containers aren't on
+    // disk — restoring such an id would be a dead entry.
     let collapsedIds: [String] = (sidebarVC?.collapsedItemIds() ?? [])
       .filter(persistedIds.contains)
       .map(\.string)
