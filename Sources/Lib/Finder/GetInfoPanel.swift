@@ -138,8 +138,9 @@ public final class GetInfoPanel: NSPanel, NSWindowDelegate {
   private func makeContent() -> NSView {
     let isDirectory =
       (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    let kind = (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey])
-      .localizedTypeDescription) ?? "—"
+    let kind =
+      (try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey])
+        .localizedTypeDescription) ?? "—"
     let fileBytes: Int64? =
       isDirectory
       ? nil

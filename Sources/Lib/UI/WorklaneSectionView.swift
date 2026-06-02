@@ -355,8 +355,7 @@ final class WorklaneSectionView: NSView {
     let accentColor: (Int) -> NSColor
     let paneTitle: (PaneModel) -> String
     let paneIcon: (PaneModel) -> NSImage?
-    let paneAudioState:
-      (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
+    let paneAudioState: (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
     let paneIsSuspended: (PaneModel) -> Bool
     let paneIsLoading: (PaneModel) -> Bool
     /// Persisted collapse predicate. Receives either a workspace or
@@ -386,16 +385,18 @@ final class WorklaneSectionView: NSView {
     /// where the moved pane should land (`nil` = append at the
     /// trailing edge). Used for both cross-workspace moves and
     /// in-place column splits within the same workspace.
-    let onMovePaneToWorkspace: (
-      _ paneId: ULID, _ workspaceId: ULID, _ position: Int?
-    ) -> Void
+    let onMovePaneToWorkspace:
+      (
+        _ paneId: ULID, _ workspaceId: ULID, _ position: Int?
+      ) -> Void
     /// Commit a pane move into an existing column. `position` is
     /// the pane index inside the target column (`nil` = append at
     /// the trailing edge). Covers in-column reorder (source column
     /// == target column) and column merge (different columns).
-    let onMovePaneToColumn: (
-      _ paneId: ULID, _ columnId: ULID, _ position: Int?
-    ) -> Void
+    let onMovePaneToColumn:
+      (
+        _ paneId: ULID, _ columnId: ULID, _ position: Int?
+      ) -> Void
     /// Fired once per drag session when the user hovers a pane
     /// over a workspace whose private flag differs from the
     /// source's. The container surfaces a toast explaining the
@@ -1067,7 +1068,8 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     // than silently treating the drop as "append at end".
     guard let oldIndex = liveOrder.firstIndex(of: draggedId) else {
       logger.error(
-        "[worklane/drag] drop with id no longer in liveOrder id=\(draggedId.string, privacy: .public)")
+        "[worklane/drag] drop with id no longer in liveOrder id=\(draggedId.string, privacy: .public)"
+      )
       return false
     }
     var newOrder = liveOrder
@@ -1794,8 +1796,9 @@ extension WorklaneSectionView: NSMenuDelegate {
     input: ReloadInput, titleOverride: String? = nil,
     isEnabled: Bool = true
   ) {
-    guard let action = input.paneActionsProvider()
-      .first(where: { $0.id == actionId })
+    guard
+      let action = input.paneActionsProvider()
+        .first(where: { $0.id == actionId })
     else { return }
     let item = NSMenuItem(
       title: titleOverride ?? action.menuTitle ?? action.title,
@@ -1869,8 +1872,9 @@ extension WorklaneSectionView: NSMenuDelegate {
   private func appendColumnAction(
     to menu: NSMenu, actionId: String, columnId: ULID, input: ReloadInput
   ) {
-    guard let action = input.paneActionsProvider()
-      .first(where: { $0.id == actionId })
+    guard
+      let action = input.paneActionsProvider()
+        .first(where: { $0.id == actionId })
     else { return }
     let item = NSMenuItem(
       title: action.menuTitle ?? action.title,

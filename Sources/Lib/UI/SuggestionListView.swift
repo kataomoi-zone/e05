@@ -558,12 +558,14 @@ private final class SuggestionCellView: NSView {
       iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
 
       primaryLabel.topAnchor.constraint(equalTo: topAnchor),
-      primaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
+      primaryLabel.trailingAnchor.constraint(
+        lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
       secondaryLabel.leadingAnchor.constraint(equalTo: primaryLabel.leadingAnchor),
       secondaryLabel.topAnchor.constraint(equalTo: primaryLabel.bottomAnchor, constant: 2),
       secondaryLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
-      secondaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
+      secondaryLabel.trailingAnchor.constraint(
+        lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
       accessoryLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
       accessoryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),

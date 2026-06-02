@@ -92,24 +92,6 @@ public final class AdBlocker {
     /// `category` (`.core` true, `.optional` false) but the two stay
     /// decoupled so a future category can pick its own default.
     public let defaultEnabled: Bool
-
-    init(
-      id: String,
-      name: String,
-      url: URL,
-      cacheFilename: String,
-      homepage: URL?,
-      category: SourceCategory,
-      defaultEnabled: Bool
-    ) {
-      self.id = id
-      self.name = name
-      self.url = url
-      self.cacheFilename = cacheFilename
-      self.homepage = homepage
-      self.category = category
-      self.defaultEnabled = defaultEnabled
-    }
   }
 
   /// The shipped catalog. Default sources cover global ads + privacy +

@@ -362,7 +362,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
   private static let iconConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
 
-  private static func makeIconButton(symbol: String, fallback: String, accessibility: String) -> HoverIconButton {
+  private static func makeIconButton(symbol: String, fallback: String, accessibility: String)
+    -> HoverIconButton
+  {
     let button = HoverIconButton()
     if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)?
       .withSymbolConfiguration(iconConfig)
@@ -1043,7 +1045,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     // Remove observer for old window, add for new
-    NotificationCenter.default.removeObserver(self, name: NSWindow.didResizeNotification, object: nil)
+    NotificationCenter.default.removeObserver(
+      self, name: NSWindow.didResizeNotification, object: nil)
     if let window {
       NotificationCenter.default.addObserver(
         self, selector: #selector(windowDidResize),
@@ -1666,7 +1669,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     isPreviewingSelection = false
   }
 
-  public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector) -> Bool {
+  public func control(_ control: NSControl, textView _: NSTextView, doCommandBy selector: Selector)
+    -> Bool
+  {
     if selector == #selector(insertNewline(_:)) {
       if !suggestionList.isHidden,
         let index = suggestionList.selectedIndex,
@@ -1691,7 +1696,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
           // field already holds the previewed URL, so the host
           // navigates to what the user could see — same outcome.
           onNavigate?(urlField.stringValue)
-        } else if selected.isSearch, let liveSearch = PaneAddress.searchURL(query: urlField.stringValue) {
+        } else if selected.isSearch,
+          let liveSearch = PaneAddress.searchURL(query: urlField.stringValue)
+        {
           // No-lag search row: build the search URL directly so the
           // suggestion builder's stricter URL-vs-search classification
           // wins over the host's looser one — without this, a no-space

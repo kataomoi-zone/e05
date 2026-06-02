@@ -657,11 +657,11 @@ public final class Bookmarks {
     return query(
       sql:
         entryColumns + """
-        FROM bookmarks
-        WHERE is_folder = 0
-          AND (url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')
-        ORDER BY created_at DESC LIMIT ?
-        """,
+          FROM bookmarks
+          WHERE is_folder = 0
+            AND (url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')
+          ORDER BY created_at DESC LIMIT ?
+          """,
       bind: { stmt in
         _ = pattern.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
         _ = pattern.withCString { sqlite3_bind_text(stmt, 2, $0, -1, SQLITE_TRANSIENT) }
@@ -728,13 +728,15 @@ public final class Bookmarks {
     var entries: [Entry] = []
     while sqlite3_step(stmt) == SQLITE_ROW {
       let id = sqlite3_column_int64(stmt, 0)
-      let url: String? = sqlite3_column_type(stmt, 1) == SQLITE_NULL
+      let url: String? =
+        sqlite3_column_type(stmt, 1) == SQLITE_NULL
         ? nil
         : sqlite3_column_text(stmt, 1).map { String(cString: $0) }
       guard let titlePtr = sqlite3_column_text(stmt, 2) else { continue }
       let title = String(cString: titlePtr)
       let createdAt = Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
-      let parentId: Int64? = sqlite3_column_type(stmt, 4) == SQLITE_NULL
+      let parentId: Int64? =
+        sqlite3_column_type(stmt, 4) == SQLITE_NULL
         ? nil
         : sqlite3_column_int64(stmt, 4)
       let isFolder = sqlite3_column_int(stmt, 5) != 0

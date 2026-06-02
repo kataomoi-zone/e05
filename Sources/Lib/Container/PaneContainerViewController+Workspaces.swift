@@ -63,8 +63,12 @@ extension PaneContainerViewController {
     completion: (@MainActor @Sendable () -> Void)? = nil
   ) {
     let targetCol = workspaces[safe: index]?.focusedColumnIndex ?? -1
-    let targetPane = workspaces[safe: index]?.columns[safe: workspaces[safe: index]?.focusedColumnIndex ?? 0]?.focusedPaneIndex ?? -1
-    logger.info("switchWorkspace(to:\(index)) entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), targetCol=\(targetCol) targetPane=\(targetPane)")
+    let targetPane =
+      workspaces[safe: index]?.columns[safe: workspaces[safe: index]?.focusedColumnIndex ?? 0]?
+      .focusedPaneIndex ?? -1
+    logger.info(
+      "switchWorkspace(to:\(index)) entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), targetCol=\(targetCol) targetPane=\(targetPane)"
+    )
     guard index != focusedWorkspaceIndex,
       workspaces.indices.contains(index)
     else {
@@ -125,7 +129,9 @@ extension PaneContainerViewController {
     guard let fromTop = fromVC.topConstraint,
       let toTop = toVC.topConstraint
     else {
-      logger.error("animateSlide missing constraints — from=\(fromVC.topConstraint == nil ? "nil" : "ok", privacy: .public) to=\(toVC.topConstraint == nil ? "nil" : "ok", privacy: .public)")
+      logger.error(
+        "animateSlide missing constraints — from=\(fromVC.topConstraint == nil ? "nil" : "ok", privacy: .public) to=\(toVC.topConstraint == nil ? "nil" : "ok", privacy: .public)"
+      )
       completion?()
       return
     }
@@ -160,7 +166,9 @@ extension PaneContainerViewController {
     }
     view.layoutSubtreeIfNeeded()
 
-    logger.debug("animateSlide start: slidingUp=\(slidingUp ? "yes" : "no", privacy: .public) fromConst=\(fromTop.constant) toStart=\(toTop.constant) h=\(h)")
+    logger.debug(
+      "animateSlide start: slidingUp=\(slidingUp ? "yes" : "no", privacy: .public) fromConst=\(fromTop.constant) toStart=\(toTop.constant) h=\(h)"
+    )
 
     NSAnimationContext.runAnimationGroup(
       { ctx in
@@ -231,7 +239,9 @@ extension PaneContainerViewController {
   /// one that lands below slides up (which is also the `after == nil`
   /// append case, since the new tail is always below current focus).
   public func createWorkspace(isPrivate: Bool = false, after: ULID? = nil) {
-    logger.info("createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)")
+    logger.info(
+      "createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)"
+    )
 
     dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
@@ -260,7 +270,8 @@ extension PaneContainerViewController {
         insertIndex = refIdx + 1
       } else {
         logger.debug(
-          "[workspaces/create] after id=\(after.string, privacy: .public) not found; falling back to append")
+          "[workspaces/create] after id=\(after.string, privacy: .public) not found; falling back to append"
+        )
         insertIndex = workspaces.count
       }
     } else {
@@ -278,7 +289,8 @@ extension PaneContainerViewController {
     // before it's released; release builds compile this away.
     assert(
       focusedWorkspaceIndex == previousFocusedIndex,
-      "createWorkspace: focusedWorkspaceIndex mutated between snapshot and slide-direction comparison")
+      "createWorkspace: focusedWorkspaceIndex mutated between snapshot and slide-direction comparison"
+    )
 
     // Advance focus so `addColumn` / `rebuildStackView` target the new
     // workspace's stackView via the computed accessors.
@@ -301,7 +313,9 @@ extension PaneContainerViewController {
   /// stashed surfaces belong to the workspace we're discarding) and
   /// terminates the app when the last workspace is gone.
   public func closeCurrentWorkspace() {
-    logger.info("closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)")
+    logger.info(
+      "closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)"
+    )
     dismissAllFindSessions(in: currentWorkspace)
     focusedPane?.urlBar.dismissSuggestionDropdown()
     let closing = currentWorkspace
@@ -377,7 +391,9 @@ extension PaneContainerViewController {
     }
     let closing = workspaces[index]
     let closingVC = workspaceVCs[index]
-    logger.info("closeWorkspace(at:\(index)) non-current: focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)")
+    logger.info(
+      "closeWorkspace(at:\(index)) non-current: focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)"
+    )
 
     for column in closing.columns {
       for pane in column.panes {
@@ -558,7 +574,9 @@ extension PaneContainerViewController {
     // ⌘N / ⌘⇧N in the desired workspace instead.
     let sourceIsPrivate = sourceWs.isPrivate
     if sourceIsPrivate != workspaces[target].isPrivate {
-      logger.error("movePane blocked: cross-private-boundary move (source=\(sourceIsPrivate ? "private" : "public", privacy: .public), target=\(self.workspaces[target].isPrivate ? "private" : "public", privacy: .public))")
+      logger.error(
+        "movePane blocked: cross-private-boundary move (source=\(sourceIsPrivate ? "private" : "public", privacy: .public), target=\(self.workspaces[target].isPrivate ? "private" : "public", privacy: .public))"
+      )
       showCrossPrivateBoundaryToast()
       return
     }
@@ -567,7 +585,8 @@ extension PaneContainerViewController {
     // visible — for a background source the persisted `scrollX` is
     // already accurate (last switch away captured it).
     if sourceIndex == originalFocusedIndex {
-      sourceWs.scrollX = sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+      sourceWs.scrollX =
+        sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
     }
     preserveSurfaces(in: sourceWs)
 
@@ -885,7 +904,8 @@ extension PaneContainerViewController {
     // are readable side-by-side in Console.app.
     if sourceWs.isPrivate != targetWs.isPrivate {
       logger.error(
-        "movePane(toColumnId:) blocked: cross-private-boundary move (source=\(sourceWs.isPrivate ? "private" : "public", privacy: .public), target=\(targetWs.isPrivate ? "private" : "public", privacy: .public))")
+        "movePane(toColumnId:) blocked: cross-private-boundary move (source=\(sourceWs.isPrivate ? "private" : "public", privacy: .public), target=\(targetWs.isPrivate ? "private" : "public", privacy: .public))"
+      )
       showCrossPrivateBoundaryToast()
       return
     }
@@ -1055,7 +1075,9 @@ extension PaneContainerViewController {
   /// suppressed here so the workspace's saved offset isn't clobbered.
   func restoreFocusInCurrentWorkspace() {
     let ws = currentWorkspace
-    logger.debug("restoreFocusInCurrentWorkspace: wsId=\(String(describing: ws.id), privacy: .public) columns=\(ws.columns.count) wsFocusedCol=\(ws.focusedColumnIndex) wsIdx=\(self.focusedWorkspaceIndex)")
+    logger.debug(
+      "restoreFocusInCurrentWorkspace: wsId=\(String(describing: ws.id), privacy: .public) columns=\(ws.columns.count) wsFocusedCol=\(ws.focusedColumnIndex) wsIdx=\(self.focusedWorkspaceIndex)"
+    )
     guard !ws.columns.isEmpty else { return }
     let colIdx = min(max(ws.focusedColumnIndex, 0), ws.columns.count - 1)
     let column = ws.columns[colIdx]

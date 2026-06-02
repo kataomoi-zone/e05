@@ -93,7 +93,8 @@ extension PaneContainerViewController {
     urlBarHoverInGeneration &+= 1
     let gen = urlBarHoverInGeneration
     urlBarHoverInTimer?.invalidate()
-    logger.debug("scheduleURLBarHoverIn pane=\(String(describing: pane.id), privacy: .public) gen=\(gen)")
+    logger.debug(
+      "scheduleURLBarHoverIn pane=\(String(describing: pane.id), privacy: .public) gen=\(gen)")
     urlBarHoverInTimer = Timer.scheduledTimer(
       withTimeInterval: Self.urlBarHoverInDelay,
       repeats: false
@@ -149,7 +150,8 @@ extension PaneContainerViewController {
     urlBarHoverOutGeneration &+= 1
     let gen = urlBarHoverOutGeneration
     urlBarHoverOutTimer?.invalidate()
-    logger.debug("scheduleURLBarHoverOut pane=\(String(describing: pane.id), privacy: .public) gen=\(gen)")
+    logger.debug(
+      "scheduleURLBarHoverOut pane=\(String(describing: pane.id), privacy: .public) gen=\(gen)")
     urlBarHoverOutTimer = Timer.scheduledTimer(
       withTimeInterval: Self.urlBarHoverOutDelay,
       repeats: false

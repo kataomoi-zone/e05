@@ -23,19 +23,22 @@ extension FinderPaneView {
       // behaviour) and surface only directory-level actions.
       let pasteCount = pasteableFileURLCount()
       let pasteTitle = pasteCount > 1 ? "Paste \(pasteCount) Items" : "Paste Item"
-      menu.addItem(makeContextMenuItem(
-        title: pasteTitle,
-        symbolName: "doc.on.clipboard",
-        action: pasteCount > 0 ? #selector(contextMenuPaste(_:)) : nil))
-      menu.addItem(makeContextMenuItem(
-        title: "New Folder",
-        symbolName: "folder.badge.plus",
-        action: #selector(contextMenuNewFolder(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: pasteTitle,
+          symbolName: "doc.on.clipboard",
+          action: pasteCount > 0 ? #selector(contextMenuPaste(_:)) : nil))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "New Folder",
+          symbolName: "folder.badge.plus",
+          action: #selector(contextMenuNewFolder(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Show in Finder",
-        symbolName: "finder",
-        action: #selector(contextMenuShowInFinder(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Show in Finder",
+          symbolName: "finder",
+          action: #selector(contextMenuShowInFinder(_:))))
       return menu
     }
 
@@ -43,61 +46,74 @@ extension FinderPaneView {
     let count = urls.count
     if count == 1 {
       let name = urls[0].lastPathComponent
-      menu.addItem(makeContextMenuItem(
-        title: "Open",
-        symbolName: "arrow.up.forward.square",
-        action: #selector(contextMenuOpen(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Open With...",
-        symbolName: "arrow.up.forward.app",
-        action: #selector(contextMenuOpenWith(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Show in Finder",
-        symbolName: "finder",
-        action: #selector(contextMenuShowInFinder(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Open",
+          symbolName: "arrow.up.forward.square",
+          action: #selector(contextMenuOpen(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Open With...",
+          symbolName: "arrow.up.forward.app",
+          action: #selector(contextMenuOpenWith(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Show in Finder",
+          symbolName: "finder",
+          action: #selector(contextMenuShowInFinder(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Move to Trash",
-        symbolName: "trash",
-        action: #selector(contextMenuTrash(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Move to Trash",
+          symbolName: "trash",
+          action: #selector(contextMenuTrash(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Get Info",
-        symbolName: "info.circle",
-        action: #selector(contextMenuGetInfo(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Rename",
-        symbolName: "pencil",
-        action: #selector(contextMenuRename(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Compress \"\(name)\"",
-        symbolName: "archivebox",
-        action: #selector(contextMenuCompress(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Duplicate",
-        symbolName: "plus.square.on.square",
-        action: #selector(contextMenuDuplicate(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Make Alias",
-        symbolName: "arrow.up.right.square",
-        action: #selector(contextMenuMakeAlias(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Quick Look",
-        symbolName: "eye",
-        action: #selector(contextMenuQuickLook(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Get Info",
+          symbolName: "info.circle",
+          action: #selector(contextMenuGetInfo(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Rename",
+          symbolName: "pencil",
+          action: #selector(contextMenuRename(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Compress \"\(name)\"",
+          symbolName: "archivebox",
+          action: #selector(contextMenuCompress(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Duplicate",
+          symbolName: "plus.square.on.square",
+          action: #selector(contextMenuDuplicate(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Make Alias",
+          symbolName: "arrow.up.right.square",
+          action: #selector(contextMenuMakeAlias(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Quick Look",
+          symbolName: "eye",
+          action: #selector(contextMenuQuickLook(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Copy \"\(name)\"",
-        symbolName: "doc.on.doc",
-        action: #selector(contextMenuCopy(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Copy \"\(name)\" as Pathname",
-        symbolName: "text.alignleft",
-        action: #selector(contextMenuCopyPathname(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Share...",
-        symbolName: "square.and.arrow.up",
-        action: #selector(contextMenuShare(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Copy \"\(name)\"",
+          symbolName: "doc.on.doc",
+          action: #selector(contextMenuCopy(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Copy \"\(name)\" as Pathname",
+          symbolName: "text.alignleft",
+          action: #selector(contextMenuCopyPathname(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Share...",
+          symbolName: "square.and.arrow.up",
+          action: #selector(contextMenuShare(_:))))
     } else {
       // Multi-select: omit "Open" (mass-open via the default app
       // across mixed folders/files is unintuitive) and "Rename"
@@ -105,59 +121,72 @@ extension FinderPaneView {
       // app for several files is a real workflow (five images in
       // Pixelmator, three logs in BBEdit) and Launch Services
       // batches them into a single launch.
-      menu.addItem(makeContextMenuItem(
-        title: "New Folder with Selection (\(count) Items)",
-        symbolName: "folder.badge.plus",
-        action: #selector(contextMenuNewFolderWithSelection(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "New Folder with Selection (\(count) Items)",
+          symbolName: "folder.badge.plus",
+          action: #selector(contextMenuNewFolderWithSelection(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Open With...",
-        symbolName: "arrow.up.forward.app",
-        action: #selector(contextMenuOpenWith(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Show in Finder",
-        symbolName: "finder",
-        action: #selector(contextMenuShowInFinder(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Open With...",
+          symbolName: "arrow.up.forward.app",
+          action: #selector(contextMenuOpenWith(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Show in Finder",
+          symbolName: "finder",
+          action: #selector(contextMenuShowInFinder(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Move to Trash",
-        symbolName: "trash",
-        action: #selector(contextMenuTrash(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Move to Trash",
+          symbolName: "trash",
+          action: #selector(contextMenuTrash(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Compress \(count) Items",
-        symbolName: "archivebox",
-        action: #selector(contextMenuCompress(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Duplicate",
-        symbolName: "plus.square.on.square",
-        action: #selector(contextMenuDuplicate(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Make Alias",
-        symbolName: "arrow.up.right.square",
-        action: #selector(contextMenuMakeAlias(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Quick Look",
-        symbolName: "eye",
-        action: #selector(contextMenuQuickLook(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Compress \(count) Items",
+          symbolName: "archivebox",
+          action: #selector(contextMenuCompress(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Duplicate",
+          symbolName: "plus.square.on.square",
+          action: #selector(contextMenuDuplicate(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Make Alias",
+          symbolName: "arrow.up.right.square",
+          action: #selector(contextMenuMakeAlias(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Quick Look",
+          symbolName: "eye",
+          action: #selector(contextMenuQuickLook(_:))))
       menu.addItem(.separator())
-      menu.addItem(makeContextMenuItem(
-        title: "Copy \(count) Items",
-        symbolName: "doc.on.doc",
-        action: #selector(contextMenuCopy(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Copy \(count) Items as Pathnames",
-        symbolName: "text.alignleft",
-        action: #selector(contextMenuCopyPathname(_:))))
-      menu.addItem(makeContextMenuItem(
-        title: "Share...",
-        symbolName: "square.and.arrow.up",
-        action: #selector(contextMenuShare(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Copy \(count) Items",
+          symbolName: "doc.on.doc",
+          action: #selector(contextMenuCopy(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Copy \(count) Items as Pathnames",
+          symbolName: "text.alignleft",
+          action: #selector(contextMenuCopyPathname(_:))))
+      menu.addItem(
+        makeContextMenuItem(
+          title: "Share...",
+          symbolName: "square.and.arrow.up",
+          action: #selector(contextMenuShare(_:))))
     }
     return menu
   }
 
-  private func makeContextMenuItem(title: String, symbolName: String, action: Selector?) -> NSMenuItem {
+  private func makeContextMenuItem(title: String, symbolName: String, action: Selector?)
+    -> NSMenuItem
+  {
     let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
     item.target = self
     item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)

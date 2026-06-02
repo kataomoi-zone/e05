@@ -164,7 +164,7 @@ struct GeneralSettingsView: View {
     let raw =
       preferences.defaultDownloadDir
       ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)
-        .first?.path(percentEncoded: false)
+      .first?.path(percentEncoded: false)
       ?? "~/Downloads"
     var home = FileManager.default.homeDirectoryForCurrentUser.path(percentEncoded: false)
     while home.hasSuffix("/") { home.removeLast() }

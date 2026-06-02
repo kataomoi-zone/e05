@@ -310,9 +310,11 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     let destinationURL: URL
     let preferences = PreferencesStore.shared.preferences
     if preferences.alwaysPromptDownload, let window = windowProvider?() {
-      guard let chosen = await presentDestinationPrompt(
-        suggested: sanitized, window: window
-      ) else {
+      guard
+        let chosen = await presentDestinationPrompt(
+          suggested: sanitized, window: window
+        )
+      else {
         // User dismissed the sheet. Returning nil cancels the
         // download — WebKit fires `didFailWithError` with
         // `NSURLErrorCancelled`, which the existing failure
@@ -396,7 +398,8 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     entry.bytesWritten = max(entry.bytesWritten, Int64(download.progress.completedUnitCount))
     entry.totalBytes = max(entry.totalBytes, Int64(download.progress.totalUnitCount))
     if entry.bytesWritten == 0,
-      let size = try? FileManager.default.attributesOfItem(atPath: entry.destination)[.size] as? Int64
+      let size = try? FileManager.default.attributesOfItem(atPath: entry.destination)[.size]
+        as? Int64
     {
       entry.bytesWritten = size
       if entry.totalBytes == 0 {

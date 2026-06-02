@@ -35,7 +35,10 @@ extension FinderPaneView {
     }
     let resolved = target.resolvingSymlinksInPath()
     var isDir: ObjCBool = false
-    guard FileManager.default.fileExists(atPath: resolved.path(percentEncoded: false), isDirectory: &isDir) else {
+    guard
+      FileManager.default.fileExists(
+        atPath: resolved.path(percentEncoded: false), isDirectory: &isDir)
+    else {
       logger.warning("navigate(to:) target does not exist: \(resolved.path, privacy: .public)")
       return
     }
@@ -521,7 +524,9 @@ extension FinderPaneView {
 
   func updateStatusBar() {
     var available: Int64?
-    if let values = try? currentURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+    if let values = try? currentURL.resourceValues(forKeys: [
+      .volumeAvailableCapacityForImportantUsageKey
+    ]),
       let bytes = values.volumeAvailableCapacityForImportantUsage
     {
       available = bytes

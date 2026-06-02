@@ -64,7 +64,8 @@ struct URLMatcherTests {
   func hostStartMatch() {
     let m = URLMatcher.match(query: "apple", title: "Apple", url: "https://apple.com")
     #expect(m != nil)
-    let urlScore = URLMatcher.match(query: "apple", title: "x", url: "https://apple.com")?.score ?? 0
+    let urlScore =
+      URLMatcher.match(query: "apple", title: "x", url: "https://apple.com")?.score ?? 0
     let midPathScore =
       URLMatcher.match(query: "apple", title: "x", url: "https://x.com/apple")?.score ?? 0
     // Host-start is the strongest URL signal; mid-path lands as a
@@ -86,9 +87,14 @@ struct URLMatcherTests {
   @Test("multi-token query allows partial credit but requires at least one match")
   func multiTokenPartialCredit() {
     // Both tokens hit → highest score.
-    let bothScore = URLMatcher.match(query: "git e05", title: "kawarimidoll/e05", url: "https://github.com/kawarimidoll/e05")?.score ?? 0
+    let bothScore =
+      URLMatcher.match(
+        query: "git e05", title: "kawarimidoll/e05", url: "https://github.com/kawarimidoll/e05")?
+      .score
+      ?? 0
     // Only the `git` token hits.
-    let oneScore = URLMatcher.match(query: "git e05", title: "Gist", url: "https://gist.github.com")?.score ?? 0
+    let oneScore =
+      URLMatcher.match(query: "git e05", title: "Gist", url: "https://gist.github.com")?.score ?? 0
     // Neither token hits → drop.
     #expect(URLMatcher.match(query: "git e05", title: "x", url: "https://example.com") == nil)
     #expect(bothScore > oneScore)

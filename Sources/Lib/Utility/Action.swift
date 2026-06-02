@@ -81,7 +81,8 @@ public struct Action {
   /// only the immutable `specialKeyGlyphs` table — callers in plain
   /// `struct` contexts (SwiftUI Row helpers) need this to be
   /// reachable without an actor hop.
-  public nonisolated static func buildKeyLabel(key: String?, mask: NSEvent.ModifierFlags) -> String? {
+  public nonisolated static func buildKeyLabel(key: String?, mask: NSEvent.ModifierFlags) -> String?
+  {
     // Treat empty string as unbound. A stray "" can land here if a
     // recorder ever persists a blank chord; without this guard the
     // joined label collapses to "" and the row renders empty.

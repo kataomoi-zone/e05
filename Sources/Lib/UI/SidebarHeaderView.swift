@@ -196,7 +196,8 @@ final class SidebarHeaderView: NSView {
       settingsButton.widthAnchor.constraint(equalToConstant: 22),
       settingsButton.heightAnchor.constraint(equalToConstant: 22),
       leading,
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: settingsButton.leadingAnchor, constant: -8),
+      titleLabel.trailingAnchor.constraint(
+        lessThanOrEqualTo: settingsButton.leadingAnchor, constant: -8),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }

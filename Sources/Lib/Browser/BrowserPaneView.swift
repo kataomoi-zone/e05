@@ -619,7 +619,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       // broken rather than helpful.
       webView.allowsMagnification = true
     }
-    return (webView, hoverHandler, cwsInstallHandler, cwsStateHandler, scrollEdgeHandler, channelId, extensionConfig != nil)
+    return (
+      webView, hoverHandler, cwsInstallHandler, cwsStateHandler, scrollEdgeHandler, channelId,
+      extensionConfig != nil
+    )
   }
 
   /// Safari-equivalent UA stamped onto every non-extension pane's
@@ -904,19 +907,22 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         }
       }
     }
-    canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] _, _ in
+    canGoBackObservation = webView.observe(\.canGoBack, options: [.new, .initial]) {
+      [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
       }
     }
-    canGoForwardObservation = webView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] _, _ in
+    canGoForwardObservation = webView.observe(\.canGoForward, options: [.new, .initial]) {
+      [weak self] _, _ in
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.onNavigationStateChange?(self.webView.canGoBack, self.webView.canGoForward)
       }
     }
-    isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) { [weak self] _, change in
+    isLoadingObservation = webView.observe(\.isLoading, options: [.new, .initial]) {
+      [weak self] _, change in
       guard let isLoading = change.newValue else { return }
       DispatchQueue.main.async {
         self?.applyLoadingStateForProgressBar(isLoading: isLoading)
@@ -1335,8 +1341,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       iconDataURI.isEmpty
       ? ""
       : """
-        <img class="icon" src="\(iconDataURI)" alt="" aria-hidden="true">
-        """
+      <img class="icon" src="\(iconDataURI)" alt="" aria-hidden="true">
+      """
     let html = """
       <!DOCTYPE html>
       <html lang="en">
@@ -1390,9 +1396,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     if let attemptedURL, webView.responds(to: selector),
       let imp = webView.method(for: selector)
     {
-      typealias Fn = @convention(c) (
-        AnyObject, Selector, NSString, NSURL?, NSURL
-      ) -> Void
+      typealias Fn =
+        @convention(c) (
+          AnyObject, Selector, NSString, NSURL?, NSURL
+        ) -> Void
       let fn = unsafeBitCast(imp, to: Fn.self)
       fn(webView, selector, html as NSString, nil, attemptedURL as NSURL)
       return

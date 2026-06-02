@@ -59,7 +59,8 @@ public struct E05Paths: Sendable {
   public init(env: [String: String], bundleIdentifier: String?, home: URL) {
     self.configDir = Self.resolveConfigDir(env: env, home: home)
     if let bid = bundleIdentifier, !bid.isEmpty {
-      self.dataDir = home.appendingPathComponent("Library/Application Support/\(bid)", isDirectory: true)
+      self.dataDir = home.appendingPathComponent(
+        "Library/Application Support/\(bid)", isDirectory: true)
       self.cacheDir = home.appendingPathComponent("Library/Caches/\(bid)", isDirectory: true)
     } else {
       self.dataDir = home.appendingPathComponent(".config/e05", isDirectory: true)

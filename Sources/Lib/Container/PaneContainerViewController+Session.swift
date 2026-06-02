@@ -320,7 +320,9 @@ extension PaneContainerViewController {
       if !ws.columns.isEmpty {
         ws.focusedColumnIndex = min(max(wsState.focusedColumnIndex, 0), ws.columns.count - 1)
       }
-      logger.debug("restoreSession wsId=\(String(describing: ws.id), privacy: .public) saved focusedCol=\(wsState.focusedColumnIndex) → set to \(ws.focusedColumnIndex), columns=\(ws.columns.count)")
+      logger.debug(
+        "restoreSession wsId=\(String(describing: ws.id), privacy: .public) saved focusedCol=\(wsState.focusedColumnIndex) → set to \(ws.focusedColumnIndex), columns=\(ws.columns.count)"
+      )
     }
 
     // Drop workspaces that ended up empty (e.g. all addresses unparseable).
@@ -378,7 +380,9 @@ extension PaneContainerViewController {
       let column = ws.columns[colIdx]
       let paneIdx = min(max(column.focusedPaneIndex, 0), column.panes.count - 1)
       pendingInitialFocus = (focusedWorkspaceIndex, colIdx, paneIdx)
-      logger.debug("restoreSession snapshot focus ws=\(self.focusedWorkspaceIndex) col=\(colIdx) pane=\(paneIdx)")
+      logger.debug(
+        "restoreSession snapshot focus ws=\(self.focusedWorkspaceIndex) col=\(colIdx) pane=\(paneIdx)"
+      )
     }
     restoreFocusInCurrentWorkspace()
     // First responder now firmly on current WS's target pane — safe to

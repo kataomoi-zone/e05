@@ -66,8 +66,9 @@ extension PaneContainerViewController {
     let activeSearchHosts = Self.currentSearchEngineHosts()
     var seenSearchKeys: Set<String> = []
     results = results.filter { suggestion in
-      guard let key = Self.searchEngineQueryKey(
-        for: suggestion.url, hosts: activeSearchHosts)
+      guard
+        let key = Self.searchEngineQueryKey(
+          for: suggestion.url, hosts: activeSearchHosts)
       else {
         return true
       }
@@ -440,7 +441,9 @@ extension PaneContainerViewController {
       // splice it into the column at the same index. The position,
       // surrounding panes, and column geometry stay put; only the
       // pane's content view changes.
-      guard let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) }) else { return }
+      guard
+        let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) })
+      else { return }
       let column = columns[colIdx]
       guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
 

@@ -234,7 +234,7 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
     }
 
     NSLayoutConstraint.activate([
-      row.widthAnchor.constraint(equalToConstant: 336),
+      row.widthAnchor.constraint(equalToConstant: 336)
     ])
     return row
   }

@@ -32,7 +32,9 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 extension FinderPaneView {
   // MARK: - List drag source
 
-  public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+  public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int)
+    -> NSPasteboardWriting?
+  {
     guard row >= 0, row < items.count else { return nil }
     return items[row].url as NSURL
   }
@@ -82,7 +84,9 @@ extension FinderPaneView {
   ) -> Bool {
     let sources = draggedURLs(from: info)
     guard !sources.isEmpty else { return false }
-    guard let destURL = resolveDropDestination(row: row, dropOperation: dropOperation) else { return false }
+    guard let destURL = resolveDropDestination(row: row, dropOperation: dropOperation) else {
+      return false
+    }
 
     let op = Self.dropOperation(sources: sources, destination: destURL)
     let sourcePane = Self.resolveDragSourcePane(from: info)

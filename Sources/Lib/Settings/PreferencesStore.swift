@@ -132,7 +132,8 @@ public final class PreferencesStore {
       return stored.preferences
     } catch {
       let timestamp = ISO8601DateFormatter().string(from: Date())
-      let quarantine = url
+      let quarantine =
+        url
         .deletingLastPathComponent()
         .appendingPathComponent("\(url.lastPathComponent).corrupt-\(timestamp)")
       do {

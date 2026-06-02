@@ -233,7 +233,7 @@ final class BookmarksSidebarView: NSView {
     // text-field width.
     nameField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
     NSLayoutConstraint.activate([
-      nameField.widthAnchor.constraint(equalToConstant: 280),
+      nameField.widthAnchor.constraint(equalToConstant: 280)
     ])
 
     alert.accessoryView = nameField
@@ -500,10 +500,14 @@ extension BookmarksSidebarView: NSMenuDelegate {
     }
 
     // Empty area: top-level actions only.
-    append(menu, title: "New Folder", selector: #selector(menuNewFolder)) { Optional<Int64>.none as Any }
+    append(menu, title: "New Folder", selector: #selector(menuNewFolder)) {
+      Optional<Int64>.none as Any
+    }
     menu.addItem(.separator())
     append(menu, title: "Import…", selector: #selector(menuImport)) { Optional<Int64>.none as Any }
-    append(menu, title: "Export All…", selector: #selector(menuExport)) { Optional<Int64>.none as Any }
+    append(menu, title: "Export All…", selector: #selector(menuExport)) {
+      Optional<Int64>.none as Any
+    }
   }
 
   /// Build and append a menu item bound to `self` whose
@@ -584,7 +588,7 @@ extension BookmarksSidebarView {
     nameField.translatesAutoresizingMaskIntoConstraints = false
     nameField.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
     NSLayoutConstraint.activate([
-      nameField.widthAnchor.constraint(equalToConstant: 280),
+      nameField.widthAnchor.constraint(equalToConstant: 280)
     ])
 
     alert.accessoryView = nameField

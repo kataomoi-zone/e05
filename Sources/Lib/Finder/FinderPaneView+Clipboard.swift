@@ -50,9 +50,10 @@ extension FinderPaneView {
   /// available.
   func pasteableFileURLCount() -> Int {
     let pb = NSPasteboard.general
-    let urls = pb.readObjects(
-      forClasses: [NSURL.self],
-      options: [.urlReadingFileURLsOnly: true]) as? [URL]
+    let urls =
+      pb.readObjects(
+        forClasses: [NSURL.self],
+        options: [.urlReadingFileURLsOnly: true]) as? [URL]
     return urls?.count ?? 0
   }
 

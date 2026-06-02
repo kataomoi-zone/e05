@@ -95,9 +95,9 @@ struct ShortcutsSettingsView: View {
       } footer: {
         Text(
           "Press Esc to cancel a recording, or Delete to clear the binding. Terminal panes use ghostty's own key handling."
-          + (category == .browser
-            ? " Back and Forward also respond to ⌘← / ⌘→ — those are handled by WebKit itself and can't be remapped."
-            : "")
+            + (category == .browser
+              ? " Back and Forward also respond to ⌘← / ⌘→ — those are handled by WebKit itself and can't be remapped."
+              : "")
         )
         .font(.caption)
         .foregroundStyle(.secondary)

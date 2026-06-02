@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let ghosttyApp = GhosttyApp()
   private var paneContainer: PaneContainerViewController?
 
-
   /// Strong reference for the WKWebsiteDataStore + UNUserNotificationCenter
   /// delegate. `WKWebsiteDataStore._delegate` is `weak`, so the delegate
   /// would be deallocated immediately if we let it go out of scope. Only
@@ -432,7 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       // that does not trip "unused let self" diagnostics.
       while self != nil, !Task.isCancelled {
         let prefs = PreferencesStore.shared.preferences
-        let configured = prefs.adblockerAutoUpdateIntervalHours
+        let configured =
+          prefs.adblockerAutoUpdateIntervalHours
           ?? AdBlocker.defaultAutoUpdateIntervalHours
         guard configured > 0 else { return }
         let interval = TimeInterval(configured) * 3600
@@ -640,7 +640,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSEvent.removeMonitor(existing)
       extensionCommandMonitor = nil
     }
-    extensionCommandMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+    extensionCommandMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
       // App-global monitor; only forward to extensions when the main
       // window owns focus, otherwise a Settings text field's ⌘⇧L
       // (or any custom chord an extension grabs) would fire a
@@ -670,7 +671,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSEvent.removeMonitor(existing)
       nativeBackForwardMonitor = nil
     }
-    nativeBackForwardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+    nativeBackForwardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
       guard let self,
         event.keyCode == KeyCode.leftArrow || event.keyCode == KeyCode.rightArrow
       else { return event }
@@ -793,7 +795,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
     editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
     editMenu.addItem(.separator())
-    editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editMenu.addItem(
+      withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editMenuItem.submenu = editMenu
     mainMenu.addItem(editMenuItem)
 

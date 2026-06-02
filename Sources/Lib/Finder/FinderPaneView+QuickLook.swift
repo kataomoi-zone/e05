@@ -51,7 +51,9 @@ extension FinderPaneView: @preconcurrency QLPreviewPanelDataSource, QLPreviewPan
     selectedURLs.count
   }
 
-  public func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+  public func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (
+    any QLPreviewItem
+  )! {
     let urls = selectedURLs
     guard index >= 0, index < urls.count else { return nil }
     return urls[index] as NSURL

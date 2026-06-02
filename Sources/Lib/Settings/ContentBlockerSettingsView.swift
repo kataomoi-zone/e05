@@ -625,7 +625,8 @@ struct ContentBlockerSettingsView: View {
 
   private var currentInterval: UpdateInterval {
     _ = revision
-    let stored = PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
+    let stored =
+      PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
       ?? AdBlocker.defaultAutoUpdateIntervalHours
     return UpdateInterval.allCases.first { $0.rawValue == stored } ?? .weekly
   }

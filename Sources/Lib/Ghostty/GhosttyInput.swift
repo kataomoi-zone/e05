@@ -37,7 +37,8 @@ public enum GhosttyInput {
 
     // unshifted_codepoint: only for key events (not flagsChanged)
     if event.type == .keyDown || event.type == .keyUp {
-      let modsToApply = translationMods.map { NSEvent.ModifierFlags(rawValue: UInt($0.rawValue)) } ?? []
+      let modsToApply =
+        translationMods.map { NSEvent.ModifierFlags(rawValue: UInt($0.rawValue)) } ?? []
       if let chars = event.characters(byApplyingModifiers: modsToApply),
         let scalar = chars.unicodeScalars.first
       {

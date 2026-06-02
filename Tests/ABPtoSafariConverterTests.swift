@@ -185,7 +185,8 @@ struct ABPtoSafariConverterTests {
 
   @Test("domain= option drops unless when combined with if")
   func domainOption() {
-    let rules = ABPtoSafariConverter.convert("||ads.example.com^$domain=news.com|~sub.news.com").rules
+    let rules = ABPtoSafariConverter.convert("||ads.example.com^$domain=news.com|~sub.news.com")
+      .rules
     #expect(!rules.isEmpty)
     for rule in rules {
       #expect(rule.trigger.ifDomain == ["*news.com"])

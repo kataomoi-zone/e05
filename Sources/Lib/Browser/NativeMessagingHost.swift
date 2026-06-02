@@ -121,7 +121,9 @@ final class NativeMessagingPort {
     self.port = port
     self.manifestPath = manifest.path
     self.context = context
-    logger.info("Spawning host name=\(manifest.name, privacy: .public) path=\(manifest.path, privacy: .public) origin=\(callerOrigin ?? "(none)", privacy: .public)")
+    logger.info(
+      "Spawning host name=\(manifest.name, privacy: .public) path=\(manifest.path, privacy: .public) origin=\(callerOrigin ?? "(none)", privacy: .public)"
+    )
     let process = Process()
     process.executableURL = URL(fileURLWithPath: manifest.path)
     if let origin = callerOrigin {
@@ -149,7 +151,9 @@ final class NativeMessagingPort {
     // Wire termination logging *before* spawning so Process can
     // never deliver the callback before our handler is set.
     process.terminationHandler = { proc in
-      logger.info("host process terminated pid=\(proc.processIdentifier) status=\(proc.terminationStatus) reason=\(proc.terminationReason == .exit ? "exit" : "uncaughtSignal", privacy: .public)")
+      logger.info(
+        "host process terminated pid=\(proc.processIdentifier) status=\(proc.terminationStatus) reason=\(proc.terminationReason == .exit ? "exit" : "uncaughtSignal", privacy: .public)"
+      )
     }
     try process.run()
     logger.info(
@@ -181,7 +185,9 @@ final class NativeMessagingPort {
         // to a launch crash and clutters the log with false leads.
         guard !self.isClosed else { return }
         if !self.process.isRunning {
-          logger.error("WARN host exited within 500ms pid=\(pid) status=\(self.process.terminationStatus) path=\(path, privacy: .public)")
+          logger.error(
+            "WARN host exited within 500ms pid=\(pid) status=\(self.process.terminationStatus) path=\(path, privacy: .public)"
+          )
         } else {
           logger.debug("host still alive after 500ms pid=\(pid)")
         }
@@ -263,7 +269,8 @@ final class NativeMessagingPort {
         withJSONObject: message, options: [.fragmentsAllowed]
       )
     } catch {
-      logger.error("JSON encode failed for ext→host payload: \(error.localizedDescription, privacy: .public)")
+      logger.error(
+        "JSON encode failed for ext→host payload: \(error.localizedDescription, privacy: .public)")
       return
     }
     var length = UInt32(data.count).littleEndian
@@ -278,7 +285,8 @@ final class NativeMessagingPort {
       let preview = body.count > 200 ? String(body.prefix(200)) + "…" : body
       logger.debug("wrote \(data.count) bytes to host stdin: \(preview, privacy: .public)")
     } catch {
-      logger.error("stdin write failed (\(data.count) bytes): \(error.localizedDescription, privacy: .public)")
+      logger.error(
+        "stdin write failed (\(data.count) bytes): \(error.localizedDescription, privacy: .public)")
       shutdown(reason: "stdin write failed")
     }
   }
@@ -341,7 +349,9 @@ final class NativeMessagingPort {
     } catch {
       // Skip malformed frames rather than tearing down the channel —
       // the host may emit diagnostic noise the extension can ignore.
-      logger.error("host emitted non-JSON payload (\(frame.count) bytes): \(error.localizedDescription, privacy: .public)")
+      logger.error(
+        "host emitted non-JSON payload (\(frame.count) bytes): \(error.localizedDescription, privacy: .public)"
+      )
       return
     }
     let body = String(data: frame, encoding: .utf8) ?? "(binary)"

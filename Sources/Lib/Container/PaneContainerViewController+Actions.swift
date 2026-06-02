@@ -495,7 +495,8 @@ extension PaneContainerViewController {
         // visible in the finder pane itself immediately on trigger.
         handler: { [weak self] in
           FinderSettings.toggleShowHiddenFiles()
-          self?.showToast(FinderSettings.showHiddenFiles ? "Show Hidden Files" : "Hide Hidden Files")
+          self?.showToast(
+            FinderSettings.showHiddenFiles ? "Show Hidden Files" : "Hide Hidden Files")
         }
       ),
       Action(

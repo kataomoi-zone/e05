@@ -363,7 +363,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
   }
 
   override func setHoverActionsHidden(_ hidden: Bool) {
-    actionsStack.arrangedSubviews.forEach { $0.isHidden = hidden }
+    for view in actionsStack.arrangedSubviews { view.isHidden = hidden }
   }
 
   func configure(with entry: Download) {
@@ -424,7 +424,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
   }
 
   private func rebuildActionButtons(for state: DownloadState) {
-    actionsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    for view in actionsStack.arrangedSubviews { view.removeFromSuperview() }
 
     // Leading primary action: transport control for active rows,
     // reveal-in-Finder for completed rows, absent for terminal
@@ -487,7 +487,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     // under the cursor (e.g. a state transition reload triggered
     // from a WebKit progress tick) don't flicker the buttons off
     // until the next mouse move.
-    actionsStack.arrangedSubviews.forEach { $0.isHidden = !isHovered }
+    for view in actionsStack.arrangedSubviews { view.isHidden = !isHovered }
   }
 
   private func makeButton(symbol: String, tooltip: String, action: Selector) -> HoverIconButton {
@@ -534,7 +534,8 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     case .paused:
       if entry.totalBytes > 0 {
         let percent = Int((Double(entry.bytesWritten) / Double(entry.totalBytes)) * 100)
-        return "Paused · \(percent)% · \(formatBytes(entry.bytesWritten)) / \(formatBytes(entry.totalBytes))"
+        return
+          "Paused · \(percent)% · \(formatBytes(entry.bytesWritten)) / \(formatBytes(entry.totalBytes))"
       }
       return "Paused"
     case .completed:

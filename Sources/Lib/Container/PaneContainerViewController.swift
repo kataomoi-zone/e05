@@ -86,12 +86,14 @@ public final class PaneContainerViewController: NSViewController {
   var currentLeadingInset: CGFloat = 0
 
   var currentWorkspace: WorkspaceModel {
-    precondition(!workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
+    precondition(
+      !workspaces.isEmpty, "workspaces invariant violated: must contain at least one element")
     return workspaces[focusedWorkspaceIndex]
   }
 
   var currentWorkspaceVC: WorkspaceViewController {
-    precondition(!workspaceVCs.isEmpty, "workspaceVCs invariant violated: must contain at least one element")
+    precondition(
+      !workspaceVCs.isEmpty, "workspaceVCs invariant violated: must contain at least one element")
     return workspaceVCs[focusedWorkspaceIndex]
   }
 
@@ -407,7 +409,8 @@ public final class PaneContainerViewController: NSViewController {
     if level.contains(.warning) { parts.append("warning") }
     let name = parts.isEmpty ? "normal" : parts.joined(separator: "+")
     logger.warning(
-      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing suspend sweep")
+      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing suspend sweep"
+    )
     suspendSweep(force: true)
   }
 
@@ -448,9 +451,10 @@ public final class PaneContainerViewController: NSViewController {
     // `lastActiveAt` clock keeps drifting past the cutoff. Without
     // this set, switching back to that workspace an hour later
     // would find the article gone and the placeholder up.
-    let focusedPaneIds = Set(workspaces.compactMap { ws -> ULID? in
-      ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
-    })
+    let focusedPaneIds = Set(
+      workspaces.compactMap { ws -> ULID? in
+        ws.columns[safe: ws.focusedColumnIndex]?.focusedPane?.id
+      })
     for ws in workspaces {
       for col in ws.columns {
         for pane in col.panes {
@@ -462,7 +466,10 @@ public final class PaneContainerViewController: NSViewController {
           if focusedPaneIds.contains(pane.id) { continue }
           if pane.isSuspendExempt { continue }
           if let host = bv.webView.url?.host,
-             SuspendHostExemptStore.shared.isExempt(host: host) { continue }
+            SuspendHostExemptStore.shared.isExempt(host: host)
+          {
+            continue
+          }
           if bv.isPlayingAudio { continue }
           if !force, pane.lastActiveAt > cutoff { continue }
           bv.suspend()
@@ -498,12 +505,16 @@ public final class PaneContainerViewController: NSViewController {
   /// `workspaces[0]` and install its view full-bounds. `restoreSession`
   /// may later replace this VC wholesale if a persisted session exists.
   private func installInitialWorkspaceVC() {
-    logger.debug("installInitialWorkspaceVC entry: view.bounds=\(String(describing: self.view.bounds), privacy: .public)")
+    logger.debug(
+      "installInitialWorkspaceVC entry: view.bounds=\(String(describing: self.view.bounds), privacy: .public)"
+    )
     let vc = WorkspaceViewController(workspace: workspaces[0])
     addChild(vc)
     workspaceVCs.append(vc)
     installWorkspaceView(vc, makeCurrent: true)
-    logger.debug("installInitialWorkspaceVC done: workspaceVCs.count=\(self.workspaceVCs.count), subviews=\(self.view.subviews.count)")
+    logger.debug(
+      "installInitialWorkspaceVC done: workspaceVCs.count=\(self.workspaceVCs.count), subviews=\(self.view.subviews.count)"
+    )
   }
 
   /// Describe each subview of the container's view for debugging. Maps
@@ -516,7 +527,8 @@ public final class PaneContainerViewController: NSViewController {
       }
       return "[\(i)]other=\(type(of: sv))"
     }
-    logger.debug("\(tag, privacy: .public) subviews=\(subs.joined(separator: " "), privacy: .public)")
+    logger.debug(
+      "\(tag, privacy: .public) subviews=\(subs.joined(separator: " "), privacy: .public)")
   }
 
   /// Add `vc.view` as a constraint-pinned subview of the container. All
@@ -650,7 +662,9 @@ public final class PaneContainerViewController: NSViewController {
       hasAppearedOnce = true
       if let target = pendingInitialFocus {
         pendingInitialFocus = nil
-        logger.info("viewDidAppear re-applying focus → ws=\(target.workspaceIndex) col=\(target.columnIndex) pane=\(target.paneIndex)")
+        logger.info(
+          "viewDidAppear re-applying focus → ws=\(target.workspaceIndex) col=\(target.columnIndex) pane=\(target.paneIndex)"
+        )
         // Wipe every border in the current workspace first. Between
         // restoreFocus and viewDidAppear, AppKit's key-window init
         // can hand first responder to the leftmost terminal pane,

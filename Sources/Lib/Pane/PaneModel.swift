@@ -465,7 +465,8 @@ public final class PaneModel {
       urlBarTopEdgeHitZone.topAnchor.constraint(equalTo: containerView.topAnchor),
       urlBarTopEdgeHitZone.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
       urlBarTopEdgeHitZone.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-      urlBarTopEdgeHitZone.heightAnchor.constraint(equalToConstant: EdgeHoverHitZoneView.topEdgeHeight),
+      urlBarTopEdgeHitZone.heightAnchor.constraint(
+        equalToConstant: EdgeHoverHitZoneView.topEdgeHeight),
 
       // Header overlay (top-right, only shown when URL bar is hidden)
       headerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),

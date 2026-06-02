@@ -17,7 +17,8 @@ extension PaneContainerViewController {
   /// requested constant is below the floor; values above the floor
   /// solve unambiguously with both.
   @discardableResult
-  func installColumnWidthConstraints(on column: ColumnModel, initial: CGFloat) -> NSLayoutConstraint {
+  func installColumnWidthConstraints(on column: ColumnModel, initial: CGFloat) -> NSLayoutConstraint
+  {
     let wc = column.containerView.widthAnchor.constraint(equalToConstant: initial)
     wc.priority = NSLayoutConstraint.Priority(rawValue: 999)
     wc.isActive = true
@@ -92,7 +93,8 @@ extension PaneContainerViewController {
   ) {
     guard workspaces.contains(where: { $0.id == wsId }) else {
       logger.debug(
-        "[panes/add] addColumnAndToast stale workspace id=\(wsId, privacy: .public) toast=\(toastLabel, privacy: .public)")
+        "[panes/add] addColumnAndToast stale workspace id=\(wsId, privacy: .public) toast=\(toastLabel, privacy: .public)"
+      )
       return
     }
     addColumn(address, toWorkspaceId: wsId)
@@ -280,7 +282,8 @@ extension PaneContainerViewController {
     NSLayoutConstraint.activate([
       column.foldedLabelView.topAnchor.constraint(equalTo: column.containerView.topAnchor),
       column.foldedLabelView.leadingAnchor.constraint(equalTo: column.containerView.leadingAnchor),
-      column.foldedLabelView.trailingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+      column.foldedLabelView.trailingAnchor.constraint(
+        equalTo: column.containerView.trailingAnchor),
       column.foldedLabelView.bottomAnchor.constraint(equalTo: column.containerView.bottomAnchor),
     ])
 
@@ -1420,7 +1423,8 @@ extension PaneContainerViewController {
   /// single user gesture so the confirmation should be too.
   public func closeColumn(id columnId: ULID) {
     guard let column = locateColumn(id: columnId) else {
-      logger.debug("[panes/close] closeColumn no-op: column not found id=\(columnId, privacy: .public)")
+      logger.debug(
+        "[panes/close] closeColumn no-op: column not found id=\(columnId, privacy: .public)")
       return
     }
     let surfaces = column.panes.compactMap { $0.terminalView?.surface }
@@ -1436,7 +1440,9 @@ extension PaneContainerViewController {
       // presentation and answer. The captured `paneIds` from before
       // the sheet would over- or under-close in those cases.
       guard let liveColumn = self.locateColumn(id: columnId) else {
-        logger.debug("[panes/close] closeColumn post-confirm no-op: column gone id=\(columnId, privacy: .public)")
+        logger.debug(
+          "[panes/close] closeColumn post-confirm no-op: column gone id=\(columnId, privacy: .public)"
+        )
         return
       }
       let paneIds = liveColumn.panes.map(\.id)
@@ -1481,7 +1487,9 @@ extension PaneContainerViewController {
   /// "Close N Panes" toast rather than N stacked ones.
   public func closeOtherPanesInColumn(keepPaneId paneId: ULID) {
     guard let loc = locatePane(id: paneId) else {
-      logger.debug("[panes/close] closeOtherPanesInColumn no-op: pane not found id=\(paneId, privacy: .public)")
+      logger.debug(
+        "[panes/close] closeOtherPanesInColumn no-op: pane not found id=\(paneId, privacy: .public)"
+      )
       return
     }
     let column = workspaces[loc.workspaceIndex].columns[loc.columnIndex]
@@ -1505,7 +1513,9 @@ extension PaneContainerViewController {
       guard let self, let liveColumn = self.locateColumn(id: columnId),
         liveColumn.panes.contains(where: { $0.id == paneId })
       else {
-        logger.debug("[panes/close] closeOtherPanesInColumn post-confirm no-op: column or keep pane gone columnId=\(columnId, privacy: .public) paneId=\(paneId, privacy: .public)")
+        logger.debug(
+          "[panes/close] closeOtherPanesInColumn post-confirm no-op: column or keep pane gone columnId=\(columnId, privacy: .public) paneId=\(paneId, privacy: .public)"
+        )
         return
       }
       let otherIds = liveColumn.panes.map(\.id).filter { $0 != paneId }
@@ -1811,7 +1821,8 @@ extension PaneContainerViewController {
     guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == workspaceId })
     else {
       logger.debug(
-        "[worklane/menu] stale workspace id=\(workspaceId.string, privacy: .public) action=\(actionId, privacy: .public)")
+        "[worklane/menu] stale workspace id=\(workspaceId.string, privacy: .public) action=\(actionId, privacy: .public)"
+      )
       return
     }
     switch actionId {

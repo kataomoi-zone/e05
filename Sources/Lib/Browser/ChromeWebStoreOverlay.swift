@@ -72,170 +72,170 @@ enum ChromeWebStoreOverlay {
   /// `WKUserContentController` without duplicating the string.
   static let userScript: WKUserScript = {
     let source = #"""
-    (async function() {
-      'use strict';
-      const host = location.host;
-      if (host !== 'chromewebstore.google.com' && host !== 'chrome.google.com') {
-        return;
-      }
-      // Fetch the install state from Swift before the first rewrite
-      // runs so the initial paint already reflects the correct "Add
-      // to E05" / "Remove from E05" wording. `WKScriptMessageHandlerWithReply`
-      // crosses the UI ↔ WebContent process boundary so the reply is
-      // not literally synchronous, but it resolves before any
-      // user-script-driven DOM read because the IIFE is the only JS
-      // running on this turn — the await yields back to the page
-      // event loop, which has no other queued work between
-      // document_start and our continuation.
-      try {
-        const ids = await webkit.messageHandlers.e05CWSState.postMessage(null);
-        window.__e05InstalledExtensions = Array.isArray(ids) ? ids : [];
-      } catch (e) {
-        console.error('[e05/cws-overlay] state fetch failed:', e);
-        window.__e05InstalledExtensions = window.__e05InstalledExtensions || [];
-      }
-      const SELECTOR =
-        'div.webstore-test-button-label, button span[jsname]:not(:empty)';
-
-      function extensionIDFromURL() {
-        // CWS extension IDs use Google's base16-shifted alphabet
-        // (a-p only); matching that here mirrors the Swift-side
-        // `installedChromeWebStoreIDs` filter so the install-state
-        // check can't false-match on a malformed listing URL.
-      const m = location.pathname.match(/\/detail\/[^/]+\/([a-p]{32})/);
-        return m ? m[1] : null;
-      }
-
-      function isInstalled(id) {
-        return Array.isArray(window.__e05InstalledExtensions)
-          && window.__e05InstalledExtensions.indexOf(id) >= 0;
-      }
-
-      // Switch between the add and remove wording when the live
-      // install state disagrees with the textContent (either CWS's
-      // own "Add to Chrome" form because chrome.management is
-      // unavailable to inform it of the install, or our prior
-      // rewrite of the same node from a previous pass). The
-      // mapping is locale-keyed and lossy on languages we haven't
-      // seen — the unmatched fallback returns the input as-is so a
-      // missing translation doesn't lie about the action.
-      function flipToRemove(text) {
-        if (text.indexOf('Add to ') === 0) {
-          return text.replace('Add to ', 'Remove from ');
+      (async function() {
+        'use strict';
+        const host = location.host;
+        if (host !== 'chromewebstore.google.com' && host !== 'chrome.google.com') {
+          return;
         }
-        if (text.indexOf(' に追加') >= 0) {
-          return text.replace(' に追加', ' から削除');
-        }
-        if (text.indexOf('に追加') >= 0) {
-          return text.replace('に追加', 'から削除');
-        }
-        return text;
-      }
-      function flipToAdd(text) {
-        if (text.indexOf('Remove from ') === 0) {
-          return text.replace('Remove from ', 'Add to ');
-        }
-        if (text.indexOf(' から削除') >= 0) {
-          return text.replace(' から削除', ' に追加');
-        }
-        if (text.indexOf('から削除') >= 0) {
-          return text.replace('から削除', 'に追加');
-        }
-        return text;
-      }
-
-      // Rewriting textContent / button attributes is itself a DOM
-      // mutation, so the observer re-fires on our own writes. Pause
-      // observation for the duration of a rewrite pass to avoid a
-      // ping-pong between this script and any CWS re-render that
-      // reasserts the disabled attribute (CWS is Lit-based and
-      // re-renders are rare, but the rebrand needs to be stable
-      // even if Google ships a chattier component tomorrow).
-      let observer = null;
-      function rewrite() {
-        if (observer) observer.disconnect();
+        // Fetch the install state from Swift before the first rewrite
+        // runs so the initial paint already reflects the correct "Add
+        // to E05" / "Remove from E05" wording. `WKScriptMessageHandlerWithReply`
+        // crosses the UI ↔ WebContent process boundary so the reply is
+        // not literally synchronous, but it resolves before any
+        // user-script-driven DOM read because the IIFE is the only JS
+        // running on this turn — the await yields back to the page
+        // event loop, which has no other queued work between
+        // document_start and our continuation.
         try {
-          rewriteInner();
-        } finally {
-          if (observer) observer.observe(document, { attributes: true, childList: true, subtree: true });
+          const ids = await webkit.messageHandlers.e05CWSState.postMessage(null);
+          window.__e05InstalledExtensions = Array.isArray(ids) ? ids : [];
+        } catch (e) {
+          console.error('[e05/cws-overlay] state fetch failed:', e);
+          window.__e05InstalledExtensions = window.__e05InstalledExtensions || [];
         }
-      }
-      function rewriteInner() {
-        const id = extensionIDFromURL();
-        const installed = id ? isInstalled(id) : false;
-        const nodes = document.querySelectorAll(SELECTOR);
-        for (const node of nodes) {
-          const text = (node.textContent || '').trim();
-          // Re-process nodes already carrying our rebranded text so
-          // the install-state direction stays current when the
-          // installed-IDs push arrives after the first rewrite
-          // pass. Without the E05 check the second pass would skip
-          // a node we just changed and the wording would be stuck
-          // on whichever direction the first pass landed on.
-          if (!text.includes('Chrome') && !text.includes('E05')) continue;
-          // `replace('Chrome','E05')` runs before flipToRemove /
-          // flipToAdd so the verb checks ("Add to ", " に追加") see
-          // a stable subject regardless of the source locale —
-          // sidesteps an enumerated locale table while keeping the
-          // direction flip locale-aware.
-          let next = text.replace('Chrome', 'E05');
-          next = installed ? flipToRemove(next) : flipToAdd(next);
-          if (text === next) continue;
-          node.textContent = next;
-          // CWS disables the install button when it can't identify
-          // the host as a Chromium-derived browser. Brave gets a
-          // free pass because it is Chromium; WKWebView is not, so
-          // strip the disabled signal from the enclosing button so
-          // the capture-phase click handler below can intercept the
-          // press and route it into e05's install pipeline. The
-          // visual gating (opacity / pointer-events) comes from a
-          // build-keyed CSS class on top of the `disabled` attribute;
-          // overriding the inline style overrides the class for
-          // free.
-          const button = node.closest('button');
-          if (button) {
-            button.removeAttribute('disabled');
-            button.removeAttribute('aria-disabled');
-            button.style.opacity = '1';
-            button.style.pointerEvents = 'auto';
-            button.style.cursor = 'pointer';
+        const SELECTOR =
+          'div.webstore-test-button-label, button span[jsname]:not(:empty)';
+
+        function extensionIDFromURL() {
+          // CWS extension IDs use Google's base16-shifted alphabet
+          // (a-p only); matching that here mirrors the Swift-side
+          // `installedChromeWebStoreIDs` filter so the install-state
+          // check can't false-match on a malformed listing URL.
+        const m = location.pathname.match(/\/detail\/[^/]+\/([a-p]{32})/);
+          return m ? m[1] : null;
+        }
+
+        function isInstalled(id) {
+          return Array.isArray(window.__e05InstalledExtensions)
+            && window.__e05InstalledExtensions.indexOf(id) >= 0;
+        }
+
+        // Switch between the add and remove wording when the live
+        // install state disagrees with the textContent (either CWS's
+        // own "Add to Chrome" form because chrome.management is
+        // unavailable to inform it of the install, or our prior
+        // rewrite of the same node from a previous pass). The
+        // mapping is locale-keyed and lossy on languages we haven't
+        // seen — the unmatched fallback returns the input as-is so a
+        // missing translation doesn't lie about the action.
+        function flipToRemove(text) {
+          if (text.indexOf('Add to ') === 0) {
+            return text.replace('Add to ', 'Remove from ');
+          }
+          if (text.indexOf(' に追加') >= 0) {
+            return text.replace(' に追加', ' から削除');
+          }
+          if (text.indexOf('に追加') >= 0) {
+            return text.replace('に追加', 'から削除');
+          }
+          return text;
+        }
+        function flipToAdd(text) {
+          if (text.indexOf('Remove from ') === 0) {
+            return text.replace('Remove from ', 'Add to ');
+          }
+          if (text.indexOf(' から削除') >= 0) {
+            return text.replace(' から削除', ' に追加');
+          }
+          if (text.indexOf('から削除') >= 0) {
+            return text.replace('から削除', 'に追加');
+          }
+          return text;
+        }
+
+        // Rewriting textContent / button attributes is itself a DOM
+        // mutation, so the observer re-fires on our own writes. Pause
+        // observation for the duration of a rewrite pass to avoid a
+        // ping-pong between this script and any CWS re-render that
+        // reasserts the disabled attribute (CWS is Lit-based and
+        // re-renders are rare, but the rebrand needs to be stable
+        // even if Google ships a chattier component tomorrow).
+        let observer = null;
+        function rewrite() {
+          if (observer) observer.disconnect();
+          try {
+            rewriteInner();
+          } finally {
+            if (observer) observer.observe(document, { attributes: true, childList: true, subtree: true });
           }
         }
-      }
+        function rewriteInner() {
+          const id = extensionIDFromURL();
+          const installed = id ? isInstalled(id) : false;
+          const nodes = document.querySelectorAll(SELECTOR);
+          for (const node of nodes) {
+            const text = (node.textContent || '').trim();
+            // Re-process nodes already carrying our rebranded text so
+            // the install-state direction stays current when the
+            // installed-IDs push arrives after the first rewrite
+            // pass. Without the E05 check the second pass would skip
+            // a node we just changed and the wording would be stuck
+            // on whichever direction the first pass landed on.
+            if (!text.includes('Chrome') && !text.includes('E05')) continue;
+            // `replace('Chrome','E05')` runs before flipToRemove /
+            // flipToAdd so the verb checks ("Add to ", " に追加") see
+            // a stable subject regardless of the source locale —
+            // sidesteps an enumerated locale table while keeping the
+            // direction flip locale-aware.
+            let next = text.replace('Chrome', 'E05');
+            next = installed ? flipToRemove(next) : flipToAdd(next);
+            if (text === next) continue;
+            node.textContent = next;
+            // CWS disables the install button when it can't identify
+            // the host as a Chromium-derived browser. Brave gets a
+            // free pass because it is Chromium; WKWebView is not, so
+            // strip the disabled signal from the enclosing button so
+            // the capture-phase click handler below can intercept the
+            // press and route it into e05's install pipeline. The
+            // visual gating (opacity / pointer-events) comes from a
+            // build-keyed CSS class on top of the `disabled` attribute;
+            // overriding the inline style overrides the class for
+            // free.
+            const button = node.closest('button');
+            if (button) {
+              button.removeAttribute('disabled');
+              button.removeAttribute('aria-disabled');
+              button.style.opacity = '1';
+              button.style.pointerEvents = 'auto';
+              button.style.cursor = 'pointer';
+            }
+          }
+        }
 
-      // Match install / uninstall button text in any locale, before
-      // or after the rewrite (Chrome → E05). Substring match on
-      // either brand name is enough to catch the install affordance
-      // since the SELECTOR has already narrowed the click target to
-      // install-button-shaped DOM.
-      function isInstallButton(text) {
-        return /Chrome|E05/.test(text);
-      }
-      document.addEventListener('click', (event) => {
-        const target = event.target.closest('button, div.webstore-test-button-label');
-        if (!target) return;
-        const text = (target.textContent || '').trim();
-        if (!isInstallButton(text)) return;
-        const id = extensionIDFromURL();
-        if (!id) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const installed = isInstalled(id);
-        window.webkit.messageHandlers.e05CWSInstall.postMessage({
-          extensionID: id,
-          uninstall: installed
-        });
-      }, true);
+        // Match install / uninstall button text in any locale, before
+        // or after the rewrite (Chrome → E05). Substring match on
+        // either brand name is enough to catch the install affordance
+        // since the SELECTOR has already narrowed the click target to
+        // install-button-shaped DOM.
+        function isInstallButton(text) {
+          return /Chrome|E05/.test(text);
+        }
+        document.addEventListener('click', (event) => {
+          const target = event.target.closest('button, div.webstore-test-button-label');
+          if (!target) return;
+          const text = (target.textContent || '').trim();
+          if (!isInstallButton(text)) return;
+          const id = extensionIDFromURL();
+          if (!id) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const installed = isInstalled(id);
+          window.webkit.messageHandlers.e05CWSInstall.postMessage({
+            extensionID: id,
+            uninstall: installed
+          });
+        }, true);
 
-      // Rerun whenever the install state push from Swift hits the
-      // page (and an explicit hook the host calls right after).
-      window.__e05CWSOverlayRewrite = rewrite;
+        // Rerun whenever the install state push from Swift hits the
+        // page (and an explicit hook the host calls right after).
+        window.__e05CWSOverlayRewrite = rewrite;
 
-      observer = new MutationObserver(rewrite);
-      observer.observe(document, { attributes: true, childList: true, subtree: true });
-      rewrite();
-    })();
-    """#
+        observer = new MutationObserver(rewrite);
+        observer.observe(document, { attributes: true, childList: true, subtree: true });
+        rewrite();
+      })();
+      """#
     return WKUserScript(
       source: source,
       injectionTime: .atDocumentStart,
@@ -253,7 +253,9 @@ enum ChromeWebStoreOverlay {
     let json: String = {
       if let data = try? JSONSerialization.data(withJSONObject: ids, options: []),
         let s = String(data: data, encoding: .utf8)
-      { return s }
+      {
+        return s
+      }
       return "[]"
     }()
     return """

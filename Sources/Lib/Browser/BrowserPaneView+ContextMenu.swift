@@ -65,7 +65,7 @@ extension BrowserPaneView {
   /// raw string; matching on identifier is more stable than
   /// selector-matching across SDK changes.
   private static let openInNewWindowIdentifiers: Set<String> = [
-    "WKMenuItemIdentifierOpenLinkInNewWindow",
+    "WKMenuItemIdentifierOpenLinkInNewWindow"
   ]
 
   /// `@objc` name override binds this Swift method to WebKit's
@@ -82,9 +82,13 @@ extension BrowserPaneView {
   ) {
     let linkURL = Self.linkURL(from: element)
 
-    logger.debug("proposed menu items=\(menu.items.count) linkURL=\(linkURL?.absoluteString ?? "nil", privacy: .public)")
+    logger.debug(
+      "proposed menu items=\(menu.items.count) linkURL=\(linkURL?.absoluteString ?? "nil", privacy: .public)"
+    )
     for item in menu.items {
-      logger.debug("  item title=\(item.title, privacy: .public) action=\(item.action.map(NSStringFromSelector) ?? "nil", privacy: .public) identifier=\(item.identifier?.rawValue ?? "nil", privacy: .public)")
+      logger.debug(
+        "  item title=\(item.title, privacy: .public) action=\(item.action.map(NSStringFromSelector) ?? "nil", privacy: .public) identifier=\(item.identifier?.rawValue ?? "nil", privacy: .public)"
+      )
     }
 
     // Drop "Open Link in New Window" — e05 is a single-window app
@@ -107,7 +111,7 @@ extension BrowserPaneView {
       let separator = NSMenuItem.separator()
       let openInPaneItem = NSMenuItem(
         title: "Open Link in New Pane",
-        action: #selector(_e05_openLinkInPane(_:)),
+        action: #selector(e05OpenLinkInPane(_:)),
         keyEquivalent: "")
       openInPaneItem.target = self
       openInPaneItem.representedObject = url
@@ -119,7 +123,7 @@ extension BrowserPaneView {
         accessibilityDescription: nil)
       let openInWorkspaceItem = NSMenuItem(
         title: "Open Link in New Workspace",
-        action: #selector(_e05_openLinkInWorkspace(_:)),
+        action: #selector(e05OpenLinkInWorkspace(_:)),
         keyEquivalent: "")
       openInWorkspaceItem.target = self
       openInWorkspaceItem.representedObject = url
@@ -165,12 +169,12 @@ extension BrowserPaneView {
     return url
   }
 
-  @objc fileprivate func _e05_openLinkInPane(_ sender: NSMenuItem) {
+  @objc fileprivate func e05OpenLinkInPane(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     onOpenInNewPane?(url)
   }
 
-  @objc fileprivate func _e05_openLinkInWorkspace(_ sender: NSMenuItem) {
+  @objc fileprivate func e05OpenLinkInWorkspace(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     onOpenInNewWorkspace?(url)
   }

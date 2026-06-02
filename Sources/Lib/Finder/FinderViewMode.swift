@@ -152,7 +152,8 @@ public final class FinderModeStore {
       return try JSONDecoder().decode([String: FinderViewMode].self, from: data)
     } catch {
       let timestamp = ISO8601DateFormatter().string(from: Date())
-      let quarantine = url
+      let quarantine =
+        url
         .deletingLastPathComponent()
         .appendingPathComponent("\(url.lastPathComponent).corrupt-\(timestamp)")
       do {

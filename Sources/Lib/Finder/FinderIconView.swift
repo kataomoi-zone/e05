@@ -140,7 +140,7 @@ final class FinderIconCollectionView: NSCollectionView {
     }
 
     if flags == .shift,
-      (event.charactersIgnoringModifiers == "G" || event.characters == "G")
+      event.charactersIgnoringModifiers == "G" || event.characters == "G"
     {
       pane.selectAbsoluteRow(pane.lastRowIndex)
       return

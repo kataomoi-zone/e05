@@ -61,9 +61,10 @@ extension FinderPaneView {
     // crosses APFS containers (cwd on an external volume, temp on
     // the system disk) zip falls back to copy+delete — slower than
     // an in-place rename, but still correct.
-    process.arguments = [
-      "-b", NSTemporaryDirectory(), "-r", "-q", archiveArg,
-    ] + sourceArgs
+    process.arguments =
+      [
+        "-b", NSTemporaryDirectory(), "-r", "-q", archiveArg,
+      ] + sourceArgs
     // Capture stderr so partial-failure messages don't drop into
     // /dev/null with `-q` set — they go to the unified log instead
     // when zip exits non-zero.

@@ -646,7 +646,8 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
       let mv = String(format: "%g", entry.manifestVersion)
       subtitleLabel.stringValue = "MV\(mv)"
     }
-    iconView.image = entry.icon
+    iconView.image =
+      entry.icon
       ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
     // Dim the metadata in the disabled state so the row reads as
     // inert at a glance, matching how Safari and Chrome dim disabled

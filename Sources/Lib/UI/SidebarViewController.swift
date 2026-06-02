@@ -114,7 +114,9 @@ final class SidebarViewController: NSViewController {
     overlay.onHoverExit = { [weak self] in self?.setSidebarHovered(false) }
     overlay.header.onTogglePin = { [weak self] in self?.togglePin() }
     overlay.header.onOpenSettings = { [weak self] in self?.invokeHeaderAction("open_settings") }
-    overlay.header.onOpenCommandPalette = { [weak self] in self?.invokeHeaderAction("command_palette") }
+    overlay.header.onOpenCommandPalette = { [weak self] in
+      self?.invokeHeaderAction("command_palette")
+    }
     applyMode(currentMode)
   }
 
@@ -127,7 +129,9 @@ final class SidebarViewController: NSViewController {
   /// the point).
   private func invokeHeaderAction(_ id: String) {
     guard let action = container?.actions().first(where: { $0.id == id }) else {
-      logger.error("[sidebar/header] action '\(id, privacy: .public)' missing — click ignored (container=\(self.container == nil ? "nil" : "set", privacy: .public))")
+      logger.error(
+        "[sidebar/header] action '\(id, privacy: .public)' missing — click ignored (container=\(self.container == nil ? "nil" : "set", privacy: .public))"
+      )
       return
     }
     action.handler()
@@ -579,12 +583,14 @@ final class SidebarViewController: NSViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverInDelay) { [weak self] in
       guard let self else { return }
       guard gen == self.stateGeneration else {
-        logger.debug("scheduleHoverIn fire: gen mismatch (captured=\(gen) live=\(self.stateGeneration))")
+        logger.debug(
+          "scheduleHoverIn fire: gen mismatch (captured=\(gen) live=\(self.stateGeneration))")
         return
       }
       guard self.mouseInside, self.hoverTriggerAllowed else {
         logger.debug(
-          "scheduleHoverIn fire: conditions failed (inside=\(self.mouseInside) allowed=\(self.hoverTriggerAllowed))")
+          "scheduleHoverIn fire: conditions failed (inside=\(self.mouseInside) allowed=\(self.hoverTriggerAllowed))"
+        )
         return
       }
       guard self.currentState == .hidden else {
@@ -602,7 +608,9 @@ final class SidebarViewController: NSViewController {
       "scheduleHoverOut: gen=\(self.stateGeneration, privacy: .public) state=\(String(describing: self.currentState), privacy: .public) edge=\(self.edgeHovered, privacy: .public) sidebar=\(self.sidebarHovered, privacy: .public)"
     )
     guard currentState == .hoverPeek else {
-      logger.debug("scheduleHoverOut: early-return (state=\(String(describing: self.currentState), privacy: .public))")
+      logger.debug(
+        "scheduleHoverOut: early-return (state=\(String(describing: self.currentState), privacy: .public))"
+      )
       return
     }
     let gen = stateGeneration
@@ -630,7 +638,9 @@ final class SidebarViewController: NSViewController {
         return
       }
       guard self.currentState == .hoverPeek else {
-        logger.debug("scheduleHoverOut fire: state moved (\(String(describing: self.currentState), privacy: .public))")
+        logger.debug(
+          "scheduleHoverOut fire: state moved (\(String(describing: self.currentState), privacy: .public))"
+        )
         return
       }
       logger.debug("scheduleHoverOut fire: transitioning to .hidden")
@@ -645,7 +655,8 @@ final class SidebarViewController: NSViewController {
   /// one is already in flight is a no-op.
   private func installDragEndMonitor() {
     guard dragEndMonitor == nil else { return }
-    dragEndMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+    dragEndMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) {
+      [weak self] event in
       guard let self else { return event }
       self.removeDragEndMonitor()
       self.hoverInsideDidChange()
@@ -745,7 +756,8 @@ final class SidebarViewController: NSViewController {
       }
       self.isAnimating = false
       logger.debug(
-        "transition completion: isAnimating=false (state=\(String(describing: self.currentState), privacy: .public))")
+        "transition completion: isAnimating=false (state=\(String(describing: self.currentState), privacy: .public))"
+      )
     }
   }
 

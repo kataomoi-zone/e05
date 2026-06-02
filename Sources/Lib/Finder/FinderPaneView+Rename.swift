@@ -198,7 +198,8 @@ extension FinderPaneView {
     let base = "untitled folder"
     var name = base
     var suffix = 2
-    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false)) {
+    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false))
+    {
       name = "\(base) \(suffix)"
       suffix += 1
     }
@@ -254,7 +255,8 @@ extension FinderPaneView {
     let base = "untitled folder"
     var name = base
     var suffix = 2
-    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false)) {
+    while fm.fileExists(atPath: currentURL.appendingPathComponent(name).path(percentEncoded: false))
+    {
       name = "\(base) \(suffix)"
       suffix += 1
     }

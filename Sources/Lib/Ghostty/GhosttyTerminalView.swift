@@ -349,7 +349,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   }
 
   @discardableResult
-  private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?, composing: Bool = false)
+  private func sendKeyEvent(
+    _ event: NSEvent, action: ghostty_input_action_e, text: String?, composing: Bool = false
+  )
     -> Bool
   {
     guard let surface else { return false }
@@ -370,16 +372,21 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
     let result: Bool
     if shouldSendText, let text {
-      let textHex = text.unicodeScalars.map { String(format: "0x%02X", $0.value) }.joined(separator: " ")
+      let textHex = text.unicodeScalars.map { String(format: "0x%02X", $0.value) }.joined(
+        separator: " ")
       let kc = String(format: "0x%02X", event.keyCode)
-      logger.debug("[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=\"\(text, privacy: .public)\" hex=[\(textHex, privacy: .public)]")
+      logger.debug(
+        "[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=\"\(text, privacy: .public)\" hex=[\(textHex, privacy: .public)]"
+      )
       result = text.withCString { ptr in
         key.text = ptr
         return ghostty_surface_key(surface, key)
       }
     } else {
       let kc = String(format: "0x%02X", event.keyCode)
-      logger.debug("[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=nil (raw=\(text ?? "nil", privacy: .public))")
+      logger.debug(
+        "[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=nil (raw=\(text ?? "nil", privacy: .public))"
+      )
       result = ghostty_surface_key(surface, key)
     }
     return result
@@ -540,7 +547,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     markedTextStorage.length > 0
   }
 
-  public func attributedSubstring(forProposedRange _: NSRange, actualRange _: NSRangePointer?) -> NSAttributedString? {
+  public func attributedSubstring(forProposedRange _: NSRange, actualRange _: NSRangePointer?)
+    -> NSAttributedString?
+  {
     nil
   }
 

@@ -5,7 +5,7 @@ import SwiftUI
 /// Kept separate from the persisted enum because the picker needs a
 /// `Hashable` tag that survives a type flip while the row's numeric
 /// value is being edited.
-fileprivate enum PaneWidthPresetKind: String, Hashable, CaseIterable {
+private enum PaneWidthPresetKind: String, Hashable, CaseIterable {
   case points
   case fraction
 }
@@ -16,7 +16,7 @@ fileprivate enum PaneWidthPresetKind: String, Hashable, CaseIterable {
 /// value as points directly; the `fraction` branch interprets it as a
 /// percentage (0-100) so the user sees `50` instead of `0.5` in the
 /// field, then divides by 100 on write-back.
-fileprivate struct WidthCycleRow: Identifiable, Equatable {
+private struct WidthCycleRow: Identifiable, Equatable {
   let id: UUID
   var kind: PaneWidthPresetKind
   var value: Double
@@ -74,7 +74,8 @@ struct AppearanceSettingsView: View {
     _paneGapPreset = State(initialValue: PaneGapPreset.resolve(prefs.paneGap))
     _cornerPreset = State(
       initialValue: CornerRadiusPreset.resolve(prefs.surfaceCornerRadius))
-    let prefsCycle = prefs.widthCyclePresets
+    let prefsCycle =
+      prefs.widthCyclePresets
       ?? PaneContainerViewController.defaultWidthCycle
     _widthCycleRows = State(
       initialValue: prefsCycle.map { WidthCycleRow(preset: $0) })
@@ -328,7 +329,8 @@ struct AppearanceSettingsView: View {
       // differs from what the view already shows. Otherwise an inline
       // edit (which writes through this view) would re-issue fresh
       // row ids on every keystroke, dropping TextField focus mid-typing.
-      let externalPresets = new.widthCyclePresets
+      let externalPresets =
+        new.widthCyclePresets
         ?? PaneContainerViewController.defaultWidthCycle
       let currentPresets = widthCycleRows.map(\.preset)
       if externalPresets != currentPresets {
@@ -352,7 +354,7 @@ struct AppearanceSettingsView: View {
 /// field the instant the user clicks elsewhere instead of waiting on
 /// the next Settings interaction.
 @MainActor
-fileprivate struct WidthCycleRowView: View {
+private struct WidthCycleRowView: View {
   @Binding var row: WidthCycleRow
   let canRemove: Bool
   let onRemove: () -> Void

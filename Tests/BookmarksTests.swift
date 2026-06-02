@@ -195,9 +195,10 @@ struct BookmarksTests {
     bm.add(url: "https://c.example.com", title: "C")
 
     let children = bm.children(of: nil)
-    #expect(children.map(\.url) == [
-      "https://a.example.com", "https://b.example.com", "https://c.example.com",
-    ])
+    #expect(
+      children.map(\.url) == [
+        "https://a.example.com", "https://b.example.com", "https://c.example.com",
+      ])
     // Sibling sort_order strictly increases with each new insert.
     let orders = children.map(\.sortOrder)
     #expect(orders == orders.sorted())
@@ -337,9 +338,10 @@ struct BookmarksTests {
     bm.reorder(parentId: nil, orderedIds: [folder.id, b.id, c.id, a.id])
 
     let rootUrls = bm.children(of: nil).map { $0.url ?? "<folder>" }
-    #expect(rootUrls == [
-      "<folder>", "https://b.example.com", "https://c.example.com", "https://a.example.com",
-    ])
+    #expect(
+      rootUrls == [
+        "<folder>", "https://b.example.com", "https://c.example.com", "https://a.example.com",
+      ])
 
     // Cross-parent reorder: move A into the folder, in front of any
     // existing children (folder is empty here, so the result is just

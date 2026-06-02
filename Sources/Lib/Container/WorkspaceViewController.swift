@@ -45,7 +45,8 @@ public final class WorkspaceViewController: NSViewController {
   required init?(coder _: NSCoder) { fatalError() }
 
   public override func loadView() {
-    logger.debug("WorkspaceVC.loadView wsId=\(String(describing: self.workspace.id), privacy: .public)")
+    logger.debug(
+      "WorkspaceVC.loadView wsId=\(String(describing: self.workspace.id), privacy: .public)")
     // Constraint-driven layout — the container installs leading/trailing/
     // height/top constraints and animates `topConstraint.constant` to
     // slide this view vertically. Autoresizing mask is turned off to

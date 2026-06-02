@@ -91,7 +91,9 @@ struct AdBlockerWhitelistStoreTests {
         (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))
         ?? []
       #expect(
-        entries.contains(where: { $0.lastPathComponent.hasPrefix("adblocker-whitelist.json.corrupt-") }))
+        entries.contains(where: {
+          $0.lastPathComponent.hasPrefix("adblocker-whitelist.json.corrupt-")
+        }))
     }
   }
 

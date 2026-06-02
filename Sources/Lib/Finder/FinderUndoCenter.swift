@@ -139,12 +139,14 @@ public enum FinderUndoCenter {
     let failed = total - succeeded
     let itemPhrase = total == 1 ? "1 item" : "\(failed) of \(total) items"
     let message = "\(itemPhrase) couldn't be \(verbPhrase)"
-    guard let container = target.window?.contentViewController as? PaneContainerViewController else {
+    guard let container = target.window?.contentViewController as? PaneContainerViewController
+    else {
       // Diagnostic: the per-item moveItem already logged its own
       // failure, but the user never saw the toast. Without this
       // line a teardown / detached-window state surfaces as
       // "the partial failure is invisible" with no clue why.
-      logger.error("Partial-failure toast dropped: container unresolved (\(message, privacy: .public))")
+      logger.error(
+        "Partial-failure toast dropped: container unresolved (\(message, privacy: .public))")
       return
     }
     container.showToast(message, style: .error)

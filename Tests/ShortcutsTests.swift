@@ -8,7 +8,8 @@ import Testing
 struct ShortcutBindingTests {
   @Test("Codable round-trip preserves both fields")
   func codableRoundTrip() throws {
-    let binding = ShortcutBinding(keyEquivalent: "k", modifierMask: NSEvent.ModifierFlags.command.rawValue)
+    let binding = ShortcutBinding(
+      keyEquivalent: "k", modifierMask: NSEvent.ModifierFlags.command.rawValue)
     let data = try JSONEncoder().encode(binding)
     let decoded = try JSONDecoder().decode(ShortcutBinding.self, from: data)
     #expect(decoded == binding)
@@ -152,8 +153,9 @@ struct ShortcutPreferencesTests {
       let reader = PreferencesStore(storeURL: storeURL)
       let overrides = reader.preferences.keyboardShortcuts ?? [:]
       #expect(overrides["close_pane"]?.keyEquivalent == "x")
-      #expect(overrides["close_pane"]?.modifierMask
-        == NSEvent.ModifierFlags([.command, .shift]).rawValue)
+      #expect(
+        overrides["close_pane"]?.modifierMask
+          == NSEvent.ModifierFlags([.command, .shift]).rawValue)
       #expect(overrides["browser_reload"]?.keyEquivalent == nil)
     }
   }

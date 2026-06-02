@@ -18,7 +18,9 @@ extension PaneContainerViewController {
   public func setFocus(
     columnIndex: Int, paneIndex: Int, scroll: Bool = true
   ) {
-    logger.info("setFocus entry col=\(columnIndex) pane=\(paneIndex) scroll=\(scroll ? "yes" : "no", privacy: .public) currentWs=\(self.focusedWorkspaceIndex)")
+    logger.info(
+      "setFocus entry col=\(columnIndex) pane=\(paneIndex) scroll=\(scroll ? "yes" : "no", privacy: .public) currentWs=\(self.focusedWorkspaceIndex)"
+    )
     guard columns.indices.contains(columnIndex) else {
       logger.error("setFocus guard: bad columnIndex")
       return
@@ -82,7 +84,8 @@ extension PaneContainerViewController {
     }
 
     if let previousPane = focusedPane {
-      logger.debug("setFocus clearing previous pane=\(String(describing: previousPane.id), privacy: .public)")
+      logger.debug(
+        "setFocus clearing previous pane=\(String(describing: previousPane.id), privacy: .public)")
       clearFocusBorder(previousPane)
       hideHeaderForPane(previousPane)
     }
@@ -91,7 +94,9 @@ extension PaneContainerViewController {
     column.focusedPaneIndex = paneIndex
 
     let pane = column.panes[paneIndex]
-    logger.info("setFocus applying pane=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
+    logger.info(
+      "setFocus applying pane=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)"
+    )
     // Inform the WKWebExtension bridge of the focus change up front
     // so the sticky "active browser pane" tracker stays current
     // regardless of what subsequent UI work (popup webView, find bar,
@@ -118,7 +123,9 @@ extension PaneContainerViewController {
       pane.urlBar.focusURLField()
     } else {
       let result = view.window?.makeFirstResponder(pane.preferredFirstResponder) ?? false
-      logger.debug("setFocus makeFirstResponder result=\(result ? "true" : "false", privacy: .public) actualFirstResponder=\(String(describing: self.view.window?.firstResponder), privacy: .public)")
+      logger.debug(
+        "setFocus makeFirstResponder result=\(result ? "true" : "false", privacy: .public) actualFirstResponder=\(String(describing: self.view.window?.firstResponder), privacy: .public)"
+      )
     }
     updateHandleActiveStates()
     showHeaderForFocusedPane()
@@ -480,7 +487,9 @@ extension PaneContainerViewController {
     return handle
   }
 
-  private func makeColumnResizeHandle(leftColumn: ColumnModel, rightColumn: ColumnModel) -> PaneResizeHandle {
+  private func makeColumnResizeHandle(leftColumn: ColumnModel, rightColumn: ColumnModel)
+    -> PaneResizeHandle
+  {
     let handle = PaneResizeHandle(orientation: .horizontal)
     handle.onDrag = { [weak self, weak leftColumn, weak rightColumn] deltaX in
       guard let self, let leftColumn, let rightColumn else { return }
@@ -614,7 +623,9 @@ extension PaneContainerViewController {
     }
   }
 
-  private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int) -> PaneResizeHandle {
+  private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int)
+    -> PaneResizeHandle
+  {
     let handle = PaneResizeHandle(orientation: .vertical)
     // Vertical handles are always active within a column (unlike horizontal
     // handles which are only active adjacent to the focused column).
@@ -632,7 +643,9 @@ extension PaneContainerViewController {
       // AppKit Y is up, so dragging down (negative deltaY) should grow the top pane
       let newTopHeight = topPane.containerView.frame.height - deltaY
       let newBottomHeight = bottomPane.containerView.frame.height + deltaY
-      guard newTopHeight >= self.minPaneHeight, newBottomHeight >= self.minPaneHeight else { return }
+      guard newTopHeight >= self.minPaneHeight, newBottomHeight >= self.minPaneHeight else {
+        return
+      }
 
       // Replace all height constraints with ratio constraints relative to first pane.
       // Ratio constraints fill the container naturally — no absolute heights needed.
@@ -652,7 +665,8 @@ extension PaneContainerViewController {
         }
         let firstHeight =
           (column.panes[0].id == topPane.id)
-          ? newTopHeight : (column.panes[0].id == bottomPane.id) ? newBottomHeight : firstCV.frame.height
+          ? newTopHeight
+          : (column.panes[0].id == bottomPane.id) ? newBottomHeight : firstCV.frame.height
         guard firstHeight > 0 else { continue }
         let ratio = currentHeight / firstHeight
         let c = pane.containerView.heightAnchor.constraint(
@@ -741,7 +755,8 @@ extension PaneContainerViewController {
     cv.layer?.borderColor = nil
     removeDottedBorderOverlay(in: cv)
     if hadBorder {
-      logger.debug("clearFocusBorder paneId=\(String(describing: pane.id), privacy: .public) (had border)")
+      logger.debug(
+        "clearFocusBorder paneId=\(String(describing: pane.id), privacy: .public) (had border)")
     }
 
     if let column = columns.first(where: { $0.panes.contains(where: { $0.id == pane.id }) }) {
@@ -824,7 +839,9 @@ extension PaneContainerViewController {
   /// resolve correctly. The previous current-WS-only scan would silently
   /// drop focus updates for panes parked in non-current workspaces.
   func handleFocusChange(from pane: PaneModel) {
-    logger.debug("handleFocusChange paneId=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)")
+    logger.debug(
+      "handleFocusChange paneId=\(String(describing: pane.id), privacy: .public) addr=\(pane.address.description, privacy: .public)"
+    )
     // Cold-restore guard: while `pendingInitialFocus` is non-nil the
     // session restore is still in flight and `viewDidAppear` hasn't
     // re-applied the saved focus yet. AppKit's `_setUpFirstResponder`

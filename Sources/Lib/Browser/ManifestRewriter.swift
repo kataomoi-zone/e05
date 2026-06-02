@@ -46,7 +46,6 @@ enum ManifestRewriter {
     return result.count == 32 ? result : nil
   }
 
-
   enum RewriteError: Swift.Error, CustomStringConvertible {
     case manifestNotFound(URL)
     case manifestNotJSON(URL, underlying: Swift.Error)
@@ -145,10 +144,11 @@ enum ManifestRewriter {
       if let sw = bg["service_worker"] as? String {
         let isModule = (bg["type"] as? String) == "module"
         synthBg = (sw, isModule)
-        manifest["background"] = [
-          "page": "_e05_bg.html",
-          "persistent": false,
-        ] as [String: Any]
+        manifest["background"] =
+          [
+            "page": "_e05_bg.html",
+            "persistent": false,
+          ] as [String: Any]
         didRewrite = true
       } else if var bg2 = manifest["background"] as? [String: Any],
         bg2["scripts"] is [String]
@@ -315,7 +315,8 @@ enum ManifestRewriter {
       let range = NSRange(bgSource.startIndex..., in: bgSource)
       regex.enumerateMatches(in: bgSource, range: range) { match, _, _ in
         guard let match = match,
-          let r = Range(match.range(at: 1), in: bgSource) else { return }
+          let r = Range(match.range(at: 1), in: bgSource)
+        else { return }
         let path = String(bgSource[r])
         let fileURL = dir.appendingPathComponent(path)
         if !fm.fileExists(atPath: fileURL.path) {

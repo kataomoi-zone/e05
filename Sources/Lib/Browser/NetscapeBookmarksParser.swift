@@ -465,14 +465,14 @@ private func decodeEntity(_ name: String) -> Character? {
   }
 }
 
-private extension Unicode.Scalar {
-  var isWhitespace: Bool {
+extension Unicode.Scalar {
+  fileprivate var isWhitespace: Bool {
     self == " " || self == "\t" || self == "\n" || self == "\r"
   }
 }
 
-private extension String {
-  var trimmed: String {
+extension String {
+  fileprivate var trimmed: String {
     trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }

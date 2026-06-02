@@ -381,7 +381,8 @@ public final class FinderPaneView: NSView {
     dateCol.title = "Date Modified"
     dateCol.width = 150
     dateCol.minWidth = 100
-    dateCol.sortDescriptorPrototype = NSSortDescriptor(key: SortKey.dateModified.rawValue, ascending: false)
+    dateCol.sortDescriptorPrototype = NSSortDescriptor(
+      key: SortKey.dateModified.rawValue, ascending: false)
 
     let sizeCol = NSTableColumn(identifier: Self.sizeColumn)
     sizeCol.title = "Size"

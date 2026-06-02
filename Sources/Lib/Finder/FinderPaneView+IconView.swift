@@ -229,7 +229,8 @@ extension FinderPaneView {
     // becomes hidden out from under the editor.
     cancelRenameIfActive()
     let preserved = selectedURLs
-    let wasFirstResponder = (window?.firstResponder as? NSView)
+    let wasFirstResponder =
+      (window?.firstResponder as? NSView)
       .map { $0.isDescendant(of: self) } ?? false
     let leavingIconMode = (currentMode == .icon)
 
