@@ -5,10 +5,10 @@ import Testing
 
 @Suite("PaneWidthPreset")
 struct PaneWidthPresetTests {
-  @Test("columns equality")
-  func columnsEquality() {
-    #expect(PaneWidthPreset.columns(80) == .columns(80))
-    #expect(PaneWidthPreset.columns(80) != .columns(120))
+  @Test("points equality")
+  func pointsEquality() {
+    #expect(PaneWidthPreset.points(80) == .points(80))
+    #expect(PaneWidthPreset.points(80) != .points(120))
   }
 
   @Test("fraction equality")
@@ -17,9 +17,9 @@ struct PaneWidthPresetTests {
     #expect(PaneWidthPreset.fraction(0.5) != .fraction(0.333))
   }
 
-  @Test("columns and fraction are not equal")
+  @Test("points and fraction are not equal")
   func crossTypeInequality() {
-    #expect(PaneWidthPreset.columns(80) != .fraction(0.5))
+    #expect(PaneWidthPreset.points(80) != .fraction(0.5))
   }
 }
 
