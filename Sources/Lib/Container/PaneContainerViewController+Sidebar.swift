@@ -122,6 +122,7 @@ extension PaneContainerViewController {
   func notifySidebarWorklaneDidChange() {
     guard let sidebarVC, !isAnimatingWorkspaceSwitch else { return }
     sidebarVC.reloadWorklane()
+    scheduleSessionAutosave()
   }
 
   // MARK: - State machine layout application

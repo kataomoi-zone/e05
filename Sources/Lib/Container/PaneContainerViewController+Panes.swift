@@ -390,6 +390,7 @@ extension PaneContainerViewController {
         if let pane {
           ExtensionController.shared.notifyTabPropertiesChanged(pane, properties: .URL)
         }
+        self?.scheduleSessionAutosave()
       }
       bv.onFocusChanged = { [weak self, weak pane] in
         guard let self, let pane else { return }

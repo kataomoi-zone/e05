@@ -144,6 +144,31 @@ extension PaneContainerViewController {
     captureSession().save()
   }
 
+  /// Debounce window for autosave, matching Chromium's session-save
+  /// batch delay (`kSaveDelay`, 2500ms). Layout and navigation bursts
+  /// (redirect chains, SPA `pushState`, rapid pane edits) collapse
+  /// into a single write once activity settles.
+  private static let autosaveDebounce: TimeInterval = 2.5
+
+  /// Schedule a debounced session save. Called from every layout /
+  /// focus mutation (via `notifySidebarWorklaneDidChange`) and from
+  /// browser navigation (`onURLChange`); each call supersedes the
+  /// prior pending save so rapid changes coalesce into one write.
+  /// This is the save path that guards against crash / force-quit
+  /// data loss — `applicationWillTerminate` only fires on a clean quit.
+  func scheduleSessionAutosave() {
+    sessionAutosaveWorkItem?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      MainActor.assumeIsolated {
+        self?.sessionAutosaveWorkItem = nil
+        self?.saveSession()
+      }
+    }
+    sessionAutosaveWorkItem = work
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + Self.autosaveDebounce, execute: work)
+  }
+
   /// Restore session from a saved state.
   func restoreSession(_ session: SessionState) {
     // Set first so that `setupPaneCallbacks`, run per-pane inside the

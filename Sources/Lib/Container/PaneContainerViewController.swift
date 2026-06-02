@@ -18,6 +18,14 @@ public final class PaneContainerViewController: NSViewController {
   var workspaceVCs: [WorkspaceViewController] = []
   var focusedWorkspaceIndex: Int = 0
 
+  /// Pending debounced session autosave. Every layout / focus
+  /// mutation (via `notifySidebarWorklaneDidChange`) and browser
+  /// navigation (`onURLChange`) reschedules this, collapsing a burst
+  /// of changes into one write once activity settles. It is the only
+  /// save path that survives a crash / force-quit; the other,
+  /// `applicationWillTerminate`, runs only on a clean quit.
+  var sessionAutosaveWorkItem: DispatchWorkItem?
+
   /// Sidebar child VC. Set exactly once in `viewDidLoad` via
   /// `installSidebar()`, then non-nil for the rest of the VC's life.
   /// The implicitly-unwrapped type encodes that invariant so
