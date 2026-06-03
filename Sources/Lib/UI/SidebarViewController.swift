@@ -96,6 +96,13 @@ final class SidebarViewController: NSViewController {
   /// surfaces share one subscription style and one cleanup path.
   nonisolated(unsafe) private var faviconObserver: NSObjectProtocol?
 
+  /// Block-based observer for
+  /// `ExtensionController.popupVisibilityDidChangeNotification`. Keeps
+  /// the sidebar revealed while an extension popup launched from the
+  /// extensions list is open; shares the `faviconObserver` cleanup
+  /// path in `deinit`.
+  nonisolated(unsafe) private var extensionPopupObserver: NSObjectProtocol?
+
   /// Hover-in delay (seconds). Short enough to feel instant on
   /// intentional edge hover yet long enough to shrug off an accidental
   /// cursor fly-by crossing the edge strip.
@@ -261,6 +268,24 @@ final class SidebarViewController: NSViewController {
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.reloadWorklane() }
+    }
+
+    // While an extension popup popover launched from the extensions
+    // list is open, the hover-peek auto-hide is suppressed (see
+    // `scheduleHoverOut`) so the popover's sidebar-row anchor stays in
+    // the window. Resume the hide once the popup closes, provided the
+    // cursor has already left the sidebar.
+    extensionPopupObserver = NotificationCenter.default.addObserver(
+      forName: ExtensionController.popupVisibilityDidChangeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, !ExtensionController.shared.isPopupPopoverVisible else { return }
+        if self.currentState == .hoverPeek, !self.mouseInside {
+          self.scheduleHoverOut()
+        }
+      }
     }
   }
 
@@ -634,6 +659,14 @@ final class SidebarViewController: NSViewController {
         self.installDragEndMonitor()
         return
       }
+      // An extension popup anchored to a sidebar row is open. Hiding
+      // now would detach the popover's anchor view and dismiss the
+      // popup mid-use; stay revealed. The popup-visibility observer
+      // re-arms the hide once the popover closes.
+      guard !ExtensionController.shared.isPopupPopoverVisible else {
+        logger.debug("scheduleHoverOut fire: deferring (extension popup open)")
+        return
+      }
       guard self.currentState == .hoverPeek else {
         logger.debug(
           "scheduleHoverOut fire: state moved (\(String(describing: self.currentState), privacy: .public))"
@@ -677,6 +710,9 @@ final class SidebarViewController: NSViewController {
       NSEvent.removeMonitor(m)
     }
     if let token = faviconObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = extensionPopupObserver {
       NotificationCenter.default.removeObserver(token)
     }
   }

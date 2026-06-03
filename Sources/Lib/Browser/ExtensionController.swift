@@ -77,6 +77,53 @@ public final class ExtensionController {
     "com.kawarimidoll.e05.ExtensionController.didChange"
   )
 
+  /// Posted whenever an extension action popup popover is shown or
+  /// dismissed. The sidebar observes this to keep itself revealed
+  /// while a popup it launched is open: the popover is anchored to a
+  /// sidebar row, so the hover-peek auto-hide would otherwise detach
+  /// the anchor and dismiss the popup the moment the cursor moves onto
+  /// it.
+  public static let popupVisibilityDidChangeNotification = Notification.Name(
+    "com.kawarimidoll.e05.ExtensionController.popupVisibilityDidChange"
+  )
+
+  /// Number of extension action popup popovers currently on screen. A
+  /// count — not a Bool — because popups are `.semitransient`: opening
+  /// a second popover dismisses the first, and the first's `willClose`
+  /// can be delivered *after* the second's present. A Bool would then
+  /// read false while a popover is still visible; the count stays
+  /// positive across the overlap.
+  private var popupPopoverCount = 0
+
+  /// Whether any extension action popup popover is currently on screen.
+  /// The sidebar reads this to suppress its hover-peek auto-hide while
+  /// a popup it launched (anchored to a sidebar row) is open.
+  public var isPopupPopoverVisible: Bool { popupPopoverCount > 0 }
+
+  /// Record that a popup popover was presented. Posts the visibility
+  /// notification only on the 0 → 1 edge so observers see one
+  /// "became visible" signal regardless of how many popovers overlap.
+  func popupPopoverDidPresent() {
+    popupPopoverCount += 1
+    if popupPopoverCount == 1 { postPopupVisibilityChange() }
+  }
+
+  /// Record that a popup popover closed. Clamped at zero so a stray
+  /// double close hook can't drive the count negative and wedge the
+  /// "visible" state on. Posts only on the 1 → 0 edge. Relies on
+  /// `NSPopover.willCloseNotification` firing for every shown popover —
+  /// the same assumption the popup's native-port cleanup already makes.
+  func popupPopoverDidClose() {
+    guard popupPopoverCount > 0 else { return }
+    popupPopoverCount -= 1
+    if popupPopoverCount == 0 { postPopupVisibilityChange() }
+  }
+
+  private func postPopupVisibilityChange() {
+    NotificationCenter.default.post(
+      name: Self.popupVisibilityDidChangeNotification, object: self)
+  }
+
   /// Per-extension `WKWebExtensionContext` cache keyed by source-URL
   /// filename. Built once during `load(at:)` so a toggle from the
   /// sidebar can call `controller.load` / `controller.unload` without
@@ -2398,6 +2445,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated {
+        self?.controller?.popupPopoverDidClose()
         self?.shutdownNativePorts(for: context)
       }
     }
@@ -2407,6 +2455,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       closeToken,
       .OBJC_ASSOCIATION_RETAIN_NONATOMIC
     )
+    controller?.popupPopoverDidPresent()
     popover.show(
       relativeTo: anchorRect,
       of: anchorView,

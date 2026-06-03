@@ -82,6 +82,11 @@ final class ExtensionsSidebarView: NSView {
     tableView.style = .plain
     tableView.dataSource = self
     tableView.delegate = self
+    // Single click on a row body activates the extension (opens its
+    // popup, or fires `onClicked`). Clicks on the switch / ellipsis are
+    // consumed by those controls and never reach this action.
+    tableView.target = self
+    tableView.action = #selector(handleRowClick)
     scrollView.documentView = tableView
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
@@ -234,6 +239,31 @@ final class ExtensionsSidebarView: NSView {
     rows = ExtensionController.shared.loadedExtensions
     tableView.reloadData()
     emptyLabel.isHidden = !rows.isEmpty
+  }
+
+  /// Activate the clicked extension — the same effect as clicking its
+  /// toolbar button: open the popup popover (anchored to the row's
+  /// icon) or fire the extension's `onClicked` handler when it has no
+  /// popup. Disabled extensions are skipped because their
+  /// `WKWebExtensionContext` is unloaded — there is nothing to action
+  /// and the row's switch is the user-facing control in that state.
+  @objc private func handleRowClick() {
+    let row = tableView.clickedRow
+    guard row >= 0, row < rows.count else { return }
+    let entry = rows[row]
+    guard entry.isEnabled else { return }
+    guard
+      let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+        as? ExtensionsSidebarCellView
+    else { return }
+    // WebKit may dispatch the popover present asynchronously. If a
+    // `didChangeNotification` reloads the table in that gap, NSTableView
+    // can recycle this cell onto another row, so the popover may sprout
+    // from a different row's icon — cosmetic only: the action still
+    // targets the right extension by `sourceURL`, and the delegate's
+    // window-liveness guard keeps it from anchoring to a detached view.
+    ExtensionController.shared.performAction(
+      for: entry.sourceURL, anchorView: cell, anchorRect: cell.actionAnchorRect)
   }
 
   private func hideAllActionButtons() {
@@ -491,6 +521,11 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   override func setHoverActionsHidden(_ hidden: Bool) {
     menuButton.isHidden = hidden
   }
+
+  /// Frame of the icon in the cell's own coordinates — used as the
+  /// popup popover's anchor so the arrow points at the extension's
+  /// icon rather than the full-width row.
+  var actionAnchorRect: NSRect { iconView.frame }
 
   @objc private func menuTapped() {
     guard let sourceURL = currentSourceURL else { return }
