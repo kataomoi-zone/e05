@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Fast dev iteration: swift build → assemble dev .app → launch.
 #
-# Runs the binary directly out of the bundle so stderr is
-# attached to the terminal and unified log Logger picks up
-# the dev bundle id (com.kawarimidoll.e05.debug) as subsystem.
+# Runs the binary directly out of the bundle so stderr stays
+# attached to the terminal and bundle-identity APIs resolve.
+# os.Logger uses a fixed subsystem (com.kawarimidoll.e05, see
+# LogSubsystem); tail it with scripts/logs.sh.
 # Extra args are forwarded to the e05 binary.
 
 set -euo pipefail

@@ -56,6 +56,8 @@ The `--disable-sandbox` flag is required because tests access `~/.config/e05/` p
 
 For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script assembles a `.app` bundle under `build/dev/` and execs the binary out of it, so `Bundle.main.bundleIdentifier` resolves and APIs that gate on bundle identity work — camera/microphone/location permission prompts, unified-log Logger subsystem, and the upcoming `UNUserNotificationCenter` wiring. The binary is exec'd directly (not via `open`), so stderr stays attached to the terminal.
 
+To follow the app's own `os.Logger` output, run `./scripts/logs.sh` in another terminal (it wraps `log stream --predicate 'subsystem == "com.kawarimidoll.e05"' --level debug`). The `--level debug` matters: the default stream level is `notice`, so `info`/`debug` messages are hidden without it. `os.Logger` also redacts interpolated strings as `<private>` — log a value as `\(value, privacy: .public)` to see it. (This is unrelated to `NSLog`, which a `swift run` binary does not route to the unified log at all.)
+
 ```bash
 ./scripts/dev.sh                  # iterate
 ./scripts/build_app.sh release    # assemble build/release/e05.app (after swift build -c release)
