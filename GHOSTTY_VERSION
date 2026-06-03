@@ -1,0 +1,8 @@
+# ghostty commit pinned for BOTH the GhosttyKit.xcframework binary and the
+# vendored runtime resources under Resources/{ghostty,terminfo}.
+#
+# The xcframework is gitignored (rebuilt per machine); the resources are
+# committed. They MUST come from the same ghostty commit — when bumping,
+# rebuild ghostty at the new commit and refresh both together, then update
+# this file. See CONTRIBUTING.md ("Building GhosttyKit").
+3a1482d1a

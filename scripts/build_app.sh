@@ -108,6 +108,17 @@ mkdir -p "$CONTENTS/Resources/bin"
 cp -f "$CLI_SRC" "$CONTENTS/Resources/bin/e05"
 cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 
+# Ghostty runtime resources (themes / shell-integration / terminfo),
+# vendored under Resources/ and pinned via GHOSTTY_VERSION. Bundled so a
+# release launched from Finder — with no GHOSTTY_RESOURCES_DIR inherited
+# from a parent ghostty — still resolves built-in themes and the
+# xterm-ghostty terminfo. GhosttyApp points GHOSTTY_RESOURCES_DIR at
+# Contents/Resources/ghostty; terminfo sits beside it as
+# Contents/Resources/terminfo (ghostty resolves terminfo adjacent to the
+# resources dir). rsync --delete keeps the bundle in sync across rebuilds.
+rsync -a --delete "$REPO_ROOT/Resources/ghostty/" "$CONTENTS/Resources/ghostty/"
+rsync -a --delete "$REPO_ROOT/Resources/terminfo/" "$CONTENTS/Resources/terminfo/"
+
 # App icon: rsvg-convert renders icon.svg into the seven PNG sizes
 # the macOS .appiconset format references, then actool compiles them
 # into AppIcon.icns + Assets.car. PartialInfo.plist is requested only

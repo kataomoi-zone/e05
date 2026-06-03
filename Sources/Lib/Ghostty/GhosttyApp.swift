@@ -36,7 +36,39 @@ public final class GhosttyApp {
   private(set) var app: ghostty_app_t?
   private(set) var config: ghostty_config_t?
 
+  /// Point libghostty at the resources bundled inside the app
+  /// (themes / shell-integration / terminfo) before `ghostty_init`.
+  /// A release launched from Finder inherits no `GHOSTTY_RESOURCES_DIR`
+  /// from a parent ghostty process, so without this the built-in themes
+  /// and the `xterm-ghostty` terminfo can't be resolved. The bundle copy
+  /// is forced to win over any inherited value so the resources always
+  /// match the embedded libghostty version. terminfo lives beside the
+  /// resources dir (ghostty resolves it adjacent to `GHOSTTY_RESOURCES_DIR`),
+  /// so the sentinel check probes the sibling `terminfo/78/xterm-ghostty`.
+  private static func configureBundledResourcesDir() {
+    guard let resourceURL = Bundle.main.resourceURL else {
+      logger.warning(
+        "[ghostty/resources] Bundle.main.resourceURL is nil; relying on inherited GHOSTTY_RESOURCES_DIR"
+      )
+      return
+    }
+    let sentinel = resourceURL.appendingPathComponent("terminfo/78/xterm-ghostty")
+    guard FileManager.default.fileExists(atPath: sentinel.path) else {
+      logger.warning(
+        "[ghostty/resources] bundled terminfo missing at \(sentinel.path); built-in themes and xterm-ghostty terminfo are unavailable unless GHOSTTY_RESOURCES_DIR is inherited"
+      )
+      return
+    }
+    let ghosttyDir = resourceURL.appendingPathComponent("ghostty").path
+    if setenv("GHOSTTY_RESOURCES_DIR", ghosttyDir, 1) != 0 {
+      logger.error(
+        "[ghostty/resources] setenv GHOSTTY_RESOURCES_DIR failed: \(String(cString: strerror(errno)))"
+      )
+    }
+  }
+
   public init() {
+    Self.configureBundledResourcesDir()
     let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
     guard initResult == 0 else {
       logger.error("ghostty_init failed: \(initResult)")

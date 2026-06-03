@@ -22,11 +22,25 @@ git checkout main && git pull
 
 # Copy the output into the e05 project root
 cp -R macos/GhosttyKit.xcframework /path/to/e05/
+
+# Runtime resources (themes / shell-integration / terminfo). Unlike the
+# xcframework these are COMMITTED under Resources/, and must come from the
+# same ghostty commit (see GHOSTTY_VERSION). build_app.sh bundles them so a
+# release resolves built-in themes + the xterm-ghostty terminfo without an
+# inherited GHOSTTY_RESOURCES_DIR.
+rsync -a --delete zig-out/share/ghostty/themes/            /path/to/e05/Resources/ghostty/themes/
+rsync -a --delete zig-out/share/ghostty/shell-integration/ /path/to/e05/Resources/ghostty/shell-integration/
+rsync -a --delete zig-out/share/terminfo/                  /path/to/e05/Resources/terminfo/
+
+# Pin the commit so binary + resources stay in lockstep:
+git rev-parse --short HEAD   # write this into e05's GHOSTTY_VERSION
 ```
 
 Notes:
 
-- Use Homebrew's zig. Nix's zig does not build libghostty successfully (empirical result)
+- Use Homebrew's zig **0.15.2** (ghostty 1.3.x's required version). Nix's zig (0.16+) does not build libghostty successfully (empirical result)
+- The macOS app build (which is what produces the apprt-enabled xcframework) needs the **Metal Toolchain** (`xcodebuild -downloadComponent MetalToolchain`) and a CoreSimulator in sync with Xcode (`sudo xcodebuild -runFirstLaunch`; reboot if `xcrun simctl list` still errors). Missing either fails the `Ld ghostty` step
+- Do **not** pass `-Demit-macos-app=false`: it skips the app build, and the resulting xcframework lacks the `ghostty_*` apprt symbols e05 links against (`ghostty_init`, `ghostty_surface_*`)
 - `-Dxcframework-target=native` produces a host-arch binary only. Use `universal` for a fat xcframework
 - `-Dapp-runtime=none` selects the embedding runtime; on macOS `emit-xcframework` is implied
 - `libghostty-spm` is intentionally **not** used. Empirically it has key-handling problems and unstable API tracking
