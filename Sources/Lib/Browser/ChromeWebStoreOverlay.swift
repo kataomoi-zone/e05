@@ -33,16 +33,22 @@ import WebKit
 ///    on "Add to Chrome" forever (no Chromium API means no state
 ///    feedback from e05 to CWS's DOM).
 ///
-/// Rebranding strategy: instead of enumerating every CWS locale,
-/// substitute the literal `Chrome` substring with `E05` on any node
-/// matched by the install-button selector. Brave's approach uses an
-/// enumerated phrase table plus a literal `replace('Chrome', 'Brave')`
-/// fallback; the e05 overlay drops the table entirely and relies on
-/// the substring substitution alone — the selector already restricts
-/// the rewrite to install-button-shaped DOM, so unrelated occurrences
-/// of "Chrome" on the page are untouched. This gives the rebrand
-/// 50+ locale coverage with zero translation work, and any future
-/// CWS localization comes for free.
+/// Rebranding strategy: on the install button, swap the literal
+/// `Chrome` substring for `E05` and flip the add/remove direction
+/// from the live install state. The new-layout selector (`button
+/// span[jsname]`) also matches the "install Chrome / switch to
+/// Chrome" promo banner CWS shows non-Chromium browsers, so the
+/// rewrite — and the click intercept — must tell the two apart. They
+/// do it by state, not by label: CWS ships the install button
+/// `disabled` to hosts it can't verify as Chromium, while the promo's
+/// download link is a normal enabled link. That signal is locale-
+/// independent, so the install keeps working in every CWS locale (the
+/// brand stays literal "Chrome" worldwide); only the add/remove
+/// direction flip is English + Japanese, and other locales keep CWS's
+/// own verb. Once the rewrite strips `disabled`, a `dataset` claim
+/// flag keeps the button recognised on later passes. The old layout's
+/// `div.webstore-test-button-label` is an install-only class, so it
+/// qualifies unconditionally.
 ///
 /// CWS rolled out a new layout under `chromewebstore.google.com` in
 /// 2023, retaining the legacy `chrome.google.com/webstore/*` for
@@ -144,6 +150,36 @@ enum ChromeWebStoreOverlay {
           return text;
         }
 
+        // Tell the extension's install button apart from the "install
+        // Chrome / switch to Chrome" promo banner that shares SELECTOR,
+        // and from any other disabled control on the page. Two locale-
+        // independent signals: CWS ships the install button `disabled`
+        // to hosts it can't verify as Chromium (the promo's download
+        // link stays enabled), and the install label carries the brand
+        // substring — "Chrome" untranslated in every CWS locale, or our
+        // "E05" after the rewrite. `disabled` excludes the promo banner;
+        // the brand check excludes unrelated `disabled`/`aria-disabled`
+        // buttons (Google's components mark many controls `aria-disabled`
+        // while leaving them clickable), so a press on one can't be
+        // mistaken for an install. The `e05Install` claim flag keeps the
+        // button recognised after the rewrite strips `disabled`. The old
+        // layout's `div.webstore-test-button-label` is an install-only
+        // class, so it qualifies unconditionally.
+        function installButton(node) {
+          if (node.classList && node.classList.contains('webstore-test-button-label')) {
+            return node.closest('button') || node;
+          }
+          const button = node.closest('button');
+          if (!button) return null;
+          const claimed = button.dataset.e05Install === '1';
+          const disabled =
+            button.hasAttribute('disabled') || button.hasAttribute('aria-disabled');
+          if (!claimed && !disabled) return null;
+          const text = (node.textContent || '').trim();
+          if (text.indexOf('Chrome') < 0 && text.indexOf('E05') < 0) return null;
+          return button;
+        }
+
         // Rewriting textContent / button attributes is itself a DOM
         // mutation, so the observer re-fires on our own writes. Pause
         // observation for the duration of a rewrite pass to avoid a
@@ -165,57 +201,48 @@ enum ChromeWebStoreOverlay {
           const installed = id ? isInstalled(id) : false;
           const nodes = document.querySelectorAll(SELECTOR);
           for (const node of nodes) {
+            const button = installButton(node);
+            // Skip the promo banner (matched by SELECTOR but never
+            // disabled) and anything else, so the brand swap can't
+            // mangle "install Chrome" into "install E05".
+            if (!button) continue;
+            // Claim the button so the next pass still recognises it
+            // after the disabled attribute is stripped below.
+            button.dataset.e05Install = '1';
             const text = (node.textContent || '').trim();
-            // Re-process nodes already carrying our rebranded text so
-            // the install-state direction stays current when the
-            // installed-IDs push arrives after the first rewrite
-            // pass. Without the E05 check the second pass would skip
-            // a node we just changed and the wording would be stuck
-            // on whichever direction the first pass landed on.
-            if (!text.includes('Chrome') && !text.includes('E05')) continue;
-            // `replace('Chrome','E05')` runs before flipToRemove /
-            // flipToAdd so the verb checks ("Add to ", " に追加") see
-            // a stable subject regardless of the source locale —
-            // sidesteps an enumerated locale table while keeping the
-            // direction flip locale-aware.
+            // The brand swap is locale-independent (CWS leaves "Chrome"
+            // literal in every locale); the add/remove direction flip
+            // is English + Japanese only, so other locales keep CWS's
+            // own verb while the brand still rebrands.
             let next = text.replace('Chrome', 'E05');
             next = installed ? flipToRemove(next) : flipToAdd(next);
-            if (text === next) continue;
-            node.textContent = next;
+            if (text !== next) node.textContent = next;
             // CWS disables the install button when it can't identify
-            // the host as a Chromium-derived browser. Brave gets a
-            // free pass because it is Chromium; WKWebView is not, so
-            // strip the disabled signal from the enclosing button so
-            // the capture-phase click handler below can intercept the
-            // press and route it into e05's install pipeline. The
-            // visual gating (opacity / pointer-events) comes from a
-            // build-keyed CSS class on top of the `disabled` attribute;
-            // overriding the inline style overrides the class for
-            // free.
-            const button = node.closest('button');
-            if (button) {
-              button.removeAttribute('disabled');
-              button.removeAttribute('aria-disabled');
-              button.style.opacity = '1';
-              button.style.pointerEvents = 'auto';
-              button.style.cursor = 'pointer';
-            }
+            // the host as a Chromium-derived browser. Strip the signal
+            // so the capture-phase click handler below can intercept
+            // the press and route it into e05's install pipeline. The
+            // visual gating (opacity / pointer-events) is a build-keyed
+            // CSS class on top of the `disabled` attribute; overriding
+            // the inline style overrides the class for free.
+            button.removeAttribute('disabled');
+            button.removeAttribute('aria-disabled');
+            button.style.opacity = '1';
+            button.style.pointerEvents = 'auto';
+            button.style.cursor = 'pointer';
           }
         }
 
-        // Match install / uninstall button text in any locale, before
-        // or after the rewrite (Chrome → E05). Substring match on
-        // either brand name is enough to catch the install affordance
-        // since the SELECTOR has already narrowed the click target to
-        // install-button-shaped DOM.
-        function isInstallButton(text) {
-          return /Chrome|E05/.test(text);
-        }
+        // Intercept clicks only on the install button (claimed by the
+        // rewrite, or still disabled before the first pass). The promo
+        // banner shares SELECTOR and carries a valid extension ID from
+        // the listing URL, but is never disabled/claimed, so its
+        // "install Chrome" press falls through to CWS instead of being
+        // mistaken for an extension install.
         document.addEventListener('click', (event) => {
-          const target = event.target.closest('button, div.webstore-test-button-label');
-          if (!target) return;
-          const text = (target.textContent || '').trim();
-          if (!isInstallButton(text)) return;
+          const node = event.target.closest(SELECTOR) || event.target.closest('button');
+          if (!node) return;
+          const button = installButton(node);
+          if (!button) return;
           const id = extensionIDFromURL();
           if (!id) return;
           event.preventDefault();
