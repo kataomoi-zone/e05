@@ -44,9 +44,9 @@ final class BookmarksSidebarView: NSView {
   /// in a new browser column in the current workspace.
   var onOpen: ((String) -> Void)?
 
-  /// Fired on Cmd+click of a bookmark row. UX policy: always open in
-  /// a newly created workspace. The container is responsible for the
-  /// `createWorkspace()` + `addColumn` orchestration.
+  /// Fired on Cmd+click of a bookmark row. UX policy: always open in a
+  /// newly created workspace whose only pane is the bookmark's browser
+  /// pane (the container seeds it via `createWorkspace(initialAddress:)`).
   var onOpenInNewWorkspace: ((String) -> Void)?
 
   private let bookmarks: Bookmarks

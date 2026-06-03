@@ -114,6 +114,14 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// silently via the column's minimum-width constraint.
   public var widthCyclePresets: [PaneWidthPreset]?
 
+  /// Identifier of the pane kind seeded into a freshly created
+  /// workspace (see ``InitialPaneKindPreset``). `nil` keeps the
+  /// historical terminal default. Unknown values resolve back to
+  /// terminal at the call site so a typo doesn't quarantine the file.
+  /// Link-opened workspaces ("Open in New Workspace") ignore this and
+  /// seed the destination browser pane instead.
+  public var initialPaneKind: String?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -130,7 +138,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     adblockerAutoUpdateIntervalHours: Int? = nil,
     adblockerLastRefreshedAt: Date? = nil,
     adblockerCustomSources: [AdblockerCustomSource]? = nil,
-    widthCyclePresets: [PaneWidthPreset]? = nil
+    widthCyclePresets: [PaneWidthPreset]? = nil,
+    initialPaneKind: String? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -148,6 +157,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.adblockerLastRefreshedAt = adblockerLastRefreshedAt
     self.adblockerCustomSources = adblockerCustomSources
     self.widthCyclePresets = widthCyclePresets
+    self.initialPaneKind = initialPaneKind
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

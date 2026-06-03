@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// "General" tab content. Three sections cover the cross-app hardcodes
+/// "General" tab content. Four sections cover the cross-app hardcodes
 /// that the preferences store replaces: the home URL fed to a fresh
-/// browser pane, the search engine template the URL bar uses when the
-/// input does not parse as a URL, and the download destination policy
-/// (always-prompt vs. silent-save-to-folder).
+/// browser pane, the pane kind a new workspace seeds, the search
+/// engine template the URL bar uses when the input does not parse as a
+/// URL, and the download destination policy (always-prompt vs.
+/// silent-save-to-folder).
 ///
 /// State binds to a local copy of the preferences. The shared store
 /// is the single source of truth; the view writes back through
@@ -27,6 +28,11 @@ struct GeneralSettingsView: View {
   /// a built-in preset, so the choice has to live in view state
   /// rather than be re-derived from preferences on every render.
   @State private var selectedSearchPreset: SearchEnginePreset
+  /// Pane kind seeded into a freshly created workspace. Maps 1:1 to
+  /// the stored identifier, so it can be re-derived from preferences
+  /// on every external mutation (no sticky `.custom` case to preserve
+  /// the way the home / search pickers need).
+  @State private var initialPaneKind: InitialPaneKindPreset
   /// Store-listener handle. Held in state so `.onDisappear` can
   /// unsubscribe, preventing the listener from outliving the view
   /// when the tab is swapped out.
@@ -39,6 +45,8 @@ struct GeneralSettingsView: View {
     _homeOption = State(initialValue: current.homeURL == nil ? .blank : .custom)
     _selectedSearchPreset = State(
       initialValue: SearchEnginePreset.matching(template: current.searchTemplate))
+    _initialPaneKind = State(
+      initialValue: InitialPaneKindPreset.resolve(current.initialPaneKind))
   }
 
   var body: some View {
@@ -72,6 +80,18 @@ struct GeneralSettingsView: View {
             .textFieldStyle(.roundedBorder)
             .onSubmit { writeHomeURL() }
             .onChange(of: homeURLInput) { _, _ in writeHomeURL() }
+        }
+      }
+
+      Section("New Workspace") {
+        Picker("Initial pane", selection: $initialPaneKind) {
+          ForEach(InitialPaneKindPreset.allCases) { kind in
+            Label(kind.displayName, systemImage: kind.symbol).tag(kind)
+          }
+        }
+        .onChange(of: initialPaneKind) { _, kind in
+          preferences.initialPaneKind = kind.rawValue
+          persist()
         }
       }
 
@@ -141,6 +161,7 @@ struct GeneralSettingsView: View {
       homeURLInput = new.homeURL ?? ""
       homeOption = new.homeURL == nil ? .blank : .custom
       selectedSearchPreset = SearchEnginePreset.matching(template: new.searchTemplate)
+      initialPaneKind = InitialPaneKindPreset.resolve(new.initialPaneKind)
     }
   }
 

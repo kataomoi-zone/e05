@@ -219,8 +219,21 @@ extension PaneContainerViewController {
 
   // MARK: - Creation
 
+  /// Seed address for a new workspace's first pane when the caller
+  /// doesn't override it: the user's configured initial-pane kind
+  /// (default terminal). Resolved at call time so toggling the
+  /// preference takes effect on the next new workspace.
+  private var configuredInitialPaneAddress: PaneAddress {
+    InitialPaneKindPreset.resolve(PreferencesStore.shared.preferences.initialPaneKind).address
+  }
+
   /// Create a new workspace with an auto-assigned accent color and an
-  /// initial terminal column, then slide it into view. `isPrivate`
+  /// initial pane, then slide it into view. The seed pane is the
+  /// user's configured initial-pane kind (``InitialPaneKindPreset``,
+  /// default terminal) unless a caller passes `initialAddress` — the
+  /// "Open in New Workspace" link path does, so the destination
+  /// browser pane is the workspace's only pane instead of landing
+  /// next to a seeded terminal. `isPrivate`
   /// propagates to the new workspace's panes: browser panes use an
   /// ephemeral `WKWebsiteDataStore`, history recording is skipped,
   /// closed-pane undo is disabled, and the focus border renders as
@@ -238,7 +251,9 @@ extension PaneContainerViewController {
   /// current focus slides down (reads as "appearing from above") and
   /// one that lands below slides up (which is also the `after == nil`
   /// append case, since the new tail is always below current focus).
-  public func createWorkspace(isPrivate: Bool = false, after: ULID? = nil) {
+  public func createWorkspace(
+    isPrivate: Bool = false, after: ULID? = nil, initialAddress: PaneAddress? = nil
+  ) {
     logger.info(
       "createWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count), private=\(isPrivate ? "yes" : "no", privacy: .public)"
     )
@@ -295,7 +310,7 @@ extension PaneContainerViewController {
     // Advance focus so `addColumn` / `rebuildStackView` target the new
     // workspace's stackView via the computed accessors.
     focusedWorkspaceIndex = insertIndex
-    addColumn(address: .terminal)
+    addColumn(address: initialAddress ?? configuredInitialPaneAddress)
     showToast(isPrivate ? "New Private Workspace" : "New Workspace")
 
     // Direction: matches `switchWorkspace`'s spatial convention so

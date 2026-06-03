@@ -476,11 +476,10 @@ extension PaneContainerViewController {
         self?.addColumn(address: PaneAddress(url))
       }
       bv.onOpenInNewWorkspace = { [weak self, weak pane] url in
-        // Mirrors bookmark / history "open in new workspace": the
-        // newly created workspace seeds a terminal column, and the
-        // browser column requested by the link lands alongside it.
-        // Replacing the auto-terminal is deferred until the
-        // ergonomics demand it.
+        // Mirrors bookmark / history "open in new workspace": the new
+        // workspace opens with the link's browser pane as its only
+        // pane — `initialAddress` overrides the configured seed pane
+        // so there's no stray terminal alongside the destination.
         //
         // Private inheritance: a Shift-click from inside a private
         // workspace lands the new workspace as private too, so a
@@ -491,8 +490,7 @@ extension PaneContainerViewController {
         guard let self else { return }
         let inheritsPrivate =
           pane.flatMap { self.workspaceContaining(pane: $0) }?.isPrivate ?? false
-        self.createWorkspace(isPrivate: inheritsPrivate)
-        self.addColumn(address: PaneAddress(url))
+        self.createWorkspace(isPrivate: inheritsPrivate, initialAddress: PaneAddress(url))
       }
       bv.onChromeWebStoreAction = { [weak self] extensionID, uninstall in
         // Same install pipeline the Extensions sidebar's "Install

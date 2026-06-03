@@ -21,8 +21,8 @@ final class HistorySidebarView: NSView {
   var onOpen: ((String) -> Void)?
 
   /// Fired on Cmd+click. UX policy: always open in a newly created
-  /// workspace. The container is responsible for the
-  /// `createWorkspace()` + `addColumn` orchestration.
+  /// workspace whose only pane is the entry's browser pane (the
+  /// container seeds it via `createWorkspace(initialAddress:)`).
   var onOpenInNewWorkspace: ((String) -> Void)?
 
   private let history: BrowsingHistory
