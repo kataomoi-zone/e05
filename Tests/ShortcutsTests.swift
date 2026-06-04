@@ -125,6 +125,117 @@ struct ShortcutCategoryTests {
   }
 }
 
+@Suite("ShortcutsSettingsView.detectConflicts")
+@MainActor
+struct ShortcutConflictDetectionTests {
+  private func action(
+    _ id: String, _ key: String?, _ mask: NSEvent.ModifierFlags = [.command]
+  ) -> Action {
+    Action(id: id, title: id, keyEquivalent: key, modifierMask: mask, handler: {})
+  }
+
+  @Test("two static actions on the same chord form one conflict group")
+  func sharedChordGroups() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "w"),
+      action("focus_right", "w"),
+    ])
+    #expect(groups.count == 1)
+    #expect(groups[0].chord == "⌘W")
+    #expect(Set(groups[0].actionIds) == ["close_pane", "focus_right"])
+  }
+
+  @Test("dynamic registry ids never count toward a conflict")
+  func dynamicIdsExcluded() {
+    // focus_pane_123 shares ⌘W with close_pane, but dynamic ids are
+    // runtime-generated and uncustomisable, so the bucket holds only
+    // the one static action and reports no conflict.
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "w"),
+      action("focus_pane_123", "w"),
+    ])
+    #expect(groups.isEmpty)
+  }
+
+  @Test("unbound actions (nil key) are not conflicts")
+  func unboundExcluded() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", nil),
+      action("focus_right", nil),
+    ])
+    #expect(groups.isEmpty)
+  }
+
+  @Test("distinct chords produce no conflict")
+  func distinctChords() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "w"),
+      action("focus_right", "e"),
+    ])
+    #expect(groups.isEmpty)
+  }
+
+  @Test("the same key under different modifiers is not a conflict")
+  func modifierDistinguishesChord() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "l", [.command]),
+      action("focus_right", "l", [.command, .option]),
+    ])
+    #expect(groups.isEmpty)
+  }
+
+  @Test("conflict groups are sorted by chord glyph")
+  func groupsSortedByChord() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "z"),
+      action("focus_right", "z"),
+      action("pane_find", "a"),
+      action("browser_back", "a"),
+    ])
+    #expect(groups.map(\.chord) == ["⌘A", "⌘Z"])
+  }
+
+  @Test("three actions on one chord collapse into a single group")
+  func threeWayChordGroups() {
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      action("close_pane", "g"),
+      action("focus_right", "g"),
+      action("pane_find", "g"),
+    ])
+    #expect(groups.count == 1)
+    #expect(Set(groups[0].actionIds) == ["close_pane", "focus_right", "pane_find"])
+  }
+
+  @Test("an empty action list yields no conflicts")
+  func emptyInput() {
+    #expect(ShortcutsSettingsView.detectConflicts(in: []).isEmpty)
+  }
+
+  @Test("a conflict group preserves input order in its ids and titles")
+  func groupPreservesOrderAndTitles() {
+    // Drive the whole ConflictGroup through `==` (not field-by-field)
+    // so the bucket id, chord glyph, and the input-order-preserving
+    // id / title arrays are all pinned at once.
+    let cmd = NSEvent.ModifierFlags.command.rawValue
+    let groups = ShortcutsSettingsView.detectConflicts(in: [
+      Action(
+        id: "close_pane", title: "Close Pane", keyEquivalent: "w",
+        modifierMask: [.command], handler: {}),
+      Action(
+        id: "focus_right", title: "Focus Right", keyEquivalent: "w",
+        modifierMask: [.command], handler: {}),
+    ])
+    #expect(
+      groups == [
+        ConflictGroup(
+          id: "\(cmd):w",
+          chord: "⌘W",
+          actionIds: ["close_pane", "focus_right"],
+          actionTitles: ["Close Pane", "Focus Right"])
+      ])
+  }
+}
+
 @Suite("Shortcut override preferences fan-out")
 @MainActor
 struct ShortcutPreferencesTests {

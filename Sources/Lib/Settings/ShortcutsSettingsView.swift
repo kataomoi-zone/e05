@@ -284,15 +284,28 @@ struct ShortcutsSettingsView: View {
   // MARK: - Conflicts
 
   /// All static actions currently sharing a chord with another
-  /// static action. Dynamic registry entries (`workspace_switch_*`,
-  /// `focus_pane_*`) are intentionally skipped — they are runtime
-  /// generated and cannot be customised, so a "conflict" with them
-  /// would never have a resolution.
+  /// static action, resolved against the live registry. The bucketing
+  /// itself lives in ``detectConflicts(in:)`` so it can be unit tested
+  /// without the `SettingsWindowController` singleton; this property
+  /// only supplies the live action list and re-resolves whenever
+  /// `revision` bumps.
   private var conflicts: [ConflictGroup] {
     _ = revision
     guard let pc = SettingsWindowController.shared.paneContainer else { return [] }
+    return Self.detectConflicts(in: pc.actions())
+  }
+
+  /// Bucket `actions` by their `(modifier, key)` chord and return
+  /// every chord shared by two or more actions, sorted by the chord's
+  /// glyph label. Dynamic registry entries (`workspace_switch_*`,
+  /// `focus_pane_*`) are skipped — they are runtime generated and
+  /// cannot be customised, so a "conflict" with them would never have
+  /// a resolution. Pure over its input (no singleton / SwiftUI state),
+  /// so the dynamic-exclusion, 2+-grouping and sort rules are unit
+  /// testable.
+  static func detectConflicts(in actions: [Action]) -> [ConflictGroup] {
     var buckets: [String: [(id: String, title: String, label: String)]] = [:]
-    for action in pc.actions() {
+    for action in actions {
       guard ShortcutCategory.category(for: action.id) != nil else { continue }
       guard let key = action.keyEquivalent else { continue }
       let bucket = "\(action.modifierMask.rawValue):\(key)"
@@ -324,7 +337,7 @@ struct ShortcutsSettingsView: View {
 
 // MARK: - Conflict
 
-private struct ConflictGroup: Identifiable {
+struct ConflictGroup: Identifiable, Equatable {
   let id: String
   let chord: String
   let actionIds: [String]
