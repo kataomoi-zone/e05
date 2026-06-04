@@ -153,10 +153,15 @@ extension FinderPaneView {
 
   // MARK: - Shared validate / accept core
 
-  /// Reject self / descendant drops and resolve the drag operation
-  /// (move within volume, copy across volumes). Returns `nil` to mean
-  /// "reject the drop"; `validateDrop` callers translate that into
-  /// the empty `NSDragOperation`.
+  /// Reject no-op / invalid drops, then resolve the drag operation
+  /// (move within volume, copy across volumes). A drop is rejected
+  /// (returns `nil`) when a source *is* the destination, when the
+  /// destination sits inside a source (descendant), or when a source
+  /// already lives directly in the destination — dropping a file back
+  /// into its own folder moves nothing, so it is a no-op rather than a
+  /// spurious "already exists" conflict (Finder's behaviour).
+  /// `validateDrop` callers translate `nil` into the empty
+  /// `NSDragOperation`.
   private func validateDropOperation(
     sources: [URL], destination destURL: URL
   ) -> NSDragOperation? {
@@ -165,6 +170,13 @@ extension FinderPaneView {
       let srcPath = Self.normalizedPath(src)
       if srcPath == destPath { return nil }
       if destPath.hasPrefix(srcPath + "/") { return nil }
+      // Source already in the destination: the move resolves to the
+      // file's current path, so performDrop's conflict probe would
+      // match the file against itself and pop an "already exists"
+      // dialog for a move that does nothing. Reject as a no-op.
+      if Self.normalizedPath(src.deletingLastPathComponent()) == destPath {
+        return nil
+      }
     }
     return Self.dropOperation(sources: sources, destination: destURL)
   }
