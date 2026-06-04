@@ -206,7 +206,11 @@ extension PaneContainerViewController {
     // leave `column.containerView.frame.minX` pointing into the
     // wrong neighbourhood and the scroll would aim at a 1-pixel
     // sliver instead of the full column.
-    let scrollTarget = animated ? computeScrollTargetX(for: column) : nil
+    // A freshly inserted column lands to the right of focus, so seat it
+    // against the trailing edge: the new pane slides in from the right
+    // and the columns already on screen to its left stay visible
+    // instead of being shoved off by a centre snap.
+    let scrollTarget = animated ? computeScrollTargetX(for: column, mode: .alignRight) : nil
 
     if animated {
       // Now that the target frame is known, snap the column back
@@ -862,48 +866,123 @@ extension PaneContainerViewController {
     return scrollView.contentView.bounds.width - insets.left - insets.right
   }
 
-  /// Compute where the scroll view should land so `column` is
-  /// centred within the visible (post-inset) region. Call with the
-  /// layout already settled at the column's final width — reading
-  /// the frame during the insert tween would capture an intermediate
-  /// width and target the wrong X. Returns `nil` when the whole
-  /// content already fits in view.
+  /// How `computeScrollTargetX` should seat a column in the viewport.
+  /// `.frameIn` is niri's minimal-fit (the default, used by focus
+  /// navigation); the others drive the explicit align / centre actions
+  /// and the snaps that still want centring.
+  enum ColumnScrollMode {
+    case frameIn
+    case alignLeft
+    case alignRight
+    case center
+  }
+
+  /// Resolve where the scroll view should land to satisfy `mode` for
+  /// `column`, or `nil` to leave the scroll position untouched (the
+  /// whole content already fits, or `.frameIn` finds the column fully
+  /// visible). Call with the layout already settled at the column's
+  /// final width — reading the frame mid-tween captures an intermediate
+  /// width and targets the wrong X.
   ///
-  /// Honours `scrollView.contentInsets` so a column doesn't end up
-  /// hidden behind the pinned sidebar: the visible region is
-  /// `(insets.left, scrollView.bounds.width - insets.right)`, the
-  /// scroll origin's lower bound is `-insets.left` (the natural
-  /// "left edge" with the inset present), and centring is computed
-  /// against the post-inset midpoint rather than the raw bounds.
-  func computeScrollTargetX(for column: ColumnModel) -> CGFloat? {
+  /// `.frameIn` (default, used by focus navigation) scrolls the minimum
+  /// to bring the column fully into view and never centres, so adjacent
+  /// columns stay on screen — the whole point of a horizontally
+  /// scrolling layout. `.center` keeps the old centre-on-focus
+  /// behaviour for the explicit "centre column" action and the
+  /// insert / session-restore snaps that still want it. `.alignLeft` /
+  /// `.alignRight` pin the column to the matching viewport edge. The
+  /// math lives in the pure `columnScrollTargetX` so it is unit testable
+  /// without an AppKit view tree.
+  func computeScrollTargetX(
+    for column: ColumnModel, mode: ColumnScrollMode = .frameIn
+  ) -> CGFloat? {
     let columnFrame = column.containerView.frame
-    let visibleWidth = scrollView.contentView.bounds.width
-    let contentWidth = stackView.frame.width
     let insets = scrollView.contentInsets
-    let effective = effectiveVisibleWidth(in: scrollView)
+    return Self.columnScrollTargetX(
+      mode: mode,
+      currentX: scrollView.contentView.bounds.origin.x,
+      columnMinX: columnFrame.minX,
+      columnWidth: columnFrame.width,
+      visibleWidth: scrollView.contentView.bounds.width,
+      contentWidth: stackView.frame.width,
+      insetLeft: insets.left,
+      insetRight: insets.right,
+      gap: WorkspaceViewController.outerMargin)
+  }
+
+  /// Pure scroll-target math shared by every column scroll, ported from
+  /// niri's `compute_new_view_offset` (src/layout/scrolling.rs). Returns
+  /// the new `scrollView.contentView.bounds.origin.x`, or `nil` for "do
+  /// not scroll". All values are in the scroll view's document
+  /// coordinates; the user-visible band carves out the pinned-sidebar
+  /// inset as `[currentX + insetLeft, currentX + visibleWidth - insetRight]`.
+  /// `gap` is the inter-column gutter the fit modes reserve beside the
+  /// column — it shrinks toward 0 as the column approaches the viewport
+  /// width (niri's `padding`), so a near-full-width column still seats
+  /// flush.
+  nonisolated static func columnScrollTargetX(
+    mode: ColumnScrollMode,
+    currentX: CGFloat,
+    columnMinX: CGFloat,
+    columnWidth: CGFloat,
+    visibleWidth: CGFloat,
+    contentWidth: CGFloat,
+    insetLeft: CGFloat,
+    insetRight: CGFloat,
+    gap: CGFloat
+  ) -> CGFloat? {
+    let effective = visibleWidth - insetLeft - insetRight
+    // Whole content already fits — nothing to scroll for any mode.
     guard contentWidth > effective else { return nil }
 
-    // Reserve the same gap on either side of a left-pinned column as
-    // the perimeter outer margin, so a focused column doesn't kiss
-    // the sidebar / window edge after a focus scroll while every
-    // other gap in the layout is `outerMargin` wide.
-    let perimeter = WorkspaceViewController.outerMargin
-    let targetX: CGFloat
-    if columnFrame.width >= effective {
-      // Column can't fit, pin its left edge to the visible region's
-      // leading edge offset by `perimeter` so the gap before the
-      // column matches the rhythm of the rest of the layout.
-      targetX = columnFrame.minX - insets.left - perimeter
-    } else {
-      // Centre against the post-inset midpoint. Reuse `effective` so
-      // both branches of this method derive their "visible width"
-      // from the same helper instead of repeating the inset math.
-      let visibleCenter = insets.left + effective / 2
-      targetX = columnFrame.midX - visibleCenter
+    let minScrollX = -insetLeft
+    let maxScrollX = contentWidth - visibleWidth + insetRight
+    func clamp(_ x: CGFloat) -> CGFloat { max(minScrollX, min(maxScrollX, x)) }
+
+    // Origins that seat the column against the post-inset band's
+    // leading / trailing edge with `margin` of gutter to spare.
+    func leadingEdgeX(margin: CGFloat) -> CGFloat { columnMinX - insetLeft - margin }
+    func trailingEdgeX(margin: CGFloat) -> CGFloat {
+      columnMinX + columnWidth + margin - (visibleWidth - insetRight)
     }
-    let minScrollX = -insets.left
-    let maxScrollX = contentWidth - visibleWidth + insets.right
-    return max(minScrollX, min(maxScrollX, targetX))
+
+    // Frame-in's auto-fit uses a padding that shrinks toward 0 as a
+    // column nears the viewport width, so the "already fully visible"
+    // test below stays satisfiable and repeated focus doesn't oscillate
+    // (niri's rule). The explicit align modes and the oversized-column
+    // pin instead reserve the full configured `gap`, so a column that
+    // can't fit either way still lines up with the layout's gutter
+    // rhythm instead of kissing the viewport edge.
+    let fitPadding = min(max((effective - columnWidth) / 2, 0), gap)
+
+    switch mode {
+    case .alignLeft:
+      return clamp(leadingEdgeX(margin: gap))
+    case .alignRight:
+      return clamp(trailingEdgeX(margin: gap))
+    case .center:
+      // A column wider than the band can't be centred — pin it left
+      // with the full gap so it keeps the gutter.
+      if columnWidth >= effective { return clamp(leadingEdgeX(margin: gap)) }
+      let visibleCenter = insetLeft + effective / 2
+      return clamp(columnMinX + columnWidth / 2 - visibleCenter)
+    case .frameIn:
+      // Wider than the band: pin the leading edge with the full gap.
+      if columnWidth >= effective { return clamp(leadingEdgeX(margin: gap)) }
+      let bandLeft = currentX + insetLeft
+      let bandRight = currentX + visibleWidth - insetRight
+      let needLeft = columnMinX - fitPadding
+      let needRight = columnMinX + columnWidth + fitPadding
+      // Already fully visible with padding: leave the scroll be.
+      if bandLeft <= needLeft && needRight <= bandRight { return nil }
+      // Otherwise fit to whichever edge needs the smaller move (niri's
+      // rule), never centring so neighbours stay on screen.
+      let distLeft = abs(bandLeft - needLeft)
+      let distRight = abs(bandRight - needRight)
+      return clamp(
+        distLeft <= distRight
+          ? leadingEdgeX(margin: fitPadding) : trailingEdgeX(margin: fitPadding))
+    }
   }
 
   /// Tween the scroll view to the given X in its own animation
@@ -1302,7 +1381,9 @@ extension PaneContainerViewController {
       // Capture scroll target while the layout reflects the
       // column's saved width — see the matching comment in
       // `insertColumn` for the 1-pixel-sliver pitfall.
-      let scrollTarget = animated ? computeScrollTargetX(for: column) : nil
+      // `.center` keeps the new-column entrance snap centring as before;
+      // the frame-in default is scoped to focus navigation for now.
+      let scrollTarget = animated ? computeScrollTargetX(for: column, mode: .center) : nil
 
       if animated {
         // Snap to width 0 for the animation start now that the

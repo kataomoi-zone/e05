@@ -711,7 +711,7 @@ public final class PaneContainerViewController: NSViewController {
         trueVisible.size.width -= insets.left + insets.right
         if let focused = columns[safe: focusedColumnIndex],
           !trueVisible.contains(focused.containerView.frame),
-          let targetX = computeScrollTargetX(for: focused)
+          let targetX = computeScrollTargetX(for: focused, mode: .center)
         {
           scrollView.contentView.setBoundsOrigin(NSPoint(x: targetX, y: 0))
         }

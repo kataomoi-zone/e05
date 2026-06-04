@@ -798,10 +798,11 @@ extension PaneContainerViewController {
     guard let column = columns[safe: index] else { return }
 
     view.layoutSubtreeIfNeeded()
-    // Centre / clamp logic lives in `computeScrollTargetX` so the
-    // focus-driven scroll and the insert/animate-in scroll both
-    // honour `contentInsets.left` (= the pinned-sidebar inset)
-    // and resolve a focused column's scroll target the same way.
+    // Frame-in / clamp logic lives in `computeScrollTargetX`, which
+    // honours `contentInsets.left` (= the pinned-sidebar inset). The
+    // default `.frameIn` mode scrolls the minimum to reveal the column
+    // and leaves the position untouched when it is already visible, so
+    // a focus hop keeps neighbouring columns on screen.
     guard let clampedX = computeScrollTargetX(for: column) else { return }
 
     // Defer the animator call so it lands on a fresh run-loop tick.
