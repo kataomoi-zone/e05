@@ -183,6 +183,22 @@ extension PaneContainerViewController {
         separatorBefore: true
       ),
       Action(
+        id: "column_align_left",
+        title: "Align Column Left",
+        handler: { [weak self] in self?.scrollFocusedColumn(.alignLeft) },
+        separatorBefore: true
+      ),
+      Action(
+        id: "column_align_right",
+        title: "Align Column Right",
+        handler: { [weak self] in self?.scrollFocusedColumn(.alignRight) }
+      ),
+      Action(
+        id: "column_center",
+        title: "Center Column",
+        handler: { [weak self] in self?.scrollFocusedColumn(.center) }
+      ),
+      Action(
         id: "toggle_url_bar",
         title: "Toggle URL Bar",
         keyEquivalent: "l",

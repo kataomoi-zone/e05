@@ -794,16 +794,21 @@ extension PaneContainerViewController {
 
   // MARK: - Scrolling
 
-  func scrollToColumn(at index: Int) {
-    guard let column = columns[safe: index] else { return }
+  /// Returns whether a scroll was actually scheduled — `false` when the
+  /// column is missing or already seated (nothing to move). Callers that
+  /// surface feedback (the align actions' toast) gate on it.
+  @discardableResult
+  func scrollToColumn(at index: Int, mode: ColumnScrollMode = .frameIn) -> Bool {
+    guard let column = columns[safe: index] else { return false }
 
     view.layoutSubtreeIfNeeded()
     // Frame-in / clamp logic lives in `computeScrollTargetX`, which
     // honours `contentInsets.left` (= the pinned-sidebar inset). The
     // default `.frameIn` mode scrolls the minimum to reveal the column
     // and leaves the position untouched when it is already visible, so
-    // a focus hop keeps neighbouring columns on screen.
-    guard let clampedX = computeScrollTargetX(for: column) else { return }
+    // a focus hop keeps neighbouring columns on screen; the explicit
+    // align / centre actions pass a fixed mode instead.
+    guard let clampedX = computeScrollTargetX(for: column, mode: mode) else { return false }
 
     // Defer the animator call so it lands on a fresh run-loop tick.
     // Mouse-event-driven paths (direct pane click, sidebar row click)
@@ -827,6 +832,25 @@ extension PaneContainerViewController {
         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         self.scrollView.contentView.animator().bounds.origin.x = clampedX
       }
+    }
+    return true
+  }
+
+  /// Scroll the focused column to an explicit alignment within the
+  /// viewport — the deliberate counterpart of the frame-in scroll a
+  /// focus hop performs. Backs the align-left / align-right /
+  /// centre-column actions; focus is untouched, only the scroll moves.
+  func scrollFocusedColumn(_ mode: ColumnScrollMode) {
+    guard columns.indices.contains(focusedColumnIndex) else { return }
+    // Only confirm with a toast when something actually scrolled — when
+    // every column already fits on screen `scrollToColumn` is a no-op,
+    // and a toast would then claim an alignment that never happened.
+    guard scrollToColumn(at: focusedColumnIndex, mode: mode) else { return }
+    switch mode {
+    case .alignLeft: showToast("Align Column Left")
+    case .alignRight: showToast("Align Column Right")
+    case .center: showToast("Center Column")
+    case .frameIn: break
     }
   }
 
