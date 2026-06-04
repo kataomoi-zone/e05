@@ -805,7 +805,8 @@ enum ManifestRewriter {
                 value: chromeWrap, writable: true, configurable: true,
               });
               wnInstalled = !!(globalThis.chrome.webNavigation
-                && globalThis.chrome.webNavigation.onCreatedNavigationTarget);
+                && globalThis.chrome.webNavigation.onCreatedNavigationTarget
+                && globalThis.chrome.webNavigation.onCreatedNavigationTarget.addListener);
             } catch (e) {
               console.warn('[e05/bg-shim] globalThis.chrome proxy failed:', e);
             }
