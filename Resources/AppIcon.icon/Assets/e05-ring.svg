@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Icon Composer layer: color ring (appearance-INVARIANT). Transparent
+     background. Circle centre (512,512) r=375, stroke 80. 270° + 3×30°. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"
+     width="1024" height="1024">
+  <g fill="none" stroke-width="80" stroke-linecap="butt">
+    <path d="M512 887 A375 375 0 1 1 887 512" stroke="#ce055b"/>
+    <path d="M887 512 A375 375 0 0 1 836.7 699.5" stroke="#b0bf1f"/>
+    <path d="M836.7 699.5 A375 375 0 0 1 699.3 836.8" stroke="#ec6e65"/>
+    <path d="M699.3 836.8 A375 375 0 0 1 512 887" stroke="#0279c2"/>
+  </g>
+</svg>

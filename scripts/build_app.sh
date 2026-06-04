@@ -119,48 +119,36 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 rsync -a --delete "$REPO_ROOT/Resources/ghostty/" "$CONTENTS/Resources/ghostty/"
 rsync -a --delete "$REPO_ROOT/Resources/terminfo/" "$CONTENTS/Resources/terminfo/"
 
-# App icon: rsvg-convert renders icon.svg into the seven PNG sizes
-# the macOS .appiconset format references, then actool compiles them
-# into AppIcon.icns + Assets.car. PartialInfo.plist is requested only
-# because actool warns when omitted; the two CFBundleIcon* keys it
-# would emit are stable across SDK versions, so they are appended
-# directly via PlistBuddy below. The staging dir lives under build/
-# so the source asset catalog stays free of generated PNGs.
-if ! command -v rsvg-convert >/dev/null 2>&1; then
-    echo "build_app.sh: rsvg-convert not found (install via \`brew install librsvg\`)" >&2
-    exit 1
-fi
+# App icon: actool compiles the layered Icon Composer package
+# (Resources/AppIcon.icon — icon.json + Assets/) into Assets.car (the
+# macOS 26 layered icon carrying the Light / Dark / Tinted appearance
+# variants) plus a legacy AppIcon.icns fallback for older macOS.
+# PartialInfo.plist is requested only because actool warns when
+# omitted; the two CFBundleIcon* keys it would emit are stable across
+# SDK versions, so they are appended directly via PlistBuddy below.
 
 # Localised ERR trap: anything inside the icon section that fails
-# (rsvg-convert / cp / mkdir / actool) leaves a scoped breadcrumb
-# instead of an opaque `set -e` abort.
+# (mkdir / actool / cp) leaves a scoped breadcrumb instead of an
+# opaque `set -e` abort.
 trap 'echo "build_app.sh: icon section failed at line $LINENO" >&2' ERR
 
-ICON_STAGING="$REPO_ROOT/build/$FLAVOR/icon-staging"
 ICON_OUT="$REPO_ROOT/build/$FLAVOR/icon-out"
-rm -rf "$ICON_STAGING" "$ICON_OUT"
-mkdir -p "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset" "$ICON_OUT"
-cp "$REPO_ROOT/Resources/Assets.xcassets/Contents.json" \
-    "$ICON_STAGING/Assets.xcassets/Contents.json"
-cp "$REPO_ROOT/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json" \
-    "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset/Contents.json"
-for size in 16 32 64 128 256 512 1024; do
-    rsvg-convert -w "$size" -h "$size" \
-        "$REPO_ROOT/Resources/icon.svg" \
-        -o "$ICON_STAGING/Assets.xcassets/AppIcon.appiconset/icon_${size}x${size}.png"
-done
+rm -rf "$ICON_OUT"
+mkdir -p "$ICON_OUT"
 
 ACTOOL_LOG="$ICON_OUT/actool.log"
 xcrun actool \
     --compile "$ICON_OUT" \
     --app-icon AppIcon \
     --platform macosx \
+    --target-device mac \
     --minimum-deployment-target 26.0 \
     --output-partial-info-plist "$ICON_OUT/PartialInfo.plist" \
     --warnings --notices --errors \
-    "$ICON_STAGING/Assets.xcassets" >"$ACTOOL_LOG" 2>&1
-# actool returns 0 even when it embeds errors into its plist output,
-# so grep the log explicitly to surface them.
+    "$REPO_ROOT/Resources/AppIcon.icon" >"$ACTOOL_LOG" 2>&1
+# actool exits non-zero on most failures, but can also embed errors
+# into its plist output while still exiting 0, so grep the log
+# explicitly as a safety net.
 if grep -q "com.apple.actool.errors" "$ACTOOL_LOG"; then
     echo "build_app.sh: actool reported errors:" >&2
     cat "$ACTOOL_LOG" >&2
