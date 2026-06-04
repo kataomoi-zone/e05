@@ -102,6 +102,18 @@ enum ChromeWebStoreOverlay {
         }
         const SELECTOR =
           'div.webstore-test-button-label, button span[jsname]:not(:empty)';
+        // The install affordance is usually a real <button>, but
+        // Google's component framework sometimes renders interactive
+        // controls as `<div role="button">`. Match both so a layout
+        // swap to a role-based button doesn't make the rewrite (and the
+        // click intercept) silently miss the install button — cheap
+        // insurance; Brave's upstream script is <button>-only and would
+        // break the same way.
+        const BUTTON_SELECTOR = 'button, [role="button"]';
+        // After an install or uninstall lands, ignore presses for this
+        // long so the tail of a button mash can't immediately toggle the
+        // listing back the other way.
+        const ACTION_COOLDOWN_MS = 700;
 
         function extensionIDFromURL() {
           // CWS extension IDs use Google's base16-shifted alphabet
@@ -167,9 +179,9 @@ enum ChromeWebStoreOverlay {
         // class, so it qualifies unconditionally.
         function installButton(node) {
           if (node.classList && node.classList.contains('webstore-test-button-label')) {
-            return node.closest('button') || node;
+            return node.closest(BUTTON_SELECTOR) || node;
           }
-          const button = node.closest('button');
+          const button = node.closest(BUTTON_SELECTOR);
           if (!button) return null;
           const claimed = button.dataset.e05Install === '1';
           const disabled =
@@ -209,6 +221,15 @@ enum ChromeWebStoreOverlay {
             // Claim the button so the next pass still recognises it
             // after the disabled attribute is stripped below.
             button.dataset.e05Install = '1';
+            // Re-arm the click cooldown the moment the install state
+            // flips (an install or uninstall just landed) so a mash that
+            // outlasted the action can't immediately toggle it back.
+            const nowInstalled = installed ? '1' : '0';
+            if (button.dataset.e05WasInstalled !== undefined
+              && button.dataset.e05WasInstalled !== nowInstalled) {
+              button.dataset.e05Cooldown = String(Date.now() + ACTION_COOLDOWN_MS);
+            }
+            button.dataset.e05WasInstalled = nowInstalled;
             const text = (node.textContent || '').trim();
             // The brand swap is locale-independent (CWS leaves "Chrome"
             // literal in every locale); the add/remove direction flip
@@ -217,6 +238,22 @@ enum ChromeWebStoreOverlay {
             let next = text.replace('Chrome', 'E05');
             next = installed ? flipToRemove(next) : flipToAdd(next);
             if (text !== next) node.textContent = next;
+            // A click marks the button `e05Installing` until the install
+            // resolves. Render it disabled while pending so a second
+            // press is visually discouraged and pointer-events drop the
+            // repeat — the host-side in-flight guard is the actual
+            // double-install safety net, this is only feedback. The flag
+            // clears once the state push reports the install landed
+            // (installed === true), or via the click handler's timeout
+            // if the install failed (no state change to clear it).
+            if (installed) delete button.dataset.e05Installing;
+            if (button.dataset.e05Installing === '1') {
+              button.setAttribute('aria-disabled', 'true');
+              button.style.opacity = '0.5';
+              button.style.pointerEvents = 'none';
+              button.style.cursor = 'default';
+              continue;
+            }
             // CWS disables the install button when it can't identify
             // the host as a Chromium-derived browser. Strip the signal
             // so the capture-phase click handler below can intercept
@@ -239,7 +276,7 @@ enum ChromeWebStoreOverlay {
         // "install Chrome" press falls through to CWS instead of being
         // mistaken for an extension install.
         document.addEventListener('click', (event) => {
-          const node = event.target.closest(SELECTOR) || event.target.closest('button');
+          const node = event.target.closest(SELECTOR) || event.target.closest(BUTTON_SELECTOR);
           if (!node) return;
           const button = installButton(node);
           if (!button) return;
@@ -247,11 +284,39 @@ enum ChromeWebStoreOverlay {
           if (!id) return;
           event.preventDefault();
           event.stopPropagation();
+          // Drop a repeat press while an install for this listing is
+          // already pending so a mashed button can't fan out duplicate
+          // installs before the host-side guard sees the first one.
+          if (button.dataset.e05Installing === '1') return;
+          // Ignore presses inside the post-flip cooldown so a continued
+          // mash can't toggle install ↔ uninstall the instant the button
+          // changes label.
+          if (Date.now() < (Number(button.dataset.e05Cooldown) || 0)) return;
           const installed = isInstalled(id);
           window.webkit.messageHandlers.e05CWSInstall.postMessage({
             extensionID: id,
             uninstall: installed
           });
+          // Start the cooldown for either direction; re-armed on the
+          // actual state flip in rewriteInner once the action lands.
+          button.dataset.e05Cooldown = String(Date.now() + ACTION_COOLDOWN_MS);
+          // Uninstall is idempotent host-side; only installs need the
+          // pending lockout.
+          if (installed) return;
+          // Mark the install pending so the rewrite renders the button
+          // disabled. The host clears it through the state push on
+          // success; this timeout is the failure fallback (a failed
+          // install produces no state change to clear the flag), and is
+          // only cosmetic since the host-side guard already blocks a
+          // duplicate install regardless of the button's appearance.
+          button.dataset.e05Installing = '1';
+          if (window.__e05CWSOverlayRewrite) window.__e05CWSOverlayRewrite();
+          setTimeout(() => {
+            if (button.dataset.e05Installing === '1') {
+              delete button.dataset.e05Installing;
+              if (window.__e05CWSOverlayRewrite) window.__e05CWSOverlayRewrite();
+            }
+          }, 10000);
         }, true);
 
         // Rerun whenever the install state push from Swift hits the

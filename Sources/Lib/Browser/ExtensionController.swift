@@ -153,6 +153,18 @@ public final class ExtensionController {
   /// same way at scan time.
   private var pinnedExtensions: Set<String> = []
 
+  /// Chrome Web Store extension IDs whose install is currently in
+  /// flight. ``installFromChromeWebStore(extensionID:)`` is the CWS
+  /// overlay's only install entry point, and the rebranded button
+  /// carries no loading state the host can see, so the same listing
+  /// open in two panes — or a press that slips past the overlay's
+  /// per-button lockout — could download and unpack the same CRX twice,
+  /// racing on the destination directory and surfacing a spurious
+  /// "already installed" error from the loser. Guarding on this set
+  /// drops the re-entrant call as a no-op; the per-button JS flag can't
+  /// coordinate across panes.
+  private var installsInFlight: Set<String> = []
+
   /// One Task per active context, watching the context's
   /// `errorsDidUpdateNotification` stream. Tracked here so a toggle
   /// can cancel the old subscription before installing a new one — an
@@ -1505,6 +1517,19 @@ public final class ExtensionController {
   /// loader and silently inherit the auto-promoted permission set
   /// archive-flavoured installs grant.
   public func installFromChromeWebStore(extensionID id: String) async throws {
+    // Drop a re-entrant install of the same ID — the same listing open
+    // in two panes, or a press that slipped past the overlay's
+    // per-button lockout. The `@MainActor` isolation makes this
+    // insert-and-check atomic against the first `await` below, so
+    // exactly one install per ID proceeds and the rest no-op instead of
+    // racing on the destination tree.
+    guard installsInFlight.insert(id).inserted else {
+      logger.info(
+        "Chrome Web Store install for \(id, privacy: .public) already in flight; ignoring re-entrant request"
+      )
+      return
+    }
+    defer { installsInFlight.remove(id) }
     let downloadURL = Self.chromeWebStoreCRXURL(extensionID: id)
     let crx: Data
     do {

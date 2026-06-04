@@ -493,13 +493,12 @@ extension PaneContainerViewController {
         self.createWorkspace(isPrivate: inheritsPrivate, initialAddress: PaneAddress(url))
       }
       bv.onChromeWebStoreAction = { [weak self] extensionID, uninstall in
-        // Same install pipeline the Extensions sidebar's "Install
-        // from Chrome Web Store" URL prompt uses; rebranded CWS
-        // button click just skips the prompt step. The uninstall
-        // branch reaches `removeExtension(for:)` via the controller
-        // helper that maps a CWS ID back to its `sourceURL`. The
-        // result lands as a toast so the user sees confirmation
-        // without leaving the listing page.
+        // The rebranded CWS listing button is the install entry point:
+        // it routes here, where the install branch downloads + unpacks
+        // through the controller and the uninstall branch reaches
+        // `removeExtension(for:)` via the helper that maps a CWS ID back
+        // to its `sourceURL`. The result lands as a toast so the user
+        // sees confirmation without leaving the listing page.
         Task { @MainActor in
           guard let self else { return }
           if uninstall {
