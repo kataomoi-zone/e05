@@ -355,6 +355,14 @@ extension PaneContainerViewController {
         }
         self?.addColumn(address: address)
       }
+
+      // Persist a `cd` within the autosave debounce so the working
+      // directory survives a crash, the same way `onURLChange` keeps a
+      // browser pane's URL crash-safe. Dedup upstream means this only
+      // fires on a real directory change, not every prompt.
+      tv.onWorkingDirectoryChange = { [weak self] in
+        self?.scheduleSessionAutosave()
+      }
     }
 
     if let bv = pane.browserView {

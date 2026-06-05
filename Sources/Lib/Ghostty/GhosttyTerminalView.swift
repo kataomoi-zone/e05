@@ -23,6 +23,26 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// whether the URL becomes a browser or finder pane.
   public var onOpenURL: ((URL) -> Void)?
 
+  /// Fired when the surface's reported working directory actually
+  /// changes (deduped against OSC 7's per-prompt re-emits). Lets the
+  /// host persist a `cd` promptly so it survives a crash / force quit,
+  /// not only a clean quit.
+  public var onWorkingDirectoryChange: (() -> Void)?
+
+  /// Current working directory of the surface's shell, updated from
+  /// each `GHOSTTY_ACTION_PWD` (OSC 7 via shell integration). `nil`
+  /// until the shell first reports one; read at session-save time so a
+  /// restored pane can reopen in the same directory. Requires shell
+  /// integration to be active — without OSC 7 only the launch dir is
+  /// ever known.
+  public private(set) var currentWorkingDirectory: String?
+
+  /// Working directory to launch the surface in, supplied on restore.
+  /// Consumed once in `createSurface` as the config's
+  /// `working_directory`; `nil` lets the shell start in its default
+  /// (inherited / home) directory.
+  private let restoreWorkingDirectory: String?
+
   /// When true, surface is preserved when the view is removed from window.
   /// Used by undo close to keep the terminal alive while detached.
   public var keepSurfaceAlive = false
@@ -61,8 +81,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     return num.uint32Value
   }
 
-  public init(frame: NSRect, ghosttyApp: GhosttyApp) {
+  public init(
+    frame: NSRect, ghosttyApp: GhosttyApp, restoreWorkingDirectory: String? = nil
+  ) {
     self.ghosttyApp = ghosttyApp
+    self.restoreWorkingDirectory = restoreWorkingDirectory
     super.init(frame: frame)
     // Deliberately do NOT set `wantsLayer` or override `makeBackingLayer`.
     // libghostty's Metal renderer makes the view layer-hosting by
@@ -145,7 +168,21 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
       cfg.scale_factor = scale
     }
 
-    surface = ghostty_surface_new(app, &cfg)
+    // Hand the restored working directory to libghostty as the surface's
+    // launch dir. The C string only needs to outlive the
+    // `ghostty_surface_new` call (libghostty copies the path during
+    // init), so build the surface inside the `withCString` scope. A nil
+    // restore dir leaves `working_directory` unset, which lets
+    // libghostty's `*-inherit-working-directory` seed it from the
+    // focused surface instead — the desired behaviour for fresh panes.
+    if let cwd = restoreWorkingDirectory {
+      surface = cwd.withCString { ptr in
+        cfg.working_directory = ptr
+        return ghostty_surface_new(app, &cfg)
+      }
+    } else {
+      surface = ghostty_surface_new(app, &cfg)
+    }
     guard surface != nil else {
       logger.error("ghostty_surface_new failed")
       return
@@ -166,6 +203,21 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   public func releaseDetachedSurface() {
     keepSurfaceAlive = false
     destroySurface()
+  }
+
+  /// Record the shell's reported working directory, delivered by
+  /// `GhosttyApp`'s dispatch of the `GHOSTTY_ACTION_PWD` apprt action
+  /// (OSC 7). Session save reads `currentWorkingDirectory` so a restored
+  /// pane reopens here. Returns whether the value actually changed:
+  /// shell integration re-emits OSC 7 on every prompt redraw (not only
+  /// on `cd`), so the same path arrives repeatedly and callers skip
+  /// redundant work on a no-op.
+  @discardableResult
+  func noteWorkingDirectoryChanged(_ pwd: String) -> Bool {
+    guard pwd != currentWorkingDirectory else { return false }
+    currentWorkingDirectory = pwd
+    onWorkingDirectoryChange?()
+    return true
   }
 
   // MARK: - Layout

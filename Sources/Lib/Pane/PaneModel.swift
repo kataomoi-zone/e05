@@ -69,16 +69,24 @@ public struct PaneDependencies {
   /// for browser panes.
   public var initialInteractionState: Data?
 
+  /// Working directory to launch a restored terminal pane in, passed
+  /// to ``GhosttyTerminalView`` as its surface launch dir. Only
+  /// meaningful for terminal panes; other kinds ignore it. `nil` lets
+  /// the shell start in its default (inherited) directory.
+  public var terminalWorkingDirectory: String?
+
   public init(
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
     initialTitle: String? = nil,
-    initialInteractionState: Data? = nil
+    initialInteractionState: Data? = nil,
+    terminalWorkingDirectory: String? = nil
   ) {
     self.dataStore = dataStore
     self.startSuspended = startSuspended
     self.initialTitle = initialTitle
     self.initialInteractionState = initialInteractionState
+    self.terminalWorkingDirectory = terminalWorkingDirectory
   }
 }
 
@@ -272,7 +280,9 @@ public final class PaneModel {
     switch address.kind {
     case .terminal:
       guard let ghosttyApp else { fatalError("GhosttyApp required for terminal pane") }
-      let tv = GhosttyTerminalView(frame: .zero, ghosttyApp: ghosttyApp)
+      let tv = GhosttyTerminalView(
+        frame: .zero, ghosttyApp: ghosttyApp,
+        restoreWorkingDirectory: dependencies.terminalWorkingDirectory)
       tv.translatesAutoresizingMaskIntoConstraints = false
       self.content = .terminal(tv)
     case .browser:

@@ -65,6 +65,11 @@ extension PaneContainerViewController {
               ? bv.suspendedInteractionState
               : bv.webView.interactionState as? Data
           }
+          // Terminal panes carry their shell's last-reported cwd so the
+          // restore can relaunch the surface in the same directory.
+          if let cwd = pane.terminalView?.currentWorkingDirectory {
+            state.terminalWorkingDirectory = cwd
+          }
           paneStates.append(state)
           keptPaneOriginalIndexes.append(paneIdx)
         }
@@ -247,7 +252,8 @@ extension PaneContainerViewController {
           dependencies: PaneDependencies(
             startSuspended: !firstIsLive,
             initialTitle: firstPaneState.title,
-            initialInteractionState: firstPaneState.interactionState
+            initialInteractionState: firstPaneState.interactionState,
+            terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory
           ),
           focusOnInsert: false,
           id: columnId
@@ -273,7 +279,8 @@ extension PaneContainerViewController {
             dependencies: PaneDependencies(
               startSuspended: !isLive,
               initialTitle: paneState.title,
-              initialInteractionState: paneState.interactionState
+              initialInteractionState: paneState.interactionState,
+              terminalWorkingDirectory: paneState.terminalWorkingDirectory
             )
           )
           if let title = paneState.title { pane.title = title }

@@ -74,6 +74,13 @@ public struct SessionState: Codable {
     /// written before this field existed — those fall back to a plain
     /// URL load.
     public var interactionState: Data?
+    /// Working directory of a terminal pane's shell at save time,
+    /// captured from the `pwd` apprt action (OSC 7 via shell
+    /// integration). Restored as the surface's launch directory so the
+    /// pane reopens where it was. `nil` for non-terminal panes,
+    /// terminals whose shell never reported a directory (no shell
+    /// integration), and sessions written before this field existed.
+    public var terminalWorkingDirectory: String?
   }
 
   // MARK: - File Path

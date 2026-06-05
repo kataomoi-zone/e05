@@ -239,6 +239,17 @@ public final class GhosttyApp {
       else { return false }
       view.onTitleChange?(title)
       return true
+    case GHOSTTY_ACTION_PWD:
+      guard let view = terminalView(for: target),
+        let pwdPtr = action.action.pwd.pwd,
+        let pwd = String(validatingCString: pwdPtr)
+      else { return false }
+      // Shell integration re-emits OSC 7 on every prompt redraw, so log
+      // only when the directory actually moves to keep the noise down.
+      if view.noteWorkingDirectoryChanged(pwd) {
+        logger.debug("[ghostty/pwd] surface cwd=\(pwd, privacy: .public)")
+      }
+      return true
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
       // GUI notification for abnormal exit or wait_after_command.
       // The actual close is handled by close_surface_cb.
