@@ -120,6 +120,7 @@ extension PaneContainerViewController {
       persistedIds.insert(ws.id)
       return SessionState.WorkspaceState(
         id: ws.id.string,
+        name: ws.name,
         columns: columnStates,
         focusedColumnIndex: clampedColFocus,
         scrollX: Double(ws.scrollX)
@@ -227,6 +228,7 @@ extension PaneContainerViewController {
       // gone identity.
       let wsId = wsState.id.map(ULID.init) ?? ULID()
       let ws = WorkspaceModel(id: wsId)
+      ws.name = wsState.name
       ws.scrollX = CGFloat(wsState.scrollX)
       let vc = WorkspaceViewController(workspace: ws)
       addChild(vc)

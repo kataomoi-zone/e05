@@ -32,6 +32,11 @@ public struct SessionState: Codable {
     /// drops any persisted `collapsedIds` entries that referenced
     /// the missing workspace.
     public var id: String?
+    /// User-assigned workspace name at save time. `Optional` so a
+    /// session.json written before names existed (or by an unnamed
+    /// workspace) decodes cleanly to `nil` and restores the
+    /// positional "Workspace N" fallback.
+    public var name: String?
     public var columns: [ColumnState]
     public var focusedColumnIndex: Int
     /// Horizontal scroll offset (in points) at the time of capture.

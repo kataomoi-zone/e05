@@ -453,6 +453,13 @@ final class WorklaneSectionView: NSView {
     /// workspace-id end-to-end path (`addColumn(_:toWorkspaceId:)`,
     /// `createWorkspace(after:)`, `closeWorkspace(at:)`).
     let onWorkspaceAction: (_ actionId: String, _ workspaceId: ULID) -> Void
+    /// Commit an inline workspace rename. Receives the workspace id
+    /// and the trimmed new name (empty = clear back to the "Workspace
+    /// N" fallback). Separate from `onWorkspaceAction` because the
+    /// begin gesture is handled inside the section view
+    /// (`beginRenamingWorkspace`); only the committed value crosses
+    /// back to the container.
+    let onRenameWorkspace: (_ workspaceId: ULID, _ newName: String) -> Void
   }
 
   func reload(_ input: ReloadInput) {
@@ -1733,7 +1740,7 @@ extension WorklaneSectionView: NSMenuDelegate {
     let sourceIsPrivate = sourceWs.isPrivate
     for (index, ws) in input.workspaces.enumerated() {
       let item = NSMenuItem(
-        title: "Workspace \(index + 1)",
+        title: ws.displayName(at: index),
         action: #selector(handleMoveToWorkspace(_:)),
         keyEquivalent: "")
       item.target = self
@@ -1930,6 +1937,10 @@ extension WorklaneSectionView: NSMenuDelegate {
   ) {
     let workspaceId = workspaceNode.id
     appendWorkspaceItem(
+      to: menu, sentinel: "_ws_rename",
+      title: "Rename Workspace", workspaceId: workspaceId)
+    menu.addItem(.separator())
+    appendWorkspaceItem(
       to: menu, sentinel: "_ws_new_browser_pane",
       title: "New Browser Pane", workspaceId: workspaceId)
     appendWorkspaceItem(
@@ -1976,6 +1987,34 @@ extension WorklaneSectionView: NSMenuDelegate {
     guard let payload = sender.representedObject as? WorklaneWorkspaceMenuPayload,
       let input = lastInput
     else { return }
+    // Rename begins inside the section view — the editable cell lives
+    // here, and only the committed value round-trips to the container
+    // via `ReloadInput.onRenameWorkspace`.
+    if payload.actionId == "_ws_rename" {
+      beginRenamingWorkspace(id: payload.workspaceId)
+      return
+    }
     input.onWorkspaceAction(payload.actionId, payload.workspaceId)
+  }
+
+  /// Put the workspace row for `id` into inline-rename mode. Finds the
+  /// row, scrolls it into view, and hands editing to its cell. No-op
+  /// if the workspace was torn down between menu open and click.
+  func beginRenamingWorkspace(id: ULID) {
+    guard let node = nodesByWorkspaceId[id] else { return }
+    let row = outlineView.row(forItem: node)
+    guard row >= 0 else { return }
+    outlineView.scrollRowToVisible(row)
+    // A menu-driven trigger leaves first responder parked on the
+    // window; the field editor only engages once the outline view
+    // owns it (mirrors the Finder rename path's reclaim step).
+    if let window = outlineView.window, window.firstResponder !== outlineView {
+      window.makeFirstResponder(outlineView)
+    }
+    guard
+      let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
+        as? WorklaneWorkspaceCellView
+    else { return }
+    cell.beginRename()
   }
 }

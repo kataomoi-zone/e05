@@ -21,6 +21,28 @@ struct WorkspaceTests {
     #expect(a.id != b.id)
   }
 
+  @Test("displayName falls back to the positional label when unnamed")
+  @MainActor func displayNameFallback() {
+    let ws = WorkspaceModel()
+    #expect(ws.name == nil)
+    #expect(ws.displayName(at: 0) == "Workspace 1")
+    #expect(ws.displayName(at: 4) == "Workspace 5")
+  }
+
+  @Test("displayName returns the trimmed custom name when set")
+  @MainActor func displayNameCustom() {
+    let ws = WorkspaceModel()
+    ws.name = "  Email  "
+    #expect(ws.displayName(at: 2) == "Email")
+  }
+
+  @Test("displayName treats whitespace-only names as unnamed")
+  @MainActor func displayNameBlank() {
+    let ws = WorkspaceModel()
+    ws.name = "   "
+    #expect(ws.displayName(at: 1) == "Workspace 2")
+  }
+
   @Test("accentColor returns the palette in order for the first cycle")
   @MainActor func accentColorPalette() {
     let palette = PaneContainerViewController.accentColorPalette

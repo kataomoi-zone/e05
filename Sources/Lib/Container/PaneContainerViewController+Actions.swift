@@ -675,7 +675,7 @@ extension PaneContainerViewController {
       result.append(
         Action(
           id: "workspace_switch_\(wsId)",
-          title: "Switch to Workspace \(i + 1)",
+          title: "Switch to \(ws.displayName(at: i))",
           handler: { [weak self] in self?.switchWorkspace(toId: wsId) }
         ))
     }
@@ -684,7 +684,7 @@ extension PaneContainerViewController {
       result.append(
         Action(
           id: "workspace_move_pane_\(wsId)",
-          title: "Move Pane to Workspace \(i + 1)",
+          title: "Move Pane to \(ws.displayName(at: i))",
           handler: { [weak self] in self?.movePane(toWorkspaceId: wsId) }
         ))
     }
@@ -692,8 +692,9 @@ extension PaneContainerViewController {
     // Dynamic actions: one "Focus: <title>" entry per pane across ALL
     // workspaces. `focusPane(id:)` switches workspace as needed, so the
     // command palette can jump anywhere by fuzzy-searching title. Labels
-    // are prefixed with the workspace number for non-current workspaces
-    // so users can disambiguate identical titles across workspaces.
+    // are prefixed with the workspace's display name for non-current
+    // workspaces so users can disambiguate identical titles across
+    // workspaces.
     for (wsIdx, ws) in workspaces.enumerated() {
       for (colIdx, column) in ws.columns.enumerated() {
         for (paneIdx, pane) in column.panes.enumerated() {
@@ -704,7 +705,7 @@ extension PaneContainerViewController {
           let label =
             wsIdx == focusedWorkspaceIndex
             ? base
-            : "WS \(wsIdx + 1) · \(base)"
+            : "\(ws.displayName(at: wsIdx)) · \(base)"
           // Capture pane.id instead of positional indices. The handler
           // resolves the current position at execution time so that
           // pane close/reorder between palette show and selection

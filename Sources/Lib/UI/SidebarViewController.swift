@@ -410,6 +410,9 @@ final class SidebarViewController: NSViewController {
         onWorkspaceAction: { [weak container] actionId, workspaceId in
           container?.dispatchWorkspaceMenuAction(
             actionId, workspaceId: workspaceId)
+        },
+        onRenameWorkspace: { [weak container] workspaceId, newName in
+          container?.renameWorkspace(id: workspaceId, to: newName)
         }
       ))
   }

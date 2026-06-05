@@ -73,6 +73,14 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   private var onAddHandler: (() -> Void)?
   private var onAddTerminalHandler: (() -> Void)?
   private var onAddFinderHandler: (() -> Void)?
+  /// Commit sink for an inline rename, captured in `configure` so it
+  /// carries the workspace id without the cell having to re-resolve a
+  /// (possibly recycled) `node` at end-of-edit.
+  private var onRenameCommit: ((String) -> Void)?
+  /// True while the label is acting as an editable name field. Guards
+  /// `configure` from clobbering the in-progress text and makes
+  /// `beginRename` idempotent.
+  private var isRenaming = false
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -85,6 +93,9 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
   override func prepareForReuse() {
     super.prepareForReuse()
+    // Drop any in-flight rename so a recycled cell never reappears in
+    // edit mode against a different workspace.
+    if isRenaming { endRenameMode() }
     // Hover state belongs to the previous row this cell represented.
     // Reset it before reconfigure so the close × button and hover
     // background don't bleed from one workspace header to another
@@ -147,10 +158,14 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     input: WorklaneSectionView.ReloadInput
   ) {
     self.node = node
-    let title = "Workspace \(node.index + 1)"
+    let title = node.model.displayName(at: node.index)
     let accent = input.accentColor(node.index)
     let isCurrent = node.index == input.focusedWorkspaceIndex
-    label.stringValue = title
+    // Leave the in-progress text alone if a worklane reload re-vends
+    // this row while the user is mid-rename (e.g. an unrelated pane
+    // title change fires `notifySidebarWorklaneDidChange`). The
+    // commit/cancel path owns the label's string until editing ends.
+    if !isRenaming { label.stringValue = title }
     label.font =
       isCurrent
       ? NSFont.boldSystemFont(ofSize: 13)
@@ -162,6 +177,9 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
     let workspaceIndex = node.index
     let workspaceId = node.id
+    onRenameCommit = {
+      [onRename = input.onRenameWorkspace] newName in onRename(workspaceId, newName)
+    }
     onCloseHandler = {
       [onClose = input.onWorkspaceClose] in onClose(workspaceIndex)
     }
@@ -174,6 +192,61 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     onAddFinderHandler = {
       [onAdd = input.onAddFinderPaneToWorkspace] in onAdd(workspaceId)
     }
+  }
+
+  // MARK: - Inline rename
+
+  /// Turn the title label into an editable name field seeded with the
+  /// current custom name (empty for an unnamed workspace, with the
+  /// "Workspace N" fallback shown as the placeholder). Idempotent —
+  /// a second call while already editing is a no-op.
+  func beginRename() {
+    guard !isRenaming, let node else { return }
+    isRenaming = true
+    label.stringValue = node.model.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    // Placeholder is always the positional fallback, not displayName:
+    // it previews what an emptied field reverts to, so it stays
+    // "Workspace N" even when the workspace currently has a name.
+    label.placeholderString = "Workspace \(node.index + 1)"
+    label.isEditable = true
+    label.isSelectable = true
+    label.isBezeled = true
+    label.bezelStyle = .squareBezel
+    label.drawsBackground = true
+    label.alphaValue = 1.0
+    label.delegate = self
+    if let window, window.makeFirstResponder(label) {
+      label.currentEditor()?.selectAll(nil)
+    } else {
+      // First-responder transition refused (cell not yet laid out or
+      // another responder claimed the chain) — roll back so a stuck
+      // `isRenaming` doesn't block the next attempt.
+      endRenameMode()
+    }
+  }
+
+  /// Restore the label to its non-editing presentation, re-seeding the
+  /// text from the model's display name so a cancelled or emptied edit
+  /// reverts to the fallback instead of a blank row.
+  private func endRenameMode() {
+    isRenaming = false
+    label.isEditable = false
+    label.isSelectable = false
+    label.isBezeled = false
+    label.drawsBackground = false
+    label.delegate = nil
+    if let node { label.stringValue = node.model.displayName(at: node.index) }
+  }
+
+  /// Walk up to the hosting outline view so first responder can be
+  /// handed back to it after an edit ends.
+  private var enclosingOutlineView: NSOutlineView? {
+    var view: NSView? = superview
+    while let current = view {
+      if let outline = current as? NSOutlineView { return outline }
+      view = current.superview
+    }
+    return nil
   }
 
   override func updateTrackingAreas() {
@@ -242,5 +315,38 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)
+  }
+}
+
+extension WorklaneWorkspaceCellView: NSTextFieldDelegate {
+  /// Intercept ESC: AppKit's default cancel can tear the field editor
+  /// down without firing `controlTextDidEndEditing`, which would leave
+  /// `isRenaming` stuck. Handle it explicitly — discard the edit and
+  /// hand first responder back to the outline view.
+  func control(
+    _ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector
+  ) -> Bool {
+    guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+    endRenameMode()
+    if let outline = enclosingOutlineView { window?.makeFirstResponder(outline) }
+    return true
+  }
+
+  /// Commit path (Return / focus loss). The ESC cancel is routed
+  /// through `control(_:textView:doCommandBy:)` and never reaches
+  /// here, so this only handles commits. Reads the value, exits edit
+  /// mode, then hands the trimmed name to the captured commit sink —
+  /// the container normalises empty to "unnamed" and reloads the
+  /// worklane, which re-vends this row with the resolved display name.
+  func controlTextDidEndEditing(_ notification: Notification) {
+    guard isRenaming else { return }
+    let newName = label.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let commit = onRenameCommit
+    endRenameMode()
+    // Unlike the ESC path, no explicit first-responder hand-back: a
+    // Return / focus-loss end-edit already moves it (focus loss to the
+    // new responder, Return back to the outline view), and the commit
+    // triggers a worklane reload that re-vends this row regardless.
+    commit?(newName)
   }
 }

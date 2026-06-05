@@ -5,6 +5,63 @@ import Testing
 
 @Suite("SessionState")
 struct SessionStateTests {
+  @Test("workspace name round-trips through encode/decode")
+  func nameRoundTrip() throws {
+    let session = SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          name: "Email",
+          columns: [
+            SessionState.ColumnState(
+              panes: [SessionState.PaneState(address: "e05://terminal")],
+              focusedPaneIndex: 0,
+              width: 500,
+              heightRatios: []
+            )
+          ],
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0
+    )
+    let data = try JSONEncoder().encode(session)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    #expect(decoded.workspaces[0].name == "Email")
+  }
+
+  @Test("a session without the name key decodes to a nil name")
+  func legacyDecodeWithoutName() throws {
+    // Sessions written before workspace names existed omit the key
+    // entirely; the Optional must decode cleanly to nil rather than
+    // sending the whole file to quarantine.
+    let json = """
+      {
+        "workspaces": [
+          {
+            "columns": [
+              {
+                "panes": [{"address": "e05://terminal"}],
+                "focusedPaneIndex": 0,
+                "width": 500,
+                "heightRatios": [],
+                "isFolded": false,
+                "unfoldedWidth": 0
+              }
+            ],
+            "focusedColumnIndex": 0,
+            "scrollX": 0
+          }
+        ],
+        "focusedWorkspaceIndex": 0,
+        "urlBarVisible": false,
+        "sidebarPinned": false
+      }
+      """
+    let decoded = try JSONDecoder().decode(SessionState.self, from: Data(json.utf8))
+    #expect(decoded.workspaces[0].name == nil)
+  }
+
   @Test("round-trip encode/decode preserves state across workspaces")
   func roundTrip() throws {
     let session = SessionState(

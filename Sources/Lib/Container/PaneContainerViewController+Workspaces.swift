@@ -100,11 +100,27 @@ extension PaneContainerViewController {
     let resolvedSlidingUp = slidingUp ?? (index > focusedWorkspaceIndex)
     focusedWorkspaceIndex = index
     restoreScroll(in: currentWorkspace)
-    showToast("Workspace \(index + 1)")
+    showToast(workspaces[index].displayName(at: index))
     animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp) { [weak self] in
       self?.restoreFocusInCurrentWorkspace()
       completion?()
     }
+  }
+
+  /// Apply an inline rename to the workspace identified by `id`.
+  /// Whitespace-only / empty input clears `name` back to `nil` so the
+  /// row reverts to its positional "Workspace N" label. Routes through
+  /// `notifySidebarWorklaneDidChange` so the worklane re-vends the row
+  /// with the resolved display name and the change is autosaved.
+  public func renameWorkspace(id: ULID, to newName: String) {
+    guard let workspace = workspaces.first(where: { $0.id == id }) else {
+      logger.debug(
+        "[worklane/rename] stale workspace id=\(id.string, privacy: .public)")
+      return
+    }
+    let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    workspace.name = trimmed.isEmpty ? nil : trimmed
+    notifySidebarWorklaneDidChange()
   }
 
   /// Animate a vertical slide from `fromVC` to `toVC` by tweening each
@@ -732,7 +748,7 @@ extension PaneContainerViewController {
     let toastLabel =
       isSameWs
       ? "Move Pane"
-      : "Move Pane to Workspace \(adjustedTarget + 1)"
+      : "Move Pane to \(workspaces[adjustedTarget].displayName(at: adjustedTarget))"
     if sourceIndex == originalFocusedIndex, !isSameWs {
       // Cross-workspace move from the currently visible workspace —
       // run the slide animation that palette / IPC `Move Pane`
@@ -1019,7 +1035,7 @@ extension PaneContainerViewController {
     let isCrossWs = targetWs.id != sourceWs.id
     let toastLabel =
       isCrossWs
-      ? "Move Pane to Workspace \(adjustedTargetWsIdx + 1)"
+      ? "Move Pane to \(workspaces[adjustedTargetWsIdx].displayName(at: adjustedTargetWsIdx))"
       : "Move Pane"
 
     let targetVC = workspaceVCs[adjustedTargetWsIdx]

@@ -16,6 +16,13 @@ public final class WorkspaceModel {
   /// `collapsedIds` set survives a save/restore round-trip.
   public let id: ULID
 
+  /// User-assigned name, or `nil` for an unnamed workspace that falls
+  /// back to the positional "Workspace N" label. Edited inline in the
+  /// sidebar worklane and persisted through `SessionState.WorkspaceState.name`.
+  /// Empty / whitespace-only input is normalised back to `nil` so the
+  /// fallback re-engages instead of showing a blank row.
+  public var name: String?
+
   public var columns: [ColumnModel] = []
   public var focusedColumnIndex: Int = 0
 
@@ -46,5 +53,19 @@ public final class WorkspaceModel {
   public init(isPrivate: Bool = false, id: ULID = ULID()) {
     self.id = id
     self.isPrivate = isPrivate
+  }
+
+  /// User-facing label: the custom `name` when set (trimmed,
+  /// non-empty), else the positional "Workspace N" fallback. The
+  /// index is passed in because numbering is positional — the model
+  /// doesn't know its own slot in the container's `workspaces` array
+  /// (see the type doc on why accent / number live outside the model).
+  public func displayName(at index: Int) -> String {
+    if let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !trimmed.isEmpty
+    {
+      return trimmed
+    }
+    return "Workspace \(index + 1)"
   }
 }
