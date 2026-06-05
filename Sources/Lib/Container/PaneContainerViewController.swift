@@ -713,7 +713,13 @@ public final class PaneContainerViewController: NSViewController {
           !trueVisible.contains(focused.containerView.frame),
           let targetX = computeScrollTargetX(for: focused, mode: .center)
         {
-          scrollView.contentView.setBoundsOrigin(NSPoint(x: targetX, y: 0))
+          // `computeScrollTargetX` returns a logical origin; add the live
+          // peek compensation like every other apply site. It is zero here
+          // (viewDidAppear can't be in `.hoverPeek` — peek is edge-hover
+          // driven), but matching the convention keeps the logical/live
+          // split uniform rather than depending on that fact implicitly.
+          scrollView.contentView.setBoundsOrigin(
+            NSPoint(x: targetX + hoverPeekScrollCompensation, y: 0))
         }
       }
     }

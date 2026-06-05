@@ -893,19 +893,35 @@ extension PaneContainerViewController {
   /// `.alignRight` pin the column to the matching viewport edge. The
   /// math lives in the pure `columnScrollTargetX` so it is unit testable
   /// without an AppKit view tree.
+  /// Resolve the **logical** scroll origin (hover-peek-compensation-free)
+  /// that satisfies `mode` for `column`, or `nil` to leave the scroll
+  /// untouched. The live origin is `logicalOrigin + hoverPeekScrollCompensation`;
+  /// the appliers (`scrollToColumn` / `animateScroll`) add the live
+  /// compensation, so the column geometry stays in one consistent
+  /// coordinate frame regardless of sidebar state.
+  ///
+  /// During a hover-peek the sidebar overlays transiently and snaps back
+  /// the instant the cursor leaves, so the column is framed for the
+  /// persistent (hidden) layout: the leading inset is ignored and the
+  /// compensation stripped from the current origin so the whole
+  /// computation runs in logical coordinates. A pinned sidebar reserves
+  /// its inset for real (no compensation is active then), so it is
+  /// honoured and `logical == live`.
   func computeScrollTargetX(
     for column: ColumnModel, mode: ColumnScrollMode = .frameIn
   ) -> CGFloat? {
     let columnFrame = column.containerView.frame
     let insets = scrollView.contentInsets
+    let comp = hoverPeekScrollCompensation
+    let insetLeft = comp != 0 ? 0 : insets.left
     return Self.columnScrollTargetX(
       mode: mode,
-      currentX: scrollView.contentView.bounds.origin.x,
+      currentX: scrollView.contentView.bounds.origin.x - comp,
       columnMinX: columnFrame.minX,
       columnWidth: columnFrame.width,
       visibleWidth: scrollView.contentView.bounds.width,
       contentWidth: stackView.frame.width,
-      insetLeft: insets.left,
+      insetLeft: insetLeft,
       insetRight: insets.right,
       gap: WorkspaceViewController.outerMargin)
   }
@@ -996,12 +1012,22 @@ extension PaneContainerViewController {
   /// NSScrollView's `animator().bounds.origin` is silently
   /// dropped when it shares a context with other implicit
   /// animations.
-  func animateScroll(toX targetX: CGFloat) {
+  func animateScroll(toX logicalX: CGFloat) {
     guard view.window != nil else { return }
+    // `logicalX` is a logical origin from `computeScrollTargetX`; the live
+    // origin adds the hover-peek compensation. Snap during a peek (same
+    // retract race as `scrollToColumn`) so `live == logical + comp` holds
+    // through the retract; animate otherwise.
+    let comp = hoverPeekScrollCompensation
+    let liveTarget = logicalX + comp
+    if comp != 0 {
+      scrollView.contentView.setBoundsOrigin(NSPoint(x: liveTarget, y: 0))
+      return
+    }
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = Self.paneAnimationDuration
       ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-      self.scrollView.contentView.animator().bounds.origin.x = targetX
+      self.scrollView.contentView.animator().bounds.origin.x = liveTarget
     }
   }
 

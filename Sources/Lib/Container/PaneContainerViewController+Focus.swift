@@ -802,35 +802,47 @@ extension PaneContainerViewController {
     guard let column = columns[safe: index] else { return false }
 
     view.layoutSubtreeIfNeeded()
-    // Frame-in / clamp logic lives in `computeScrollTargetX`, which
-    // honours `contentInsets.left` (= the pinned-sidebar inset). The
-    // default `.frameIn` mode scrolls the minimum to reveal the column
-    // and leaves the position untouched when it is already visible, so
-    // a focus hop keeps neighbouring columns on screen; the explicit
-    // align / centre actions pass a fixed mode instead.
-    guard let clampedX = computeScrollTargetX(for: column, mode: mode) else { return false }
+    // `.frameIn` (the default) scrolls the minimum to reveal the column
+    // and leaves the position untouched when it is already visible, so a
+    // focus hop keeps neighbouring columns on screen; the explicit align
+    // / centre actions pass a fixed mode. `computeScrollTargetX` returns
+    // a *logical* origin — the live compensation is added at apply time.
+    guard let logicalX = computeScrollTargetX(for: column, mode: mode) else { return false }
 
-    // Defer the animator call so it lands on a fresh run-loop tick.
-    // Mouse-event-driven paths (direct pane click, sidebar row click)
-    // call scrollToColumn from inside `NSView.mouseDown(with:)`; an
-    // NSAnimationContext opened there collapses to an instantaneous
-    // transition because AppKit flushes layout within the same event
-    // dispatch. Deferring to main-async lets the mouse event return
-    // first, then the animator produces a visible ease-out.
+    // Defer the apply to a fresh run-loop tick. Mouse-event-driven paths
+    // (direct pane click, sidebar row click) call scrollToColumn from
+    // inside `NSView.mouseDown(with:)`; an NSAnimationContext opened there
+    // collapses to an instantaneous transition because AppKit flushes
+    // layout within the same event dispatch. Deferring lets the mouse
+    // event return first, then the animator produces a visible ease-out.
+    // The command-palette path already runs outside mouseDown so the
+    // ~0ms defer is a no-op for it.
     //
-    // Command-palette path already runs outside mouseDown so the
-    // ~0ms defer is a no-op for it; no regression there.
-    //
-    // Overlapping calls (rapid-fire clicks) are resolved by
-    // CoreAnimation animator reuse — writing the same property from
-    // a new animator cancels the previous one, producing a smooth
-    // re-target instead of a frame jump. No explicit coalescing needed.
+    // Overlapping animated calls (rapid-fire clicks) are resolved by
+    // CoreAnimation animator reuse — writing the same property from a new
+    // animator cancels the previous one, producing a smooth re-target.
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      // The live origin is `logical + hoverPeekScrollCompensation`, read
+      // here at apply time. When `comp != 0` (a genuine hover-peek), snap
+      // instead of animating: the peek retracts by offsetting the origin
+      // by the compensation the instant the cursor leaves, and an
+      // in-flight tween would win that race and leave the column a
+      // sidebar-width off the edge. Snapping keeps `live == logical + comp`
+      // true through the retract, and the peeked column sits under the
+      // overlay so no visible tween is lost. A peek→pinned promotion
+      // zeroes `comp` synchronously before this tick, so that path
+      // animates (the column is no longer under an overlay there).
+      let comp = self.hoverPeekScrollCompensation
+      let liveTarget = logicalX + comp
+      if comp != 0 {
+        self.scrollView.contentView.setBoundsOrigin(NSPoint(x: liveTarget, y: 0))
+        return
+      }
       NSAnimationContext.runAnimationGroup { context in
         context.duration = 0.25
         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        self.scrollView.contentView.animator().bounds.origin.x = clampedX
+        self.scrollView.contentView.animator().bounds.origin.x = liveTarget
       }
     }
     return true
