@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// Top-level Settings view. The sidebar selects which tab renders in
-/// the detail pane; future tabs (Terminal) land as additional
-/// ``SettingsTab`` cases without restructuring the container.
+/// the detail pane; a ``SettingsSearchField`` at its top filters the
+/// list into cross-tab ``SettingsSearchIndex`` results. New tabs land
+/// as additional ``SettingsTab`` cases without restructuring the
+/// container.
 ///
 /// Built on a plain `HStack` + `Divider` rather than
 /// `NavigationSplitView` because the platform split view still
@@ -22,6 +24,10 @@ import SwiftUI
 @MainActor
 struct SettingsRootView: View {
   @State private var selected: SettingsTab = .general
+  /// Cross-tab search query. While non-empty the sidebar swaps its
+  /// tab list for ``SettingsSearchIndex`` results; clearing it (or
+  /// selecting a result) restores the tab list.
+  @State private var searchText: String = ""
 
   var body: some View {
     HStack(spacing: 0) {
@@ -32,18 +38,76 @@ struct SettingsRootView: View {
     .frame(minWidth: 720, minHeight: 480)
   }
 
+  private var trimmedQuery: String {
+    searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   private var sidebar: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 2) {
-        ForEach(SettingsTab.allCases) { tab in
-          sidebarRow(tab)
+    VStack(spacing: 0) {
+      SettingsSearchField(text: $searchText, placeholder: "Search")
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+
+      ScrollView {
+        VStack(alignment: .leading, spacing: 2) {
+          if trimmedQuery.isEmpty {
+            ForEach(SettingsTab.allCases) { tab in
+              sidebarRow(tab)
+            }
+          } else {
+            searchResults
+          }
         }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
       }
-      .padding(.horizontal, 10)
-      .padding(.vertical, 8)
     }
     .frame(width: 180)
     .background(Color(nsColor: .windowBackgroundColor))
+  }
+
+  @ViewBuilder
+  private var searchResults: some View {
+    let results = SettingsSearchIndex.search(searchText)
+    if results.isEmpty {
+      Text("No Results")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      ForEach(results) { entry in
+        searchResultRow(entry)
+      }
+    }
+  }
+
+  private func searchResultRow(_ entry: SettingsSearchEntry) -> some View {
+    Button {
+      // Jump to the owning tab and drop back to the tab list. v1
+      // navigates at tab granularity; section scroll/highlight is a
+      // deferred follow-up.
+      selected = entry.tab
+      searchText = ""
+    } label: {
+      VStack(alignment: .leading, spacing: 1) {
+        Text(entry.title)
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+        Text(entry.tab.title)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 5)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(Text("\(entry.title), \(entry.tab.title)"))
   }
 
   private func sidebarRow(_ tab: SettingsTab) -> some View {
@@ -90,51 +154,6 @@ struct SettingsRootView: View {
       ContentBlockerSettingsView()
     case .about:
       AboutSettingsView()
-    }
-  }
-}
-
-/// `allCases` order drives the sidebar row order. About sits at the
-/// bottom by convention so the most-edited tabs (General first,
-/// Terminal / Sites / Appearance / Shortcuts / Content Blocker
-/// above About) stay near the top. Terminal sits right after General
-/// because the terminal pane is e05's founding feature and the
-/// `config.ghostty` it edits is shared with the libghostty runtime
-/// rather than being a downstream feature toggle.
-private enum SettingsTab: CaseIterable, Hashable, Identifiable {
-  case general
-  case terminal
-  case sites
-  case appearance
-  case shortcuts
-  case contentBlocker
-  case about
-
-  var id: Self { self }
-
-  var title: String {
-    switch self {
-    case .general: "General"
-    case .terminal: "Terminal"
-    case .sites: "Sites"
-    case .appearance: "Appearance"
-    case .shortcuts: "Shortcuts"
-    case .contentBlocker: "Content Blocker"
-    case .about: "About"
-    }
-  }
-
-  /// SF Symbol for the sidebar row. Picked from system symbols so a
-  /// future light-theme switch picks up the appearance automatically.
-  var symbol: String {
-    switch self {
-    case .general: "gearshape"
-    case .terminal: "terminal"
-    case .sites: "globe"
-    case .appearance: "paintbrush.fill"
-    case .shortcuts: "keyboard"
-    case .contentBlocker: "shield.lefthalf.filled"
-    case .about: "info.circle"
     }
   }
 }
