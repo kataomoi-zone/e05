@@ -306,20 +306,10 @@ extension FinderPaneView {
     // Surface a per-batch error toast when any source failed to land.
     // A live drop posts no success toast (matching Finder), so this is
     // the only feedback for a partial / full failure; per-item causes
-    // are already logged above. `actionName: nil` — there is no
-    // companion success line to name.
-    let failed = plans.count - succeeded
-    if failed > 0 {
-      let verbPhrase = op == .copy ? "copied" : "moved"
-      let message = FinderUndoCenter.partialFailureMessage(
-        actionName: nil, succeeded: succeeded, total: plans.count, verbPhrase: verbPhrase)
-      if let container = window?.contentViewController as? PaneContainerViewController {
-        container.showToast(message, style: .error)
-      } else {
-        logger.error(
-          "Drop failure toast dropped: container unresolved (\(message, privacy: .public))")
-      }
-    }
+    // are already logged above.
+    reportOperationFailure(
+      succeeded: succeeded, total: plans.count,
+      verbPhrase: op == .copy ? "copied" : "moved")
     return succeeded > 0
   }
 

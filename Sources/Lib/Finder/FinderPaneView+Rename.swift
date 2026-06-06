@@ -285,6 +285,8 @@ extension FinderPaneView {
         )
       }
     }
+    reportOperationFailure(
+      succeeded: moves.count, total: urls.count, verbPhrase: "moved into folder")
     FinderUndoCenter.registerNewFolderWithSelection(
       folder: target, moves: moves, in: self)
     // Same `selectAfterLoad` + delayed `beginRename` chain as
@@ -309,10 +311,16 @@ extension FinderPaneView {
     let urls = selectedURLs
     guard !urls.isEmpty else { return }
     var pairs: [(origin: URL, trashed: URL)] = []
+    // Count successes independently of `pairs`: `trashItem` can
+    // succeed yet leave `resultingItemURL` nil, which keeps the entry
+    // out of `pairs` (no undo URL) but it's still a successful trash,
+    // so the failure toast mustn't report it as a casualty.
+    var succeeded = 0
     for url in urls {
       var resulting: NSURL?
       do {
         try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
+        succeeded += 1
         if let resulting = resulting as URL? {
           pairs.append((url, resulting))
         }
@@ -325,10 +333,34 @@ extension FinderPaneView {
     if !pairs.isEmpty {
       FinderUndoCenter.registerTrash(pairs: pairs, in: self)
     }
+    reportOperationFailure(
+      succeeded: succeeded, total: urls.count, verbPhrase: "moved to Trash")
     // The directory monitor event that follows will schedule a
     // debounced reload. An explicit reload here would race the
     // monitor and could flash a stale row set; let the debounce
     // layer do its job.
+  }
+
+  // MARK: - Failure feedback
+
+  /// Post an `.error` toast summarising a partial / full failure of a
+  /// live filesystem op. No-op on full success. The phrasing comes from
+  /// the same `partialFailureMessage` helper the undo path uses, with
+  /// `actionName: nil` — live ops have no companion success toast to
+  /// name. Resolves the container up the responder chain and logs,
+  /// never silently drops, when it can't (per-item causes are already
+  /// logged at the call site; this keeps a teardown state from hiding
+  /// the failure entirely).
+  func reportOperationFailure(succeeded: Int, total: Int, verbPhrase: String) {
+    guard succeeded < total else { return }
+    let message = FinderUndoCenter.partialFailureMessage(
+      actionName: nil, succeeded: succeeded, total: total, verbPhrase: verbPhrase)
+    guard let container = window?.contentViewController as? PaneContainerViewController else {
+      logger.error(
+        "Operation-failure toast dropped: container unresolved (\(message, privacy: .public))")
+      return
+    }
+    container.showToast(message, style: .error)
   }
 }
 
@@ -449,6 +481,10 @@ extension FinderPaneView: NSTextFieldDelegate {
       logger.error(
         "Rename failed \(oldURL.path, privacy: .public) → \(newName, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
+      // A forward rename that collides (target name reoccupied) or
+      // hits a permission error would otherwise be silent — the name
+      // just snaps back with no explanation.
+      reportOperationFailure(succeeded: 0, total: 1, verbPhrase: "renamed")
       reloadItems(preservingSelection: true)
       return
     }
