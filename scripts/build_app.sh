@@ -107,6 +107,10 @@ fi
 mkdir -p "$CONTENTS/Resources/bin"
 cp -f "$CLI_SRC" "$CONTENTS/Resources/bin/e05"
 cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
+# PATH-fix snippets sourced by the shell-integration (injected below)
+# so the `open` shim shadows /usr/bin/open in e05 panes.
+cp -f "$REPO_ROOT/Resources/bin/e05-integration.zsh" "$CONTENTS/Resources/bin/e05-integration.zsh"
+cp -f "$REPO_ROOT/Resources/bin/e05-integration.bash" "$CONTENTS/Resources/bin/e05-integration.bash"
 
 # Ghostty runtime resources (themes / shell-integration / terminfo),
 # vendored under Resources/ and pinned via GHOSTTY_VERSION. Bundled so a
@@ -118,6 +122,35 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 # resources dir). rsync --delete keeps the bundle in sync across rebuilds.
 rsync -a --delete "$REPO_ROOT/Resources/ghostty/" "$CONTENTS/Resources/ghostty/"
 rsync -a --delete "$REPO_ROOT/Resources/terminfo/" "$CONTENTS/Resources/terminfo/"
+
+# Inject e05's PATH fix into the bundled shell-integration so every e05
+# pane shell keeps the bundled bin dir ahead of /usr/bin (a prompt hook
+# re-prepends post-path_helper, which a launch-time PATH prepend cannot
+# survive in a login shell). This is what lets the `open` shim shadow
+# /usr/bin/open with zero user setup, and the exported PATH covers child
+# processes too. Applied to the bundle copy only — the repo's vendored
+# integration stays pristine so a ghostty version bump's rsync diff is
+# clean, and this re-applies every build so the bump can't silently drop
+# it. The integration is Kitty-derived GPLv3; the e05-integration.*
+# snippets are GPLv3 to match. The grep guard prevents a double-inject.
+ZSH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/zsh/ghostty-integration"
+if [[ -f "$ZSH_INTEG" ]] && ! grep -q 'e05-integration.zsh' "$ZSH_INTEG"; then
+    cat >> "$ZSH_INTEG" <<'EOF'
+
+# e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
+# Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
+[[ -n "$E05_BIN_DIR" ]] && builtin source "$E05_BIN_DIR/e05-integration.zsh"
+EOF
+fi
+BASH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/bash/ghostty.bash"
+if [[ -f "$BASH_INTEG" ]] && ! grep -q 'e05-integration.bash' "$BASH_INTEG"; then
+    cat >> "$BASH_INTEG" <<'EOF'
+
+# e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
+# Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
+[ -n "$E05_BIN_DIR" ] && . "$E05_BIN_DIR/e05-integration.bash"
+EOF
+fi
 
 # App icon: actool compiles the layered Icon Composer package
 # (Resources/AppIcon.icon — icon.json + Assets/) into Assets.car (the
