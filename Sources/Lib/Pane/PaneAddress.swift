@@ -9,7 +9,8 @@ import Foundation
 ///   remains a single source of truth for session persistence, sidebar
 ///   worklane labels, and URL-bar display; `currentPath` decodes it back
 ///   into a filesystem path.
-/// - `e05://settings` — settings pane (future)
+/// - `e05://settings` — not a pane: Settings opens as a window
+///   (open_settings / ⌘,), so this address falls back to a blank browser
 /// - `https://...`, `http://...` — browser pane
 ///
 /// The former `e05://history`, `e05://bookmarks`, and `e05://downloads`

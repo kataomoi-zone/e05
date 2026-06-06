@@ -271,7 +271,7 @@ final class SidebarOverlayView: NSView {
   // responder chain from a structural subview (NSGlassEffectView's
   // content `NSView`, the empty padding around `worklane` /
   // `places` / `header`, etc.) without one of the per-container
-  // absorbers (`FlippedClipView` for worklane, `PlacesSectionView`
+  // absorbers (`WorklaneOutlineView` for worklane, `PlacesSectionView`
   // for the bottom strip) catching it first. Without this the
   // `NSResponder` default forwards mouseDown all the way up past the
   // overlay, where `NSGlassEffectView`'s pass-through delivers the

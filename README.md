@@ -10,8 +10,8 @@ Alpha. macOS 26+ only. Dark-mode only.
 - Horizontally-tiled columns with intra-column vertical splits, slide animations on insert / reorder / close.
 - Multiple workspaces inside one window, cycled with `⌘⇧]` / `⌘⇧[`, plus ephemeral "private" workspaces with a non-persistent data store.
 - Sidebar with five modes — Tabs (workspace + pane tree), Bookmarks, History, Downloads, Extensions — hover-peek and pin.
-- Per-tab WKWebExtensions: install Chrome Web Store extensions (Bitwarden verified) or Safari Web Extension `.appex` bundles. Firefox `.xpi` is not supported.
-- Built-in adblocker (declarative + procedural cosmetic runtime) bundling EasyList, EasyPrivacy, and AdGuard Japanese.
+- Per-tab WKWebExtensions: install Chrome Web Store extensions (Bitwarden and 1Password verified). Firefox `.xpi` and Safari `.appex` bundles are not supported.
+- Built-in adblocker (declarative + procedural cosmetic runtime) with a catalog of filter lists — EasyList, EasyPrivacy, uBlock Origin, AdGuard regional lists, and more — fetched and cached at runtime, with a default-on subset plus optional and custom sources.
 - Memory saver: idle browser panes auto-suspend after 60 minutes (and on system memory pressure), with cross-launch back/forward history restoration via a shadow URL stack.
 - Web Notifications routed to native macOS banners with deep-link dispatch through the page's Service Worker.
 - Per-host site permissions for camera / microphone / geolocation / notifications, and per-site mute.
@@ -41,7 +41,7 @@ open build/release/e05.app
 swift test --disable-sandbox    # see CONTRIBUTING.md for why --disable-sandbox is needed
 ```
 
-Dev and release use separate bundle ids (`org.kawarimidoll.e05.debug` vs `org.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
+Dev and release use separate bundle ids (`com.kawarimidoll.e05.debug` vs `com.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
 
 The release build is not yet Developer ID-signed or notarised. On first launch macOS Gatekeeper will block it; right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`.
 
@@ -79,7 +79,7 @@ Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys. Browser / workspace
 | UI | `⌘⇧ P` | Command palette |
 | | `⌘ B` | Toggle sidebar pin |
 
-The command palette surfaces every action by id (e.g. `new_terminal`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
+The command palette surfaces every action by id (e.g. `new_terminal_pane`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
 
 Drag a pane edge to resize to an arbitrary width.
 
@@ -123,7 +123,7 @@ Subcommands:
 ```bash
 e05 open <url-or-path>          # Open URL as a browser column, dir as a finder column
 e05 action <action-id>          # Run any command-palette action by id
-e05 switch-workspace <index>    # Switch to workspace N (1-based)
+e05 switch-workspace <index>    # Switch to workspace at zero-based index
 e05 notify <message>            # Surface a toast in the running app
 ```
 

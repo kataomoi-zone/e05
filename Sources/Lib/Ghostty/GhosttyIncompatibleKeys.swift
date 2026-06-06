@@ -142,10 +142,10 @@ public enum GhosttyIncompatibleKeys {
       key: "initial-window",
       reason: "e05 controls window-on-launch through `session.json`."
     ),
-    .init(
-      key: "window-inherit-working-directory",
-      reason: "e05 derives a new pane's CWD from its own pane spawn semantics."
-    ),
+    // window-inherit-working-directory is intentionally NOT listed: e05
+    // relies on it (left at its default) to seed a fresh pane's CWD from
+    // the focused surface — see GhosttyTerminalView.createSurface, which
+    // leaves `working_directory` unset for a non-restored pane.
     .init(
       key: "window-inherit-font-size",
       reason: "e05 manages per-pane font size independently of ghostty's inherit setting."

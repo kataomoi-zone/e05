@@ -1592,7 +1592,7 @@ extension WorklaneSectionView: NSMenuDelegate {
     // something. Items left at the default `true` are intentionally
     // browser-pane-always-valid (reload / hard_reload / inspector /
     // keep_active toggles) or have no cheap clicked-row probe
-    // (toggle_bookmark — needs a BookmarksStore lookup every menu
+    // (toggle_bookmark — needs a Bookmarks lookup every menu
     // open).
     let browser = pane.browserView
     let webView = browser?.webView

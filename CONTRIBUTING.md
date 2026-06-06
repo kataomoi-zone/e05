@@ -138,6 +138,9 @@ Sources/
     Container/            — PaneContainerViewController + partial extensions (+Panes, +Focus,
                             +Workspaces, +URLBar, +Actions, +Session, +Sidebar)
     UI/                   — Sidebar, URL bar, command palette, suggestions, list panes
+    Finder/               — native file-browser pane (e05://finder)
+    Settings/             — Settings window (SwiftUI) + preferences store
+    IPC/                  — control socket + e05 CLI protocol
     Utility/              — FuzzyMatcher, ULID, Action registry, Collection+safe
 Tests/                    — unit tests
 Package.swift             — SwiftPM manifest with GhosttyKit binary target

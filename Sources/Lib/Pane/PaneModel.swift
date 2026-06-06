@@ -325,13 +325,12 @@ public final class PaneModel {
       let fv = FinderPaneView(initialURL: initialURL)
       self.content = .finder(fv)
     case .settings:
-      // Settings is planned but not yet implemented. Log and fall
-      // back to a blank browser so users who type `e05://settings`
-      // or restore a session referencing it see an empty pane
-      // instead of a debug-build trap. The feature remains on the
-      // roadmap — drop this branch once a real Settings view ships.
+      // Settings is intentionally a window (open_settings / ⌘,), never
+      // a pane. This branch is permanent: it keeps a typed
+      // `e05://settings` or a stale session entry from trapping by
+      // falling back to a blank browser instead.
       logger.warning(
-        "Settings pane is not yet implemented — falling back to blank browser"
+        "e05://settings is not a pane (Settings opens as a window) — falling back to blank browser"
       )
       let bv = Self.makeBrowserView(dataStore: dataStore)
       self.content = .browser(bv)

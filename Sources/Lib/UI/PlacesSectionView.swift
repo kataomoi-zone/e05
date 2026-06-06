@@ -130,7 +130,7 @@ final class PlacesSectionView: NSView {
   // leak through `NSGlassEffectView`'s transparent regions to the
   // workspace pane underneath, letting the user click links / select
   // text in the WebView through the sidebar's footer area. Same
-  // pattern as `FlippedClipView` in the worklane — `scrollWheel` etc.
+  // pattern as `WorklaneOutlineView` in the worklane — `scrollWheel` etc.
   // are intentionally not overridden.
   override func mouseDown(with _: NSEvent) {}
   override func mouseDragged(with _: NSEvent) {}

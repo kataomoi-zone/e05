@@ -104,10 +104,9 @@ extension PaneContainerViewController {
     // `chrome.tabs.query({active})` is sourced from this sticky state.
     ExtensionController.shared.workspaceBridge.noteFocusChanged(pane)
     applyFocusBorder(pane)
-    // Activate the incoming pane's top-edge hit zone so the next
-    // hover near the pane top is observed. The hover scheduler that
-    // attaches to the zone's callbacks lands in a follow-up commit;
-    // for now the strip is just present and listening.
+    // Activate the incoming pane's top-edge hit zone so the hover
+    // scheduler (wireURLBarHoverScheduler) observes the next hover near
+    // the pane top and peeks the URL bar.
     pane.urlBarTopEdgeHitZone.isHidden = false
     if pane.isBlankBrowser {
       // Blank pane has nothing to focus inside its content view; show
