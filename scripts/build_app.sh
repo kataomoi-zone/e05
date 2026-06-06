@@ -112,6 +112,22 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.zsh" "$CONTENTS/Resources/bin/e05-integration.zsh"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.bash" "$CONTENTS/Resources/bin/e05-integration.bash"
 
+# License texts for bundled copyleft dependencies (the GPLv3 ghostty /
+# kitty shell-integration). GPLv3 requires the full license to ship
+# with the work, so the .app carries it under Resources/licenses.
+if [[ -d "$REPO_ROOT/Resources/licenses" ]]; then
+    mkdir -p "$CONTENTS/Resources/licenses"
+    # nullglob so an empty dir is a clean no-op instead of copying a
+    # literal `*.txt`. A real copy failure still aborts the build (set
+    # -e) rather than silently shipping a GPL bundle without its license.
+    shopt -s nullglob
+    license_texts=("$REPO_ROOT/Resources/licenses/"*.txt)
+    shopt -u nullglob
+    if (( ${#license_texts[@]} > 0 )); then
+        cp -f "${license_texts[@]}" "$CONTENTS/Resources/licenses/"
+    fi
+fi
+
 # Ghostty runtime resources (themes / shell-integration / terminfo),
 # vendored under Resources/ and pinned via GHOSTTY_VERSION. Bundled so a
 # release launched from Finder — with no GHOSTTY_RESOURCES_DIR inherited
@@ -131,8 +147,9 @@ rsync -a --delete "$REPO_ROOT/Resources/terminfo/" "$CONTENTS/Resources/terminfo
 # processes too. Applied to the bundle copy only — the repo's vendored
 # integration stays pristine so a ghostty version bump's rsync diff is
 # clean, and this re-applies every build so the bump can't silently drop
-# it. The integration is Kitty-derived GPLv3; the e05-integration.*
-# snippets are GPLv3 to match. The grep guard prevents a double-inject.
+# it. The integration is Kitty-derived GPLv3; only this appended `source`
+# line stays under GPL — the sourced e05-integration.* snippets are
+# standalone e05 scripts (MIT). The grep guard prevents a double-inject.
 ZSH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/zsh/ghostty-integration"
 if [[ -f "$ZSH_INTEG" ]] && ! grep -q 'e05-integration.zsh' "$ZSH_INTEG"; then
     cat >> "$ZSH_INTEG" <<'EOF'

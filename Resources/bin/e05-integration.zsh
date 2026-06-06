@@ -7,11 +7,11 @@
 # dirs first. Re-prepending here wins regardless of that reordering,
 # and the exported PATH is inherited by child processes and scripts.
 #
-# Sourced from the bundled ghostty shell-integration (Kitty-derived,
-# GPLv3), so this file is distributed under GPLv3 to match:
-# This program is free software under the GNU General Public License
-# version 3 or later, WITHOUT ANY WARRANTY. See
-# <https://www.gnu.org/licenses/>.
+# Standalone e05 script: it defines its own function and is merely
+# `source`d by the bundled ghostty shell-integration, deriving nothing
+# from it. Covered by e05's own MIT license (see ../../LICENSE), kept
+# separate so e05 ships no GPL code of its own — only the one-line
+# `source` appended into the GPLv3 integration stays under GPL.
 
 _e05_fix_path() {
   [[ -n "$E05_BIN_DIR" ]] || return

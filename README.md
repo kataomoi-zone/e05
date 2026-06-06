@@ -131,7 +131,9 @@ Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-t
 
 ## License
 
-[MIT](./LICENSE)
+e05 itself is [MIT](./LICENSE).
+
+It also bundles, as separate aggregated scripts, the Ghostty shell integration (derived from Kitty), which is **GPL-3.0-or-later**. Its full license text ships inside the app at `Contents/Resources/licenses/GPL-3.0.txt` (source under [`Resources/licenses/`](./Resources/licenses)). This is mere aggregation — e05's own MIT-licensed code is unaffected.
 
 ## Contributing
 
