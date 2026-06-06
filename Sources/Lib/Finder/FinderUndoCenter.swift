@@ -71,6 +71,18 @@ public enum FinderUndoCenter {
   /// undo/redo cycle.
   public internal(set) static var lastBatchPartial: (succeeded: Int, total: Int)?
 
+  /// Action name of the undo/redo turn currently in flight. The
+  /// `undo:` / `redo:` handlers assign it before invoking the manager
+  /// and clear it after; `reportPartialBatchFailure` — only ever
+  /// reached from inside an undo/redo closure — reads it so a
+  /// full-failure error toast, whose companion `<action> undone /
+  /// redone` success line is suppressed, can still name the operation.
+  /// Undo/redo-only: the live-drop path doesn't consult this channel,
+  /// it passes its own name straight to `partialFailureMessage`. No
+  /// leading nil needed (unlike `lastBatchPartial`) — the handlers
+  /// always assign before any read, so a prior turn's value can't leak.
+  public internal(set) static var currentActionName: String?
+
   // MARK: - Rename
 
   /// Register a `from → to` rename so ⌘Z reverses it via
@@ -101,6 +113,13 @@ public enum FinderUndoCenter {
           logger.error(
             "Undo rename \(newURL.path, privacy: .public) → \(oldURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
+          // A failed rename undo (target name reoccupied between the
+          // forward rename and ⌘Z) would otherwise be silent — worse,
+          // `postUndoToast` would still post a false "Rename undone".
+          // Reporting a (0, 1) partial both surfaces the error toast
+          // and trips the success-toast suppression in `postUndoToast`.
+          reportPartialBatchFailure(
+            target: target, succeeded: 0, total: 1, verbPhrase: "renamed")
         }
       }
     }
@@ -108,6 +127,28 @@ public enum FinderUndoCenter {
   }
 
   // MARK: - Partial-failure feedback
+
+  /// Build the user-facing partial / full-failure sentence. Pure (no
+  /// container, no actor state) so the phrasing contract is unit-
+  /// testable and the live-drop path can reuse it.
+  ///
+  /// `actionName` is prefixed only on a full failure (`succeeded ==
+  /// 0`): there `postUndoToast` suppresses the `<action> undone /
+  /// redone` success line, so this sentence is the user's only
+  /// context. On a partial failure the success toast still posts with
+  /// the action name, so the bare phrasing avoids redundancy. Pass
+  /// `nil` for callers with no companion success toast (live drop).
+  nonisolated static func partialFailureMessage(
+    actionName: String?, succeeded: Int, total: Int, verbPhrase: String
+  ) -> String {
+    let failed = total - succeeded
+    let itemPhrase = total == 1 ? "1 item" : "\(failed) of \(total) items"
+    let body = "\(itemPhrase) couldn't be \(verbPhrase)"
+    if succeeded == 0, let actionName, !actionName.isEmpty {
+      return "\(actionName): \(body)"
+    }
+    return body
+  }
 
   /// Surface an error toast describing a partial-failure batch
   /// undo/redo: silent on full success, factual sentence on a
@@ -136,9 +177,9 @@ public enum FinderUndoCenter {
   ) {
     guard succeeded < total else { return }
     Self.lastBatchPartial = (succeeded: succeeded, total: total)
-    let failed = total - succeeded
-    let itemPhrase = total == 1 ? "1 item" : "\(failed) of \(total) items"
-    let message = "\(itemPhrase) couldn't be \(verbPhrase)"
+    let message = partialFailureMessage(
+      actionName: Self.currentActionName, succeeded: succeeded, total: total,
+      verbPhrase: verbPhrase)
     guard let container = target.window?.contentViewController as? PaneContainerViewController
     else {
       // Diagnostic: the per-item moveItem already logged its own

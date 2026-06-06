@@ -170,6 +170,10 @@ extension FinderPaneView: NSMenuItemValidation {
   @objc public func undo(_ sender: Any?) {
     let action = FinderUndoCenter.manager.undoActionName
     FinderUndoCenter.lastBatchPartial = nil
+    // Expose the action to `reportPartialBatchFailure` so a full-failure
+    // error toast can name the operation the suppressed success toast
+    // would have. Cleared after the turn alongside `lastBatchPartial`.
+    FinderUndoCenter.currentActionName = action
     FinderUndoCenter.manager.undo()
     postUndoToast(
       action: action, suffix: "undone",
@@ -179,16 +183,19 @@ extension FinderPaneView: NSMenuItemValidation {
     // value. The next undo/redo's leading nil already covers the
     // happy path; this trailing one closes any external read window.
     FinderUndoCenter.lastBatchPartial = nil
+    FinderUndoCenter.currentActionName = nil
   }
 
   @objc public func redo(_ sender: Any?) {
     let action = FinderUndoCenter.manager.redoActionName
     FinderUndoCenter.lastBatchPartial = nil
+    FinderUndoCenter.currentActionName = action
     FinderUndoCenter.manager.redo()
     postUndoToast(
       action: action, suffix: "redone",
       partial: FinderUndoCenter.lastBatchPartial)
     FinderUndoCenter.lastBatchPartial = nil
+    FinderUndoCenter.currentActionName = nil
   }
 
   /// Surface a brief confirmation toast for a finder-pane undo/redo.

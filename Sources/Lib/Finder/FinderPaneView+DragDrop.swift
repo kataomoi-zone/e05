@@ -219,7 +219,7 @@ extension FinderPaneView {
     }
     guard resolution != .stop else { return false }
 
-    var anyAccepted = false
+    var succeeded = 0
     // Track only `.move` successes — cross-volume `copyItem` results
     // are deliberately not registered with the undo manager. System
     // Finder treats those copies the same way (no undo entry) since
@@ -265,7 +265,7 @@ extension FinderPaneView {
       if op == .copy {
         do {
           try fm.copyItem(at: plan.source, to: actualTarget)
-          anyAccepted = true
+          succeeded += 1
         } catch {
           logger.error(
             "Drop copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -275,7 +275,7 @@ extension FinderPaneView {
       }
       do {
         try fm.moveItem(at: plan.source, to: actualTarget)
-        anyAccepted = true
+        succeeded += 1
         movePairs.append((plan.source, actualTarget))
       } catch let error as NSError where Self.isCrossVolumeError(error) {
         // Validate said `.move`, but the source's volume disappeared
@@ -287,7 +287,7 @@ extension FinderPaneView {
         // above.
         do {
           try fm.copyItem(at: plan.source, to: actualTarget)
-          anyAccepted = true
+          succeeded += 1
         } catch {
           logger.error(
             "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -303,7 +303,24 @@ extension FinderPaneView {
       FinderUndoCenter.registerMove(
         pairs: movePairs, sourcePane: sourcePane, in: self)
     }
-    return anyAccepted
+    // Surface a per-batch error toast when any source failed to land.
+    // A live drop posts no success toast (matching Finder), so this is
+    // the only feedback for a partial / full failure; per-item causes
+    // are already logged above. `actionName: nil` — there is no
+    // companion success line to name.
+    let failed = plans.count - succeeded
+    if failed > 0 {
+      let verbPhrase = op == .copy ? "copied" : "moved"
+      let message = FinderUndoCenter.partialFailureMessage(
+        actionName: nil, succeeded: succeeded, total: plans.count, verbPhrase: verbPhrase)
+      if let container = window?.contentViewController as? PaneContainerViewController {
+        container.showToast(message, style: .error)
+      } else {
+        logger.error(
+          "Drop failure toast dropped: container unresolved (\(message, privacy: .public))")
+      }
+    }
+    return succeeded > 0
   }
 
   /// Three-way batch decision a drop's conflicting targets resolve
