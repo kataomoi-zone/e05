@@ -27,13 +27,14 @@ Alpha. macOS 26+ only.
 
 ## Build & Run
 
-e05 requires a real `.app` bundle at runtime — bundle id drives data paths, permission prompts, and `UNUserNotificationCenter`. `swift run e05` does not work.
+e05 requires a real `.app` bundle at runtime — bundle id drives data paths, permission prompts, and `UNUserNotificationCenter`. `swift run e05` does not work; build the binary first, then assemble the bundle with `scripts/build_app.sh`.
 
 ```bash
 # Dev iteration (build → assemble dev bundle → exec, stderr attached):
 ./scripts/dev.sh
 
-# Release bundle (ad-hoc sign + Hardened Runtime; no Developer ID / notarisation yet):
+# Release bundle (ad-hoc signed + Hardened Runtime):
+swift build -c release
 ./scripts/build_app.sh release
 open build/release/e05.app
 
@@ -43,7 +44,29 @@ swift test --disable-sandbox    # see CONTRIBUTING.md for why --disable-sandbox 
 
 Dev and release use separate bundle ids (`com.kawarimidoll.e05.debug` vs `com.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
 
-The release build is not yet Developer ID-signed or notarised. On first launch macOS Gatekeeper will block it; right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`.
+An ad-hoc-signed release is not notarised, so macOS Gatekeeper blocks it on first launch; right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`.
+
+### Signed & notarised distribution
+
+`scripts/build_app.sh release` upgrades from ad-hoc to a real Developer ID identity when `E05_SIGN_IDENTITY` is set (adding the secure timestamp that notarisation requires), and `scripts/notarize.sh` then submits the bundle to Apple and staples the ticket. Copy `.envrc.sample` to `.envrc`, fill in your Developer ID identity and App Store Connect API key, and `direnv allow` (`.envrc` is gitignored) — or export the variables yourself:
+
+```bash
+swift build -c release
+./scripts/build_app.sh release    # Developer ID-signed + Hardened Runtime + secure timestamp
+./scripts/notarize.sh             # notarise, staple, emit a distributable zip
+```
+
+A notarised + stapled bundle launches without being blocked by Gatekeeper. See `scripts/notarize.sh --help` for the required `E05_NOTARY_*` variables.
+
+### Install
+
+`open build/release/e05.app` runs the bundle in place. To install it for everyday use, copy it into `/Applications` with `ditto` (a faithful bundle copy; quit any running instance first):
+
+```bash
+ditto build/release/e05.app /Applications/e05.app
+```
+
+The bundled `e05` CLI then lives at `/Applications/e05.app/Contents/Resources/bin/e05` — see [CLI](#cli) to put it on your `PATH`.
 
 ## Keybindings
 
