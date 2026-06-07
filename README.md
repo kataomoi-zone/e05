@@ -2,21 +2,21 @@
 
 A macOS window manager that tiles libghostty terminal panes, WKWebView browser panes, and a native finder pane in horizontally-scrolling columns across multiple workspaces inside a single window.
 
-Alpha. macOS 26+ only. Dark-mode only.
+Alpha. macOS 26+ only.
 
 ## Highlights
 
 - Three pane kinds: terminal (libghostty), browser (WKWebView), and finder (native file browser at `e05://finder`).
 - Horizontally-tiled columns with intra-column vertical splits, slide animations on insert / reorder / close.
-- Multiple workspaces inside one window, cycled with `⌘⇧]` / `⌘⇧[`, plus ephemeral "private" workspaces with a non-persistent data store.
+- Multiple workspaces inside one window, plus ephemeral "private" workspaces with a non-persistent data store.
 - Sidebar with five modes — Tabs (workspace + pane tree), Bookmarks, History, Downloads, Extensions — hover-peek and pin.
-- Per-tab WKWebExtensions: install Chrome Web Store extensions (Bitwarden and 1Password verified). Firefox `.xpi` and Safari `.appex` bundles are not supported.
+- Per-tab WKWebExtensions: install from the Chrome Web Store, or load an unpacked extension folder or ZIP archive. Firefox `.xpi` and Safari `.appex` bundles are not supported.
 - Built-in adblocker (declarative + procedural cosmetic runtime) with a catalog of filter lists — EasyList, EasyPrivacy, uBlock Origin, AdGuard regional lists, and more — fetched and cached at runtime, with a default-on subset plus optional and custom sources.
-- Memory saver: idle browser panes auto-suspend after 60 minutes (and on system memory pressure), with cross-launch back/forward history restoration via a shadow URL stack.
+- Memory saver: idle browser panes auto-suspend after a configurable idle timeout (60 minutes by default) and on system memory pressure, with cross-launch back/forward history restoration via a shadow URL stack.
 - Web Notifications routed to native macOS banners with deep-link dispatch through the page's Service Worker.
 - Per-host site permissions for camera / microphone / geolocation / notifications, and per-site mute.
-- Finder pane (`e05://finder`) with inline rename, undo/redo across move / trash / new folder / duplicate / drag-drop, icon view with QuickLook thumbnails, and a rich right-click menu (Get Info, Open With, Duplicate, Make Alias, Compress, Copy / Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection).
-- Toast feedback overlay, command palette (`⌘⇧P`), per-pane find bar.
+- Finder pane (`e05://finder`) with inline rename, undo/redo across move / trash / new folder / duplicate / drag-drop, icon view with QuickLook thumbnails, and a rich right-click menu (Open, Open With, Get Info, Rename, Compress, Duplicate, Make Alias, Quick Look, Copy / Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection).
+- Toast feedback overlay, command palette, per-pane find bar.
 - `e05` CLI for scripting and shell integration; bundled `open` shim that routes shell-typed `open <url>` / `open <dir>` inside terminal panes to new columns.
 
 ## Requirements
@@ -47,7 +47,7 @@ The release build is not yet Developer ID-signed or notarised. On first launch m
 
 ## Keybindings
 
-Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys. Browser / workspace shortcuts use **⌘**.
+The bindings below are the **defaults** — remap, clear, or reset any of them in Settings → Shortcuts (`⌘,`). Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys; browser / workspace shortcuts use **⌘**.
 
 | Category | Keys | Action |
 |---|---|---|
@@ -56,14 +56,15 @@ Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys. Browser / workspace
 | Pane order | `⌥⌃⇧ H` / `L` | Move column left / right |
 | | `⌥⌃⇧ J` / `K` | Move pane down / up within column |
 | New pane | `⌘ T` | New browser column |
-| | `⌥⌃ V` | Vertical split within column |
+| | `⌘⇧ D` | Vertical split within column |
 | | (palette) | New Terminal Column, New Finder Column |
 | Close / restore | `⌘ W` | Close pane (with confirmation for live terminals) |
 | | `⌘⇧ T` | Reopen last closed pane (within 10s) |
-| Layout | `⌥⌃ /` | Cycle pane width preset (80 cols → 120 cols → 1/2 → 1/3 → …) |
+| Layout | `⌥⌃ /` | Cycle pane width preset (defaults to 640 pt → 1/2 → 1/3; editable in Settings → Appearance) |
 | | `⌥⌃ F` | Toggle column fold |
 | Browser | `⌘ L` / `⌘⇧ L` | Focus URL bar / toggle URL bar visibility |
 | | `⌘ R` / `⌘⇧ R` | Reload / hard reload (bypass cache) |
+| | `⌘ .` | Stop loading |
 | | `⌘ [` / `⌘ ]` | Back / forward |
 | | `⌘ +` / `⌘ -` / `⌘ 0` | Zoom in / out / reset |
 | | `⌘ D` | Toggle bookmark |
@@ -75,9 +76,13 @@ Pane navigation uses **⌥⌃ (Opt+Ctrl) + vim-style** keys. Browser / workspace
 | | `⌘⇧ W` | Close current workspace |
 | | `⌘⇧ ]` / `⌘⇧ [` | Next / previous workspace |
 | Finder pane | `⌘⌫` | Move selection to Trash |
-| | (right-click) | Get Info, Open With, Duplicate, Make Alias, Compress, Copy, Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection |
+| | `⌘⇧ .` | Toggle hidden files |
+| | (right-click) | Open, Open With, Get Info, Rename, Compress, Duplicate, Make Alias, Quick Look, Copy, Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection |
+| Sidebar | `⌘⌥ T` / `B` / `L` / `E` | Open Tabs / Bookmarks / Downloads / Extensions |
+| | `⌘ Y` | Open History |
 | UI | `⌘⇧ P` | Command palette |
 | | `⌘ B` | Toggle sidebar pin |
+| | `⌘ ,` | Settings |
 
 The command palette surfaces every action by id (e.g. `new_terminal_pane`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
 
@@ -85,7 +90,7 @@ Drag a pane edge to resize to an arbitrary width.
 
 ## Configuration
 
-If `~/.config/e05/config.ghostty` exists it is loaded into ghostty's config parser at startup, so any ghostty config key (theme, font, keybindings, …) takes effect. The `.ghostty` extension follows the convention ghostty itself adopted in 1.3.0 so the same file can be fed to `ghostty --config-file=...`. Note that some ghostty options (window decoration, app-lifecycle flags) are app-only and have no effect inside libghostty; e05-specific preferences live separately and are edited through Settings (`⌘,`).
+If `~/.config/e05/config.ghostty` exists it is loaded into ghostty's config parser at startup, so any ghostty config key (theme, font, keybindings, …) takes effect. The `.ghostty` extension follows the convention ghostty itself adopted in 1.3.0 so the same file can be fed to `ghostty --config-file=...`. Note that some ghostty options (window decoration, app-lifecycle flags) are app-only and have no effect inside libghostty. e05-specific preferences — including the app appearance (System / Light / Dark, following the macOS Appearance preference by default), keyboard shortcuts, and the idle-suspend threshold — live separately and are edited through Settings (`⌘,`).
 
 ## Data layout
 
