@@ -500,6 +500,17 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "duplicate_pane",
+        title: "Duplicate Pane",
+        menuTitle: "Duplicate Pane",
+        // Palette-only: browsers ship no standard duplicate-tab chord,
+        // and claiming one here would risk a collision.
+        handler: { [weak self] in self?.duplicateFocusedBrowserPane() },
+        validate: { [weak self] in
+          (self?.focusedPane?.browserView != nil, nil)
+        }
+      ),
+      Action(
         id: "toggle_hidden_files",
         title: "Toggle Hidden Files",
         keyEquivalent: ".",

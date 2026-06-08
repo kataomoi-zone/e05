@@ -1012,6 +1012,39 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     suspendedSnapshot?.interactionState
   }
 
+  /// Current URL for duplicating this pane (live or suspended).
+  public var currentURLForDuplication: URL? {
+    if let snap = suspendedSnapshot { return snap.url }
+    return webView.url ?? lastAttemptedURL
+  }
+
+  /// `interactionState` blob (full back/forward list + scroll + form)
+  /// for seeding a duplicate of this pane, live or suspended.
+  public var interactionStateForDuplication: Data? {
+    if let snap = suspendedSnapshot { return snap.interactionState }
+    return webView.interactionState as? Data
+  }
+
+  /// Adopt a duplicated pane's history onto this freshly created live
+  /// web view: cancel the pane's initial address load and reinstate the
+  /// source pane's full back/forward list + scroll/form from its
+  /// `interactionState`. Done on the single web view rather than via a
+  /// suspend/restore round-trip — the latter spins up a second web view
+  /// whose teardown races the back/forward list, leaving restored
+  /// entries bouncing back to the current one.
+  public func adoptDuplicatedHistory(_ interactionState: Data) {
+    webView.stopLoading()
+    // Reinstate the full back/forward list + scroll/form. Unlike
+    // `restore()`, deliberately do NOT arm the SPA reload-on-back
+    // (`restoredEntryURLs`): a duplicate's cross-document entries load
+    // natively on back/forward, whereas that reload re-loads the
+    // already-committed current document and bounces the navigation
+    // straight back to it. (SPA same-document entries in a duplicate can
+    // still blank on the first back — acceptable for the rarer case.)
+    webView.interactionState = interactionState
+    restoredEntryURLs = []
+  }
+
   // MARK: - History menu
 
   /// Back-history entries nearest-first (immediate previous page

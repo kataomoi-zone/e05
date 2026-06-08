@@ -101,6 +101,47 @@ extension PaneContainerViewController {
     showToast(toastLabel)
   }
 
+  /// Open a new browser column / workspace that duplicates a pane,
+  /// carrying its full back/forward history, scroll, and form state via
+  /// a copy of the source `interactionState`. Lands on the source's
+  /// current entry. Reused by the Duplicate Pane command and by ⌘/⇧ +
+  /// back/forward (which then reposition onto the chosen history entry).
+  ///
+  /// The blob is adopted onto the new column's single web view
+  /// (`adoptDuplicatedHistory`): the initial address load is cancelled
+  /// and `interactionState` reinstated in place. A suspend/restore
+  /// round-trip here would spin up a second web view whose teardown
+  /// races the back/forward list and leaves restored entries bouncing.
+  @discardableResult
+  func openDuplicatedBrowser(
+    url: URL, interactionState: Data?, inNewWorkspace: Bool, focus: Bool
+  ) -> PaneModel? {
+    let pane: PaneModel?
+    if inNewWorkspace {
+      createWorkspace(initialAddress: PaneAddress(url))
+      pane = focusedPane
+    } else {
+      pane = addColumn(address: PaneAddress(url), focusOnInsert: focus).panes.first
+    }
+    guard let pane, let bv = pane.browserView else { return nil }
+    if let interactionState {
+      bv.adoptDuplicatedHistory(interactionState)
+    }
+    return pane
+  }
+
+  /// Duplicate the focused browser pane into a new column with its full
+  /// history. No-op for non-browser panes.
+  func duplicateFocusedBrowserPane() {
+    guard let pane = focusedPane, let bv = pane.browserView,
+      let url = bv.currentURLForDuplication
+    else { return }
+    openDuplicatedBrowser(
+      url: url, interactionState: bv.interactionStateForDuplication,
+      inNewWorkspace: false, focus: true)
+    showToast("Duplicate Pane")
+  }
+
   @discardableResult
   func insertColumn(
     with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
