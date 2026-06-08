@@ -1101,7 +1101,28 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// No-op when the pane is not currently suspended.
   @discardableResult
   public func restore() -> Bool {
-    guard let snapshot = suspendedSnapshot else { return false }
+    guard let snapshot = rebuildWebViewFromSnapshot() else { return false }
+
+    if let data = snapshot.interactionState {
+      // Reinstates the back/forward list, scroll position, and form
+      // values, and kicks off a load of the current entry.
+      applyInteractionState(data)
+    } else {
+      webView.load(URLRequest(url: snapshot.url))
+      restoredEntryURLs = []
+    }
+    return true
+  }
+
+  /// Rebuild the live `WKWebView` from the current suspended snapshot,
+  /// rewiring every delegate/handler/observer, hiding the placeholder,
+  /// and clearing the suspended state. Returns the consumed snapshot so
+  /// the caller decides what to load: ``restore()`` reinstates the
+  /// captured page, while ``navigate(to:transition:)`` keeps the
+  /// recovered back/forward list but loads a fresh URL on top. Returns
+  /// `nil` when the pane is not suspended.
+  private func rebuildWebViewFromSnapshot() -> BrowserPaneSnapshot? {
+    guard let snapshot = suspendedSnapshot else { return nil }
 
     hidePlaceholder()
 
@@ -1141,29 +1162,27 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     setupObservers()
     observeAdBlockerReady()
 
-    if let data = snapshot.interactionState {
-      // Reinstates the back/forward list, scroll position, and form
-      // values, and kicks off a load of the current entry.
-      webView.interactionState = data
-      // Snapshot the URLs WebKit just put into the back/forward list.
-      // The url observer uses this to spot back/forward navigations
-      // into entries whose document was never alive in this process
-      // (SPA pushState entries restored from a previous session or a
-      // runtime suspend) and force a reload — popstate alone leaves
-      // the URL updated but the DOM untouched there.
-      let list = webView.backForwardList
-      var urls = Set(
-        list.backList.map(\.url) + list.forwardList.map(\.url))
-      if let current = list.currentItem?.url { urls.insert(current) }
-      restoredEntryURLs = urls
-    } else {
-      webView.load(URLRequest(url: snapshot.url))
-      restoredEntryURLs = []
-    }
-
     suspendedSnapshot = nil
     onSuspendedStateChanged?()
-    return true
+    return snapshot
+  }
+
+  /// Reinstate a captured `interactionState` blob (back/forward list,
+  /// scroll position, form values) on the live web view and snapshot
+  /// the restored entry URLs. The `\.url` observer uses that set to
+  /// spot back/forward navigations into entries whose document was
+  /// never alive in this process (SPA pushState entries restored from a
+  /// previous session or a runtime suspend) and force a reload —
+  /// popstate alone leaves the URL updated but the DOM untouched there.
+  /// Setting `interactionState` also kicks off a load of the current
+  /// entry.
+  private func applyInteractionState(_ data: Data) {
+    webView.interactionState = data
+    let list = webView.backForwardList
+    var urls = Set(
+      list.backList.map(\.url) + list.forwardList.map(\.url))
+    if let current = list.currentItem?.url { urls.insert(current) }
+    restoredEntryURLs = urls
   }
 
   /// Initialise a placeholder-only pane that has not yet built its
@@ -1273,6 +1292,20 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       let scheme = url.scheme,
       ["https", "http", "about", PaneAddress.extensionScheme].contains(scheme)
     else { return }
+    // A URL typed against a suspended pane must navigate, not no-op
+    // against the detached web view (which left "reload to recover" as
+    // the only escape). Rebuild a live web view and load the new URL
+    // directly. We deliberately do NOT replay the captured
+    // interactionState: restoring it starts an async load of the old
+    // current entry, and loading the new URL before that commits races
+    // WebKit and collapses the whole back/forward list onto the new URL
+    // (every Back then lands on the new page). Preserving a suspended
+    // pane's prior history belongs to the enumerable history model, not
+    // an interactionState replay here.
+    if isSuspended {
+      _ = rebuildWebViewFromSnapshot()
+      restoredEntryURLs = []
+    }
     // WebKit reports programmatic loads as `.other`; record the
     // caller's intent (URL bar entry = `.typed`) so the `\.url` KVO
     // observer attributes the visit correctly.
