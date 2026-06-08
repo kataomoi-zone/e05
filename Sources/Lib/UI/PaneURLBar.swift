@@ -192,6 +192,11 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   public var onBack: (() -> Void)?
   /// Called when user clicks forward button.
   public var onForward: (() -> Void)?
+  /// Called on a long-press (or secondary action) of the back button to
+  /// show the back-history dropdown, anchored at the supplied view.
+  public var onBackHistory: ((NSView) -> Void)?
+  /// Called on a long-press of the forward button.
+  public var onForwardHistory: ((NSView) -> Void)?
   /// Called when user clicks the reload button.
   public var onReload: (() -> Void)?
   /// Called when user clicks the stop button (the reload icon flips
@@ -392,6 +397,21 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     forwardButton.target = self
     forwardButton.action = #selector(forwardAction)
     forwardButton.toolTip = "Forward"
+    // Long-press a nav button to drop down its history (Safari/Brave).
+    // A short click still fires the button's normal back/forward
+    // action: the press gesture only recognises after
+    // `minimumPressDuration`, so a release before then never reaches its
+    // `.began` state and the button handles the click as usual.
+    let backPress = NSPressGestureRecognizer(
+      target: self, action: #selector(backHistoryPress(_:)))
+    backPress.minimumPressDuration = 0.3
+    backPress.allowableMovement = 8
+    backButton.addGestureRecognizer(backPress)
+    let forwardPress = NSPressGestureRecognizer(
+      target: self, action: #selector(forwardHistoryPress(_:)))
+    forwardPress.minimumPressDuration = 0.3
+    forwardPress.allowableMovement = 8
+    forwardButton.addGestureRecognizer(forwardPress)
     reloadButton.target = self
     reloadButton.action = #selector(reloadAction)
     reloadButton.toolTip = "Reload"
@@ -1342,6 +1362,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   @objc private func forwardAction() {
     onClicked?()
     onForward?()
+  }
+
+  @objc private func backHistoryPress(_ gr: NSPressGestureRecognizer) {
+    guard gr.state == .began, backButton.isEnabled else { return }
+    onClicked?()
+    onBackHistory?(backButton)
+  }
+
+  @objc private func forwardHistoryPress(_ gr: NSPressGestureRecognizer) {
+    guard gr.state == .began, forwardButton.isEnabled else { return }
+    onClicked?()
+    onForwardHistory?(forwardButton)
   }
 
   @objc private func reloadAction() {

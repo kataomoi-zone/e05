@@ -499,6 +499,55 @@ extension PaneContainerViewController {
     }
   }
 
+  // MARK: - Back/forward history dropdown
+
+  enum HistoryMenuDirection { case back, forward }
+
+  /// Target carried by a history `NSMenuItem`: the pane to navigate and
+  /// the offset (relative to its current entry) to jump to.
+  private final class HistoryMenuTarget {
+    weak var pane: PaneModel?
+    let offset: Int
+    init(pane: PaneModel?, offset: Int) {
+      self.pane = pane
+      self.offset = offset
+    }
+  }
+
+  /// Build and pop up the back/forward history dropdown for `pane`'s
+  /// browser, anchored under the long-pressed nav button. Browser-only.
+  /// Works while suspended — items come from the captured history, so
+  /// merely viewing them does not resume the pane.
+  func showBrowserHistoryMenu(
+    pane: PaneModel?, direction: HistoryMenuDirection, anchor: NSView
+  ) {
+    guard let pane, let bv = pane.browserView else { return }
+    let items = direction == .back ? bv.backHistoryItems : bv.forwardHistoryItems
+    guard !items.isEmpty else { return }
+
+    let menu = NSMenu()
+    for item in items {
+      let menuItem = NSMenuItem(
+        title: item.title, action: #selector(historyMenuItemSelected(_:)), keyEquivalent: "")
+      menuItem.target = self
+      menuItem.representedObject = HistoryMenuTarget(pane: pane, offset: item.offset)
+      menu.addItem(menuItem)
+    }
+    // Drop the menu from the button's bottom edge. NSButton is a
+    // non-flipped view, so its visual bottom is `minY`; nudge clear.
+    let origin = NSPoint(
+      x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + 2 : anchor.bounds.minY - 2)
+    menu.popUp(positioning: nil, at: origin, in: anchor)
+  }
+
+  @objc private func historyMenuItemSelected(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? HistoryMenuTarget,
+      let pane = target.pane
+    else { return }
+    handleFocusChange(from: pane)
+    pane.browserView?.goToHistory(offset: target.offset)
+  }
+
   /// Focus the URL bar of the focused pane (⌘+L). When the global
   /// toggle is off the bar peeks open just for this pane — Esc or a
   /// committed navigation collapses it again. With the toggle on

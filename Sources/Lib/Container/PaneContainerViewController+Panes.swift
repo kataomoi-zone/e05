@@ -627,6 +627,14 @@ extension PaneContainerViewController {
         fv.goForward()
       }
     }
+    // URL bar: long-press a nav button to drop down that browser pane's
+    // history (browser-only; finder keeps plain arrows).
+    pane.urlBar.onBackHistory = { [weak self, weak pane] anchor in
+      self?.showBrowserHistoryMenu(pane: pane, direction: .back, anchor: anchor)
+    }
+    pane.urlBar.onForwardHistory = { [weak self, weak pane] anchor in
+      self?.showBrowserHistoryMenu(pane: pane, direction: .forward, anchor: anchor)
+    }
     pane.urlBar.onReload = { [weak pane] in
       if let bv = pane?.browserView {
         bv.reload()

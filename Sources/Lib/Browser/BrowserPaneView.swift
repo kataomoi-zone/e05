@@ -958,11 +958,46 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `interactionState` carries the back/forward list, scroll
   /// position, and form values; preserved verbatim because the
   /// underlying `WKInteractionState` blob is opaque to us — WebKit
-  /// owns the schema.
+  /// owns the schema. `history` duplicates that list in an enumerable
+  /// form so the URL-bar history menu can list entries while the pane
+  /// is suspended (the opaque blob can't drive a menu).
   public struct BrowserPaneSnapshot {
     public let url: URL
     public let title: String?
     public let interactionState: Data?
+    public let history: [HistorySnapshotEntry]
+    public let historyCurrentIndex: Int
+
+    public init(
+      url: URL, title: String?, interactionState: Data?,
+      history: [HistorySnapshotEntry] = [], historyCurrentIndex: Int = 0
+    ) {
+      self.url = url
+      self.title = title
+      self.interactionState = interactionState
+      self.history = history
+      self.historyCurrentIndex = historyCurrentIndex
+    }
+  }
+
+  /// One enumerable back/forward entry, captured while the web view was
+  /// live so a suspended pane's history is still listable.
+  public struct HistorySnapshotEntry {
+    public let url: URL
+    public let title: String
+    public init(url: URL, title: String) {
+      self.url = url
+      self.title = title
+    }
+  }
+
+  /// A back/forward entry for the URL-bar history dropdown. `offset` is
+  /// the position relative to the current entry (negative = back,
+  /// positive = forward), consumed by ``goToHistory(offset:)``.
+  public struct HistoryMenuItem {
+    public let url: URL
+    public let title: String
+    public let offset: Int
   }
 
   /// True while the pane has no live `WKWebView` (it was detached
@@ -975,6 +1010,74 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// no live `WKWebView` to read `interactionState` from.
   public var suspendedInteractionState: Data? {
     suspendedSnapshot?.interactionState
+  }
+
+  // MARK: - History menu
+
+  /// Back-history entries nearest-first (immediate previous page
+  /// first), for the URL-bar back-button long-press menu. Reads the
+  /// live `WKBackForwardList`, or — while suspended — the enumerable
+  /// list captured at suspend time, so the menu lists entries without
+  /// resuming the pane.
+  public var backHistoryItems: [HistoryMenuItem] {
+    if let snap = suspendedSnapshot {
+      let cur = snap.historyCurrentIndex
+      return (0..<cur).reversed().map {
+        HistoryMenuItem(url: snap.history[$0].url, title: snap.history[$0].title, offset: $0 - cur)
+      }
+    }
+    let back = webView.backForwardList.backList
+    let n = back.count
+    return back.enumerated().reversed().map { i, item in
+      HistoryMenuItem(
+        url: item.url, title: Self.historyLabel(url: item.url, title: item.title), offset: i - n)
+    }
+  }
+
+  /// Forward-history entries nearest-first.
+  public var forwardHistoryItems: [HistoryMenuItem] {
+    if let snap = suspendedSnapshot {
+      let cur = snap.historyCurrentIndex
+      let h = snap.history
+      guard cur + 1 < h.count else { return [] }
+      return ((cur + 1)..<h.count).map {
+        HistoryMenuItem(url: h[$0].url, title: h[$0].title, offset: $0 - cur)
+      }
+    }
+    return webView.backForwardList.forwardList.enumerated().map { j, item in
+      HistoryMenuItem(
+        url: item.url, title: Self.historyLabel(url: item.url, title: item.title), offset: j + 1)
+    }
+  }
+
+  /// Navigate to a history entry `offset` away from the current one
+  /// (negative = back, positive = forward). A live pane walks the
+  /// `WKBackForwardList` in place; a suspended pane resumes and loads
+  /// the target URL fresh — selection navigates, only menu *viewing*
+  /// avoids the resume.
+  public func goToHistory(offset: Int) {
+    guard offset != 0 else { return }
+    if let snap = suspendedSnapshot {
+      let idx = snap.historyCurrentIndex + offset
+      guard snap.history.indices.contains(idx) else { return }
+      navigate(to: snap.history[idx].url.absoluteString)
+      return
+    }
+    let list = webView.backForwardList
+    let target: WKBackForwardListItem?
+    if offset < 0 {
+      let i = list.backList.count + offset
+      target = list.backList.indices.contains(i) ? list.backList[i] : nil
+    } else {
+      let j = offset - 1
+      target = list.forwardList.indices.contains(j) ? list.forwardList[j] : nil
+    }
+    if let target { webView.go(to: target) }
+  }
+
+  private static func historyLabel(url: URL, title: String?) -> String {
+    if let title, !title.isEmpty { return title }
+    return url.host ?? url.absoluteString
   }
 
   /// View that should receive first-responder status when the host
@@ -1061,10 +1164,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         "[browser/suspend] interactionState type mismatch: \(type(of: raw))")
     }
 
+    // Capture the back/forward list as an enumerable list now, while
+    // the web view is live, so the URL-bar history menu can list it
+    // without resuming the pane (interactionState carries the same
+    // history but is opaque).
+    let bfList = webView.backForwardList
+    let historyEntries =
+      (bfList.backList + [bfList.currentItem].compactMap { $0 } + bfList.forwardList)
+      .map {
+        HistorySnapshotEntry(url: $0.url, title: Self.historyLabel(url: $0.url, title: $0.title))
+      }
+    let historyCurrentIndex = bfList.currentItem != nil ? bfList.backList.count : 0
+
     let snapshot = BrowserPaneSnapshot(
       url: url,
       title: webView.title,
-      interactionState: rawInteractionState as? Data
+      interactionState: rawInteractionState as? Data,
+      history: historyEntries,
+      historyCurrentIndex: historyCurrentIndex
     )
 
     // `webView.stopLoading()` only emits the `isLoading: false` KVO
