@@ -108,14 +108,15 @@ extension PaneContainerViewController {
     // scheduler (wireURLBarHoverScheduler) observes the next hover near
     // the pane top and peeks the URL bar.
     pane.urlBarTopEdgeHitZone.isHidden = false
-    if pane.isBlankBrowser {
-      // Blank pane has nothing to focus inside its content view; show
-      // the URL bar so the user can type a destination. Use a peek
-      // (not a pin) so the regular `onNavigate` / `onCancel` paths
-      // can collapse it — `setURLBarVisible(true)` would lock the
-      // bar into `.pinned`, which the peek-release call sites
-      // (PaneModel.setURLBarPeek(false) and friends) skip by design,
-      // leaving the bar stuck open after the navigate completes.
+    if pane.isBlankBrowser || pane.startView != nil {
+      // A blank or start pane focuses the URL bar so the user can type a
+      // destination immediately (the start page's buttons stay
+      // mouse-clickable). Use a peek (not a pin) so the regular
+      // `onNavigate` / `onCancel` paths can collapse it —
+      // `setURLBarVisible(true)` would lock the bar into `.pinned`,
+      // which the peek-release call sites (PaneModel.setURLBarPeek(false)
+      // and friends) skip by design, leaving it stuck open after the
+      // navigate completes.
       if !pane.isURLBarVisible {
         pane.setURLBarPeek(true)
       }

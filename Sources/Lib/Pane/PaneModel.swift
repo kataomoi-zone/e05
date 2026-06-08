@@ -41,6 +41,8 @@ public enum PaneContent {
   /// so the enum exhaustiveness check works as the implicit checklist
   /// for special-pane introductions.
   case finder(FinderPaneView)
+  /// Native start page (`e05://start`) shown for a new pane.
+  case start(StartPaneView)
 }
 
 /// Optional construction inputs for ``PaneModel``. Grouped into a
@@ -193,6 +195,7 @@ public final class PaneModel {
     case .terminal(let tv): return tv
     case .browser(let bv): return bv
     case .finder(let fv): return fv
+    case .start(let sv): return sv
     }
   }
 
@@ -214,6 +217,12 @@ public final class PaneModel {
     return nil
   }
 
+  /// Convenience: returns StartPaneView if this is a start pane.
+  public var startView: StartPaneView? {
+    if case .start(let sv) = content { return sv }
+    return nil
+  }
+
   /// The pane's find-in-page driver. All three content kinds
   /// conform to `FindHelper`, so the shared find-bar controller
   /// treats them uniformly instead of branching on content. Browser
@@ -225,6 +234,8 @@ public final class PaneModel {
     case .browser(let v): return v
     case .terminal(let v): return v
     case .finder(let v): return v
+    // The start page has no find-in-page surface.
+    case .start: return nil
     }
   }
 
@@ -247,6 +258,7 @@ public final class PaneModel {
     case .terminal(let tv): return tv
     case .browser(let bv): return bv.firstResponderTarget
     case .finder(let fv): return fv.keyboardFocusTarget
+    case .start(let sv): return sv
     }
   }
 
@@ -324,6 +336,10 @@ public final class PaneModel {
       }
       let fv = FinderPaneView(initialURL: initialURL)
       self.content = .finder(fv)
+    case .start:
+      let sv = StartPaneView()
+      sv.translatesAutoresizingMaskIntoConstraints = false
+      self.content = .start(sv)
     case .settings:
       // Settings is intentionally a window (open_settings / ⌘,), never
       // a pane. This branch is permanent: it keeps a typed

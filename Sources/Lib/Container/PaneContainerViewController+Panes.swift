@@ -614,6 +614,22 @@ extension PaneContainerViewController {
       // "Finder" until the user clicks anything.
       let initialTitle = fv.currentURL.lastPathComponent
       handleTitleChange(pane: pane, title: initialTitle.isEmpty ? "Finder" : initialTitle)
+    } else if let sv = pane.startView {
+      // Start page: route the quick-action buttons through the same
+      // content-switch path the URL bar uses, so a click replaces this
+      // pane in place with a terminal / finder (typing a URL switches it
+      // to a browser). Nav / reload buttons stay disabled like other
+      // non-browser panes.
+      sv.onOpenTerminal = { [weak self, weak pane] in
+        guard let self, let pane else { return }
+        self.handleURLBarNavigate(pane: pane, input: PaneAddress.terminal.url.absoluteString)
+      }
+      sv.onOpenFinder = { [weak self, weak pane] in
+        guard let self, let pane else { return }
+        self.handleURLBarNavigate(pane: pane, input: "\(PaneAddress.internalScheme)://finder")
+      }
+      pane.urlBar.setNavigationEnabled(back: false, forward: false)
+      pane.urlBar.setReloadEnabled(false)
     } else {
       // Terminal/other panes: navigation buttons always disabled
       pane.urlBar.setNavigationEnabled(back: false, forward: false)

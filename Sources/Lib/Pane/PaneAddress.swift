@@ -31,6 +31,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
       case "terminal": return .terminal
       case "finder": return .finder
       case "settings": return .settings
+      case "start": return .start
       default: return .unknown
       }
     case "https", "http", "about", Self.extensionScheme:
@@ -47,6 +48,10 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     case browser
     case finder
     case settings
+    /// Native start page (`e05://start`): a new-pane launcher with
+    /// quick actions for terminal / finder; typing a URL switches it
+    /// to a browser.
+    case start
     case unknown
   }
 
@@ -83,6 +88,8 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
 
   public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
   public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
+  /// Native start page shown for a new pane in place of `about:blank`.
+  public static let start = PaneAddress(URL(string: "\(internalScheme)://start")!)
   /// Blank browser address (no page loaded). Kept as a sentinel so
   /// `PaneModel.isBlank` comparisons stay stable independent of the
   /// user's home URL preference; new-pane creation sites should
@@ -102,7 +109,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     if !trimmed.isEmpty, let url = URL(string: trimmed) {
       return PaneAddress(url)
     }
-    return .blankBrowser
+    return .start
   }
 
   // MARK: - Finder

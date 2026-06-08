@@ -478,12 +478,12 @@ extension PaneContainerViewController {
       ),
       Action(
         id: "new_browser_pane",
-        title: "New Browser Pane",
-        menuTitle: "New Browser Pane Here",
+        title: "New Pane",
+        menuTitle: "New Pane Here",
         keyEquivalent: "t",
         handler: { [weak self] in
           self?.addColumn(address: .newPaneHome)
-          self?.showToast("New Browser Pane")
+          self?.showToast("New Pane")
         }
       ),
       Action(

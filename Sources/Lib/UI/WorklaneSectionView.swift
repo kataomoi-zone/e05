@@ -1571,6 +1571,11 @@ extension WorklaneSectionView: NSMenuDelegate {
       buildTerminalPaneMenu(menu, paneNode: paneNode, input: input)
     case .finder:
       buildFinderPaneMenu(menu, paneNode: paneNode, input: input)
+    case .start:
+      // The start page has no pane-specific actions, but still needs the
+      // common footer (Split / Move to Workspace / Close Pane / …) so it
+      // can be managed from the worklane like any other pane.
+      appendCommonPaneFooter(menu, paneNode: paneNode, input: input)
     }
   }
 

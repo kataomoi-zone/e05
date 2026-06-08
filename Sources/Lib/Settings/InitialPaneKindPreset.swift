@@ -4,8 +4,8 @@ import Foundation
 /// through ``E05Preferences/initialPaneKind``.
 ///
 /// - ``terminal`` — a terminal pane (the historical default).
-/// - ``browser`` — a browser pane honouring the home-URL preference
-///   via ``PaneAddress/newPaneHome``.
+/// - ``browser`` — the home-URL page when set, otherwise the
+///   ``e05://start`` launcher, via ``PaneAddress/newPaneHome``.
 /// - ``finder`` — a native file-browser pane rooted at the home
 ///   directory.
 ///

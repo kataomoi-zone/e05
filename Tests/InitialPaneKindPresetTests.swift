@@ -35,9 +35,11 @@ struct InitialPaneKindPresetTests {
   func addressKind() {
     #expect(InitialPaneKindPreset.terminal.address.kind == .terminal)
     #expect(InitialPaneKindPreset.finder.address.kind == .finder)
-    // Browser honours the home-URL preference; both the configured URL
-    // and the about:blank fallback resolve to a browser-kind address.
-    #expect(InitialPaneKindPreset.browser.address.kind == .browser)
+    // Browser delegates to the new-pane home address: the configured
+    // home URL (browser-kind) when set, otherwise the e05://start
+    // launcher. Assert the delegation rather than a fixed kind so the
+    // test doesn't depend on the ambient home-URL preference.
+    #expect(InitialPaneKindPreset.browser.address == PaneAddress.newPaneHome)
   }
 
   @Test("every preset has a non-empty label and symbol")

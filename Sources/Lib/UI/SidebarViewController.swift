@@ -811,6 +811,7 @@ final class SidebarViewController: NSViewController {
       let last = pane.address.url.lastPathComponent
       return last.isEmpty || last == "/" ? "Finder" : last
     case .settings: return "Settings"
+    case .start: return "Start"
     case .unknown: return "(unknown)"
     }
   }
@@ -834,6 +835,8 @@ final class SidebarViewController: NSViewController {
       return NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
     case .settings:
       return NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+    case .start:
+      return NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
     case .unknown:
       return NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: nil)
     }
