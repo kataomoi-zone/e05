@@ -166,6 +166,22 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     let trimmed = input.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else { return nil }
 
+    // Finder addresses may carry an un-encoded path (spaces, non-ASCII)
+    // when typed or path-completed; route them through `finder(path:)`,
+    // which percent-encodes, instead of the raw `URL(string:)` below that
+    // rejects a space and returns nil. A bare `e05://finder` (empty path)
+    // resolves to the home directory downstream.
+    let finderPrefix = "\(internalScheme)://finder"
+    if trimmed.lowercased().hasPrefix(finderPrefix.lowercased()) {
+      let rest = String(trimmed.dropFirst(finderPrefix.count))
+      // Require a path boundary so `e05://finderXYZ` isn't mis-routed to
+      // the home finder; it falls through to `.unknown` like any other
+      // unrecognised host.
+      if rest.isEmpty || rest.hasPrefix("/") {
+        return finder(path: rest)
+      }
+    }
+
     // Already has a scheme — validate it
     if trimmed.contains("://") {
       guard let addr = PaneAddress(trimmed),

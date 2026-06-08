@@ -988,7 +988,14 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // may no longer reflect the live field text.
     suggestionList.onSelectIndex = { [weak self] index in
       guard let self, self.currentSuggestions.indices.contains(index) else { return }
-      self.acceptSuggestion(self.currentSuggestions[index])
+      let suggestion = self.currentSuggestions[index]
+      // Clicking a folder completion drills deeper (keeps the dropdown
+      // open) rather than navigating; Enter commits the path.
+      if suggestion.isDirectoryCompletion {
+        self.drillIntoPathCompletion(suggestion)
+      } else {
+        self.acceptSuggestion(suggestion)
+      }
     }
   }
 
@@ -1228,6 +1235,36 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     }
   }
 
+  /// Fill the field with a folder completion's path plus a trailing
+  /// slash and re-run completion, without navigating — lets the user
+  /// drill `e05://finder/Users/` → `…/you/` → … entirely in the bar
+  /// (shell-style). Enter still commits the current path; this only
+  /// extends it.
+  private func drillIntoPathCompletion(_ suggestion: Suggestion) {
+    let text = suggestion.url.hasSuffix("/") ? suggestion.url : suggestion.url + "/"
+    writeURLFieldText(text)
+    lastUserTypedText = text
+    lastFieldLength = text.count
+    isPreviewingSelection = false
+    rebuildSuggestions(for: text, rejectedCompletion: false, allowInlineCompletion: false)
+  }
+
+  /// The highlighted directory completion, or the top one when nothing
+  /// is highlighted; `nil` when the dropdown isn't showing path
+  /// completions. Drives Tab / click drilling.
+  private func highlightedOrTopPathCompletion() -> Suggestion? {
+    guard !suggestionList.isHidden else { return nil }
+    if let idx = suggestionList.selectedIndex, currentSuggestions.indices.contains(idx),
+      currentSuggestions[idx].isDirectoryCompletion
+    {
+      return currentSuggestions[idx]
+    }
+    if let first = currentSuggestions.first, first.isDirectoryCompletion {
+      return first
+    }
+    return nil
+  }
+
   /// Public entry point used by the host (`PaneContainerViewController`)
   /// to close the dropdown synchronously before a workspace slide
   /// animation starts. Without it the focus-loss path
@@ -1341,6 +1378,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   private static func faviconImage(for urlString: String) -> NSImage? {
     if PaneAddress.isSearchQuery(urlString: urlString) {
       return NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+    }
+    if urlString.hasPrefix("\(PaneAddress.internalScheme)://finder") {
+      return NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
     }
     if let url = URL(string: urlString),
       let host = url.host(percentEncoded: false),
@@ -1484,16 +1524,33 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       withTimeInterval: Self.searchDebounceInterval, repeats: false
     ) { [weak self] _ in
       DispatchQueue.main.async {
-        guard let self else { return }
-        let suggestions = self.onTextChanged?(text, rejectedCompletion) ?? []
-        self.currentSuggestions = suggestions
-        self.lastBuiltSuggestionsText = text
-        self.suggestionList.update(
-          items: suggestions.map { Self.cellModel(from: $0, query: text) }
-        )
-        self.positionSuggestionList()
-        self.applyInlineCompletion(typed: text, suggestions: suggestions, allowed: !isDeletion)
+        self?.rebuildSuggestions(
+          for: text, rejectedCompletion: rejectedCompletion, allowInlineCompletion: !isDeletion)
       }
+    }
+  }
+
+  /// Rebuild and show the suggestion dropdown for `text`. Shared by the
+  /// debounced text-change path and by path-completion drilling (which
+  /// passes `allowInlineCompletion: false` since it already filled the
+  /// field with the drilled path).
+  private func rebuildSuggestions(
+    for text: String, rejectedCompletion: Bool, allowInlineCompletion: Bool
+  ) {
+    let suggestions = onTextChanged?(text, rejectedCompletion) ?? []
+    currentSuggestions = suggestions
+    lastBuiltSuggestionsText = text
+    // Directory completions don't auto-highlight a row: the typed path
+    // must stay the Enter target so a fully typed folder (…/dotfiles/)
+    // opens, not just its children. Tab / click / arrows still drill or
+    // select explicitly.
+    let isPathCompletion = suggestions.first?.isDirectoryCompletion == true
+    suggestionList.update(
+      items: suggestions.map { Self.cellModel(from: $0, query: text) },
+      autoSelectFirst: !isPathCompletion)
+    positionSuggestionList()
+    if allowInlineCompletion {
+      applyInlineCompletion(typed: text, suggestions: suggestions, allowed: true)
     }
   }
 
@@ -1658,6 +1715,17 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
       suggestionList.selectNext()
       previewSelectedSuggestion()
       return true
+    }
+    if selector == #selector(insertTab(_:)) {
+      // Tab drills into the highlighted directory completion (fills the
+      // path + a slash and re-completes) without navigating; falls back
+      // to the default focus traversal when the rows aren't path
+      // completions.
+      if let completion = highlightedOrTopPathCompletion() {
+        drillIntoPathCompletion(completion)
+        return true
+      }
+      return false
     }
     return false
   }

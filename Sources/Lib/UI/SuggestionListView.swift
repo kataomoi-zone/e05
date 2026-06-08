@@ -218,7 +218,7 @@ public final class SuggestionListView: NSView {
   // MARK: - Public API
 
   /// Update the list contents and resize. An empty array hides the view.
-  public func update(items: [SuggestionCellModel]) {
+  public func update(items: [SuggestionCellModel], autoSelectFirst: Bool = true) {
     self.items = items
     useSingleLineHeight = items.allSatisfy { $0.secondary.isEmpty }
     tableView.rowHeight = effectiveRowHeight
@@ -256,9 +256,15 @@ public final class SuggestionListView: NSView {
     needsLayout = true
     layoutSubtreeIfNeeded()
 
-    // Auto-select first row. Non-empty is guaranteed by the early
-    // return above (`items.isEmpty → isHidden = true; return`).
-    tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    // Auto-select the first row so Enter commits the top match — except
+    // for path completions, where the typed path itself must stay the
+    // Enter target (a highlighted child would hijack it). Non-empty is
+    // guaranteed by the early return above.
+    if autoSelectFirst {
+      tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+    } else {
+      tableView.deselectAll(nil)
+    }
   }
 
   /// Move selection up.

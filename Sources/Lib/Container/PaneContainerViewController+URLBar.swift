@@ -3,6 +3,71 @@ import AppKit
 extension PaneContainerViewController {
   // MARK: - URL Bar
 
+  /// Directory completions for an `e05://finder/...` URL-bar query.
+  ///
+  /// Returns `nil` when the query is not a finder-path entry, so the
+  /// normal history / bookmark suggestions run. Otherwise lists the
+  /// parent directory and returns the directories whose name matches the
+  /// trailing path component (possibly empty when the parent doesn't
+  /// exist or nothing matches — the finder pane handles a dead path on
+  /// commit). Directories only: finder navigates folders, whereas a file
+  /// would open externally and isn't a useful completion target.
+  private func finderPathSuggestions(for query: String) -> [Suggestion]? {
+    let scheme = "\(PaneAddress.internalScheme)://finder"
+    let trimmed = query.trimmingCharacters(in: .whitespaces)
+    guard trimmed.lowercased().hasPrefix(scheme.lowercased()) else { return nil }
+
+    // Filesystem path after `e05://finder`; the bare scheme means root.
+    // Require a path boundary so `e05://finderXYZ` falls through to the
+    // normal suggestions instead of being treated as a finder query.
+    var path = String(trimmed.dropFirst(scheme.count))
+    guard path.isEmpty || path.hasPrefix("/") else { return nil }
+    if path.isEmpty { path = "/" }
+
+    let nsPath = path as NSString
+    let parentDir: String
+    let namePrefix: String
+    if path.hasSuffix("/") {
+      parentDir = path.count == 1 ? "/" : String(path.dropLast())
+      namePrefix = ""
+    } else {
+      parentDir = nsPath.deletingLastPathComponent
+      namePrefix = nsPath.lastPathComponent
+    }
+
+    let fm = FileManager.default
+    let parentURL = URL(fileURLWithPath: parentDir.isEmpty ? "/" : parentDir, isDirectory: true)
+    // Hidden entries surface only when the user has started typing a dot.
+    let includeHidden = namePrefix.hasPrefix(".")
+    let options: FileManager.DirectoryEnumerationOptions = includeHidden ? [] : [.skipsHiddenFiles]
+    guard
+      let urls = try? fm.contentsOfDirectory(
+        at: parentURL, includingPropertiesForKeys: [.isDirectoryKey], options: options)
+    else { return [] }
+
+    let lowerPrefix = namePrefix.lowercased()
+    return
+      urls
+      .filter { url in
+        let name = url.lastPathComponent
+        guard lowerPrefix.isEmpty || name.lowercased().hasPrefix(lowerPrefix) else { return false }
+        return (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+      }
+      .sorted {
+        $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent)
+          == .orderedAscending
+      }
+      .prefix(Self.maxSuggestionRows)
+      .map { url in
+        // Use the decoded display form (e05://finder/<readable path>) as
+        // the suggestion URL so drilling fills readable text; navigation
+        // re-encodes through `PaneAddress.fromUserInput`.
+        Suggestion(
+          url: PaneAddress.finder(path: url.path(percentEncoded: false)).displayString,
+          title: url.lastPathComponent, isBookmark: false, isDirectoryCompletion: true)
+      }
+  }
+
   /// Search history and bookmarks for URL bar suggestions.
   ///
   /// Collects all bookmarks plus the last 500 history entries
@@ -18,6 +83,11 @@ extension PaneContainerViewController {
   /// meaningfully past that limit, hoist this onto a background
   /// Task to avoid main-thread blocking while typing.
   func searchSuggestions(query: String, preferSearchTop: Bool = false) -> [Suggestion] {
+    // An `e05://finder/...` query completes against the filesystem
+    // instead of the history / bookmark pool.
+    if let paths = finderPathSuggestions(for: query) {
+      return paths
+    }
     let now = Date()
     // Folder rows in the bookmarks store have a `nil` url; suggestion
     // ranking only deals with destinations, so drop them up front.

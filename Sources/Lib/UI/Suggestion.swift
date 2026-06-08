@@ -15,16 +15,20 @@ public struct Suggestion: Equatable {
   /// the typed query in the field for this row rather than filling the
   /// engine's query URL.
   public let isSearch: Bool
+  /// True for a finder directory path completion. Accepting it (Tab /
+  /// click) drills into the folder in the URL bar instead of navigating.
+  public let isDirectoryCompletion: Bool
 
   public init(
     url: String, title: String, isBookmark: Bool, openPaneID: ULID? = nil,
-    isSearch: Bool = false
+    isSearch: Bool = false, isDirectoryCompletion: Bool = false
   ) {
     self.url = url
     self.title = title
     self.isBookmark = isBookmark
     self.openPaneID = openPaneID
     self.isSearch = isSearch
+    self.isDirectoryCompletion = isDirectoryCompletion
   }
 
   public var displayTitle: String {
