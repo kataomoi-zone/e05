@@ -114,7 +114,8 @@ extension PaneContainerViewController {
   /// races the back/forward list and leaves restored entries bouncing.
   @discardableResult
   func openDuplicatedBrowser(
-    url: URL, interactionState: Data?, inNewWorkspace: Bool, focus: Bool
+    url: URL, interactionState: Data?, inNewWorkspace: Bool, focus: Bool,
+    repositionOffset: Int = 0
   ) -> PaneModel? {
     let pane: PaneModel?
     if inNewWorkspace {
@@ -126,6 +127,12 @@ extension PaneContainerViewController {
     guard let pane, let bv = pane.browserView else { return nil }
     if let interactionState {
       bv.adoptDuplicatedHistory(interactionState)
+      // Reposition onto the chosen entry only after the duplicate's
+      // current-entry load commits; jumping immediately would race the
+      // interactionState restore.
+      if repositionOffset != 0 {
+        bv.onceAfterNextCommit = { [weak bv] in bv?.goToHistory(offset: repositionOffset) }
+      }
     }
     return pane
   }
@@ -654,17 +661,31 @@ extension PaneContainerViewController {
     // URL bar: back/forward/reload route to browser or finder depending
     // on which content the pane carries. Stop applies only to browser
     // (a directory listing has nothing to interrupt).
-    pane.urlBar.onBack = { [weak pane] in
-      if let bv = pane?.browserView {
+    // Plain click steps in place; ⌘/⇧ + click duplicates the pane (full
+    // history) into a new background column / new workspace and
+    // repositions onto the immediate previous/next entry (browser only;
+    // finder keeps plain back/forward).
+    pane.urlBar.onBack = { [weak self, weak pane] in
+      guard let pane else { return }
+      if let bv = pane.browserView, let mods = Self.newTargetModifiers(),
+        !bv.backHistoryItems.isEmpty
+      {
+        self?.openHistoryEntryInNewSurface(pane: pane, offset: -1, modifiers: mods)
+      } else if let bv = pane.browserView {
         bv.goBack()
-      } else if let fv = pane?.finderView {
+      } else if let fv = pane.finderView {
         fv.goBack()
       }
     }
-    pane.urlBar.onForward = { [weak pane] in
-      if let bv = pane?.browserView {
+    pane.urlBar.onForward = { [weak self, weak pane] in
+      guard let pane else { return }
+      if let bv = pane.browserView, let mods = Self.newTargetModifiers(),
+        !bv.forwardHistoryItems.isEmpty
+      {
+        self?.openHistoryEntryInNewSurface(pane: pane, offset: 1, modifiers: mods)
+      } else if let bv = pane.browserView {
         bv.goForward()
-      } else if let fv = pane?.finderView {
+      } else if let fv = pane.finderView {
         fv.goForward()
       }
     }

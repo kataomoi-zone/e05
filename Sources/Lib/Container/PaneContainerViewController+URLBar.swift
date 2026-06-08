@@ -544,8 +544,35 @@ extension PaneContainerViewController {
     guard let target = sender.representedObject as? HistoryMenuTarget,
       let pane = target.pane
     else { return }
-    handleFocusChange(from: pane)
-    pane.browserView?.goToHistory(offset: target.offset)
+    if let mods = Self.newTargetModifiers() {
+      openHistoryEntryInNewSurface(pane: pane, offset: target.offset, modifiers: mods)
+    } else {
+      handleFocusChange(from: pane)
+      pane.browserView?.goToHistory(offset: target.offset)
+    }
+  }
+
+  /// Modifiers (⌘ / ⇧) currently held, or `nil` when neither — a plain
+  /// click then navigates in place. ⌘ → new background column, ⇧ → new
+  /// workspace, mirroring browser new-tab / new-window conventions.
+  /// Reads the live modifier state (`NSEvent.modifierFlags`) so it works
+  /// from both button actions and menu-item selections.
+  static func newTargetModifiers() -> NSEvent.ModifierFlags? {
+    let mods = NSEvent.modifierFlags.intersection([.command, .shift])
+    return mods.isEmpty ? nil : mods
+  }
+
+  /// Duplicate `pane` (full back/forward history) into a new surface and
+  /// reposition onto its history entry at `offset`: ⇧ → new workspace
+  /// (foreground), otherwise (⌘) → new background column in the current
+  /// workspace.
+  func openHistoryEntryInNewSurface(
+    pane: PaneModel, offset: Int, modifiers: NSEvent.ModifierFlags
+  ) {
+    guard let bv = pane.browserView, let url = bv.currentURLForDuplication else { return }
+    openDuplicatedBrowser(
+      url: url, interactionState: bv.interactionStateForDuplication,
+      inNewWorkspace: modifiers.contains(.shift), focus: false, repositionOffset: offset)
   }
 
   /// Focus the URL bar of the focused pane (⌘+L). When the global

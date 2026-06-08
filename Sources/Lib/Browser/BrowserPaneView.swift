@@ -1025,6 +1025,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     return webView.interactionState as? Data
   }
 
+  /// One-shot action run after the next navigation commits, then
+  /// cleared. Lets a freshly duplicated pane reposition onto a chosen
+  /// history entry only once its initial (current-entry) load has
+  /// committed — navigating there earlier races the interactionState
+  /// restore (the list collapses onto the new target).
+  public var onceAfterNextCommit: (() -> Void)?
+
   /// Adopt a duplicated pane's history onto this freshly created live
   /// web view: cancel the pane's initial address load and reinstate the
   /// source pane's full back/forward list + scroll/form from its
@@ -2029,6 +2036,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // entry only suppresses blocking while the user is actually on
     // that host.
     applyAdblockerRuleListsForCurrentHost()
+    // Run a deferred one-shot (e.g. a duplicated pane repositioning onto
+    // a chosen history entry once its initial load has committed).
+    if let action = onceAfterNextCommit {
+      onceAfterNextCommit = nil
+      action()
+    }
   }
 
   public func webView(_: WKWebView, didFinish _: WKNavigation!) {
@@ -2103,6 +2116,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `NSURLErrorFailingURLErrorKey` — `webView.url` is still the
   /// last-attempted URL during a provisional failure.
   private func handleNavigationFailure(error: any Error) {
+    // A failed or cancelled navigation means the pane's current-entry
+    // load never committed, so drop any deferred reposition one-shot
+    // rather than let it fire on a later, unrelated commit.
+    onceAfterNextCommit = nil
     let nsError = error as NSError
     if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
       return
