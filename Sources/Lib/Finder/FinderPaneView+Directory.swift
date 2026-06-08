@@ -25,7 +25,12 @@ extension FinderPaneView {
   /// of jumping inside the pane. `URLResourceKey.isAliasFileKey` is
   /// the modern way to detect them; `URL(resolvingAliasFileAt:options:)`
   /// follows the bookmark to the live target.
-  public func navigate(to url: URL) {
+  /// Returns `false` when `url` resolves to nothing on disk so callers
+  /// (e.g. URL-bar entry) can surface the dead path instead of leaving
+  /// it a silent no-op. Returns `true` once a directory load is queued
+  /// or a file is handed to `NSWorkspace`.
+  @discardableResult
+  public func navigate(to url: URL) -> Bool {
     var target = url
     if let values = try? url.resourceValues(forKeys: [.isAliasFileKey]),
       values.isAliasFile == true,
@@ -40,13 +45,14 @@ extension FinderPaneView {
         atPath: resolved.path(percentEncoded: false), isDirectory: &isDir)
     else {
       logger.warning("navigate(to:) target does not exist: \(resolved.path, privacy: .public)")
-      return
+      return false
     }
     if isDir.boolValue {
       loadDirectory(url: resolved, pushHistory: true, announce: true)
     } else {
       NSWorkspace.shared.open(resolved)
     }
+    return true
   }
 
   public func goBack() {

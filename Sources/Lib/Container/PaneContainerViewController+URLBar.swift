@@ -433,6 +433,9 @@ extension PaneContainerViewController {
       // through to search like any other free-form query.
       newAddress = search
     } else {
+      // Neither a URL nor a usable search query (e.g. a malformed
+      // search template) — tell the user instead of swallowing it.
+      showToast("Couldn't open \"\(input)\"", style: .error)
       return
     }
 
@@ -466,16 +469,33 @@ extension PaneContainerViewController {
       // back through `FinderPaneView.onPathChange` so the URL bar
       // ends up displaying whatever path the finder actually resolved
       // to (handles symlinks and trailing-slash normalisation).
-      pane.address = newAddress
+      var navigated = true
       if let bv = pane.browserView {
+        pane.address = newAddress
         bv.navigate(to: newAddress.url.absoluteString, transition: .typed)
       } else if let fv = pane.finderView, newAddress.kind == .finder {
         let path = newAddress.currentPath
-        if !path.isEmpty {
-          fv.navigate(to: URL(fileURLWithPath: path, isDirectory: true))
+        if path.isEmpty {
+          navigated = false
+        } else if fv.navigate(to: URL(fileURLWithPath: path, isDirectory: true)) {
+          pane.address = newAddress
+        } else {
+          // Surface the dead path instead of silently ignoring it, and
+          // keep the URL bar on the finder's actual location rather
+          // than the path that doesn't exist.
+          showToast("No such path: \(path)", style: .error)
+          pane.urlBar.setDisplayURL(pane.address.displayString)
+          navigated = false
         }
+      } else {
+        pane.address = newAddress
       }
-      view.window?.makeFirstResponder(pane.preferredFirstResponder)
+      // Keep first responder in the URL bar when nothing navigated so
+      // the user can fix a typo'd path; otherwise hand focus to the
+      // pane content.
+      if navigated {
+        view.window?.makeFirstResponder(pane.preferredFirstResponder)
+      }
     }
   }
 
