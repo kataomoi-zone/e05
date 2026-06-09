@@ -601,6 +601,23 @@ extension PaneContainerViewController {
         title: item.title, action: #selector(historyMenuItemSelected(_:)), keyEquivalent: "")
       menuItem.target = self
       menuItem.representedObject = HistoryMenuTarget(pane: pane, offset: item.offset)
+      // Decorate with the host's cached favicon (Safari/Brave style),
+      // falling back to a globe so the list never mixes favicon rows
+      // with naked text rows. WKBackForwardListItem exposes no favicon,
+      // so reuse the host-keyed FaviconCache; on a miss, warm it with a
+      // prefetch (the menu runs modal, so this drop won't repaint, but
+      // the next one picks up the cached icon) and show the globe
+      // meanwhile. A browser back/forward list only holds web
+      // navigations, so the host is essentially always present — hence
+      // a single globe placeholder rather than the URL bar's
+      // scheme-aware fallback.
+      let host = item.url.host(percentEncoded: false)
+      if let host, !host.isEmpty, let icon = FaviconCache.shared.image(for: host) {
+        menuItem.image = Self.menuFaviconImage(icon)
+      } else {
+        if let host, !host.isEmpty { FaviconCache.shared.prefetch(for: host) }
+        menuItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+      }
       menu.addItem(menuItem)
     }
     // Drop the menu from the button's bottom edge. NSButton is a
@@ -608,6 +625,23 @@ extension PaneContainerViewController {
     let origin = NSPoint(
       x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + 2 : anchor.bounds.minY - 2)
     menu.popUp(positioning: nil, at: origin, in: anchor)
+  }
+
+  /// Downscale a cached favicon to a crisp 16pt menu glyph. Rasterises
+  /// immediately rather than via an `NSImage(size:flipped:)` drawing
+  /// handler: that handler re-runs every time the menu draws the image,
+  /// possibly off the main thread, which would re-read the `@MainActor`
+  /// FaviconCache image off its isolation. Drawing now into a standalone
+  /// bitmap severs that reference, and the fixed 16pt size keeps a large
+  /// source icon from inflating the menu row height.
+  private static func menuFaviconImage(_ icon: NSImage) -> NSImage {
+    let size = NSSize(width: 16, height: 16)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    icon.draw(
+      in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
+    image.unlockFocus()
+    return image
   }
 
   @objc private func historyMenuItemSelected(_ sender: NSMenuItem) {
