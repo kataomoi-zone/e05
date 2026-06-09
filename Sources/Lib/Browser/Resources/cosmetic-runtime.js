@@ -734,33 +734,123 @@
   }
 
   function harvestSubtree(root) {
+    if (!root || root.nodeType !== 1) return;
     harvestNode(root);
-    if (root && root.querySelectorAll) {
-      const all = root.querySelectorAll("*");
+    // Scope the descent to id/class-bearing elements and skip leaf
+    // nodes. `querySelectorAll("*")` materialised the entire subtree on
+    // every insertion — catastrophic on churny SPAs (YouTube et al.,
+    // which wedged the page) — while `[id],[class]` is engine-indexed
+    // and returns only what the surveyor can act on. uBO and Brave both
+    // scope their survey to id/class elements for the same reason.
+    if (root.firstElementChild && root.querySelectorAll) {
+      const all = root.querySelectorAll("[id],[class]");
       for (let i = 0; i < all.length; i++) harvestNode(all[i]);
     }
   }
 
+  // Added element nodes wait here for a time-sliced harvest rather than
+  // being walked synchronously inside the observer callback — a single
+  // large insertion would otherwise block the page's own main thread.
+  let pendingNodes = [];
+  let drainScheduled = false;
+  const HARVEST_DEADLINE_MS = 4;  // per-drain wall-clock budget (uBO uses 4ms)
+
+  function scheduleDrain() {
+    if (drainScheduled) return;
+    drainScheduled = true;
+    requestAnimationFrame(drainHarvest);
+  }
+
+  function drainHarvest() {
+    drainScheduled = false;
+    if (pendingNodes.length === 0) return;
+    const deadline = performance.now() + HARVEST_DEADLINE_MS;
+    let i = 0;
+    for (; i < pendingNodes.length; i++) {
+      harvestSubtree(pendingNodes[i]);
+      // Sample the clock every 64 nodes to keep performance.now() off
+      // the hot path while still bounding the slice.
+      if ((i & 63) === 63 && performance.now() >= deadline) { i++; break; }
+    }
+    pendingNodes = i >= pendingNodes.length ? [] : pendingNodes.slice(i);
+    if (pendingNodes.length) scheduleDrain();  // resume next frame
+    scheduleFlush();
+    // Procedural rules can match on freshly inserted elements — piggy-
+    // back on the same harvest pass rather than observe twice.
+    scheduleProceduralEval();
+  }
+
+  // High-churn escape hatch. A page that mutates faster than the
+  // surveyor can keep up (YouTube, infinite feeds) pins the main thread
+  // if every batch triggers work. Past a per-second mutation threshold,
+  // stop reacting to individual mutations and sample the document on a
+  // fixed interval instead — Brave uses the same observer→polling
+  // switch. Once switched, this page stays on polling until the next
+  // navigation rebuilds the runtime.
+  const CHURN_WINDOW_MS = 1000;
+  const CHURN_THRESHOLD = 1000;
+  const POLL_INTERVAL_MS = 500;
+  let mutationScore = 0;
+  let scoreWindowStart = 0;
+  let polling = false;
+
+  function noteMutations(count) {
+    if (polling) return;
+    const now = performance.now();
+    if (now - scoreWindowStart > CHURN_WINDOW_MS) {
+      mutationScore = 0;
+      scoreWindowStart = now;
+    }
+    mutationScore += count;
+    if (mutationScore > CHURN_THRESHOLD) startPolling();
+  }
+
+  // Full-document survey shared by the polling timer and the initial
+  // switch, so nodes buffered up to the switch are re-harvested at once
+  // rather than waiting a full poll interval.
+  function pollSurvey() {
+    harvestSubtree(document.documentElement);
+    scheduleFlush();
+    scheduleProceduralEval();
+  }
+
+  function startPolling() {
+    if (polling) return;
+    polling = true;
+    observer.disconnect();
+    pendingNodes = [];
+    sendLog(
+      "info",
+      `high DOM churn (score=${mutationScore}/${CHURN_WINDOW_MS}ms) — ` +
+      `cosmetic survey switched to ${POLL_INTERVAL_MS}ms polling`
+    );
+    // Survey once synchronously so the nodes discarded above aren't left
+    // unstyled until the first interval fires (~500ms of ad exposure).
+    pollSurvey();
+    setInterval(pollSurvey, POLL_INTERVAL_MS);
+  }
+
   const observer = new MutationObserver((mutations) => {
-    let dirty = false;
+    let count = 0;
     for (const m of mutations) {
       if (m.type === "childList") {
         for (const node of m.addedNodes) {
-          harvestSubtree(node);
-          dirty = true;
+          if (node.nodeType === 1) {
+            pendingNodes.push(node);
+            count++;
+          }
         }
       } else if (m.type === "attributes") {
+        // Attribute (class/id) changes are cheap to harvest inline.
         harvestNode(m.target);
-        dirty = true;
+        count++;
       }
     }
-    if (dirty) {
-      scheduleFlush();
-      // Procedural rules can match on freshly inserted elements or on
-      // text that arrived via a `textContent` mutation — piggy-back
-      // on the same dirty signal rather than observe twice.
-      scheduleProceduralEval();
-    }
+    if (count === 0) return;
+    noteMutations(count);
+    scheduleDrain();
+    scheduleFlush();
+    scheduleProceduralEval();
   });
 
   function boot() {
