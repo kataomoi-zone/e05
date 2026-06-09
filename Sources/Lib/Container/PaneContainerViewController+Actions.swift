@@ -705,8 +705,13 @@ extension PaneContainerViewController {
     // command palette can jump anywhere by fuzzy-searching title. Labels
     // are prefixed with the workspace's display name for non-current
     // workspaces so users can disambiguate identical titles across
-    // workspaces.
+    // workspaces. The `paletteFocusCurrentWorkspaceOnly` preference
+    // narrows the list to the focused workspace for users who don't
+    // want cross-workspace panes mixed in.
+    let focusCurrentWorkspaceOnly =
+      PreferencesStore.shared.preferences.paletteFocusCurrentWorkspaceOnly ?? false
     for (wsIdx, ws) in workspaces.enumerated() {
+      if focusCurrentWorkspaceOnly, wsIdx != focusedWorkspaceIndex { continue }
       for (colIdx, column) in ws.columns.enumerated() {
         for (paneIdx, pane) in column.panes.enumerated() {
           let base =

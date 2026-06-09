@@ -197,7 +197,8 @@ extension PaneContainerViewController {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex + 1)
       showToast("Next Pane")
     } else if let nextColumnIndex = nextNonEmptyColumnIndex(
-      from: focusedColumnIndex, step: 1
+      from: focusedColumnIndex, step: 1,
+      wrap: PreferencesStore.shared.preferences.wrapPaneFocus ?? true
     ) {
       setFocus(columnIndex: nextColumnIndex, paneIndex: 0)
       showToast("Next Pane")
@@ -214,7 +215,8 @@ extension PaneContainerViewController {
       setFocus(columnIndex: focusedColumnIndex, paneIndex: column.focusedPaneIndex - 1)
       showToast("Previous Pane")
     } else if let prevColumnIndex = nextNonEmptyColumnIndex(
-      from: focusedColumnIndex, step: -1
+      from: focusedColumnIndex, step: -1,
+      wrap: PreferencesStore.shared.preferences.wrapPaneFocus ?? true
     ) {
       let lastPaneIndex = columns[prevColumnIndex].panes.count - 1
       setFocus(columnIndex: prevColumnIndex, paneIndex: lastPaneIndex)
@@ -235,21 +237,31 @@ extension PaneContainerViewController {
   }
 
   /// Walk the columns array in `step` direction (+1 / -1) starting
-  /// from `start`, wrap modulo `columns.count`, and return the first
-  /// index whose column has at least one pane. Returns `nil` only
-  /// when **every** column is empty — a degenerate state that
-  /// shouldn't survive `removePane`'s column-collapse path, but
-  /// `focusNextPane` / `focusPreviousPane` need a defensive bail
-  /// because `setFocus` precondition-traps on an empty column.
-  private func nextNonEmptyColumnIndex(from start: Int, step: Int) -> Int? {
+  /// from `start` and return the first index whose column has at least
+  /// one pane. With `wrap` the walk runs modulo `columns.count` and
+  /// returns `nil` only when **every** column is empty; without it the
+  /// walk stops at the array edge and returns `nil` once the edge is
+  /// crossed (the "stop at the first / last pane" preference). The
+  /// empty-column skip is defensive either way: that state shouldn't
+  /// survive `removePane`'s column-collapse path, but `setFocus`
+  /// precondition-traps on an empty column.
+  private func nextNonEmptyColumnIndex(from start: Int, step: Int, wrap: Bool) -> Int? {
     guard !columns.isEmpty else { return nil }
     let count = columns.count
-    var idx = ((start + step) % count + count) % count
-    while columns[idx].panes.isEmpty {
-      if idx == start { return nil }
-      idx = ((idx + step) % count + count) % count
+    if wrap {
+      var idx = ((start + step) % count + count) % count
+      while columns[idx].panes.isEmpty {
+        if idx == start { return nil }
+        idx = ((idx + step) % count + count) % count
+      }
+      return idx
     }
-    return idx
+    var idx = start + step
+    while idx >= 0, idx < count {
+      if !columns[idx].panes.isEmpty { return idx }
+      idx += step
+    }
+    return nil
   }
 
   // MARK: - Width Preset Cycle

@@ -122,6 +122,23 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// seed the destination browser pane instead.
   public var initialPaneKind: String?
 
+  /// Whether `Next Pane` / `Previous Pane` wrap from the last pane back
+  /// to the first (and vice versa). `nil` keeps the historical wrapping
+  /// behaviour; `false` stops focus at the first / last pane instead.
+  public var wrapPaneFocus: Bool?
+
+  /// Whether `Next Workspace` / `Previous Workspace` wrap from the last
+  /// workspace back to the first (and vice versa). `nil` keeps the
+  /// historical wrapping behaviour; `false` stops at the first / last
+  /// workspace instead.
+  public var wrapWorkspaceSwitch: Bool?
+
+  /// Whether the command palette's dynamic "Focus: <pane>" entries are
+  /// limited to the focused workspace. `nil`/`false` keeps the
+  /// historical behaviour of listing panes across every workspace;
+  /// `true` restricts the list to the current workspace.
+  public var paletteFocusCurrentWorkspaceOnly: Bool?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -139,7 +156,10 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     adblockerLastRefreshedAt: Date? = nil,
     adblockerCustomSources: [AdblockerCustomSource]? = nil,
     widthCyclePresets: [PaneWidthPreset]? = nil,
-    initialPaneKind: String? = nil
+    initialPaneKind: String? = nil,
+    wrapPaneFocus: Bool? = nil,
+    wrapWorkspaceSwitch: Bool? = nil,
+    paletteFocusCurrentWorkspaceOnly: Bool? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -158,6 +178,9 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.adblockerCustomSources = adblockerCustomSources
     self.widthCyclePresets = widthCyclePresets
     self.initialPaneKind = initialPaneKind
+    self.wrapPaneFocus = wrapPaneFocus
+    self.wrapWorkspaceSwitch = wrapWorkspaceSwitch
+    self.paletteFocusCurrentWorkspaceOnly = paletteFocusCurrentWorkspaceOnly
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

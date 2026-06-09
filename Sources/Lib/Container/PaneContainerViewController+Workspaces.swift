@@ -218,18 +218,38 @@ extension PaneContainerViewController {
   }
 
   /// Advance to the next workspace with a consistent "slide up from below"
-  /// direction, wrapping past the last one. Fixed direction matters when
-  /// cycling — 3→1 should still feel like moving forward, not back.
+  /// direction. Wraps past the last one unless the `wrapWorkspaceSwitch`
+  /// preference is disabled, in which case it stops at the last. Fixed
+  /// direction matters when cycling — 3→1 should still feel like moving
+  /// forward, not back.
   public func switchWorkspaceNext() {
     guard workspaces.count > 1 else { return }
-    let next = (focusedWorkspaceIndex + 1) % workspaces.count
+    let wrap = PreferencesStore.shared.preferences.wrapWorkspaceSwitch ?? true
+    let raw = focusedWorkspaceIndex + 1
+    let next: Int
+    if raw < workspaces.count {
+      next = raw
+    } else if wrap {
+      next = 0
+    } else {
+      return
+    }
     switchWorkspace(to: next, slidingUp: true)
   }
 
   /// Backwards counterpart. Always slides down (incoming from above).
   public func switchWorkspacePrevious() {
     guard workspaces.count > 1 else { return }
-    let prev = (focusedWorkspaceIndex - 1 + workspaces.count) % workspaces.count
+    let wrap = PreferencesStore.shared.preferences.wrapWorkspaceSwitch ?? true
+    let raw = focusedWorkspaceIndex - 1
+    let prev: Int
+    if raw >= 0 {
+      prev = raw
+    } else if wrap {
+      prev = workspaces.count - 1
+    } else {
+      return
+    }
     switchWorkspace(to: prev, slidingUp: false)
   }
 

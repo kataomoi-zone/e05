@@ -95,6 +95,37 @@ struct GeneralSettingsView: View {
         }
       }
 
+      Section("Navigation") {
+        // Bool? fields: nil means "keep the historical default", so the
+        // toggles read through a `?? default` and write the explicit
+        // value. Wrapping is the default for focus moves; the palette's
+        // cross-workspace listing is the default for Focus search.
+        Toggle(
+          "Wrap around at the first and last pane",
+          isOn: Binding(
+            get: { preferences.wrapPaneFocus ?? true },
+            set: {
+              preferences.wrapPaneFocus = $0
+              persist()
+            }))
+        Toggle(
+          "Wrap around at the first and last workspace",
+          isOn: Binding(
+            get: { preferences.wrapWorkspaceSwitch ?? true },
+            set: {
+              preferences.wrapWorkspaceSwitch = $0
+              persist()
+            }))
+        Toggle(
+          "Limit palette Focus search to the current workspace",
+          isOn: Binding(
+            get: { preferences.paletteFocusCurrentWorkspaceOnly ?? false },
+            set: {
+              preferences.paletteFocusCurrentWorkspaceOnly = $0
+              persist()
+            }))
+      }
+
       Section("Search Engine") {
         Picker("Engine", selection: $selectedSearchPreset) {
           ForEach(SearchEnginePreset.allCases) { preset in

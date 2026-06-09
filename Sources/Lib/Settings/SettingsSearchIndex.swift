@@ -97,6 +97,12 @@ enum SettingsSearchIndex {
       id: "general.new-workspace", title: "New Workspace", tab: .general,
       keywords: ["initial pane", "default pane", "seed pane", "terminal", "browser", "finder"]),
     SettingsSearchEntry(
+      id: "general.navigation", title: "Navigation", tab: .general,
+      keywords: [
+        "wrap", "wrap around", "next pane", "previous pane", "next workspace",
+        "cycle", "stop at edge", "focus search", "palette", "current workspace",
+      ]),
+    SettingsSearchEntry(
       id: "general.search-engine", title: "Search Engine", tab: .general,
       keywords: ["search", "duckduckgo", "google", "bing", "brave", "search template", "query"]),
     SettingsSearchEntry(
