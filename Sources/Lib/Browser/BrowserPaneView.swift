@@ -158,6 +158,29 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// (anything under `LoadingProgressBarView.revealDelay`) finish
   /// before the bar would fade in, keeping it invisible noise.
   private var progressBarRevealTimer: DispatchSourceTimer?
+  /// Diagnostic watchdog for a navigation that never completes. Armed
+  /// when `isLoading` flips true, cancelled when it flips false; while a
+  /// load is still in flight it logs the in-flight URL, elapsed time,
+  /// and progress at a fixed cadence so a hung web content process
+  /// leaves a trace in the log. Log-only — e05 does not (yet) abort or
+  /// auto-recover a hang, only a full process *termination* (see
+  /// ``webViewWebContentProcessDidTerminate(_:)``).
+  private var navigationWatchdog: DispatchSourceTimer?
+  /// Short stable token identifying this pane instance in navigation
+  /// logs so interleaved traces from several panes can be told apart.
+  /// Diagnostic-only; derived from the object address, not persisted.
+  private lazy var logTag: String = String(
+    UInt(bitPattern: ObjectIdentifier(self).hashValue) & 0xFFFF, radix: 16)
+  /// Timestamps of recent web content process terminations, newest
+  /// last. Breaks a crash → reload → crash loop: a page that
+  /// deterministically kills its renderer (pathological WebGL/wasm,
+  /// repeated OOM) would otherwise flash and pin the CPU forever, worse
+  /// than a dead pane. Pruned to ``terminationLoopWindow`` on each
+  /// crash; auto-reload holds once more than ``terminationLoopLimit``
+  /// land inside the window.
+  private var recentProcessTerminations: [Date] = []
+  private static let terminationLoopWindow: TimeInterval = 30
+  private static let terminationLoopLimit = 3
   /// Indeterminate loading bar pinned above the pane. WebKit only
   /// emits `estimatedProgress` 0 → 1 transitions for most pages, so
   /// driving a determinate fill from KVO sat the bar at 0% for the
@@ -936,9 +959,13 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// timer can't outlive the load it was started for — that would
   /// otherwise fade the bar in moments after the page already settled.
   private func applyLoadingStateForProgressBar(isLoading: Bool) {
+    logger.info(
+      "[nav/loading \(self.logTag, privacy: .public)] isLoading=\(isLoading, privacy: .public) url=\(self.webView.url?.absoluteString ?? "—", privacy: .public)"
+    )
     progressBarRevealTimer?.cancel()
     progressBarRevealTimer = nil
     if isLoading {
+      startNavigationWatchdog()
       let timer = DispatchSource.makeTimerSource(queue: .main)
       timer.schedule(deadline: .now() + LoadingProgressBarView.revealDelay)
       timer.setEventHandler { [weak self] in
@@ -948,8 +975,49 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       timer.resume()
       progressBarRevealTimer = timer
     } else {
+      cancelNavigationWatchdog()
       progressBar.dismiss()
     }
+  }
+
+  /// Cadence at which the stuck-navigation watchdog logs while a load
+  /// is still in flight.
+  private static let watchdogInterval: TimeInterval = 10
+
+  /// Arm (or re-arm) the stuck-navigation watchdog. Logs the in-flight
+  /// URL, elapsed seconds, and `estimatedProgress` every
+  /// ``watchdogInterval`` for as long as the load keeps running, then
+  /// stops itself once `isLoading` clears. Diagnostic-only: it neither
+  /// aborts nor recovers the load — it exists so a navigation that
+  /// silently never finishes (e.g. a hung web content process) is
+  /// visible in the log even though e05 can't yet recover from it.
+  private func startNavigationWatchdog() {
+    cancelNavigationWatchdog()
+    let started = Date()
+    let timer = DispatchSource.makeTimerSource(queue: .main)
+    timer.schedule(
+      deadline: .now() + Self.watchdogInterval, repeating: Self.watchdogInterval)
+    timer.setEventHandler { [weak self] in
+      guard let self else { return }
+      guard self.webView.isLoading else {
+        self.cancelNavigationWatchdog()
+        return
+      }
+      let elapsed = Int(Date().timeIntervalSince(started))
+      let url =
+        self.webView.url?.absoluteString
+        ?? self.lastAttemptedURL?.absoluteString ?? "—"
+      logger.warning(
+        "[nav/watchdog \(self.logTag, privacy: .public)] still loading after \(elapsed, privacy: .public)s progress=\(self.webView.estimatedProgress, privacy: .public) url=\(url, privacy: .public)"
+      )
+    }
+    timer.resume()
+    navigationWatchdog = timer
+  }
+
+  private func cancelNavigationWatchdog() {
+    navigationWatchdog?.cancel()
+    navigationWatchdog = nil
   }
 
   // MARK: - Suspend / Restore
@@ -1388,6 +1456,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     isLoadingObservation = nil
     progressBarRevealTimer?.cancel()
     progressBarRevealTimer = nil
+    cancelNavigationWatchdog()
     progressBar.dismiss()
     adblockerObserverTask?.cancel()
     adblockerObserverTask = nil
@@ -2029,7 +2098,89 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     onDownloadStarted?(download)
   }
 
+  public func webView(
+    _ webView: WKWebView, didStartProvisionalNavigation _: WKNavigation!
+  ) {
+    logger.info(
+      "[nav/start \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
+    )
+  }
+
+  public func webView(
+    _ webView: WKWebView,
+    didReceiveServerRedirectForProvisionalNavigation _: WKNavigation!
+  ) {
+    logger.info(
+      "[nav/redirect \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
+    )
+  }
+
+  /// The web content process backing this pane terminated (renderer
+  /// crash, out-of-memory, Jetsam). WebKit leaves the pane blank with
+  /// no live process and reloads nothing on its own, stranding the user
+  /// on a dead pane with only "close it from the sidebar" as an escape.
+  /// Relaunch by reloading the current back/forward entry: the list
+  /// lives in the UI process and survives the crash, and `reload()`
+  /// spins up a fresh content process for it. A loop guard holds the
+  /// auto-reload once a page crashes repeatedly within a short window,
+  /// rendering an error page instead so a renderer that dies on every
+  /// load can't flash forever. This is the crash path only — a process
+  /// that *hangs* without terminating never reaches here and is for now
+  /// just traced by the navigation watchdog log.
+  public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    let url =
+      webView.url?.absoluteString ?? lastAttemptedURL?.absoluteString ?? "—"
+    cancelNavigationWatchdog()
+    // Break a crash → reload → crash loop. Auto-reloading a page that
+    // deterministically kills its renderer would flash and pin the CPU
+    // forever — worse than a dead pane — so reload only while crashes
+    // stay under the threshold within the window. Past that, hold and
+    // render an error page the user can manually reload from, mirroring
+    // Safari's "reload once, then hold" behaviour.
+    let now = Date()
+    recentProcessTerminations.append(now)
+    recentProcessTerminations.removeAll {
+      now.timeIntervalSince($0) > Self.terminationLoopWindow
+    }
+    if recentProcessTerminations.count > Self.terminationLoopLimit {
+      logger.error(
+        "[nav/terminate \(self.logTag, privacy: .public)] web content process terminated \(self.recentProcessTerminations.count, privacy: .public)x within \(Int(Self.terminationLoopWindow), privacy: .public)s, holding auto-reload url=\(url, privacy: .public)"
+      )
+      loadProcessCrashError(url: webView.url ?? lastAttemptedURL)
+      return
+    }
+    logger.error(
+      "[nav/terminate \(self.logTag, privacy: .public)] web content process terminated, reloading url=\(url, privacy: .public)"
+    )
+    if webView.backForwardList.currentItem != nil {
+      webView.reload()
+    } else if let target = lastAttemptedURL ?? webView.url {
+      webView.load(URLRequest(url: target))
+    }
+  }
+
+  /// Render the "page keeps crashing" surface after the auto-reload loop
+  /// guard trips, so a renderer that crashes on every load lands on a
+  /// readable error with the URL preserved for a manual retry rather
+  /// than an empty pane or an endless reload flicker.
+  private func loadProcessCrashError(url: URL?) {
+    let host = url?.host ?? "This page"
+    let escaped = Self.htmlEscape(host)
+    loadHTMLErrorPage(
+      iconDataURI: Self.triangleIconDataURI,
+      title: "This page keeps crashing",
+      descriptionHTML:
+        "<strong>\(escaped)</strong> repeatedly stopped responding, so e05 "
+        + "stopped reloading it automatically. Reload to try again.",
+      errorCode: "WebContentProcessTerminated",
+      attemptedURL: url
+    )
+  }
+
   public func webView(_ webView: WKWebView, didCommit _: WKNavigation!) {
+    logger.info(
+      "[nav/commit \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
+    )
     // The committed URL determines whether the adblocker rule
     // lists belong on this pane. A subsequent commit (link click,
     // history navigation) re-evaluates the host so a whitelisted
@@ -2045,6 +2196,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   }
 
   public func webView(_: WKWebView, didFinish _: WKNavigation!) {
+    logger.info(
+      "[nav/finish \(self.logTag, privacy: .public)] url=\(self.webView.url?.absoluteString ?? "—", privacy: .public)"
+    )
     // Scan the rendered DOM for a `<link rel="icon">` (or apple-touch
     // variant) and feed the highest-resolution hit to the favicon
     // cache. This covers sites whose `/favicon.ico` route 404s (they
@@ -2121,6 +2275,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // rather than let it fire on a later, unrelated commit.
     onceAfterNextCommit = nil
     let nsError = error as NSError
+    logger.info(
+      "[nav/fail \(self.logTag, privacy: .public)] domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) url=\(self.webView.url?.absoluteString ?? self.lastAttemptedURL?.absoluteString ?? "—", privacy: .public)"
+    )
     if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
       return
     }

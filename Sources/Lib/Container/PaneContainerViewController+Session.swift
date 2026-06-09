@@ -60,10 +60,22 @@ extension PaneContainerViewController {
             // list + scroll/form. Read it off the live web view, or
             // carry the snapshot blob forward for a pane that hasn't
             // been refocused since restore.
-            state.interactionState =
-              bv.isSuspended
-              ? bv.suspendedInteractionState
-              : bv.webView.interactionState as? Data
+            if bv.isSuspended {
+              state.interactionState = bv.suspendedInteractionState
+            } else {
+              // `interactionState` is a synchronous round-trip to the
+              // web content process; a hung process can block the main
+              // thread here for the whole autosave. Time it so a stall
+              // is attributable rather than a mystery freeze.
+              let t0 = Date()
+              state.interactionState = bv.webView.interactionState as? Data
+              let ms = Int(Date().timeIntervalSince(t0) * 1000)
+              if ms > 100 {
+                logger.warning(
+                  "[session/interactionState] slow read \(ms, privacy: .public)ms for \(pane.address.url.absoluteString, privacy: .public) — a hung web content process can block the main thread here"
+                )
+              }
+            }
           }
           // Terminal panes carry their shell's last-reported cwd so the
           // restore can relaunch the surface in the same directory.
