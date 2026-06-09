@@ -412,6 +412,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     forwardPress.minimumPressDuration = 0.3
     forwardPress.allowableMovement = 8
     forwardButton.addGestureRecognizer(forwardPress)
+    // Right-click a nav button to drop down the same history menu
+    // (Safari/Firefox). A secondary-button click recogniser sits
+    // alongside the primary-button long-press above, so the two never
+    // compete for the same gesture.
+    let backRightClick = NSClickGestureRecognizer(
+      target: self, action: #selector(backHistoryRightClick(_:)))
+    backRightClick.buttonMask = 0x2
+    backButton.addGestureRecognizer(backRightClick)
+    let forwardRightClick = NSClickGestureRecognizer(
+      target: self, action: #selector(forwardHistoryRightClick(_:)))
+    forwardRightClick.buttonMask = 0x2
+    forwardButton.addGestureRecognizer(forwardRightClick)
     reloadButton.target = self
     reloadButton.action = #selector(reloadAction)
     reloadButton.toolTip = "Reload"
@@ -1412,6 +1424,18 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
   @objc private func forwardHistoryPress(_ gr: NSPressGestureRecognizer) {
     guard gr.state == .began, forwardButton.isEnabled else { return }
+    onClicked?()
+    onForwardHistory?(forwardButton)
+  }
+
+  @objc private func backHistoryRightClick(_ gr: NSClickGestureRecognizer) {
+    guard backButton.isEnabled else { return }
+    onClicked?()
+    onBackHistory?(backButton)
+  }
+
+  @objc private func forwardHistoryRightClick(_ gr: NSClickGestureRecognizer) {
+    guard forwardButton.isEnabled else { return }
     onClicked?()
     onForwardHistory?(forwardButton)
   }
