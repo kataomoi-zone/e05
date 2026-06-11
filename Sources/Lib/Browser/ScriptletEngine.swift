@@ -36,8 +36,11 @@ public final class ScriptletEngine {
   /// (`ytInitialPlayerResponse` and the `youtubei/v1/player`
   /// response); ads share the `<video>` element and the stream with
   /// the main content, so neither network rules nor cosmetic hides
-  /// can remove them. Pinning the ad fields to `undefined` before
-  /// the player reads them is the only layer that works.
+  /// can remove them. The `set-constant` / `json-prune` rules cover
+  /// the response embedded in the initial document; the
+  /// `*-fetch-response` / `*-xhr-response` rules cover the player
+  /// response fetched dynamically on later navigations within the SPA,
+  /// scoped to the `/player` endpoint so other requests are untouched.
   static let builtinRules: [String: [[String]]] = [
     "youtube.com": [
       ["set-constant", "ytInitialPlayerResponse.playerAds", "undefined"],
@@ -49,6 +52,24 @@ public final class ScriptletEngine {
           + "playerResponse.adPlacements playerResponse.adSlots "
           + "playerResponse.playerAds",
         "",
+      ],
+      [
+        "json-prune-fetch-response",
+        "adPlacements adSlots playerAds "
+          + "playerResponse.adPlacements playerResponse.adSlots "
+          + "playerResponse.playerAds",
+        "",
+        "propsToMatch",
+        "/youtubei/v1/player",
+      ],
+      [
+        "json-prune-xhr-response",
+        "adPlacements adSlots playerAds "
+          + "playerResponse.adPlacements playerResponse.adSlots "
+          + "playerResponse.playerAds",
+        "",
+        "propsToMatch",
+        "/youtubei/v1/player",
       ],
     ]
   ]

@@ -254,12 +254,145 @@
     });
   }
 
+  // ---- json-prune-fetch-response / json-prune-xhr-response --------------
+
+  // Trailing `name, value` pairs of the *-response scriptlets (e.g.
+  // `propsToMatch, /player`). Only the keys this engine acts on are
+  // read; unknown options are ignored rather than rejected so a rule
+  // carrying an option we have not implemented still prunes.
+  function parseExtraOptions(args) {
+    const opts = {};
+    for (let i = 0; i + 1 < args.length; i += 2) {
+      opts[String(args[i])] = String(args[i + 1]);
+    }
+    return opts;
+  }
+
+  // Build a URL predicate from a `propsToMatch`-style needle: a
+  // `/regex/` literal compiles to a RegExp, anything else is a plain
+  // substring, and an empty needle matches every request. A bad regex
+  // matches nothing so a malformed rule cannot accidentally prune
+  // every response on the page.
+  //
+  // Only the single-URL-needle form is supported. uBO also allows a
+  // space-separated `url:… method:…` map; a rule using that form fails
+  // to match here (the whole string is searched as a URL substring) and
+  // so under-prunes — it leaves ads in, never breaks an unrelated
+  // response. The shipped YouTube rules use the single-needle form.
+  function urlMatcher(needle) {
+    if (!needle) return () => true;
+    if (needle.length > 2 && needle[0] === "/" && needle[needle.length - 1] === "/") {
+      let re;
+      try {
+        re = new RegExp(needle.slice(1, -1));
+      } catch (_) {
+        return () => false;
+      }
+      return (url) => re.test(url);
+    }
+    return (url) => url.indexOf(needle) !== -1;
+  }
+
+  function jsonPruneFetchResponse(rawPaths, rawRequired, ...extra) {
+    const paths = splitPaths(rawPaths);
+    const required = splitPaths(rawRequired);
+    if (!paths.length) return;
+    const matchUrl = urlMatcher(parseExtraOptions(extra).propsToMatch || "");
+    const realFetch = window.fetch;
+    if (typeof realFetch !== "function") return;
+    window.fetch = new Proxy(realFetch, {
+      async apply(target, thisArg, args) {
+        const response = await Reflect.apply(target, thisArg, args);
+        try {
+          const url = (response && response.url) || "";
+          if (!matchUrl(url)) return response;
+          const text = await response.clone().text();
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch (_) {
+            // Not JSON (or already consumed) — hand back the
+            // untouched response so non-JSON requests are unaffected.
+            return response;
+          }
+          pruneObject(data, paths, required);
+          // Content-Length no longer matches the rewritten body; drop
+          // it so the consumer reads the pruned payload to completion.
+          const headers = new Headers(response.headers);
+          headers.delete("content-length");
+          return new Response(JSON.stringify(data), {
+            status: response.status,
+            statusText: response.statusText,
+            headers,
+          });
+        } catch (_) {
+          return response;
+        }
+      },
+    });
+  }
+
+  // XHR interception is best-effort: only `responseType` of "" or
+  // "text" exposes a readable `responseText` to prune. "json"/"blob"
+  // responses are left untouched — YouTube's player request uses
+  // fetch, which the handler above covers fully. The readystatechange
+  // listener is registered inside the patched `send`, so it runs
+  // before page listeners added after `send`, and the pruned getters
+  // are installed before readyState 4 propagates to them.
+  function jsonPruneXhrResponse(rawPaths, rawRequired, ...extra) {
+    const paths = splitPaths(rawPaths);
+    const required = splitPaths(rawRequired);
+    if (!paths.length) return;
+    const matchUrl = urlMatcher(parseExtraOptions(extra).propsToMatch || "");
+    const XHR = window.XMLHttpRequest;
+    if (typeof XHR !== "function") return;
+    const realOpen = XHR.prototype.open;
+    const realSend = XHR.prototype.send;
+    XHR.prototype.open = function (method, url) {
+      this.__e05PruneUrl = String(url || "");
+      return realOpen.apply(this, arguments);
+    };
+    XHR.prototype.send = function () {
+      const xhr = this;
+      if (!matchUrl(xhr.__e05PruneUrl || "")) {
+        return realSend.apply(xhr, arguments);
+      }
+      xhr.addEventListener("readystatechange", function () {
+        if (xhr.readyState !== 4 || xhr.__e05Pruned) return;
+        const rt = xhr.responseType;
+        if (rt !== "" && rt !== "text") return;
+        let text;
+        try {
+          text = xhr.responseText;
+        } catch (_) {
+          return;
+        }
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          return;
+        }
+        pruneObject(data, paths, required);
+        const pruned = JSON.stringify(data);
+        xhr.__e05Pruned = true;
+        try {
+          Object.defineProperty(xhr, "responseText", { get: () => pruned });
+          Object.defineProperty(xhr, "response", { get: () => pruned });
+        } catch (_) {}
+      });
+      return realSend.apply(xhr, arguments);
+    };
+  }
+
   // ---- dispatch ---------------------------------------------------------
 
   const registry = {
     "set-constant": setConstant,
     set: setConstant,
     "json-prune": jsonPrune,
+    "json-prune-fetch-response": jsonPruneFetchResponse,
+    "json-prune-xhr-response": jsonPruneXhrResponse,
   };
 
   for (const host of chain) {

@@ -49,7 +49,10 @@ struct ScriptletEngineTests {
   func builtinRulesShape() {
     // Names must match the registry keys in scriptlets.js; a typo in
     // a seed rule would otherwise be silently skipped at runtime.
-    let implemented: Set<String> = ["set-constant", "set", "json-prune"]
+    let implemented: Set<String> = [
+      "set-constant", "set", "json-prune",
+      "json-prune-fetch-response", "json-prune-xhr-response",
+    ]
     #expect(!ScriptletEngine.builtinRules.isEmpty)
     for (host, invocations) in ScriptletEngine.builtinRules {
       #expect(!host.isEmpty)
@@ -58,6 +61,23 @@ struct ScriptletEngineTests {
         #expect(implemented.contains(invocation.first ?? ""))
         #expect(invocation.count >= 2)
       }
+    }
+  }
+
+  @Test("youtube rules prune the dynamically fetched player response")
+  func youtubeDynamicResponseRules() {
+    let yt = ScriptletEngine.builtinRules["youtube.com"] ?? []
+    let names = Set(yt.compactMap(\.first))
+    #expect(names.contains("json-prune-fetch-response"))
+    #expect(names.contains("json-prune-xhr-response"))
+    // The dynamic-response rules are scoped to the player endpoint so
+    // unrelated requests are not parsed and rewritten.
+    for rule in yt
+    where rule.first == "json-prune-fetch-response"
+      || rule.first == "json-prune-xhr-response"
+    {
+      #expect(rule.contains("propsToMatch"))
+      #expect(rule.contains("/youtubei/v1/player"))
     }
   }
 }
