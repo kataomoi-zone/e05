@@ -11,8 +11,8 @@ e05 links against a locally-built `GhosttyKit.xcframework`. The binary is **not*
 cd /path/to/ghostty
 git checkout main && git pull
 
-# macOS-only minimal build (use Homebrew's zig, not Nix's)
-/opt/homebrew/bin/zig build \
+# macOS-only minimal build (use Homebrew's zig@0.15, not Nix's)
+/opt/homebrew/opt/zig@0.15/bin/zig build \
   -Doptimize=ReleaseFast \
   -Dapp-runtime=none \
   -Demit-xcframework=true \
@@ -38,7 +38,7 @@ git rev-parse --short HEAD   # write this into e05's GHOSTTY_VERSION
 
 Notes:
 
-- Use Homebrew's zig **0.15.2** (ghostty 1.3.x's required version). Nix's zig (0.16+) does not build libghostty successfully (empirical result)
+- Use Homebrew's **zig@0.15** keg (0.15.2, ghostty's `minimum_zig_version`). The main `zig` formula has moved to 0.16, so invoke the keg path directly. Nix's zig (0.16+) does not build libghostty successfully (empirical result)
 - The macOS app build (which is what produces the apprt-enabled xcframework) needs the **Metal Toolchain** (`xcodebuild -downloadComponent MetalToolchain`) and a CoreSimulator in sync with Xcode (`sudo xcodebuild -runFirstLaunch`; reboot if `xcrun simctl list` still errors). Missing either fails the `Ld ghostty` step
 - Do **not** pass `-Demit-macos-app=false`: it skips the app build, and the resulting xcframework lacks the `ghostty_*` apprt symbols e05 links against (`ghostty_init`, `ghostty_surface_*`)
 - `-Dxcframework-target=native` produces a host-arch binary only. Use `universal` for a fat xcframework
