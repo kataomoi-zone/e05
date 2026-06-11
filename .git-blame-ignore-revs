@@ -4,3 +4,6 @@
 
 # style: adopt swift-format with its default configuration
 efa0f550a4ca4af3bbcd77ceba3800bae256bbd4
+
+# chore: reformat Package.swift to swift-format defaults
+4efe4880ed86bc6f6290c0fee5c89dcbed873d30
