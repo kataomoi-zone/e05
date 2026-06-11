@@ -553,6 +553,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       // WKScriptMessageHandlerWithReply registrations share the same
       // init-time snapshot constraint as AdBlocker.
       CosmeticFilterEngine.shared.attach(to: config)
+      // Scriptlet injection runs in the page world at document start
+      // so it can patch page globals before the page's own scripts
+      // read them; same init-time snapshot constraint as above.
+      ScriptletEngine.shared.attach(to: config)
       // Hover-link preview: register the content script and fire-and-
       // forget message handler before the web view is constructed so
       // the init-time configuration snapshot picks them up. The handler

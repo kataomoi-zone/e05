@@ -29,7 +29,8 @@ let package = Package(
         // processing (future image optimisation if a non-text
         // asset lands in this directory, for instance) would
         // be destructive for the content script.
-        .copy("Browser/Resources/cosmetic-runtime.js")
+        .copy("Browser/Resources/cosmetic-runtime.js"),
+        .copy("Browser/Resources/scriptlets.js"),
       ],
       linkerSettings: [
         .linkedLibrary("c++"),
