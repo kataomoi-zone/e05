@@ -143,6 +143,17 @@ public final class AdBlocker {
       category: .core, defaultEnabled: true
     ),
     FilterSource(
+      id: "ubo-quick-fixes",
+      name: "uBlock Origin Quick Fixes",
+      url: URL(
+        string:
+          "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/quick-fixes.txt"
+      )!,
+      cacheFilename: "ubo-quick-fixes.txt",
+      homepage: URL(string: "https://github.com/uBlockOrigin/uAssets"),
+      category: .core, defaultEnabled: true
+    ),
+    FilterSource(
       id: "fanboy-cookie",
       name: "EasyList Cookie",
       url: URL(string: "https://secure.fanboy.co.nz/fanboy-cookiemonster_ubo.txt")!,
@@ -505,12 +516,15 @@ public final class AdBlocker {
   /// `ruleListDidChange` notification that `start()` re-posts at
   /// the end. The procedural cosmetic engine is rebuilt against
   /// the same per-source enable state in lock-step — a disabled
-  /// source has to drop both its declarative and its cosmetic
-  /// contributions for the user to see a change.
+  /// source has to drop its declarative, cosmetic, and scriptlet
+  /// contributions for the user to see a change. (The scriptlet index
+  /// is baked per web view, so reload reaches new panes; live panes
+  /// pick it up on their next suspend → restore.)
   public func reload() async {
     ruleLists = []
     await start()
     await CosmeticFilterEngine.shared.start()
+    await ScriptletEngine.shared.start()
   }
 
   /// Force a fresh download of every enabled filterlist source by

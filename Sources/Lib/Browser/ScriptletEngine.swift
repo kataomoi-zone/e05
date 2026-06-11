@@ -23,58 +23,82 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Scriptlet")
 public final class ScriptletEngine {
   public static let shared = ScriptletEngine()
 
-  /// Hostname token (as written in a filter, matched against the
-  /// page hostname and its parent domains) → scriptlet invocations,
-  /// each encoded `[name, arg…]`. Currently a built-in set covering
-  /// YouTube's player-response ad fields — the equivalent of the
-  /// uAssets `##+js(...)` rules that uBlock Origin applies there,
-  /// expressed against our reimplemented scriptlet library.
-  public private(set) var index: [String: [[String]]] =
-    ScriptletEngine.builtinRules
+  /// Host token (as written in a filter, matched against the page
+  /// hostname and its parent domains in the runtime) → scriptlet
+  /// invocations, each encoded `[name, arg…]`. Built from the
+  /// `##+js(...)` rules of the enabled filter sources by ``start()``;
+  /// empty until that runs. The published filterlists drive which
+  /// hosts are covered — YouTube's player-response ad pruning is one
+  /// such rule set, not a special case here.
+  public private(set) var index: [String: [[String]]] = [:]
 
-  /// YouTube embeds its ad schedule in the player API JSON
-  /// (`ytInitialPlayerResponse` and the `youtubei/v1/player`
-  /// response); ads share the `<video>` element and the stream with
-  /// the main content, so neither network rules nor cosmetic hides
-  /// can remove them. The `set-constant` / `json-prune` rules cover
-  /// the response embedded in the initial document; the
-  /// `*-fetch-response` / `*-xhr-response` rules cover the player
-  /// response fetched dynamically on later navigations within the SPA,
-  /// scoped to the `/player` endpoint so other requests are untouched.
-  static let builtinRules: [String: [[String]]] = [
-    "youtube.com": [
-      ["set-constant", "ytInitialPlayerResponse.playerAds", "undefined"],
-      ["set-constant", "ytInitialPlayerResponse.adPlacements", "undefined"],
-      ["set-constant", "ytInitialPlayerResponse.adSlots", "undefined"],
-      [
-        "json-prune",
-        "adPlacements adSlots playerAds "
-          + "playerResponse.adPlacements playerResponse.adSlots "
-          + "playerResponse.playerAds",
-        "",
-      ],
-      [
-        "json-prune-fetch-response",
-        "adPlacements adSlots playerAds "
-          + "playerResponse.adPlacements playerResponse.adSlots "
-          + "playerResponse.playerAds",
-        "",
-        "propsToMatch",
-        "/youtubei/v1/player",
-      ],
-      [
-        "json-prune-xhr-response",
-        "adPlacements adSlots playerAds "
-          + "playerResponse.adPlacements playerResponse.adSlots "
-          + "playerResponse.playerAds",
-        "",
-        "propsToMatch",
-        "/youtubei/v1/player",
-      ],
-    ]
+  /// Scriptlet names the bundled library implements, kept in sync by
+  /// hand with the `registry` object in scriptlets.js. A name listed
+  /// here that the library lacks would admit a rule the runtime then
+  /// silently skips; a name the library has but is missing here drops
+  /// a rule we could otherwise run.
+  nonisolated static let supportedScriptlets: Set<String> = [
+    "set-constant", "set",
+    "json-prune",
+    "json-prune-fetch-response",
+    "json-prune-xhr-response",
   ]
 
   private init() {}
+
+  // MARK: - Index build
+
+  /// Build the scriptlet index from the cached filter sources. Call
+  /// after ``AdBlocker/start()`` has warmed the cache, alongside the
+  /// cosmetic engine. Reads cache only; a missing entry is skipped and
+  /// picked up on the next launch once AdBlocker finishes downloading.
+  ///
+  /// Like the cosmetic index, this populates state read at web view
+  /// construction. A web view built before it completes — the first
+  /// few hundred ms of a launch, or any pane on the very first launch
+  /// before the initial download — carries an empty index until it is
+  /// rebuilt on suspend → restore.
+  public func start() async {
+    var texts: [String] = []
+    for source in AdBlocker.allSources where AdBlocker.isSourceEnabled(source) {
+      if let text = await readCached(source.cacheFilename) {
+        texts.append(text)
+      }
+    }
+    let built = await Task.detached(priority: .userInitiated) {
+      Self.buildIndex(from: texts)
+    }.value
+    self.index = built
+    logger.info("index built: hosts=\(built.count, privacy: .public)")
+  }
+
+  private func readCached(_ filename: String) async -> String? {
+    let url = AdBlocker.cacheRoot.appendingPathComponent(filename)
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    return try? String(contentsOf: url, encoding: .utf8)
+  }
+
+  /// Parse the `##+js(...)` rules out of the given filter texts into a
+  /// host → invocation index, keeping only invocations whose scriptlet
+  /// the library implements. Host-less (generic) scriptlets are
+  /// dropped: a page-wide global patch with no host scope is too blunt
+  /// to ship from a third-party list.
+  nonisolated static func buildIndex(from texts: [String]) -> [String: [[String]]] {
+    var index: [String: [[String]]] = [:]
+    for text in texts {
+      text.enumerateLines { line, _ in
+        guard let parsed = ScriptletParser.parseLine(line),
+          !parsed.domains.isEmpty,
+          let name = parsed.invocation.first,
+          supportedScriptlets.contains(name)
+        else { return }
+        for domain in parsed.domains {
+          index[domain, default: []].append(parsed.invocation)
+        }
+      }
+    }
+    return index
+  }
 
   /// Install the scriptlet user script into a pane's configuration.
   /// Must run before the `WKWebView` is constructed — the
@@ -169,4 +193,82 @@ public final class ScriptletEngine {
       preconditionFailure("failed to read scriptlets.js: \(error)")
     }
   }()
+}
+
+/// Parser for ABP `##+js(...)` scriptlet-injection rules, the cosmetic
+/// shape ``CosmeticFilterEngine`` deliberately drops. The grammar is
+/// `domains##+js(name, arg, …)`: the prefix is the same comma-separated
+/// hostname list cosmetic rules use, and the body is the scriptlet name
+/// followed by its arguments.
+public enum ScriptletParser {
+  public struct ParsedScriptlet: Equatable, Sendable {
+    /// Positive hostname tokens. Empty = generic (host-less) rule.
+    public let domains: [String]
+    /// Hostname tokens with a leading `~` stripped. Carried through
+    /// for the host-matching follow-up; not yet acted on.
+    public let excludedDomains: [String]
+    /// `[name, arg…]`, ready to encode into the injected index.
+    public let invocation: [String]
+  }
+
+  public static func parseLine(_ raw: String) -> ParsedScriptlet? {
+    let line = raw.trimmingCharacters(in: .whitespaces)
+    guard !line.isEmpty, !line.hasPrefix("!"), !line.hasPrefix("[") else {
+      return nil
+    }
+    // `#@#+js(...)` cancels a scriptlet on this host. Rare; dropping
+    // it leaves the scriptlet applied, the safe default when we cannot
+    // model the exception.
+    if line.contains("#@#+js(") { return nil }
+    guard let open = line.range(of: "##+js(") else { return nil }
+    let prefix = line[..<open.lowerBound]
+    let afterOpen = line[open.upperBound...]
+    guard let close = afterOpen.lastIndex(of: ")") else { return nil }
+    let body = String(afterOpen[..<close])
+
+    var domains: [String] = []
+    var excluded: [String] = []
+    for token in prefix.split(separator: ",") {
+      let t = token.trimmingCharacters(in: .whitespaces)
+      guard !t.isEmpty else { continue }
+      if t.hasPrefix("~") {
+        let d = String(t.dropFirst()).lowercased()
+        if !d.isEmpty { excluded.append(d) }
+      } else {
+        domains.append(t.lowercased())
+      }
+    }
+
+    let invocation = splitArgs(body)
+    guard let name = invocation.first, !name.isEmpty else { return nil }
+    return ParsedScriptlet(
+      domains: domains, excludedDomains: excluded, invocation: invocation)
+  }
+
+  /// Split a scriptlet argument body on commas, honouring `\,` as a
+  /// literal comma (uBO's escape for arguments — notably regex values —
+  /// that contain commas). Other backslash escapes pass through
+  /// untouched so regex bodies survive intact.
+  static func splitArgs(_ body: String) -> [String] {
+    var args: [String] = []
+    var current = ""
+    var escaped = false
+    for ch in body {
+      if escaped {
+        if ch != "," { current.append("\\") }
+        current.append(ch)
+        escaped = false
+      } else if ch == "\\" {
+        escaped = true
+      } else if ch == "," {
+        args.append(current.trimmingCharacters(in: .whitespaces))
+        current = ""
+      } else {
+        current.append(ch)
+      }
+    }
+    if escaped { current.append("\\") }
+    args.append(current.trimmingCharacters(in: .whitespaces))
+    return args
+  }
 }

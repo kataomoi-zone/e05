@@ -45,39 +45,69 @@ struct ScriptletEngineTests {
     #expect(src.contains(#"a\"b"#))
   }
 
-  @Test("builtin rules only invoke implemented scriptlets with args")
-  func builtinRulesShape() {
-    // Names must match the registry keys in scriptlets.js; a typo in
-    // a seed rule would otherwise be silently skipped at runtime.
-    let implemented: Set<String> = [
-      "set-constant", "set", "json-prune",
-      "json-prune-fetch-response", "json-prune-xhr-response",
-    ]
-    #expect(!ScriptletEngine.builtinRules.isEmpty)
-    for (host, invocations) in ScriptletEngine.builtinRules {
-      #expect(!host.isEmpty)
-      #expect(!invocations.isEmpty)
-      for invocation in invocations {
-        #expect(implemented.contains(invocation.first ?? ""))
-        #expect(invocation.count >= 2)
-      }
-    }
+  @Test("buildIndex keeps supported host-scoped scriptlets, drops the rest")
+  func buildIndexFiltering() {
+    let text = """
+      ! comment
+      youtube.com##+js(set, ytInitialPlayerResponse.adPlacements, undefined)
+      a.com,b.com##+js(json-prune, adPlacements adSlots)
+      example.com##+js(no-such-scriptlet, x)
+      ##+js(set, generic.global, 1)
+      cosmetic.example##.ad-banner
+      ||network.example/ads^
+      """
+    let index = ScriptletEngine.buildIndex(from: [text])
+    // Supported + host-scoped rules are kept, fanned out per domain.
+    #expect(
+      index["youtube.com"] == [["set", "ytInitialPlayerResponse.adPlacements", "undefined"]])
+    #expect(index["a.com"] == [["json-prune", "adPlacements adSlots"]])
+    #expect(index["b.com"] == [["json-prune", "adPlacements adSlots"]])
+    // Unsupported scriptlet, host-less scriptlet, cosmetic and network
+    // lines all leave no entry.
+    #expect(index["example.com"] == nil)
+    #expect(index.count == 3)
+  }
+}
+
+@Suite("ScriptletParser")
+struct ScriptletParserTests {
+  @Test("host-scoped +js rule parses domains and invocation")
+  func basic() {
+    let p = ScriptletParser.parseLine("youtube.com##+js(set, a.b, undefined)")
+    #expect(p?.domains == ["youtube.com"])
+    #expect(p?.excludedDomains == [])
+    #expect(p?.invocation == ["set", "a.b", "undefined"])
   }
 
-  @Test("youtube rules prune the dynamically fetched player response")
-  func youtubeDynamicResponseRules() {
-    let yt = ScriptletEngine.builtinRules["youtube.com"] ?? []
-    let names = Set(yt.compactMap(\.first))
-    #expect(names.contains("json-prune-fetch-response"))
-    #expect(names.contains("json-prune-xhr-response"))
-    // The dynamic-response rules are scoped to the player endpoint so
-    // unrelated requests are not parsed and rewritten.
-    for rule in yt
-    where rule.first == "json-prune-fetch-response"
-      || rule.first == "json-prune-xhr-response"
-    {
-      #expect(rule.contains("propsToMatch"))
-      #expect(rule.contains("/youtubei/v1/player"))
-    }
+  @Test("multiple domains and negation split into positive and excluded")
+  func domainsAndNegation() {
+    let p = ScriptletParser.parseLine("a.com,~b.a.com,c.com##+js(json-prune, x y)")
+    #expect(p?.domains == ["a.com", "c.com"])
+    #expect(p?.excludedDomains == ["b.a.com"])
+    #expect(p?.invocation == ["json-prune", "x y"])
+  }
+
+  @Test("escaped comma stays inside one argument")
+  func escapedComma() {
+    let p = ScriptletParser.parseLine(#"e.com##+js(set, a, b\,c)"#)
+    #expect(p?.invocation == ["set", "a", "b,c"])
+  }
+
+  @Test("a trailing backslash in the final argument is preserved")
+  func trailingBackslash() {
+    let p = ScriptletParser.parseLine(#"e.com##+js(set, a, b\)"#)
+    #expect(p?.invocation == ["set", "a", #"b\"#])
+  }
+
+  @Test("scriptlet exception is dropped")
+  func exception() {
+    #expect(ScriptletParser.parseLine("e.com#@#+js(set, a, b)") == nil)
+  }
+
+  @Test("cosmetic, network, and comment lines are not scriptlets")
+  func nonScriptlet() {
+    #expect(ScriptletParser.parseLine("e.com##.ad") == nil)
+    #expect(ScriptletParser.parseLine("||e.com/ads^") == nil)
+    #expect(ScriptletParser.parseLine("! comment") == nil)
   }
 }

@@ -191,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Task {
       await AdBlocker.shared.start()
       await CosmeticFilterEngine.shared.start()
+      await ScriptletEngine.shared.start()
     }
     startAdblockerAutoUpdateSchedule()
     lastAdblockerInterval = PreferencesStore.shared.preferences.adblockerAutoUpdateIntervalHours
