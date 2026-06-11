@@ -29,6 +29,22 @@ public struct GhosttyIncompatibleKeyHit: Sendable, Equatable, Hashable {
   }
 }
 
+/// A ghostty config key that works in e05 except for specific
+/// comma-list value tokens. Matching is per token (after splitting
+/// the value on commas) so a negated form such as `no-ssh-env`
+/// does not trip the warning.
+public struct GhosttyIncompatibleValueTokens: Sendable {
+  public let key: String
+  public let tokens: Set<String>
+  public let reason: String
+
+  public init(key: String, tokens: Set<String>, reason: String) {
+    self.key = key
+    self.tokens = tokens
+    self.reason = reason
+  }
+}
+
 /// Ghostty config keys that the e05 host short-circuits because it
 /// owns the surrounding behaviour (window chrome, geometry, quick
 /// terminal, macOS app shell). libghostty still parses the key
@@ -256,11 +272,28 @@ public enum GhosttyIncompatibleKeys {
     ),
   ]
 
+  /// Keys that take effect in e05 except for specific value tokens.
+  /// The vendored shell-integration ssh wrappers shell out to the
+  /// ghostty CLI (`$GHOSTTY_BIN_DIR/ghostty +ssh`), which e05 does
+  /// not bundle — opting in replaces `ssh` with a wrapper that can
+  /// never resolve its binary, breaking the command outright rather
+  /// than degrading.
+  public static let valueTokenCatalog: [GhosttyIncompatibleValueTokens] = [
+    .init(
+      key: "shell-integration-features",
+      tokens: ["ssh-env", "ssh-terminfo"],
+      reason:
+        "e05 does not bundle the ghostty CLI; the ssh-env / ssh-terminfo wrappers would break the ssh command."
+    )
+  ]
+
   /// Walk `text` line by line and surface every catalog hit. Lines
   /// starting with `#` (comment) or empty lines are skipped, so
   /// commented-out keys do not produce noise. The matcher reads the
   /// key as everything before the first `=`, mirroring ghostty's own
-  /// flat `key = value` lexer.
+  /// flat `key = value` lexer. Keys absent from the key catalog are
+  /// additionally checked against ``valueTokenCatalog`` for value
+  /// tokens that only break with specific opt-ins.
   public static func scan(_ text: String) -> [GhosttyIncompatibleKeyHit] {
     var hits: [GhosttyIncompatibleKeyHit] = []
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -269,8 +302,19 @@ public enum GhosttyIncompatibleKeys {
       if trimmed.isEmpty || trimmed.first == "#" { continue }
       guard let eq = trimmed.firstIndex(of: "=") else { continue }
       let key = trimmed[..<eq].trimmingCharacters(in: .whitespaces)
-      guard let reason = lookupByKey[key] else { continue }
-      hits.append(.init(lineNumber: index + 1, key: key, reason: reason))
+      if let reason = lookupByKey[key] {
+        hits.append(.init(lineNumber: index + 1, key: key, reason: reason))
+        continue
+      }
+      for entry in valueTokenCatalog where entry.key == key {
+        let valueTokens = trimmed[trimmed.index(after: eq)...]
+          .split(separator: ",")
+          .map { $0.trimmingCharacters(in: .whitespaces) }
+        if valueTokens.contains(where: { entry.tokens.contains($0) }) {
+          hits.append(.init(lineNumber: index + 1, key: key, reason: entry.reason))
+          break
+        }
+      }
     }
     return hits
   }

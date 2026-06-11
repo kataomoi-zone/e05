@@ -124,4 +124,25 @@ struct GhosttyIncompatibleKeysTests {
     #expect(hits.count == 3)
     #expect(hits.map(\.lineNumber) == [1, 3, 4])
   }
+
+  @Test("ssh shell-integration feature opt-ins warn")
+  func sshFeatureTokensWarn() {
+    let optIn = GhosttyIncompatibleKeys.scan("shell-integration-features = ssh-env\n")
+    #expect(optIn.count == 1)
+    #expect(optIn.first?.key == "shell-integration-features")
+
+    let mixed = GhosttyIncompatibleKeys.scan(
+      "shell-integration-features = no-cursor, ssh-terminfo\n")
+    #expect(mixed.count == 1)
+  }
+
+  @Test("negated or unrelated shell-integration features stay silent")
+  func sshFeatureTokensNegatedSilent() {
+    let negated = GhosttyIncompatibleKeys.scan(
+      "shell-integration-features = no-ssh-env,title\n")
+    #expect(negated.isEmpty)
+
+    let unrelated = GhosttyIncompatibleKeys.scan("shell-integration-features = sudo\n")
+    #expect(unrelated.isEmpty)
+  }
 }
