@@ -56,7 +56,18 @@
     return out;
   }
 
+  // Entity candidates for `example.*` matching: each hostname-chain
+  // entry with its public-suffix label dropped ("www.youtube.com" →
+  // ["www.youtube", "youtube"], matching the `youtube` entity). Without
+  // the public suffix list this approximates uBO's entity matching — it
+  // covers single-label suffixes (.com/.de/.fr) but not multi-label
+  // ones (.co.uk), which are rare among entity rules.
+  function entityChain(host) {
+    return hostnameChain(host).map((h) => h.replace(/\.[^.]+$/, ""));
+  }
+
   const chain = hostnameChain(location.hostname);
+  const entities = entityChain(location.hostname);
   // Whitelist on the full host only, matching the cosmetic and
   // declarative layers (host keys are full hosts, not eTLD+1). A
   // parent-domain walk here would suppress scriptlets on a subdomain
@@ -395,19 +406,37 @@
     "json-prune-xhr-response": jsonPruneXhrResponse,
   };
 
-  for (const host of chain) {
-    const invocations = index[host];
-    if (!Array.isArray(invocations)) continue;
-    for (const invocation of invocations) {
-      if (!Array.isArray(invocation) || invocation.length === 0) continue;
-      const fn = registry[invocation[0]];
-      if (!fn) continue;
-      try {
-        fn(...invocation.slice(1));
-      } catch (_) {
-        // One bad invocation must not block the rest of the host's
-        // scriptlets.
-      }
+  // A rule applies unless the page hostname (or one of its parent
+  // domains) is in the rule's negation list.
+  function ruleApplies(rule) {
+    if (rule.not && rule.not.length) {
+      if (rule.not.some((n) => chain.includes(n))) return false;
+    }
+    return true;
+  }
+
+  function runRule(rule) {
+    const invocation = rule.a;
+    if (!Array.isArray(invocation) || invocation.length === 0) return;
+    const fn = registry[invocation[0]];
+    if (!fn) return;
+    try {
+      fn(...invocation.slice(1));
+    } catch (_) {
+      // One bad invocation must not block the rest of the host's
+      // scriptlets.
     }
   }
+
+  function runRules(rules) {
+    if (!Array.isArray(rules)) return;
+    for (const rule of rules) {
+      if (rule && ruleApplies(rule)) runRule(rule);
+    }
+  }
+
+  const hostRules = index.hosts || {};
+  for (const host of chain) runRules(hostRules[host]);
+  const entityRules = index.entities || {};
+  for (const entity of entities) runRules(entityRules[entity]);
 })();

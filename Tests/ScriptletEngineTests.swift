@@ -9,7 +9,9 @@ struct ScriptletEngineTests {
   @Test("source bakes index and whitelist as consts plus the library")
   func sourceComposition() throws {
     let source = ScriptletEngine.makeSource(
-      index: ["youtube.com": [["set-constant", "a.b", "undefined"]]],
+      index: ScriptletIndex(hosts: [
+        "youtube.com": [.init(a: ["set-constant", "a.b", "undefined"], not: [])]
+      ]),
       whitelist: ["allow.example"]
     )
     let src = try #require(source)
@@ -24,11 +26,11 @@ struct ScriptletEngineTests {
   @Test("source is deterministic regardless of input ordering")
   func deterministicSource() {
     let a = ScriptletEngine.makeSource(
-      index: ["b.example": [], "a.example": []],
+      index: ScriptletIndex(hosts: ["b.example": [], "a.example": []]),
       whitelist: ["z.example", "a.example"]
     )
     let b = ScriptletEngine.makeSource(
-      index: ["a.example": [], "b.example": []],
+      index: ScriptletIndex(hosts: ["a.example": [], "b.example": []]),
       whitelist: ["a.example", "z.example"]
     )
     #expect(a != nil)
@@ -38,14 +40,16 @@ struct ScriptletEngineTests {
   @Test("special characters in baked data stay JSON-escaped")
   func jsonEscaping() throws {
     let source = ScriptletEngine.makeSource(
-      index: ["example.com": [["set-constant", "a\"b", "1"]]],
+      index: ScriptletIndex(hosts: [
+        "example.com": [.init(a: ["set-constant", "a\"b", "1"], not: [])]
+      ]),
       whitelist: []
     )
     let src = try #require(source)
     #expect(src.contains(#"a\"b"#))
   }
 
-  @Test("buildIndex keeps supported host-scoped scriptlets, drops the rest")
+  @Test("buildIndex sorts rules into hosts and entities, dropping unsupported")
   func buildIndexFiltering() {
     let text = """
       ! comment
@@ -55,17 +59,27 @@ struct ScriptletEngineTests {
       ##+js(set, generic.global, 1)
       cosmetic.example##.ad-banner
       ||network.example/ads^
+      ~m.foo.com,foo.com##+js(json-prune, ads)
+      bar.*##+js(set, baz, 1)
       """
-    let index = ScriptletEngine.buildIndex(from: [text])
-    // Supported + host-scoped rules are kept, fanned out per domain.
+    let result = ScriptletEngine.buildIndex(from: [text])
+    let index = result.index
+    // Supported host-scoped rules are kept, fanned out per domain.
     #expect(
-      index["youtube.com"] == [["set", "ytInitialPlayerResponse.adPlacements", "undefined"]])
-    #expect(index["a.com"] == [["json-prune", "adPlacements adSlots"]])
-    #expect(index["b.com"] == [["json-prune", "adPlacements adSlots"]])
+      index.hosts["youtube.com"]?.first?.a
+        == ["set", "ytInitialPlayerResponse.adPlacements", "undefined"])
+    #expect(index.hosts["a.com"]?.first?.a == ["json-prune", "adPlacements adSlots"])
+    #expect(index.hosts["b.com"]?.first?.a == ["json-prune", "adPlacements adSlots"])
+    // Negation is carried on the rule; the positive host still lands.
+    #expect(index.hosts["foo.com"]?.first?.not == ["m.foo.com"])
+    // Entity token lands in `entities`, keyed by the bare label.
+    #expect(index.entities["bar"]?.first?.a == ["set", "baz", "1"])
     // Unsupported scriptlet, host-less scriptlet, cosmetic and network
-    // lines all leave no entry.
-    #expect(index["example.com"] == nil)
-    #expect(index.count == 3)
+    // lines leave no host entry; the unsupported name is reported.
+    #expect(index.hosts["example.com"] == nil)
+    #expect(result.unsupported.contains("no-such-scriptlet"))
+    #expect(index.hosts.count == 4)
+    #expect(index.entities.count == 1)
   }
 }
 
@@ -91,6 +105,13 @@ struct ScriptletParserTests {
   func escapedComma() {
     let p = ScriptletParser.parseLine(#"e.com##+js(set, a, b\,c)"#)
     #expect(p?.invocation == ["set", "a", "b,c"])
+  }
+
+  @Test("entity token is carried verbatim in domains")
+  func entityToken() {
+    let p = ScriptletParser.parseLine("youtube.*##+js(set, a, 1)")
+    #expect(p?.domains == ["youtube.*"])
+    #expect(p?.invocation == ["set", "a", "1"])
   }
 
   @Test("a trailing backslash in the final argument is preserved")

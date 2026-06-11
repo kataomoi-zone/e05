@@ -30,7 +30,7 @@ public final class ScriptletEngine {
   /// empty until that runs. The published filterlists drive which
   /// hosts are covered — YouTube's player-response ad pruning is one
   /// such rule set, not a special case here.
-  public private(set) var index: [String: [[String]]] = [:]
+  public private(set) var index = ScriptletIndex()
 
   /// Scriptlet names the bundled library implements, kept in sync by
   /// hand with the `registry` object in scriptlets.js. A name listed
@@ -65,11 +65,19 @@ public final class ScriptletEngine {
         texts.append(text)
       }
     }
-    let built = await Task.detached(priority: .userInitiated) {
+    let result = await Task.detached(priority: .userInitiated) {
       Self.buildIndex(from: texts)
     }.value
-    self.index = built
-    logger.info("index built: hosts=\(built.count, privacy: .public)")
+    self.index = result.index
+    logger.info(
+      """
+      index built: hosts=\(result.index.hosts.count, privacy: .public) \
+      entities=\(result.index.entities.count, privacy: .public)
+      """)
+    if !result.unsupported.isEmpty {
+      logger.debug(
+        "skipped \(result.unsupported.count, privacy: .public) unimplemented scriptlet name(s)")
+    }
   }
 
   private func readCached(_ filename: String) async -> String? {
@@ -79,25 +87,41 @@ public final class ScriptletEngine {
   }
 
   /// Parse the `##+js(...)` rules out of the given filter texts into a
-  /// host → invocation index, keeping only invocations whose scriptlet
-  /// the library implements. Host-less (generic) scriptlets are
+  /// ``ScriptletIndex``, keeping only invocations whose scriptlet the
+  /// library implements (the rest are collected into `unsupported` for
+  /// a one-line summary log). Plain `example.com` tokens land in
+  /// `hosts`, entity `example.*` tokens in `entities`, and each rule
+  /// carries its negation hosts. Host-less (generic) scriptlets are
   /// dropped: a page-wide global patch with no host scope is too blunt
   /// to ship from a third-party list.
-  nonisolated static func buildIndex(from texts: [String]) -> [String: [[String]]] {
-    var index: [String: [[String]]] = [:]
+  nonisolated static func buildIndex(
+    from texts: [String]
+  ) -> (index: ScriptletIndex, unsupported: Set<String>) {
+    var hosts: [String: [ScriptletIndex.Rule]] = [:]
+    var entities: [String: [ScriptletIndex.Rule]] = [:]
+    var unsupported: Set<String> = []
     for text in texts {
       text.enumerateLines { line, _ in
         guard let parsed = ScriptletParser.parseLine(line),
-          !parsed.domains.isEmpty,
-          let name = parsed.invocation.first,
-          supportedScriptlets.contains(name)
+          let name = parsed.invocation.first
         else { return }
+        guard supportedScriptlets.contains(name) else {
+          unsupported.insert(name)
+          return
+        }
+        guard !parsed.domains.isEmpty else { return }
+        let rule = ScriptletIndex.Rule(
+          a: parsed.invocation, not: parsed.excludedDomains)
         for domain in parsed.domains {
-          index[domain, default: []].append(parsed.invocation)
+          if domain.hasSuffix(".*") {
+            entities[String(domain.dropLast(2)), default: []].append(rule)
+          } else {
+            hosts[domain, default: []].append(rule)
+          }
         }
       }
     }
-    return index
+    return (ScriptletIndex(hosts: hosts, entities: entities), unsupported)
   }
 
   /// Install the scriptlet user script into a pane's configuration.
@@ -131,7 +155,8 @@ public final class ScriptletEngine {
     logger.info(
       """
       attach → pane #\(self.attachCounter) \
-      (hosts=\(self.index.count) whitelist=\(whitelist.count) world=page)
+      (hosts=\(self.index.hosts.count) entities=\(self.index.entities.count) \
+      whitelist=\(whitelist.count) world=page)
       """
     )
   }
@@ -149,7 +174,7 @@ public final class ScriptletEngine {
   /// is emitted with sorted keys so the source is deterministic for
   /// a given index (stable across launches, diffable in logs).
   static func makeSource(
-    index: [String: [[String]]],
+    index: ScriptletIndex,
     whitelist: [String]
   ) -> String? {
     let encoder = JSONEncoder()
@@ -193,6 +218,35 @@ public final class ScriptletEngine {
       preconditionFailure("failed to read scriptlets.js: \(error)")
     }
   }()
+}
+
+/// The scriptlet index baked into the injected user script. Hosts and
+/// entities are looked up separately by the runtime: a plain
+/// `example.com` token lands in `hosts`, an entity `example.*` token in
+/// `entities` keyed by the bare label (`example`). Each rule carries the
+/// negation hosts (`~m.example.com`) that suppress it.
+public struct ScriptletIndex: Encodable, Equatable, Sendable {
+  public struct Rule: Encodable, Equatable, Sendable {
+    /// `[name, arg…]`.
+    public let a: [String]
+    /// Hosts on which this rule does NOT apply (ABP `~host`). Encoded
+    /// only when non-empty so the baked index stays compact — the vast
+    /// majority of rules carry no negation.
+    public let not: [String]?
+
+    public init(a: [String], not: [String]) {
+      self.a = a
+      self.not = not.isEmpty ? nil : not
+    }
+  }
+
+  public let hosts: [String: [Rule]]
+  public let entities: [String: [Rule]]
+
+  public init(hosts: [String: [Rule]] = [:], entities: [String: [Rule]] = [:]) {
+    self.hosts = hosts
+    self.entities = entities
+  }
 }
 
 /// Parser for ABP `##+js(...)` scriptlet-injection rules, the cosmetic
