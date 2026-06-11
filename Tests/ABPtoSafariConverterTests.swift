@@ -370,4 +370,84 @@ struct ABPtoSafariConverterTests {
     #expect(cookie.rules.isEmpty)
     #expect(cookie.skipped == 1)
   }
+
+  @Test("uBO $3p / $1p / $~3p aliases map to load-type")
+  func uboLoadTypeAliases() {
+    let thirdParty = ABPtoSafariConverter.convert("||tracker.example.com^$3p").rules
+    #expect(!thirdParty.isEmpty)
+    #expect(thirdParty.allSatisfy { $0.trigger.loadType == ["third-party"] })
+
+    let firstParty = ABPtoSafariConverter.convert("||tracker.example.com^$1p").rules
+    #expect(!firstParty.isEmpty)
+    #expect(firstParty.allSatisfy { $0.trigger.loadType == ["first-party"] })
+
+    let negated = ABPtoSafariConverter.convert("||tracker.example.com^$~3p").rules
+    #expect(!negated.isEmpty)
+    #expect(negated.allSatisfy { $0.trigger.loadType == ["first-party"] })
+
+    let negatedFirstParty = ABPtoSafariConverter.convert("||tracker.example.com^$~1p").rules
+    #expect(!negatedFirstParty.isEmpty)
+    #expect(negatedFirstParty.allSatisfy { $0.trigger.loadType == ["third-party"] })
+  }
+
+  @Test("uBO $frame alias converts like subdocument, keeping domain scope")
+  func uboFrameAlias() {
+    let rules = ABPtoSafariConverter.convert(
+      "||ads.example.com^$frame,domain=a.example|b.example"
+    ).rules
+    #expect(!rules.isEmpty)
+    for rule in rules {
+      #expect(rule.trigger.resourceType == ["document"])
+      #expect(rule.trigger.ifDomain == ["*a.example", "*b.example"])
+    }
+  }
+
+  @Test("uBO bare options ($ghide, $popunder) hit the boundary and drop")
+  func uboBareOptionAliasesBoundary() {
+    let ghide = ABPtoSafariConverter.convert(
+      ".*$ghide,domain=site.example|other.example"
+    )
+    #expect(ghide.rules.isEmpty)
+    #expect(ghide.skipped == 1)
+
+    let popunder = ABPtoSafariConverter.convert(
+      "||example.com^$popunder,domain=a.com|b.com"
+    )
+    #expect(popunder.rules.isEmpty)
+    #expect(popunder.skipped == 1)
+  }
+
+  @Test("uBO keyed options ($urlskip=, $ipaddress=) hit the boundary and drop")
+  func uboKeyedOptionsBoundary() {
+    let urlskip = ABPtoSafariConverter.convert(
+      "||l.example.com/?u=http$doc,to=a.example|b.example,urlskip=?u"
+    )
+    #expect(urlskip.rules.isEmpty)
+    #expect(urlskip.skipped == 1)
+
+    let ipaddress = ABPtoSafariConverter.convert(
+      "||example.com^$ipaddress=192.168.0.1,domain=a.com|b.com"
+    )
+    #expect(ipaddress.rules.isEmpty)
+    #expect(ipaddress.skipped == 1)
+  }
+
+  @Test("keyed option value with an embedded comma still hits the boundary")
+  func keyedOptionCommaValueBoundary() {
+    // The `{0,2}` quantifier inside the `urlskip=` regex value splits
+    // into two comma tokens; the trailing fragment must not downgrade
+    // the suffix to "not options" (which would smuggle the `|` in
+    // `to=a|b` into WebKit's regex compiler as a url-filter).
+    let urlskip = ABPtoSafariConverter.convert(
+      #"||pstmrk.it/*/$doc,to=click.pstmrk.it|track.pstmrk.it,urlskip=/\.pstmrk\.it\/[23][mst]{0,2}\/([^\/?#]+)/ -uricomponent +https"#
+    )
+    #expect(urlskip.rules.isEmpty)
+    #expect(urlskip.skipped == 1)
+
+    let removeparam = ABPtoSafariConverter.convert(
+      #"||example.com^$script,removeparam=/^utm_[a-z]{1,8}$/,domain=a.com|b.com"#
+    )
+    #expect(removeparam.rules.isEmpty)
+    #expect(removeparam.skipped == 1)
+  }
 }

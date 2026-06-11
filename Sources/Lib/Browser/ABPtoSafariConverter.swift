@@ -18,9 +18,10 @@ private let logger = Logger(
 /// ## Supported
 /// - Network block: `||domain.com^`, `|http://...|`, `example.com/ads/*`
 /// - Network exception: `@@||domain.com^`
-/// - `$third-party`, `$domain=a.com|~b.com`, `$script`, `$image`, `$xhr`,
-///   `$subdocument`, `$stylesheet`, `$media`, `$websocket`, `$font`,
-///   `$document`, `$popup`, `$object`, `$ping`
+/// - `$third-party` / `$3p` (and the `$~third-party` / `$first-party` /
+///   `$1p` / `$~1p` family), `$domain=a.com|~b.com`, `$script`, `$image`,
+///   `$xhr`, `$subdocument` / `$frame`, `$stylesheet`, `$media`,
+///   `$websocket`, `$font`, `$document`, `$popup`, `$object`, `$ping`
 /// - Cosmetic hide: `##selector`, `domain.com,~sub.com##selector`
 ///
 /// ## Skipped (silently, with per-line debug log)
@@ -62,6 +63,15 @@ public enum ABPtoSafariConverter {
     public let type: String
     public let selector: String?
   }
+
+  /// Version of the converter's output shape. Folded into the compiled
+  /// rule-list cache key by ``AdBlocker`` — bump it whenever a converter
+  /// change alters what a given filterlist text converts to, so WebKit's
+  /// precompiled binaries (keyed by source text otherwise) recompile on
+  /// the next launch. Starts at 3: 1 names the implicit pre-constant
+  /// output and 2 an interim build, and compiled caches keyed by either
+  /// may survive on disk, so neither value is safe to reuse.
+  public static let outputVersion = 3
 
   /// Convert a full filterlist text into Safari rules. `maxRules` guards
   /// against the WebKit compiler's hard limit (50k on older targets,
@@ -182,25 +192,30 @@ public enum ABPtoSafariConverter {
   /// `convertNetwork` because `recognizedOptions` still excludes them.
   private static let tolerableUnsupportedOptions: Set<String> = [
     "important", "badfilter",
-    "generichide", "elemhide", "specifichide", "ehide",
+    "generichide", "ghide", "elemhide", "ehide", "specifichide", "shide",
     "inline-script", "inline-font",
     "strict3p", "strict1p",
-    "all", "empty", "mp4",
+    "all", "empty", "mp4", "popunder",
     "removeparam", "cookie",
   ]
 
   /// Option keys that always carry a value (`key=...`). Recognising
   /// the `key=` prefix lets `looksLikeOptionList` accept them without
-  /// inspecting the value, which is enough for boundary detection.
-  /// Bare-name variants (no `=`) live in ``tolerableUnsupportedOptions``
-  /// so the prefix match here never accidentally swallows tokens that
-  /// share a name root (e.g. a hypothetical `cookieless`).
+  /// inspecting the value — and accept the *rest of the suffix* along
+  /// with them, because these values are free-form (uBO allows
+  /// `/regex/` bodies whose `{n,m}` quantifiers embed commas) and
+  /// naive comma tokenisation cannot tell a value fragment from the
+  /// next option. Bare-name variants (no `=`) live in
+  /// ``tolerableUnsupportedOptions`` so the prefix match here never
+  /// accidentally swallows tokens that share a name root (e.g. a
+  /// hypothetical `cookieless`).
   private static let tolerableUnsupportedKeyedOptions: [String] = [
     "redirect=", "redirect-rule=",
     "csp=", "replace=", "removeparam=",
     "denyallow=", "permissions=", "header=",
     "cookie=",
     "app=", "method=", "to=", "from=",
+    "urlskip=", "ipaddress=",
     "rewrite=",
   ]
 
@@ -208,10 +223,14 @@ public enum ABPtoSafariConverter {
   /// of ABP options (`third-party`, `script`, `domain=...`, etc.) rather
   /// than part of a URL body? True if every non-empty token either
   /// appears in `recognizedOptions`, starts with `~`, or begins with a
-  /// known option prefix such as `domain=`, `match-case`, `sitekey=`.
-  /// Conservative by design: an unfamiliar token downgrades the whole
-  /// suffix to "not options" so we keep scanning left for a better
-  /// split point.
+  /// known option prefix such as `domain=`, `match-case`, `sitekey=` —
+  /// or once a free-form keyed option from
+  /// ``tolerableUnsupportedKeyedOptions`` shows up, in which case the
+  /// remaining tokens are accepted wholesale (they may be fragments of
+  /// that option's comma-bearing value, and the rule drops in
+  /// `convertNetwork` regardless). Otherwise conservative by design:
+  /// an unfamiliar token downgrades the whole suffix to "not options"
+  /// so we keep scanning left for a better split point.
   private static func looksLikeOptionList(_ suffix: Substring) -> Bool {
     guard !suffix.isEmpty else { return false }
     let tokens = suffix.split(separator: ",")
@@ -230,7 +249,7 @@ public enum ABPtoSafariConverter {
       }
       if tolerableUnsupportedOptions.contains(name) { continue }
       if tolerableUnsupportedKeyedOptions.contains(where: { name.hasPrefix($0) }) {
-        continue
+        return true
       }
       return false
     }
@@ -298,11 +317,12 @@ public enum ABPtoSafariConverter {
   /// Known ABP option names. Options outside this set cause the whole
   /// rule to be skipped — partial mapping risks false positives.
   private static let recognizedOptions: Set<String> = [
-    "third-party", "~third-party", "first-party",
+    "third-party", "3p", "~third-party", "~3p",
+    "first-party", "1p", "~first-party", "~1p",
     "script", "~script",
     "image", "~image",
     "xhr", "xmlhttprequest", "~xhr", "~xmlhttprequest",
-    "subdocument", "~subdocument",
+    "subdocument", "frame", "~subdocument", "~frame",
     "stylesheet", "css", "~stylesheet", "~css",
     "media", "~media",
     "websocket", "~websocket",
@@ -386,8 +406,14 @@ public enum ABPtoSafariConverter {
         // WebKit accepts exactly one load-type value. Later
         // specifiers win; `$~third-party,first-party` collapses
         // to `first-party`.
-        if opt == "third-party" { loadType = "third-party" }
-        if opt == "~third-party" || opt == "first-party" {
+        if opt == "third-party" || opt == "3p" || opt == "~first-party"
+          || opt == "~1p"
+        {
+          loadType = "third-party"
+        }
+        if opt == "~third-party" || opt == "~3p" || opt == "first-party"
+          || opt == "1p"
+        {
           loadType = "first-party"
         }
       }
@@ -425,7 +451,7 @@ public enum ABPtoSafariConverter {
     case "script": return "script"
     case "image": return "image"
     case "xhr", "xmlhttprequest": return "raw"
-    case "subdocument": return "document"
+    case "subdocument", "frame": return "document"
     case "stylesheet", "css": return "style-sheet"
     case "media": return "media"
     case "websocket": return "websocket"

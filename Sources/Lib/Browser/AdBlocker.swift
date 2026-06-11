@@ -316,9 +316,11 @@ public final class AdBlocker {
 
   /// Prefix for identifiers stored in ``WKContentRuleListStore``. Each
   /// compiled list's full identifier is
-  /// `e05-adblocker-v1-<sourceName>-<contentHash>`; changing the
-  /// converter output or a source's text flips the hash, which makes
-  /// WebKit recompile that source on the next launch.
+  /// `e05-adblocker-v1-<sourceName>-<contentHash>`; the hash covers
+  /// `ABPtoSafariConverter.outputVersion` plus the source text, so both
+  /// a converter change and a list update make WebKit recompile that
+  /// source on the next launch (`cleanupStaleStoreEntries` sweeps the
+  /// superseded hashes).
   private static let ruleListIdentifierPrefix = "e05-adblocker-v1-"
 
   public private(set) var ruleLists: [WKContentRuleList] = []
@@ -403,7 +405,8 @@ public final class AdBlocker {
         continue
       }
       guard let text = await loadFilterText(source: source) else { continue }
-      let hash = Self.shortHash(for: [text])
+      let hash = Self.shortHash(
+        for: ["converter-v\(ABPtoSafariConverter.outputVersion)", text])
       let identifier = "\(Self.ruleListIdentifierPrefix)\(source.id)-\(hash)"
       compiledIdentifiers.append(identifier)
 
@@ -534,13 +537,16 @@ public final class AdBlocker {
   /// window in ``loadFilterText``.
   public static let defaultAutoUpdateIntervalHours: Int = 168
 
-  /// Short hex digest used to key compiled rule lists. Changing the
-  /// converter or any source text flips this, which makes WebKit
-  /// recompile on the next launch without a manual identifier bump.
+  /// Short hex digest used to key compiled rule lists. Callers fold
+  /// every recompile-relevant input (converter output version, source
+  /// text) into `texts` so a change in any of them flips the digest.
   private static func shortHash(for texts: [String]) -> String {
     var hasher = SHA256()
     for t in texts {
       hasher.update(data: Data(t.utf8))
+      // NUL after each element keeps adjacent elements from
+      // concatenating ambiguously (["a", "bc"] vs ["ab", "c"]).
+      hasher.update(data: Data([0]))
     }
     let digest = hasher.finalize()
     return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
