@@ -57,6 +57,7 @@ extension PaneContainerViewController {
   /// the freed reserve doesn't linger as a phantom gap.
   func releasePinnedOverlay(_ column: ColumnModel) {
     guard column.isPinned else { return }
+    setPinnedShadow(column, enabled: false)
     NSLayoutConstraint.deactivate(column.pinConstraints)
     column.pinConstraints = []
     column.pinLeadingConstraint = nil
@@ -126,12 +127,38 @@ extension PaneContainerViewController {
     // stack and reserve its width on the leading edge.
     rebuildStackView(in: vc)
     applyLeadingInset(in: vc)
+    setPinnedShadow(column, enabled: true)
+  }
+
+  /// Soft drop shadow biased to the trailing edge of a pinned column's
+  /// overlay, cueing the depth that lets the scrolling columns read as
+  /// passing *under* it. Cast from the column's composited content (its
+  /// rounded pane surfaces with transparent gutters) rather than a
+  /// `shadowPath`. Cleared when the column unpins or is removed.
+  private func setPinnedShadow(_ column: ColumnModel, enabled: Bool) {
+    let cv = column.containerView
+    guard enabled else {
+      // Only dim an existing shadow — never induce layer-backing just to
+      // clear one that was never set. `masksToBounds` is intentionally
+      // left as-is (NSStackView never clips, so it is harmless).
+      cv.layer?.shadowOpacity = 0
+      cv.layer?.shadowRadius = 0
+      return
+    }
+    cv.wantsLayer = true
+    guard let layer = cv.layer else { return }
+    layer.masksToBounds = false
+    layer.shadowColor = NSColor.black.cgColor
+    layer.shadowOffset = CGSize(width: 5, height: 0)
+    layer.shadowOpacity = 0.3
+    layer.shadowRadius = 10
   }
 
   /// Return `column` from the leading overlay to the scrolling stack.
   func unpinColumn(_ column: ColumnModel) {
     let vc = currentWorkspaceVC
     column.isPinned = false
+    setPinnedShadow(column, enabled: false)
     NSLayoutConstraint.deactivate(column.pinConstraints)
     column.pinConstraints = []
     column.pinLeadingConstraint = nil
