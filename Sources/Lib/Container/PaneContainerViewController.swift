@@ -427,10 +427,45 @@ public final class PaneContainerViewController: NSViewController {
   /// - `.memoryCritical`: a system `.critical` pressure event. Drops
   ///   the floor entirely — every eligible non-focused pane goes,
   ///   because the alternative at that level is the OS killing us.
-  private enum SuspendTrigger {
+  enum SuspendTrigger {
     case idle
     case memoryWarning
     case memoryCritical
+
+    /// Stable label for the suspend log. Spelled out rather than
+    /// derived from the case name so renaming a case can't silently
+    /// break a log grep.
+    var logLabel: String {
+      switch self {
+      case .idle: return "idle"
+      case .memoryWarning: return "memory-warning"
+      case .memoryCritical: return "memory-critical"
+      }
+    }
+  }
+
+  /// Outcome of resolving a sweep's idle gate for a trigger.
+  enum SweepCutoff: Equatable {
+    /// The idle sweep is disabled (`suspendIdleMinutes <= 0`) and this
+    /// trigger honours that — skip the whole sweep.
+    case disabled
+    /// No age gate: every otherwise-eligible pane may be reclaimed
+    /// (a `.memoryCritical` event).
+    case all
+    /// Reclaim panes whose `lastActiveAt` is at or before this instant.
+    case idleSince(Date)
+  }
+
+  /// What the sweep should do with one pane.
+  enum SweepDecision: Equatable {
+    /// Leave the pane as-is (unsuspendable, exempt, playing media,
+    /// loopback, host-exempt, or still within the idle window).
+    case keep
+    /// Pane holds focus: pin its idle clock to `now` and keep it, so
+    /// the countdown starts when it loses focus, not when it opened.
+    case refreshFocusClock
+    /// Reclaim the pane's `WKWebView`.
+    case suspend
   }
 
   /// Idle floor applied under a `.memoryWarning` sweep. Panes active
@@ -438,7 +473,7 @@ public final class PaneContainerViewController: NSViewController {
   /// reclaims them anyway). Short enough to relieve pressure by
   /// reclaiming genuinely-parked panes, long enough that the pane you
   /// glanced at a minute ago is still there.
-  private static let memoryWarningGraceSeconds: TimeInterval = 5 * 60
+  private nonisolated static let memoryWarningGraceSeconds: TimeInterval = 5 * 60
 
   /// Walk every browser pane and suspend any that isn't currently
   /// focused, isn't playing media, isn't a loopback dev server, and
@@ -460,29 +495,9 @@ public final class PaneContainerViewController: NSViewController {
     let idleMinutes =
       PreferencesStore.shared.preferences.suspendIdleMinutes
       ?? Self.defaultSuspendIdleMinutes
-    // Resolve the idle cutoff for this trigger. `nil` means "no age
-    // gate" (`.memoryCritical`): every eligible pane is fair game.
-    let cutoff: Date?
-    switch trigger {
-    case .idle:
-      // Non-positive disables the idle sweep entirely; memory-pressure
-      // triggers still run because those come from the OS.
-      if idleMinutes <= 0 { return }
-      cutoff = Date().addingTimeInterval(-TimeInterval(idleMinutes * 60))
-    case .memoryWarning:
-      // Keep a short floor, but never be *less* aggressive than the
-      // idle sweep: if the user set a tight idle threshold (say 1 min)
-      // a warning should honour it too. A disabled idle sweep
-      // (`idleMinutes <= 0`) falls back to the grace floor alone.
-      let idleSeconds = TimeInterval(idleMinutes * 60)
-      let floor =
-        idleMinutes > 0
-        ? min(idleSeconds, Self.memoryWarningGraceSeconds)
-        : Self.memoryWarningGraceSeconds
-      cutoff = Date().addingTimeInterval(-floor)
-    case .memoryCritical:
-      cutoff = nil
-    }
+    let now = Date()
+    let cutoff = Self.sweepCutoff(trigger: trigger, idleMinutes: idleMinutes, now: now)
+    if cutoff == .disabled { return }
     // Protect the focused pane in *every* workspace, not just the
     // current one: a user reading a long article on a non-current
     // workspace doesn't move focus or change URL, so its
@@ -497,53 +512,100 @@ public final class PaneContainerViewController: NSViewController {
       for col in ws.columns {
         for pane in col.panes {
           guard let bv = pane.browserView else { continue }
-          // `canSuspend` mirrors the three guards inside `suspend()`
-          // so the call below doesn't have to swallow a `Bool` no
-          // caller can act on.
-          if !bv.canSuspend { continue }
-          if focusedPaneIds.contains(pane.id) {
-            // Pin the focused pane's idle clock to "now" on every pass
-            // so the countdown starts when the pane *loses* focus, not
-            // when it was opened or last navigated. Without this a pane
-            // kept focused past the idle threshold would already be
-            // beyond the cutoff the instant focus moves away, and
-            // suspend on the very next tick. Driven off the same
-            // `focusedPaneIds` set used to protect it, so a pane is
-            // heartbeated exactly while it is protected.
-            pane.lastActiveAt = Date()
-            continue
-          }
-          if pane.isSuspendExempt { continue }
-          // Media playback keeps a pane alive regardless of focus or
-          // memory pressure — suspending mid-video / mid-track is the
-          // most jarring reclaim a user can hit. `hasActiveMedia`
-          // covers muted-but-playing video; `isPlayingAudio` is a
-          // strict subset of it but kept explicit for the reader.
-          if bv.hasActiveMedia || bv.isPlayingAudio { continue }
-          // Resolve the host once and share it across the exempt,
-          // loopback, and log paths below.
           let host = bv.webView.url?.host
-          if let host {
-            if SuspendHostExemptStore.shared.isExempt(host: host) { continue }
-            // Loopback dev servers (localhost:3000, 127.0.0.1, …) are
-            // spared by default: a suspended local app loses its
-            // in-memory session and a reload often can't reproduce the
-            // state, so it's exempt without the user adding every port
-            // to the host list.
-            if Self.isLoopbackHost(host) { continue }
+          let decision = Self.sweepDecision(
+            canSuspend: bv.canSuspend,
+            isFocused: focusedPaneIds.contains(pane.id),
+            isSuspendExempt: pane.isSuspendExempt,
+            isPlayingMedia: bv.hasActiveMedia || bv.isPlayingAudio,
+            host: host,
+            isHostExempt: host.map { SuspendHostExemptStore.shared.isExempt(host: $0) } ?? false,
+            lastActiveAt: pane.lastActiveAt,
+            cutoff: cutoff)
+          switch decision {
+          case .keep:
+            continue
+          case .refreshFocusClock:
+            // Heartbeat the focused pane so its idle countdown starts
+            // at the moment it loses focus (see `sweepDecision`).
+            pane.lastActiveAt = now
+          case .suspend:
+            // Suspends are infrequent; log the trigger and idle age so
+            // "why did this pane reload?" stays traceable.
+            let idleSec = Int(now.timeIntervalSince(pane.lastActiveAt))
+            logger.info(
+              "[browser/suspend] reclaiming host=\(host ?? "?", privacy: .public) trigger=\(trigger.logLabel, privacy: .public) idleSec=\(idleSec, privacy: .public)"
+            )
+            bv.suspend()
           }
-          if let cutoff, pane.lastActiveAt > cutoff { continue }
-          // Suspends are infrequent; logging the trigger and idle age
-          // turns an otherwise opaque "why did this pane reload?" into
-          // something traceable in the log.
-          let idleSec = Int(Date().timeIntervalSince(pane.lastActiveAt))
-          logger.info(
-            "[browser/suspend] reclaiming host=\(host ?? "?", privacy: .public) trigger=\(String(describing: trigger), privacy: .public) idleSec=\(idleSec, privacy: .public)"
-          )
-          bv.suspend()
         }
       }
     }
+  }
+
+  /// Resolve the idle gate for `trigger`. Pure so the gating maths
+  /// (warning floor, disabled idle sweep, critical bypass) can be
+  /// exercised without a live container; `now` is injected for the
+  /// same reason. Non-positive `idleMinutes` disables the idle sweep
+  /// but not the memory-pressure triggers, which come from the OS.
+  nonisolated static func sweepCutoff(
+    trigger: SuspendTrigger, idleMinutes: Int, now: Date
+  ) -> SweepCutoff {
+    switch trigger {
+    case .idle:
+      if idleMinutes <= 0 { return .disabled }
+      return .idleSince(now.addingTimeInterval(-TimeInterval(idleMinutes * 60)))
+    case .memoryWarning:
+      // Keep a short floor, but never be *less* aggressive than the
+      // idle sweep: a tight idle threshold (say 1 min) is honoured
+      // here too; a disabled idle sweep falls back to the grace floor.
+      let floor =
+        idleMinutes > 0
+        ? min(TimeInterval(idleMinutes * 60), memoryWarningGraceSeconds)
+        : memoryWarningGraceSeconds
+      return .idleSince(now.addingTimeInterval(-floor))
+    case .memoryCritical:
+      return .all
+    }
+  }
+
+  /// Decide one pane's fate. Pure: every guard input is passed in so
+  /// the ladder — and its order — can be tested without a live
+  /// `BrowserPaneView`. `isHostExempt` is resolved by the caller from
+  /// the host-keyed store; loopback is checked here. `canSuspend`
+  /// mirrors the guards inside `BrowserPaneView.suspend()`.
+  nonisolated static func sweepDecision(
+    canSuspend: Bool,
+    isFocused: Bool,
+    isSuspendExempt: Bool,
+    isPlayingMedia: Bool,
+    host: String?,
+    isHostExempt: Bool,
+    lastActiveAt: Date,
+    cutoff: SweepCutoff
+  ) -> SweepDecision {
+    if cutoff == .disabled { return .keep }
+    guard canSuspend else { return .keep }
+    // Focus wins over every reclaim reason, and refreshes the clock.
+    if isFocused { return .refreshFocusClock }
+    if isSuspendExempt { return .keep }
+    // Media playback keeps a pane alive regardless of focus or memory
+    // pressure — suspending mid-video / mid-track is the most jarring
+    // reclaim a user can hit. The caller folds muted-but-playing video
+    // (`hasActiveMedia`) and audible playback (`isPlayingAudio`) into
+    // this one flag.
+    if isPlayingMedia { return .keep }
+    if let host {
+      if isHostExempt { return .keep }
+      // Loopback dev servers (localhost:3000, 127.0.0.1, …) are spared
+      // by default: a suspended local app loses its in-memory session
+      // and a reload often can't reproduce the state.
+      if isLoopbackHost(host) { return .keep }
+    }
+    if case .idleSince(let instant) = cutoff, lastActiveAt > instant {
+      return .keep
+    }
+    return .suspend
   }
 
   /// Loopback hosts the suspend sweep always spares. Loopback only —
