@@ -508,7 +508,12 @@ public final class PaneContainerViewController: NSViewController {
           {
             continue
           }
-          if bv.isPlayingAudio { continue }
+          // Media playback keeps a pane alive regardless of focus or
+          // memory pressure — suspending mid-video / mid-track is the
+          // most jarring reclaim a user can hit. `hasActiveMedia`
+          // covers muted-but-playing video; `isPlayingAudio` is a
+          // strict subset of it but kept explicit for the reader.
+          if bv.hasActiveMedia || bv.isPlayingAudio { continue }
           if let cutoff, pane.lastActiveAt > cutoff { continue }
           // Suspends are infrequent; logging the trigger and idle age
           // turns an otherwise opaque "why did this pane reload?" into
