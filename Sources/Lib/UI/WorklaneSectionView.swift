@@ -1690,6 +1690,13 @@ extension WorklaneSectionView: NSMenuDelegate {
     let paneId = paneNode.id
     appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "cycle_width", paneId: paneId, input: input)
+    // A single-pane column has no separate column row in the worklane
+    // (`columnNode == nil` = exposed flat at workspace top level), so
+    // surface its pin toggle here — a lone pane is its column. Multi-
+    // pane columns keep pin on the column row's menu instead.
+    if paneNode.columnNode == nil {
+      appendPaletteAction(to: menu, actionId: "toggle_pin_column", paneId: paneId, input: input)
+    }
     if input.workspaces.count > 1 {
       appendMoveToWorkspace(to: menu, paneNode: paneNode, input: input)
     }
@@ -1867,6 +1874,7 @@ extension WorklaneSectionView: NSMenuDelegate {
   ) {
     let columnId = columnNode.id
     appendColumnAction(to: menu, actionId: "toggle_fold", columnId: columnId, input: input)
+    appendColumnAction(to: menu, actionId: "toggle_pin_column", columnId: columnId, input: input)
     menu.addItem(.separator())
     appendColumnAction(to: menu, actionId: "new_browser_pane", columnId: columnId, input: input)
     appendColumnAction(to: menu, actionId: "new_terminal_pane", columnId: columnId, input: input)
