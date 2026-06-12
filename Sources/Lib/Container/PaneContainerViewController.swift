@@ -503,29 +503,61 @@ public final class PaneContainerViewController: NSViewController {
           if !bv.canSuspend { continue }
           if focusedPaneIds.contains(pane.id) { continue }
           if pane.isSuspendExempt { continue }
-          if let host = bv.webView.url?.host,
-            SuspendHostExemptStore.shared.isExempt(host: host)
-          {
-            continue
-          }
           // Media playback keeps a pane alive regardless of focus or
           // memory pressure — suspending mid-video / mid-track is the
           // most jarring reclaim a user can hit. `hasActiveMedia`
           // covers muted-but-playing video; `isPlayingAudio` is a
           // strict subset of it but kept explicit for the reader.
           if bv.hasActiveMedia || bv.isPlayingAudio { continue }
+          // Resolve the host once and share it across the exempt,
+          // loopback, and log paths below.
+          let host = bv.webView.url?.host
+          if let host {
+            if SuspendHostExemptStore.shared.isExempt(host: host) { continue }
+            // Loopback dev servers (localhost:3000, 127.0.0.1, …) are
+            // spared by default: a suspended local app loses its
+            // in-memory session and a reload often can't reproduce the
+            // state, so it's exempt without the user adding every port
+            // to the host list.
+            if Self.isLoopbackHost(host) { continue }
+          }
           if let cutoff, pane.lastActiveAt > cutoff { continue }
           // Suspends are infrequent; logging the trigger and idle age
           // turns an otherwise opaque "why did this pane reload?" into
           // something traceable in the log.
-          let host = bv.webView.url?.host ?? "?"
           let idleSec = Int(Date().timeIntervalSince(pane.lastActiveAt))
           logger.info(
-            "[browser/suspend] reclaiming host=\(host, privacy: .public) trigger=\(String(describing: trigger), privacy: .public) idleSec=\(idleSec, privacy: .public)"
+            "[browser/suspend] reclaiming host=\(host ?? "?", privacy: .public) trigger=\(String(describing: trigger), privacy: .public) idleSec=\(idleSec, privacy: .public)"
           )
           bv.suspend()
         }
       }
+    }
+  }
+
+  /// Loopback hosts the suspend sweep always spares. Loopback only —
+  /// LAN / RFC1918 ranges stay in scope so a router admin page or a
+  /// colleague's dev box on the LAN suspends like any other site.
+  nonisolated static func isLoopbackHost(_ host: String) -> Bool {
+    let lower = host.lowercased()
+    if lower == "localhost" || lower.hasSuffix(".localhost") { return true }
+    if lower == "::1" || lower == "[::1]" { return true }
+    // 127.0.0.0/8, but only for genuine IPv4 literals so a registrable
+    // name like "127.example.com" isn't mistaken for loopback.
+    if lower.hasPrefix("127."), isIPv4Literal(lower) { return true }
+    return false
+  }
+
+  /// Whether `s` is a dotted-decimal IPv4 literal (four 0–255 octets).
+  /// Keeps ``isLoopbackHost`` from treating a hostname that merely
+  /// starts with `127.` as a loopback address.
+  nonisolated static func isIPv4Literal(_ s: String) -> Bool {
+    let octets = s.split(separator: ".", omittingEmptySubsequences: false)
+    guard octets.count == 4 else { return false }
+    return octets.allSatisfy { octet in
+      !octet.isEmpty && octet.count <= 3
+        && octet.allSatisfy { $0.isASCII && $0.isNumber }
+        && (Int(octet).map { (0...255).contains($0) } ?? false)
     }
   }
 
