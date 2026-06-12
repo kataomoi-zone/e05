@@ -1488,7 +1488,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // suspended/live split lives in `reload()` itself rather than
     // here so the four entry points share one decision site.
     view.onReload = { [weak self] in
-      self?.reload()
+      guard let self else { return }
+      // Wake the pane, then land focus on it. The placeholder Reload
+      // is the one wake gesture that originates inside the pane, so
+      // unlike the URL-bar / shortcut / palette paths the user isn't
+      // already focused here. `reload()` restores the web view
+      // synchronously, so firing `onFocusChanged` after it makes the
+      // freshly-restored web view first responder — typing and
+      // scrolling work without a second click.
+      self.reload()
+      self.onFocusChanged?()
     }
     if view.superview == nil {
       view.translatesAutoresizingMaskIntoConstraints = false
