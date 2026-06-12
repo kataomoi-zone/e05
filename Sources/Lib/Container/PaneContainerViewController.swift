@@ -342,7 +342,7 @@ public final class PaneContainerViewController: NSViewController {
   /// region-based isolation friction a `TaskGroup` would introduce.
   ///
   /// Once every pane has a fresh `isPlayingAudio` reading the tick
-  /// runs `suspendSweep(force: false)` so the same walk also
+  /// runs `suspendSweep(trigger: .idle)` so the same walk also
   /// drives the idle suspend sweep. Piggy-backing keeps the runloop
   /// wake-up count at "one timer total" rather than adding a
   /// dedicated suspend timer.
@@ -362,18 +362,21 @@ public final class PaneContainerViewController: NSViewController {
             }
           }
         }
-        self.suspendSweep(force: false)
+        self.suspendSweep(trigger: .idle)
       }
     }
   }
 
   /// Subscribe to the system memory-pressure dispatch source so the
   /// suspend sweep can react to actual heap pressure rather than
-  /// waiting for the next idle-threshold tick. On a
-  /// `.warning` or `.critical` event the same sweep that the 1 Hz
-  /// tick drives runs with the idle-age gate bypassed: every non-
-  /// focused pane that isn't emitting audio gets reclaimed
-  /// immediately. The focused pane stays alive regardless of
+  /// waiting for the next idle-threshold tick. A `.warning` event
+  /// runs the sweep with a short idle floor in place of the configured
+  /// threshold — parked panes are reclaimed, but one the user touched
+  /// in the last few minutes survives, because `.warning` fires
+  /// readily and yanking a mid-use pane is more disruptive than the
+  /// memory it frees. A `.critical` event drops the floor entirely:
+  /// every eligible non-focused pane goes. The focused pane stays
+  /// alive regardless of
   /// pressure level — taking down the page the user is currently
   /// looking at would be more disruptive than the memory cost of
   /// keeping it, and pressure events generally fire *ahead of* an
@@ -409,18 +412,40 @@ public final class PaneContainerViewController: NSViewController {
     if level.contains(.warning) { parts.append("warning") }
     let name = parts.isEmpty ? "normal" : parts.joined(separator: "+")
     logger.warning(
-      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), forcing suspend sweep"
+      "[browser/memory-pressure] system pressure level=\(name, privacy: .public), running suspend sweep"
     )
-    suspendSweep(force: true)
+    suspendSweep(trigger: level.contains(.critical) ? .memoryCritical : .memoryWarning)
   }
 
+  /// What kicked off a sweep, and how aggressively it reclaims:
+  /// - `.idle`: the 1 Hz tick. Honours the configured idle threshold,
+  ///   and is the only trigger the user can switch off.
+  /// - `.memoryWarning`: a system `.warning` pressure event. Ignores
+  ///   the configured threshold but keeps a short idle floor, so a
+  ///   pane the user touched in the last few minutes survives a
+  ///   warning that fires while they are still flipping through panes.
+  /// - `.memoryCritical`: a system `.critical` pressure event. Drops
+  ///   the floor entirely — every eligible non-focused pane goes,
+  ///   because the alternative at that level is the OS killing us.
+  private enum SuspendTrigger {
+    case idle
+    case memoryWarning
+    case memoryCritical
+  }
+
+  /// Idle floor applied under a `.memoryWarning` sweep. Panes active
+  /// within this window survive a warning (a later `.critical`
+  /// reclaims them anyway). Short enough to relieve pressure by
+  /// reclaiming genuinely-parked panes, long enough that the pane you
+  /// glanced at a minute ago is still there.
+  private static let memoryWarningGraceSeconds: TimeInterval = 5 * 60
+
   /// Walk every browser pane and suspend any that isn't currently
-  /// focused, isn't emitting audio, and (unless `force == true`) has
-  /// been idle past the configured threshold. Shared by the 1 Hz idle
-  /// tick (`force: false`) and the memory-pressure handler
-  /// (`force: true`) so both paths apply the same focused / audio /
-  /// canSuspend guard set — the only difference is whether the
-  /// idle-age gate participates.
+  /// focused, isn't playing media, isn't a loopback dev server, and
+  /// has been idle past the cutoff the `trigger` resolves to. Shared
+  /// by the 1 Hz idle tick and the memory-pressure handler so every
+  /// path applies the same focused / media / exempt / loopback guard
+  /// set — the trigger only changes the idle cutoff.
   ///
   /// Runs entirely synchronously with no `await`. The
   /// `memoryPressureSource` handler relies on that — `setEventHandler`
@@ -429,22 +454,35 @@ public final class PaneContainerViewController: NSViewController {
   /// grows an `await` the handler will need a re-entrancy guard
   /// (an `isSweeping` flag, or moving sweeps onto a single serial
   /// async queue).
-  private func suspendSweep(force: Bool) {
-    // Read the preference on every sweep so a Settings tab change
-    // takes effect on the next 1 Hz tick. Non-positive `idleMinutes`
-    // disables the idle sweep — memory-pressure callers still pass
-    // `force: true` and bypass both this early return and the
-    // per-pane `lastActiveAt > cutoff` check below.
+  private func suspendSweep(trigger: SuspendTrigger) {
+    // Read the idle preference once per sweep so a Settings change
+    // lands on the next pass without a restart.
     let idleMinutes =
       PreferencesStore.shared.preferences.suspendIdleMinutes
       ?? Self.defaultSuspendIdleMinutes
-    if !force, idleMinutes <= 0 { return }
-    // Snapshot the cutoff once at sweep start instead of recomputing
-    // per pane. The sweep visits a handful of panes at most, and
-    // anything that slips through because the cutoff was captured a
-    // few ms before the per-pane check will be caught by the next
-    // sweep — latency is bounded by the loop interval anyway.
-    let cutoff = Date().addingTimeInterval(-TimeInterval(idleMinutes * 60))
+    // Resolve the idle cutoff for this trigger. `nil` means "no age
+    // gate" (`.memoryCritical`): every eligible pane is fair game.
+    let cutoff: Date?
+    switch trigger {
+    case .idle:
+      // Non-positive disables the idle sweep entirely; memory-pressure
+      // triggers still run because those come from the OS.
+      if idleMinutes <= 0 { return }
+      cutoff = Date().addingTimeInterval(-TimeInterval(idleMinutes * 60))
+    case .memoryWarning:
+      // Keep a short floor, but never be *less* aggressive than the
+      // idle sweep: if the user set a tight idle threshold (say 1 min)
+      // a warning should honour it too. A disabled idle sweep
+      // (`idleMinutes <= 0`) falls back to the grace floor alone.
+      let idleSeconds = TimeInterval(idleMinutes * 60)
+      let floor =
+        idleMinutes > 0
+        ? min(idleSeconds, Self.memoryWarningGraceSeconds)
+        : Self.memoryWarningGraceSeconds
+      cutoff = Date().addingTimeInterval(-floor)
+    case .memoryCritical:
+      cutoff = nil
+    }
     // Protect the focused pane in *every* workspace, not just the
     // current one: a user reading a long article on a non-current
     // workspace doesn't move focus or change URL, so its
@@ -471,7 +509,15 @@ public final class PaneContainerViewController: NSViewController {
             continue
           }
           if bv.isPlayingAudio { continue }
-          if !force, pane.lastActiveAt > cutoff { continue }
+          if let cutoff, pane.lastActiveAt > cutoff { continue }
+          // Suspends are infrequent; logging the trigger and idle age
+          // turns an otherwise opaque "why did this pane reload?" into
+          // something traceable in the log.
+          let host = bv.webView.url?.host ?? "?"
+          let idleSec = Int(Date().timeIntervalSince(pane.lastActiveAt))
+          logger.info(
+            "[browser/suspend] reclaiming host=\(host, privacy: .public) trigger=\(String(describing: trigger), privacy: .public) idleSec=\(idleSec, privacy: .public)"
+          )
           bv.suspend()
         }
       }
