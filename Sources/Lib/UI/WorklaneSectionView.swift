@@ -1688,15 +1688,23 @@ extension WorklaneSectionView: NSMenuDelegate {
     _ menu: NSMenu, paneNode: WorklanePaneNode, input: ReloadInput
   ) {
     let paneId = paneNode.id
-    appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
-    appendPaletteAction(to: menu, actionId: "cycle_width", paneId: paneId, input: input)
     // A single-pane column has no separate column row in the worklane
-    // (`columnNode == nil` = exposed flat at workspace top level), so
-    // surface its pin toggle here — a lone pane is its column. Multi-
-    // pane columns keep pin on the column row's menu instead.
+    // (`columnNode == nil` = exposed flat at workspace top level), so its
+    // pane row doubles as the column row: surface the column-scoped ops
+    // here, sectioned the same way `buildColumnMenu` does — state
+    // (fold / pin / width) and position (move) in separate groups. A
+    // multi-pane column carries these on its column row instead, so its
+    // pane rows stay pane-scoped.
     if paneNode.columnNode == nil {
+      appendPaletteAction(to: menu, actionId: "toggle_fold", paneId: paneId, input: input)
       appendPaletteAction(to: menu, actionId: "toggle_pin_column", paneId: paneId, input: input)
+      appendPaletteAction(to: menu, actionId: "cycle_width", paneId: paneId, input: input)
+      menu.addItem(.separator())
+      appendPaletteAction(to: menu, actionId: "move_column_left", paneId: paneId, input: input)
+      appendPaletteAction(to: menu, actionId: "move_column_right", paneId: paneId, input: input)
+      menu.addItem(.separator())
     }
+    appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
     if input.workspaces.count > 1 {
       appendMoveToWorkspace(to: menu, paneNode: paneNode, input: input)
     }
@@ -1711,7 +1719,6 @@ extension WorklaneSectionView: NSMenuDelegate {
         to: menu, actionId: "close_other_panes_in_column",
         paneId: paneId, input: input)
     }
-    appendPaletteAction(to: menu, actionId: "undo_close", paneId: paneId, input: input)
   }
 
   /// Append the parent "Move to Workspace ▶" item whose submenu
@@ -1875,6 +1882,7 @@ extension WorklaneSectionView: NSMenuDelegate {
     let columnId = columnNode.id
     appendColumnAction(to: menu, actionId: "toggle_fold", columnId: columnId, input: input)
     appendColumnAction(to: menu, actionId: "toggle_pin_column", columnId: columnId, input: input)
+    appendColumnAction(to: menu, actionId: "cycle_width", columnId: columnId, input: input)
     menu.addItem(.separator())
     appendColumnAction(to: menu, actionId: "new_browser_pane", columnId: columnId, input: input)
     appendColumnAction(to: menu, actionId: "new_terminal_pane", columnId: columnId, input: input)
