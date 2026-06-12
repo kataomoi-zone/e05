@@ -236,6 +236,20 @@ extension PaneContainerViewController {
         }
       ),
       Action(
+        id: "toggle_pin_column",
+        title: "Toggle Pin Column",
+        keyEquivalent: "p",
+        modifierMask: [.option, .control],
+        handler: { [weak self] in
+          guard let self,
+            let column = self.columns[safe: self.focusedColumnIndex]
+          else { return }
+          self.togglePinColumn()
+          // `togglePinColumn` flips `isPinned` synchronously.
+          self.showToast(column.isPinned ? "Pin Column" : "Unpin Column")
+        }
+      ),
+      Action(
         id: "toggle_bookmark",
         title: "Toggle Bookmark",
         menuTitle: "Add to Bookmarks",

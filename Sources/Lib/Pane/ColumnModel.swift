@@ -35,6 +35,24 @@ public final class ColumnModel {
   /// Width before folding — used to restore on unfold.
   public var unfoldedWidth: CGFloat = 0
 
+  /// Whether the column is pinned: lifted out of the horizontal scroll
+  /// flow into a fixed leading overlay so it stays on screen while the
+  /// other columns scroll *under* it (CSS `position: sticky`). At most
+  /// one column per workspace is pinned. A pinned column keeps its
+  /// width fixed (resize / fold are suppressed while pinned); the
+  /// `heightPin` to the stack is swapped for an overlay top/bottom pin
+  /// in `pinColumn`, and `unpinColumn` puts it back in the stack. Not
+  /// yet persisted across session restore.
+  public var isPinned: Bool = false
+  /// Overlay top / bottom / leading constraints active only while
+  /// `isPinned`. Held so `unpinColumn` can deactivate them before the
+  /// column rejoins the scrolling stack.
+  var pinConstraints: [NSLayoutConstraint] = []
+  /// The leading overlay constraint among `pinConstraints`, kept
+  /// separately so its `constant` can track the sidebar's leading
+  /// inset as the sidebar reveals / hides.
+  var pinLeadingConstraint: NSLayoutConstraint?
+
   /// Vertical stack view holding the pane terminal views.
   public let containerView: NSStackView = {
     let stack = NSStackView()

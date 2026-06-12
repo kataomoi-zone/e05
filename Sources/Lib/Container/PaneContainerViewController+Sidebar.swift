@@ -184,7 +184,10 @@ extension PaneContainerViewController {
     guard animated else {
       sidebarLeadingConstraint?.constant = sidebarConst
       for vc in workspaceVCs {
-        vc.scrollView.contentInsets.left = pinnedInset
+        // Compose the sidebar reserve with this workspace's pinned-
+        // column reserve so neither inset write clobbers the other.
+        vc.scrollView.contentInsets.left = pinnedInset + pinnedColumnReserve(in: vc)
+        pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = pinnedOverlayLeading()
         if scrollDelta != 0 {
           var origin = vc.scrollView.contentView.bounds.origin
           origin.x += scrollDelta
@@ -232,7 +235,8 @@ extension PaneContainerViewController {
         // visible to the user as the column strip drifting briefly
         // out from under the sidebar at the head of the tween.
         for vc in self.workspaceVCs {
-          vc.scrollView.contentInsets.left = pinnedInset
+          vc.scrollView.contentInsets.left = pinnedInset + self.pinnedColumnReserve(in: vc)
+          self.pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = self.pinnedOverlayLeading()
           if scrollDelta != 0 {
             var origin = vc.scrollView.contentView.bounds.origin
             origin.x += scrollDelta
@@ -255,13 +259,20 @@ extension PaneContainerViewController {
               // sidebar slide. Used for `.hidden` ↔ `.pinnedOpen`.
               if insetDelta != 0 {
                 var insets = vc.scrollView.contentInsets
-                insets.left = pinnedInset
+                insets.left = pinnedInset + self.pinnedColumnReserve(in: vc)
                 vc.scrollView.animator().contentInsets = insets
               }
               if scrollDelta != 0 {
                 let newX = vc.scrollView.contentView.bounds.origin.x + scrollDelta
                 vc.scrollView.contentView.animator().bounds.origin.x = newX
               }
+              // Keep the pin overlay in lockstep with the columns
+              // regardless of *which* delta moved them. A `.hoverPeek →
+              // .pinnedOpen` toggle shifts the columns via `scrollDelta`
+              // alone (`insetDelta == 0`); gating this on `insetDelta`
+              // left the pin behind, opening a sidebar-wide gap.
+              self.pinnedColumn(in: vc)?.pinLeadingConstraint?.constant =
+                self.pinnedOverlayLeading()
             }
           }
           self.view.layoutSubtreeIfNeeded()

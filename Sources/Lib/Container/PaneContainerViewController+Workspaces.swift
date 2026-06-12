@@ -658,7 +658,11 @@ extension PaneContainerViewController {
     let sourceColumnWasRemoved = column.panes.isEmpty
 
     if column.panes.isEmpty {
-      // Source column empty → remove it (propagate to workspace removal)
+      // Source column empty → remove it (propagate to workspace removal).
+      // If it was pinned, drop its overlay constraints first; the source
+      // VC's leading inset is recomputed at the end of this branch so the
+      // freed pin reserve doesn't linger.
+      releasePinnedOverlay(column)
       column.containerView.removeFromSuperview()
       sourceWs.columns.removeAll { $0 === column }
 
@@ -700,6 +704,11 @@ extension PaneContainerViewController {
         sourceWs.focusedColumnIndex = min(sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
         // Rebuild source VC's stackView to drop the removed column's handle.
         rebuildStackView(in: sourceVC)
+      }
+      // Recompute the source workspace's leading inset so a freed pin
+      // reserve collapses. Skipped when the source VC was destroyed.
+      if !sourceDestroyed {
+        applyLeadingInset(in: sourceVC)
       }
     } else {
       column.focusedPaneIndex = min(sourcePaneIndex, column.panes.count - 1)

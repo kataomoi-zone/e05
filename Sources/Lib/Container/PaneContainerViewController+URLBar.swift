@@ -737,6 +737,9 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex],
       let constraint = column.widthConstraint
     else { return }
+    // A pinned column is held at a fixed width in the leading overlay;
+    // fold and pin are mutually exclusive (pinning unfolds first).
+    guard !column.isPinned else { return }
 
     if column.isFolded {
       // Unfold: restore the previous width. Drop `widthConstraint`

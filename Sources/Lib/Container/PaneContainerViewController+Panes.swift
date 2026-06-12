@@ -1284,6 +1284,10 @@ extension PaneContainerViewController {
       ctx.allowsImplicitAnimation = true
 
       columns.remove(at: columnIndex)
+      // A pinned column lives in the leading overlay with its own
+      // constraints and a reserved inset — drop both before it goes so
+      // the freed width doesn't linger as a phantom leading gap.
+      releasePinnedOverlay(column)
       column.containerView.removeFromSuperview()
 
       if columns.isEmpty {
@@ -1298,6 +1302,7 @@ extension PaneContainerViewController {
       }
 
       rebuildStackView()
+      applyLeadingInset(in: currentWorkspaceVC)
       view.layoutSubtreeIfNeeded()
     }
 

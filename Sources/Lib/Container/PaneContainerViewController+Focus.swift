@@ -349,6 +349,10 @@ extension PaneContainerViewController {
     guard focusedColumnIndex > 0 else { return }
     let moved = columns[focusedColumnIndex]
     let displaced = columns[focusedColumnIndex - 1]
+    // Pinned columns live in the leading overlay, outside the stack's
+    // coordinate space — swapping one (or swapping past one) would feed
+    // `animateLayerSwap` an overlay-relative frame and desync the pin.
+    guard !moved.isPinned, !displaced.isPinned else { return }
     let oldMovedFrame = moved.containerView.frame
     let oldDisplacedFrame = displaced.containerView.frame
 
@@ -374,6 +378,8 @@ extension PaneContainerViewController {
     guard focusedColumnIndex < columns.count - 1 else { return }
     let moved = columns[focusedColumnIndex]
     let displaced = columns[focusedColumnIndex + 1]
+    // See `moveColumnLeft` — pinned columns are excluded from reordering.
+    guard !moved.isPinned, !displaced.isPinned else { return }
     let oldMovedFrame = moved.containerView.frame
     let oldDisplacedFrame = displaced.containerView.frame
 
@@ -456,7 +462,10 @@ extension PaneContainerViewController {
   /// gets its handles refreshed.
   func rebuildStackView(in vc: WorkspaceViewController) {
     let sv = vc.stackView
-    let cols = vc.workspace.columns
+    // Pinned columns live in the leading overlay (see `+Pin.swift`),
+    // not in the scrolling stack, so they get neither an arranged slot
+    // nor a neighbouring resize handle here.
+    let cols = vc.workspace.columns.filter { !$0.isPinned }
     for v in sv.arrangedSubviews.reversed() {
       sv.removeArrangedSubview(v)
       if v is PaneResizeHandle { v.removeFromSuperview() }
@@ -812,6 +821,9 @@ extension PaneContainerViewController {
   @discardableResult
   func scrollToColumn(at index: Int, mode: ColumnScrollMode = .frameIn) -> Bool {
     guard let column = columns[safe: index] else { return false }
+    // A pinned column sits in the fixed leading overlay, always on
+    // screen, so there is nothing to scroll it into view for.
+    guard !column.isPinned else { return false }
 
     view.layoutSubtreeIfNeeded()
     // `.frameIn` (the default) scrolls the minimum to reveal the column
