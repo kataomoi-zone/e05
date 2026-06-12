@@ -501,7 +501,18 @@ public final class PaneContainerViewController: NSViewController {
           // so the call below doesn't have to swallow a `Bool` no
           // caller can act on.
           if !bv.canSuspend { continue }
-          if focusedPaneIds.contains(pane.id) { continue }
+          if focusedPaneIds.contains(pane.id) {
+            // Pin the focused pane's idle clock to "now" on every pass
+            // so the countdown starts when the pane *loses* focus, not
+            // when it was opened or last navigated. Without this a pane
+            // kept focused past the idle threshold would already be
+            // beyond the cutoff the instant focus moves away, and
+            // suspend on the very next tick. Driven off the same
+            // `focusedPaneIds` set used to protect it, so a pane is
+            // heartbeated exactly while it is protected.
+            pane.lastActiveAt = Date()
+            continue
+          }
           if pane.isSuspendExempt { continue }
           // Media playback keeps a pane alive regardless of focus or
           // memory pressure — suspending mid-video / mid-track is the

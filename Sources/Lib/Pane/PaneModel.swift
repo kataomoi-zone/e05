@@ -161,6 +161,10 @@ public final class PaneModel {
   /// the clock — that wire would need a JS bridge and is deferred
   /// until a user actually hits a long-read regression.
   ///
+  /// While a pane holds focus the suspend sweep pins this to "now" on
+  /// every pass, so the idle countdown effectively starts when the
+  /// pane loses focus rather than when it was opened or last navigated.
+  ///
   /// Not persisted across session restore: a relaunched pane gets
   /// its clock reset to the relaunch time, which doubles as a
   /// grace period before the suspend sweep starts reclaiming
