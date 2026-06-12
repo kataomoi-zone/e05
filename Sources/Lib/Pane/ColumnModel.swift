@@ -41,8 +41,8 @@ public final class ColumnModel {
   /// one column per workspace is pinned. A pinned column keeps its
   /// width fixed (resize / fold are suppressed while pinned); the
   /// `heightPin` to the stack is swapped for an overlay top/bottom pin
-  /// in `pinColumn`, and `unpinColumn` puts it back in the stack. Not
-  /// yet persisted across session restore.
+  /// in `pinColumn`, and `unpinColumn` puts it back in the stack.
+  /// Persisted across session restore via `SessionState.ColumnState.isPinned`.
   public var isPinned: Bool = false
   /// Overlay top / bottom / leading constraints active only while
   /// `isPinned`. Held so `unpinColumn` can deactivate them before the

@@ -74,7 +74,8 @@ extension PaneContainerViewController {
   }
 
   /// Lift `column` into the leading overlay. Assumes `column` is the
-  /// focused column of the current workspace (the only pin entry point).
+  /// focused column of the current workspace (the only interactive pin
+  /// entry point).
   func pinColumn(_ column: ColumnModel) {
     let vc = currentWorkspaceVC
     // One pin per workspace: retire any existing pin first.
@@ -86,7 +87,18 @@ extension PaneContainerViewController {
     if column.isFolded, columns[safe: focusedColumnIndex] === column {
       toggleFold()
     }
+    applyPin(column, in: vc)
+    view.layoutSubtreeIfNeeded()
+    updateHandleActiveStates()
+  }
 
+  /// Structural half of pinning, shared by the interactive `pinColumn`
+  /// and session restore: reparent `column` into `vc`'s leading overlay,
+  /// drop it from the scrolling stack, and reserve its width. Takes the
+  /// workspace VC explicitly so restore can pin a column in a workspace
+  /// that isn't current, and runs no layout / scroll pass so the restore
+  /// path can settle everything in one shot later.
+  func applyPin(_ column: ColumnModel, in vc: WorkspaceViewController) {
     column.isPinned = true
     // Swap the stack height pin for an overlay top/bottom/leading pin.
     // The width constraint is self-referential, so it survives the
@@ -114,8 +126,6 @@ extension PaneContainerViewController {
     // stack and reserve its width on the leading edge.
     rebuildStackView(in: vc)
     applyLeadingInset(in: vc)
-    view.layoutSubtreeIfNeeded()
-    updateHandleActiveStates()
   }
 
   /// Return `column` from the leading overlay to the scrolling stack.

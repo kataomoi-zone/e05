@@ -63,6 +63,14 @@ public struct SessionState: Codable {
     /// with the defaults filled in.
     public var isFolded: Bool = false
     public var unfoldedWidth: Double = 0
+    /// Pin flag at save time. A pinned column persists with its real
+    /// `width` (pinning doesn't resize it), so a restore rebuilds the
+    /// column at that width and lifts it back into the leading overlay.
+    /// Required at decode time for the same Codable reason as
+    /// `isFolded` above — adding it bumps the schema, so a session.json
+    /// written before this field is dropped by `SessionState.load`'s
+    /// decode `catch` and the workspace reseeds fresh.
+    public var isPinned: Bool = false
   }
 
   public struct PaneState: Codable {

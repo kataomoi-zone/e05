@@ -117,7 +117,8 @@ extension PaneContainerViewController {
             width: width,
             heightRatios: heightRatios,
             isFolded: column.isFolded,
-            unfoldedWidth: Double(column.unfoldedWidth)
+            unfoldedWidth: Double(column.unfoldedWidth),
+            isPinned: column.isPinned
           ))
         keptColumnOriginalIndexes.append(colIdx)
         persistedIds.insert(column.id)
@@ -334,6 +335,16 @@ extension PaneContainerViewController {
             unfoldedWidth: CGFloat(colState.unfoldedWidth),
             to: column
           )
+        }
+        // Lift a persisted-pinned column into the leading overlay. The
+        // VC isn't in the window hierarchy yet, but reparenting and the
+        // inset write don't need it; `installWorkspaceView` re-applies
+        // the composed inset when it seats the view. Enforce one pin per
+        // workspace here too — a hand-edited / corrupt session with two
+        // pinned columns would otherwise stack both at the same leading
+        // x with only the first's width reserved.
+        if colState.isPinned, pinnedColumn(in: vc) == nil {
+          applyPin(column, in: vc)
         }
       }
 

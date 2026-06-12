@@ -46,7 +46,8 @@ struct SessionStateTests {
                 "width": 500,
                 "heightRatios": [],
                 "isFolded": false,
-                "unfoldedWidth": 0
+                "unfoldedWidth": 0,
+                "isPinned": false
               }
             ],
             "focusedColumnIndex": 0,

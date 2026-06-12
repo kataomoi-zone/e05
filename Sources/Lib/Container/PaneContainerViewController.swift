@@ -734,8 +734,10 @@ public final class PaneContainerViewController: NSViewController {
     // `applyInitialState` rewrites it during `installSidebar`).
     // `createWorkspace` / `restoreSession` addenda honour the
     // current pinned inset so a new workspace doesn't open with the
-    // leftmost column buried under a pinned sidebar.
-    vc.scrollView.contentInsets.left = currentLeadingInset
+    // leftmost column buried under a pinned sidebar. Composed with any
+    // pinned-column reserve so a session-restored pin isn't dropped
+    // when its view is seated.
+    vc.scrollView.contentInsets.left = totalLeadingInset(in: vc)
     // Seed the live scroll origin from the workspace's logical
     // `scrollX` plus the active hover-peek compensation, so the
     // invariant `live bounds.origin.x = ws.scrollX + compensation`
