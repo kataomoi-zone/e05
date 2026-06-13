@@ -163,6 +163,11 @@ final class WorklaneSectionView: NSView {
   fileprivate static let paneDragType = NSPasteboard.PasteboardType(
     "com.kawarimidoll.e05.worklane.pane")
 
+  /// Pasteboard type for a multi-pane column row dragged inside
+  /// the worklane. Payload is the column's ULID string.
+  fileprivate static let columnDragType = NSPasteboard.PasteboardType(
+    "com.kawarimidoll.e05.worklane.column")
+
   private let scrollView = NSScrollView()
   private let outlineView = WorklaneOutlineView()
 
@@ -310,7 +315,7 @@ final class WorklaneSectionView: NSView {
     contextMenu.autoenablesItems = false
     outlineView.menu = contextMenu
     outlineView.registerForDraggedTypes(
-      [Self.workspaceDragType, Self.paneDragType])
+      [Self.workspaceDragType, Self.paneDragType, Self.columnDragType])
     // Internal-only drag: dragging a workspace row out of the app
     // shouldn't synthesise anything for external receivers, and the
     // local-only mask makes the source check in `acceptDrop`
@@ -1001,9 +1006,10 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       pb.setString(pane.id.string, forType: Self.paneDragType)
       return pb
     }
-    // Column wrapper rows aren't draggable yet — pane / workspace
-    // are the two units we support reordering for. Returning nil
-    // cancels the drag for everything else.
+    if let column = item as? WorklaneColumnNode {
+      pb.setString(column.id.string, forType: Self.columnDragType)
+      return pb
+    }
     return nil
   }
 
@@ -1021,6 +1027,11 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     {
       return paneDrag
     }
+    if let columnDrag = validateColumnDrop(
+      info: info, outlineView: outlineView, item: item, index: index)
+    {
+      return columnDrag
+    }
     return []
   }
 
@@ -1033,6 +1044,9 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     }
     if draggedPaneId(from: info) != nil {
       return acceptPaneDrop(info: info, item: item, childIndex: childIndex)
+    }
+    if draggedColumnId(from: info) != nil {
+      return acceptColumnDrop(info: info, item: item, childIndex: childIndex)
     }
     return false
   }
@@ -1356,6 +1370,121 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       if nodesByPaneId[id] != nil { return id }
     }
     return nil
+  }
+
+  // MARK: Column drag
+
+  private func draggedColumnId(from info: NSDraggingInfo) -> ULID? {
+    guard let items = info.draggingPasteboard.pasteboardItems else { return nil }
+    for item in items {
+      guard let raw = item.string(forType: Self.columnDragType) else { continue }
+      guard raw.count == 26 else {
+        logger.warning(
+          "[worklane/drag] reject column ULID payload of length \(raw.count, privacy: .public)")
+        continue
+      }
+      let id = ULID(raw)
+      if nodesByColumnId[id] != nil { return id }
+    }
+    return nil
+  }
+
+  /// Resolve where a column drop should land. Returns the target
+  /// workspace node and the column-slot index, or `nil` for hits
+  /// the worklane can't interpret.
+  private func columnDropAction(
+    item: Any?, childIndex: Int
+  ) -> (ws: WorklaneWorkspaceNode, position: Int)? {
+    guard let item else { return nil }
+    if let ws = item as? WorklaneWorkspaceNode {
+      let position =
+        childIndex == NSOutlineViewDropOnItemIndex ? 0 : childIndex
+      return (ws, position)
+    }
+    if let column = item as? WorklaneColumnNode {
+      guard let ws = column.workspaceNode else { return nil }
+      guard let position = ws.model.columns.firstIndex(where: { $0.id == column.id })
+      else { return nil }
+      return (ws, position)
+    }
+    if let pane = item as? WorklanePaneNode {
+      guard let ws = pane.workspaceNode else { return nil }
+      guard
+        let position = ws.model.columns.firstIndex(where: { column in
+          column.panes.contains(where: { $0.id == pane.id })
+        })
+      else { return nil }
+      return (ws, position)
+    }
+    return nil
+  }
+
+  private func validateColumnDrop(
+    info: NSDraggingInfo, outlineView: NSOutlineView,
+    item: Any?, index: Int
+  ) -> NSDragOperation? {
+    guard let columnId = draggedColumnId(from: info),
+      let sourceNode = nodesByColumnId[columnId],
+      let sourceWsNode = sourceNode.workspaceNode,
+      let (targetWs, position) = columnDropAction(item: item, childIndex: index)
+    else { return nil }
+
+    if sourceWsNode.model.isPrivate != targetWs.model.isPrivate {
+      if !didNotifyPrivateBoundaryInLastDrag,
+        let input = lastInput
+      {
+        didNotifyPrivateBoundaryInLastDrag = true
+        input.onCrossPrivateBoundaryAttempt()
+      }
+      return []
+    }
+
+    if isColumnDropNoOp(
+      columnId: columnId, sourceWs: sourceWsNode, targetWs: targetWs, position: position)
+    {
+      return []
+    }
+
+    outlineView.setDropItem(targetWs, dropChildIndex: position)
+    return .move
+  }
+
+  /// True when a column drop would land the column back on its own slot
+  /// (same workspace, same or immediately-following index) — the no-op
+  /// the drag rejects, mirroring `isNoOpAction` for panes. Shared by
+  /// `validateColumnDrop` and `acceptColumnDrop` so both reject it.
+  private func isColumnDropNoOp(
+    columnId: ULID, sourceWs: WorklaneWorkspaceNode,
+    targetWs: WorklaneWorkspaceNode, position: Int
+  ) -> Bool {
+    guard targetWs.model.id == sourceWs.model.id,
+      let sourceIdx = sourceWs.model.columns.firstIndex(where: { $0.id == columnId })
+    else { return false }
+    return position == sourceIdx || position == sourceIdx + 1
+  }
+
+  private func acceptColumnDrop(
+    info: NSDraggingInfo, item: Any?, childIndex: Int
+  ) -> Bool {
+    guard let input = lastInput,
+      let columnId = draggedColumnId(from: info),
+      let sourceNode = nodesByColumnId[columnId],
+      let sourceWsNode = sourceNode.workspaceNode,
+      let (targetWs, position) = columnDropAction(item: item, childIndex: childIndex),
+      !isColumnDropNoOp(
+        columnId: columnId, sourceWs: sourceWsNode, targetWs: targetWs, position: position)
+    else {
+      logger.warning(
+        """
+        [worklane/drag] column drop guard failed \
+        item=\(String(describing: item), privacy: .public) \
+        childIndex=\(childIndex, privacy: .public)
+        """)
+      return false
+    }
+    input.onMoveColumnToWorkspace(columnId, targetWs.model.id, position)
+    didCommitReorderInLastDrag = true
+    return true
   }
 
   private func draggedWorkspaceId(from info: NSDraggingInfo) -> ULID? {
