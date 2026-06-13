@@ -51,9 +51,9 @@ struct GeneralSettingsView: View {
 
   var body: some View {
     Form {
-      Section("Homepage") {
+      Section("New Browser Pane") {
         Picker("New panes open", selection: $homeOption) {
-          Text("Blank page").tag(HomeOption.blank)
+          Text("Start page").tag(HomeOption.blank)
           Text("Specific URL").tag(HomeOption.custom)
         }
         .pickerStyle(.radioGroup)
