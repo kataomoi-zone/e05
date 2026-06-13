@@ -61,6 +61,44 @@ final class WorklanePaneCellView: NSTableCellView {
   private static let loadingArcStrokeEnd: CGFloat = 0.25
   private static let loadingRingRotationDuration: CFTimeInterval = 0.9
 
+  private let pinIndicator: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Unpin column")
+    b.contentTintColor = .secondaryLabelColor
+    b.toolTip = "Unpin column"
+    b.isHidden = true
+    b.refusesFirstResponder = true
+    return b
+  }()
+  private let foldIndicator: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "arrow.down.right.and.arrow.up.left",
+      accessibilityDescription: "Unfold column")
+    b.contentTintColor = .secondaryLabelColor
+    b.toolTip = "Unfold column"
+    b.isHidden = true
+    b.refusesFirstResponder = true
+    return b
+  }()
+  private let statusIndicatorStack: NSStackView = {
+    let s = NSStackView()
+    s.orientation = .horizontal
+    s.spacing = 3
+    s.translatesAutoresizingMaskIntoConstraints = false
+    return s
+  }()
+
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -99,6 +137,8 @@ final class WorklanePaneCellView: NSTableCellView {
   private weak var node: WorklanePaneNode?
   private var onCloseHandler: (() -> Void)?
   private var onAudioToggleHandler: (() -> Void)?
+  private var onPinToggleHandler: (() -> Void)?
+  private var onFoldToggleHandler: (() -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -122,6 +162,10 @@ final class WorklanePaneCellView: NSTableCellView {
     loadingArcLayer?.removeAllAnimations()
     isLoadingState = false
     focusDot.isHidden = true
+    pinIndicator.isHidden = true
+    foldIndicator.isHidden = true
+    onPinToggleHandler = nil
+    onFoldToggleHandler = nil
   }
 
   private func setupLayout() {
@@ -146,6 +190,20 @@ final class WorklanePaneCellView: NSTableCellView {
     closeButton.target = self
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
+
+    pinIndicator.target = self
+    pinIndicator.action = #selector(pinTapped(_:))
+    statusIndicatorStack.addArrangedSubview(pinIndicator)
+    pinIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
+    pinIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+    foldIndicator.target = self
+    foldIndicator.action = #selector(foldTapped(_:))
+    statusIndicatorStack.addArrangedSubview(foldIndicator)
+    foldIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
+    foldIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+    addSubview(statusIndicatorStack)
 
     audioIndicator.target = self
     audioIndicator.action = #selector(audioTapped(_:))
@@ -186,8 +244,12 @@ final class WorklanePaneCellView: NSTableCellView {
       audioIndicator.heightAnchor.constraint(equalToConstant: Self.audioIndicatorSize),
 
       titleLabel.trailingAnchor.constraint(
-        lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
+        lessThanOrEqualTo: statusIndicatorStack.leadingAnchor, constant: -4),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      statusIndicatorStack.trailingAnchor.constraint(
+        equalTo: closeButton.leadingAnchor, constant: -4),
+      statusIndicatorStack.centerYAnchor.constraint(equalTo: centerYAnchor),
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -241,6 +303,30 @@ final class WorklanePaneCellView: NSTableCellView {
       hasActiveMedia: audio.hasActiveMedia)
     applySuspendedState(input.paneIsSuspended(pane))
     applyLoadingState(input.paneIsLoading(pane), accent: accent)
+
+    // Single-pane column (no separate column row) surfaces its column's
+    // fold / pin state here; a pane inside a multi-pane column does not
+    // (the column row carries it).
+    // A `columnNode == nil` pane is the lone pane of a single-pane column,
+    // so match on exactly that rather than any column that contains it.
+    let ownColumn: ColumnModel? =
+      node.columnNode == nil
+      ? ws?.model.columns.first(where: { $0.panes.count == 1 && $0.panes.first === pane })
+      : nil
+    pinIndicator.isHidden = !(ownColumn?.isPinned ?? false)
+    foldIndicator.isHidden = !(ownColumn?.isFolded ?? false)
+
+    if let colId = ownColumn?.id {
+      onPinToggleHandler = {
+        [onAction = input.onColumnAction] in onAction("toggle_pin_column", colId)
+      }
+      onFoldToggleHandler = {
+        [onAction = input.onColumnAction] in onAction("toggle_fold", colId)
+      }
+    } else {
+      onPinToggleHandler = nil
+      onFoldToggleHandler = nil
+    }
 
     let paneId = pane.id
     onCloseHandler = {
@@ -449,6 +535,9 @@ final class WorklanePaneCellView: NSTableCellView {
   @objc private func audioTapped(_: NSButton) {
     onAudioToggleHandler?()
   }
+
+  @objc private func pinTapped(_: NSButton) { onPinToggleHandler?() }
+  @objc private func foldTapped(_: NSButton) { onFoldToggleHandler?() }
 
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)

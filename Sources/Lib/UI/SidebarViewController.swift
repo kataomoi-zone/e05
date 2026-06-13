@@ -439,6 +439,11 @@ final class SidebarViewController: NSViewController {
       paneId: paneId, isSuspended: isSuspended)
   }
 
+  /// Per-column fold / pin indicator repaint without a full reload.
+  func refreshWorklaneColumnIndicators(columnId: ULID, singlePaneId: ULID?) {
+    overlay.worklane.refreshColumnIndicators(columnId: columnId, singlePaneId: singlePaneId)
+  }
+
   /// Per-pane loading-state flip — drives the spinner ring around the
   /// favicon. Resolves the workspace accent through the container so
   /// the ring picks up the same colour as the focus dot.

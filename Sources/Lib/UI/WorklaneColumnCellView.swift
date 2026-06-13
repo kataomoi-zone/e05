@@ -20,6 +20,44 @@ final class WorklaneColumnCellView: NSTableCellView {
 
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
+  private let pinIndicator: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Unpin column")
+    b.contentTintColor = .secondaryLabelColor
+    b.toolTip = "Unpin column"
+    b.isHidden = true
+    b.refusesFirstResponder = true
+    return b
+  }()
+  private let foldIndicator: HoverIconButton = {
+    let b = HoverIconButton()
+    b.translatesAutoresizingMaskIntoConstraints = false
+    b.isBordered = false
+    b.bezelStyle = .regularSquare
+    b.imagePosition = .imageOnly
+    b.imageScaling = .scaleProportionallyDown
+    b.image = NSImage(
+      systemSymbolName: "arrow.down.right.and.arrow.up.left",
+      accessibilityDescription: "Unfold column")
+    b.contentTintColor = .secondaryLabelColor
+    b.toolTip = "Unfold column"
+    b.isHidden = true
+    b.refusesFirstResponder = true
+    return b
+  }()
+  private let statusIndicatorStack: NSStackView = {
+    let s = NSStackView()
+    s.orientation = .horizontal
+    s.spacing = 3
+    s.translatesAutoresizingMaskIntoConstraints = false
+    return s
+  }()
+
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -40,6 +78,8 @@ final class WorklaneColumnCellView: NSTableCellView {
 
   private weak var node: WorklaneColumnNode?
   private var onCloseHandler: (() -> Void)?
+  private var onPinToggleHandler: (() -> Void)?
+  private var onFoldToggleHandler: (() -> Void)?
 
   init(identifier: NSUserInterfaceItemIdentifier) {
     super.init(frame: .zero)
@@ -53,6 +93,10 @@ final class WorklaneColumnCellView: NSTableCellView {
   override func prepareForReuse() {
     super.prepareForReuse()
     setHovered(false)
+    pinIndicator.isHidden = true
+    foldIndicator.isHidden = true
+    onPinToggleHandler = nil
+    onFoldToggleHandler = nil
   }
 
   private func setupLayout() {
@@ -81,6 +125,20 @@ final class WorklaneColumnCellView: NSTableCellView {
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
 
+    pinIndicator.target = self
+    pinIndicator.action = #selector(pinTapped(_:))
+    statusIndicatorStack.addArrangedSubview(pinIndicator)
+    pinIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
+    pinIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+    foldIndicator.target = self
+    foldIndicator.action = #selector(foldTapped(_:))
+    statusIndicatorStack.addArrangedSubview(foldIndicator)
+    foldIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
+    foldIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
+
+    addSubview(statusIndicatorStack)
+
     NSLayoutConstraint.activate([
       iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -90,8 +148,12 @@ final class WorklaneColumnCellView: NSTableCellView {
       titleLabel.leadingAnchor.constraint(
         equalTo: iconView.trailingAnchor, constant: 6),
       titleLabel.trailingAnchor.constraint(
-        lessThanOrEqualTo: closeButton.leadingAnchor, constant: -4),
+        lessThanOrEqualTo: statusIndicatorStack.leadingAnchor, constant: -4),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      statusIndicatorStack.trailingAnchor.constraint(
+        equalTo: closeButton.leadingAnchor, constant: -4),
+      statusIndicatorStack.centerYAnchor.constraint(equalTo: centerYAnchor),
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -111,6 +173,14 @@ final class WorklaneColumnCellView: NSTableCellView {
     onCloseHandler = {
       [onClose = input.onColumnClose] in onClose(columnId)
     }
+    onPinToggleHandler = {
+      [onAction = input.onColumnAction] in onAction("toggle_pin_column", columnId)
+    }
+    onFoldToggleHandler = {
+      [onAction = input.onColumnAction] in onAction("toggle_fold", columnId)
+    }
+    pinIndicator.isHidden = !node.model.isPinned
+    foldIndicator.isHidden = !node.model.isFolded
   }
 
   override func updateTrackingAreas() {
@@ -146,6 +216,9 @@ final class WorklaneColumnCellView: NSTableCellView {
   @objc private func closeTapped(_: NSButton) {
     onCloseHandler?()
   }
+
+  @objc private func pinTapped(_: NSButton) { onPinToggleHandler?() }
+  @objc private func foldTapped(_: NSButton) { onFoldToggleHandler?() }
 
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .pointingHand)

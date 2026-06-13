@@ -68,11 +68,25 @@ extension PaneContainerViewController {
   /// Toggle the focused column's pinned state.
   public func togglePinColumn() {
     guard let column = columns[safe: focusedColumnIndex] else { return }
+    // Capture an existing pin before `pinColumn` retires it, so its row
+    // also repaints — otherwise the old pin's icon lingers until a reload.
+    let previousPin = column.isPinned ? nil : pinnedColumn(in: currentWorkspaceVC)
     if column.isPinned {
       unpinColumn(column)
     } else {
       pinColumn(column)
     }
+    refreshWorklaneColumnRow(column)
+    if let prev = previousPin, prev !== column {
+      refreshWorklaneColumnRow(prev)
+    }
+  }
+
+  /// Repaint the worklane row(s) for `column` so its fold / pin indicators
+  /// update without a structural reload.
+  private func refreshWorklaneColumnRow(_ column: ColumnModel) {
+    sidebarVC?.refreshWorklaneColumnIndicators(
+      columnId: column.id, singlePaneId: column.panes.first?.id)
   }
 
   /// Lift `column` into the leading overlay. Assumes `column` is the

@@ -713,6 +713,18 @@ final class WorklaneSectionView: NSView {
     visibleCell(forPaneId: paneId)?.applyLoadingState(isLoading, accent: accent)
   }
 
+  /// Re-render the worklane row(s) representing `columnId` so fold / pin
+  /// indicators repaint without a structural reload. Reloads the column
+  /// node for a multi-pane column, or the lone pane node for a single-
+  /// pane column (`singlePaneId`).
+  func refreshColumnIndicators(columnId: ULID, singlePaneId: ULID?) {
+    if let node = nodesByColumnId[columnId] {
+      outlineView.reloadItem(node)
+    } else if let paneId = singlePaneId, let node = nodesByPaneId[paneId] {
+      outlineView.reloadItem(node)
+    }
+  }
+
   private func visibleCell(forPaneId paneId: ULID) -> WorklanePaneCellView? {
     guard let node = nodesByPaneId[paneId] else {
       // The node tree should always know about every live pane id. A

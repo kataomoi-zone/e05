@@ -835,6 +835,8 @@ extension PaneContainerViewController {
     if column.isPinned {
       applyLeadingInset(in: currentWorkspaceVC)
     }
+    sidebarVC?.refreshWorklaneColumnIndicators(
+      columnId: column.id, singlePaneId: column.panes.first?.id)
   }
 
   /// Restore a column to a folded state from a persisted session.
