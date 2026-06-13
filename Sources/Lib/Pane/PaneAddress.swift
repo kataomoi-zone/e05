@@ -101,15 +101,19 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   /// etc.). Resolves through `PreferencesStore.shared.preferences.homeURL`
   /// at call time so toggling the setting in the Settings window takes
   /// effect on the next new pane without a relaunch. Falls back to
-  /// ``blankBrowser`` when the preference is unset or fails to parse.
+  /// ``blankBrowser`` when the preference is unset or fails to parse —
+  /// the start page is its own pane kind (``start``), reached by the
+  /// New Start Pane action rather than seeded here.
   @MainActor
   public static var newPaneHome: PaneAddress {
-    let home = PreferencesStore.shared.preferences.homeURL ?? ""
-    let trimmed = home.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty, let url = URL(string: trimmed) {
-      return PaneAddress(url)
-    }
-    return .start
+    let home = (PreferencesStore.shared.preferences.homeURL ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !home.isEmpty else { return .blankBrowser }
+    // Route through `fromUserInput` so a scheme-less host gets `https://`
+    // (matching the URL bar and Brave's homepage field) rather than
+    // loading verbatim as a broken relative URL. A value that isn't a
+    // URL at all falls back to a blank browser.
+    return fromUserInput(home) ?? .blankBrowser
   }
 
   // MARK: - Finder

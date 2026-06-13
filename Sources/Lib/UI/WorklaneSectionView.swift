@@ -413,10 +413,14 @@ final class WorklaneSectionView: NSView {
     /// indicator), so the toast is the only feedback the user
     /// gets about why their drop won't land.
     let onCrossPrivateBoundaryAttempt: () -> Void
-    /// Add a blank-browser column to the given workspace. The
+    /// Add a start-page column to the given workspace. Bound to the
+    /// `+` button — the primary new-pane gesture, matching ⌘T. The
     /// container resolves the "switch first if non-current" branch
     /// internally so callers can stay workspace-agnostic.
-    let onAddPaneToWorkspace: (ULID) -> Void
+    let onAddStartPaneToWorkspace: (ULID) -> Void
+    /// Add a browser column (blank / configured home URL) to the given
+    /// workspace. Surfaced from the workspace row's chevron split-menu.
+    let onAddBrowserPaneToWorkspace: (ULID) -> Void
     /// Add a terminal column to the given workspace. Surfaced from
     /// the workspace row's chevron split-menu next to the plus.
     let onAddTerminalPaneToWorkspace: (ULID) -> Void
@@ -2177,6 +2181,9 @@ extension WorklaneSectionView: NSMenuDelegate {
       to: menu, sentinel: "_ws_rename",
       title: "Rename Workspace", workspaceId: workspaceId)
     menu.addItem(.separator())
+    appendWorkspaceItem(
+      to: menu, sentinel: "_ws_new_start_pane",
+      title: "New Start Pane", workspaceId: workspaceId)
     appendWorkspaceItem(
       to: menu, sentinel: "_ws_new_browser_pane",
       title: "New Browser Pane", workspaceId: workspaceId)

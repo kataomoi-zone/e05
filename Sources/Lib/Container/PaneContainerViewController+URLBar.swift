@@ -511,26 +511,8 @@ extension PaneContainerViewController {
 
     if pane.address.requiresContentSwitch(to: newAddress) {
       // Cross-type: build a fresh PaneModel for the new kind and
-      // splice it into the column at the same index. The position,
-      // surrounding panes, and column geometry stay put; only the
-      // pane's content view changes.
-      guard
-        let colIdx = columns.firstIndex(where: { $0.panes.contains(where: { $0.id == pane.id }) })
-      else { return }
-      let column = columns[colIdx]
-      guard let paneIdx = column.panes.firstIndex(where: { $0.id == pane.id }) else { return }
-
-      let newPane = makePane(address: newAddress)
-      // The new pane joins the window's global toggle; any peek
-      // reveal that was active on the outgoing pane belongs to the
-      // dismissed bar's lifecycle and shouldn't carry over.
-      newPane.setURLBarVisible(urlBarVisible)
-      setupPaneCallbacks(pane: newPane, column: column)
-
-      column.panes[paneIdx] = newPane
-      rebuildColumnView(column: column)
-      view.layoutSubtreeIfNeeded()
-      setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+      // splice it into the column at the same index.
+      replacePane(pane, with: makePane(address: newAddress))
     } else {
       // Same type: navigate in place
       // Browser → browser: load new URL. Terminal → terminal: no-op

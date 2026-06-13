@@ -44,6 +44,14 @@ extension PaneContainerViewController {
     // follow `topConstraint` slide animation.
     let incomingPaneId = column.panes[paneIndex].id
 
+    // Stamp the incoming pane active. `setFocus` is the single focus
+    // funnel (the AppKit path routes through `handleFocusChange` →
+    // `focusPane` → here), so this keeps `lastActiveAt` a true
+    // last-focused timestamp rather than relying on the periodic
+    // suspend-sweep bump — read by the idle-suspend clock and the
+    // "inherit from latest finder" new-pane default.
+    column.panes[paneIndex].lastActiveAt = .init()
+
     // Collapse any ⌘L peek on the outgoing pane — the URL bar
     // belongs to the user's current focus, so it shouldn't linger
     // on a pane the user has just navigated away from. Pinned panes

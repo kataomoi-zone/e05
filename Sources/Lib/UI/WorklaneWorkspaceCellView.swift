@@ -40,16 +40,15 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.imagePosition = .imageOnly
     b.imageScaling = .scaleProportionallyDown
     b.image = NSImage(
-      systemSymbolName: "plus", accessibilityDescription: "New browser pane in this workspace")
-    b.toolTip = "New browser pane in this workspace"
+      systemSymbolName: "plus", accessibilityDescription: "New start pane in this workspace")
+    b.toolTip = "New start pane in this workspace"
     b.setRevealed(false)
     return b
   }()
-  /// Split-style chevron next to `+`. Click opens a menu of the
-  /// non-browser pane kinds (terminal, finder) so the common
-  /// browser case stays a one-click affordance while the longer
-  /// tail moves behind a hover-revealed dropdown rather than
-  /// crowding the workspace row.
+  /// Split-style chevron next to `+`. Click opens a menu of the other
+  /// pane kinds (browser, terminal, finder) so the common start-page
+  /// case stays a one-click affordance while the longer tail moves
+  /// behind a hover-revealed dropdown rather than crowding the row.
   private let addMoreButton: HoverIconButton = {
     let b = HoverIconButton()
     b.translatesAutoresizingMaskIntoConstraints = false
@@ -59,8 +58,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     b.imageScaling = .scaleProportionallyDown
     b.image = NSImage(
       systemSymbolName: "chevron.down",
-      accessibilityDescription: "New terminal or finder pane in this workspace")
-    b.toolTip = "New terminal or finder pane in this workspace"
+      accessibilityDescription: "New browser, terminal, or finder pane in this workspace")
+    b.toolTip = "New browser, terminal, or finder pane in this workspace"
     b.setRevealed(false)
     return b
   }()
@@ -70,7 +69,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
   private weak var node: WorklaneWorkspaceNode?
   private var onCloseHandler: (() -> Void)?
-  private var onAddHandler: (() -> Void)?
+  private var onAddStartHandler: (() -> Void)?
+  private var onAddBrowserHandler: (() -> Void)?
   private var onAddTerminalHandler: (() -> Void)?
   private var onAddFinderHandler: (() -> Void)?
   /// Commit sink for an inline rename, captured in `configure` so it
@@ -183,8 +183,11 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     onCloseHandler = {
       [onClose = input.onWorkspaceClose] in onClose(workspaceIndex)
     }
-    onAddHandler = {
-      [onAdd = input.onAddPaneToWorkspace] in onAdd(workspaceId)
+    onAddStartHandler = {
+      [onAdd = input.onAddStartPaneToWorkspace] in onAdd(workspaceId)
+    }
+    onAddBrowserHandler = {
+      [onAdd = input.onAddBrowserPaneToWorkspace] in onAdd(workspaceId)
     }
     onAddTerminalHandler = {
       [onAdd = input.onAddTerminalPaneToWorkspace] in onAdd(workspaceId)
@@ -286,11 +289,17 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   }
 
   @objc private func addTapped(_: NSButton) {
-    onAddHandler?()
+    onAddStartHandler?()
   }
 
   @objc private func addMoreTapped(_ sender: NSButton) {
     let menu = NSMenu()
+    let browser = NSMenuItem(
+      title: "New Browser Pane",
+      action: #selector(addBrowserSelected),
+      keyEquivalent: "")
+    browser.target = self
+    menu.addItem(browser)
     let terminal = NSMenuItem(
       title: "New Terminal Pane",
       action: #selector(addTerminalSelected),
@@ -310,6 +319,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     menu.popUp(positioning: nil, at: origin, in: sender)
   }
 
+  @objc private func addBrowserSelected() { onAddBrowserHandler?() }
   @objc private func addTerminalSelected() { onAddTerminalHandler?() }
   @objc private func addFinderSelected() { onAddFinderHandler?() }
 

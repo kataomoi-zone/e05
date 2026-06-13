@@ -382,17 +382,24 @@ final class SidebarViewController: NSViewController {
         onCrossPrivateBoundaryAttempt: { [weak container] in
           container?.showCrossPrivateBoundaryToast()
         },
-        onAddPaneToWorkspace: { [weak container] wsId in
+        onAddStartPaneToWorkspace: { [weak container] wsId in
+          container?.addColumnAndToast(
+            .start, toWorkspaceId: wsId, toastLabel: "New Start Pane")
+        },
+        onAddBrowserPaneToWorkspace: { [weak container] wsId in
           container?.addColumnAndToast(
             .newPaneHome, toWorkspaceId: wsId, toastLabel: "New Browser Pane")
         },
         onAddTerminalPaneToWorkspace: { [weak container] wsId in
-          container?.addColumnAndToast(
-            .terminal, toWorkspaceId: wsId, toastLabel: "New Terminal Pane")
+          guard let container else { return }
+          container.addColumnAndToast(
+            .terminal, toWorkspaceId: wsId, toastLabel: "New Terminal Pane",
+            dependencies: container.newTerminalPaneDependencies)
         },
         onAddFinderPaneToWorkspace: { [weak container] wsId in
-          container?.addColumnAndToast(
-            PaneAddress.finder(path: ""), toWorkspaceId: wsId,
+          guard let container else { return }
+          container.addColumnAndToast(
+            container.newFinderPaneAddress(), toWorkspaceId: wsId,
             toastLabel: "New Finder Pane")
         },
         onCreateWorkspace: { [weak container] in

@@ -139,6 +139,22 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// `true` restricts the list to the current workspace.
   public var paletteFocusCurrentWorkspaceOnly: Bool?
 
+  /// Pane kind opened by `Split Vertical`. Resolved through
+  /// ``SplitPaneKindPreset`` (default ``SplitPaneKindPreset/duplicate``).
+  /// `nil` / an unknown name resolves to a duplicate of the focused pane.
+  public var splitPaneKind: String?
+
+  /// Launch directory for a freshly opened terminal pane (one that
+  /// does not restore a saved cwd). `nil` / empty leaves
+  /// `working_directory` unset so libghostty inherits from the focused
+  /// surface; a non-empty path (`~` expanded at use) becomes the cwd.
+  public var newTerminalDirectory: String?
+
+  /// Root directory for a freshly opened finder pane. `nil` / empty
+  /// roots at the home directory (the historical default); a non-empty
+  /// path (`~` expanded at use) roots there instead.
+  public var newFinderDirectory: String?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -159,7 +175,10 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     initialPaneKind: String? = nil,
     wrapPaneFocus: Bool? = nil,
     wrapWorkspaceSwitch: Bool? = nil,
-    paletteFocusCurrentWorkspaceOnly: Bool? = nil
+    paletteFocusCurrentWorkspaceOnly: Bool? = nil,
+    splitPaneKind: String? = nil,
+    newTerminalDirectory: String? = nil,
+    newFinderDirectory: String? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -181,6 +200,9 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.wrapPaneFocus = wrapPaneFocus
     self.wrapWorkspaceSwitch = wrapWorkspaceSwitch
     self.paletteFocusCurrentWorkspaceOnly = paletteFocusCurrentWorkspaceOnly
+    self.splitPaneKind = splitPaneKind
+    self.newTerminalDirectory = newTerminalDirectory
+    self.newFinderDirectory = newFinderDirectory
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

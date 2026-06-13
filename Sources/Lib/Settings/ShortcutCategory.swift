@@ -63,8 +63,9 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
     (
       .panes,
       [
-        "new_terminal_pane",
+        "new_start_pane",
         "new_browser_pane",
+        "new_terminal_pane",
         "new_finder_pane",
         "split_vertical",
         "undo_close",

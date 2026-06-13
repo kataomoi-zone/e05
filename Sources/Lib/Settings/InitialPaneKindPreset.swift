@@ -4,8 +4,8 @@ import Foundation
 /// through ``E05Preferences/initialPaneKind``.
 ///
 /// - ``terminal`` — a terminal pane (the historical default).
-/// - ``browser`` — the home-URL page when set, otherwise the
-///   ``e05://start`` launcher, via ``PaneAddress/newPaneHome``.
+/// - ``browser`` — the home-URL page when set, otherwise a blank
+///   browser, via ``PaneAddress/newPaneHome``.
 /// - ``finder`` — a native file-browser pane rooted at the home
 ///   directory.
 ///
@@ -39,8 +39,10 @@ public enum InitialPaneKindPreset: String, CaseIterable, Identifiable, Sendable 
 
   /// Address used to seed the workspace's first pane. ``browser``
   /// resolves the home-URL preference at call time (so toggling the
-  /// setting takes effect on the next new workspace); ``finder``
-  /// roots at the home directory by leaving the path empty.
+  /// setting takes effect on the next new workspace). ``finder`` roots
+  /// at the home directory by leaving the path empty; the workspace
+  /// seed path overrides this with the configured new-finder default
+  /// (see `configuredInitialPaneAddress`).
   @MainActor
   public var address: PaneAddress {
     switch self {

@@ -260,7 +260,10 @@ extension PaneContainerViewController {
   /// (default terminal). Resolved at call time so toggling the
   /// preference takes effect on the next new workspace.
   private var configuredInitialPaneAddress: PaneAddress {
-    InitialPaneKindPreset.resolve(PreferencesStore.shared.preferences.initialPaneKind).address
+    let preset = InitialPaneKindPreset.resolve(PreferencesStore.shared.preferences.initialPaneKind)
+    // Finder honors the new-finder default (specific folder / inherit
+    // latest); the other kinds carry their target in the address.
+    return preset == .finder ? newFinderPaneAddress() : preset.address
   }
 
   /// Create a new workspace with an auto-assigned accent color and an
@@ -346,7 +349,12 @@ extension PaneContainerViewController {
     // Advance focus so `addColumn` / `rebuildStackView` target the new
     // workspace's stackView via the computed accessors.
     focusedWorkspaceIndex = insertIndex
-    addColumn(address: initialAddress ?? configuredInitialPaneAddress)
+    let seedAddress = initialAddress ?? configuredInitialPaneAddress
+    // A seeded terminal honors the new-terminal cwd preference; other
+    // kinds carry it in the address (browser home URL / finder root).
+    let seedDeps =
+      seedAddress.kind == .terminal ? newTerminalPaneDependencies : PaneDependencies()
+    addColumn(address: seedAddress, dependencies: seedDeps)
     showToast(isPrivate ? "New Private Workspace" : "New Workspace")
 
     // Direction: matches `switchWorkspace`'s spatial convention so

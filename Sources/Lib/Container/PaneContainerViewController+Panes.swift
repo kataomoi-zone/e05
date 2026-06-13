@@ -63,17 +63,20 @@ extension PaneContainerViewController {
   /// sees the new pane immediately after the slide. Mirrors the
   /// completion-driven pattern used by `performCrossWorkspaceMove`
   /// to avoid racing the focus / scroll animations.
-  public func addColumn(_ address: PaneAddress, toWorkspaceId wsId: ULID) {
+  public func addColumn(
+    _ address: PaneAddress, toWorkspaceId wsId: ULID,
+    dependencies: PaneDependencies = .init()
+  ) {
     guard let wsIdx = workspaces.firstIndex(where: { $0.id == wsId }) else {
       logger.debug("addColumn(toWorkspaceId:) guard failed: workspace not found")
       return
     }
     if wsIdx == focusedWorkspaceIndex {
-      addColumn(address: address)
+      addColumn(address: address, dependencies: dependencies)
       return
     }
     switchWorkspace(to: wsIdx) { [weak self] in
-      self?.addColumn(address: address)
+      self?.addColumn(address: address, dependencies: dependencies)
     }
   }
 
@@ -89,7 +92,8 @@ extension PaneContainerViewController {
   /// outcome and consolidates the (address, toast label) tuple in
   /// one place.
   public func addColumnAndToast(
-    _ address: PaneAddress, toWorkspaceId wsId: ULID, toastLabel: String
+    _ address: PaneAddress, toWorkspaceId wsId: ULID, toastLabel: String,
+    dependencies: PaneDependencies = .init()
   ) {
     guard workspaces.contains(where: { $0.id == wsId }) else {
       logger.debug(
@@ -97,7 +101,7 @@ extension PaneContainerViewController {
       )
       return
     }
-    addColumn(address, toWorkspaceId: wsId)
+    addColumn(address, toWorkspaceId: wsId, dependencies: dependencies)
     showToast(toastLabel)
   }
 
@@ -615,18 +619,22 @@ extension PaneContainerViewController {
       let initialTitle = fv.currentURL.lastPathComponent
       handleTitleChange(pane: pane, title: initialTitle.isEmpty ? "Finder" : initialTitle)
     } else if let sv = pane.startView {
-      // Start page: route the quick-action buttons through the same
-      // content-switch path the URL bar uses, so a click replaces this
-      // pane in place with a terminal / finder (typing a URL switches it
-      // to a browser). Nav / reload buttons stay disabled like other
-      // non-browser panes.
+      // Start page: the quick-action buttons replace this pane in place
+      // with a terminal / finder (typing a URL switches it to a
+      // browser). Go through `replacePane` directly rather than the
+      // URL-bar string path so the new pane honors the configured
+      // new-pane defaults — the terminal cwd and the finder root /
+      // inherit, neither of which a bare `e05://` address can carry.
+      // Nav / reload buttons stay disabled like other non-browser panes.
       sv.onOpenTerminal = { [weak self, weak pane] in
         guard let self, let pane else { return }
-        self.handleURLBarNavigate(pane: pane, input: PaneAddress.terminal.url.absoluteString)
+        self.replacePane(
+          pane,
+          with: self.makePane(address: .terminal, dependencies: self.newTerminalPaneDependencies))
       }
       sv.onOpenFinder = { [weak self, weak pane] in
         guard let self, let pane else { return }
-        self.handleURLBarNavigate(pane: pane, input: "\(PaneAddress.internalScheme)://finder")
+        self.replacePane(pane, with: self.makePane(address: self.newFinderPaneAddress()))
       }
       pane.urlBar.setNavigationEnabled(back: false, forward: false)
       pane.urlBar.setReloadEnabled(false)
@@ -875,7 +883,7 @@ extension PaneContainerViewController {
   public func splitVertical() {
     guard let column = columns[safe: focusedColumnIndex] else { return }
 
-    let newPane = makePane(address: .terminal)
+    let newPane = makeSplitPane(from: column.focusedPane)
     setupPaneCallbacks(pane: newPane, column: column)
 
     let insertPaneIndex = column.focusedPaneIndex + 1
@@ -904,6 +912,133 @@ extension PaneContainerViewController {
 
     setFocus(columnIndex: focusedColumnIndex, paneIndex: insertPaneIndex)
     showToast("Split Vertical")
+  }
+
+  /// Replace the column slot held by `pane` with `newPane`, preserving
+  /// its position and the column geometry — only the pane's content
+  /// view changes. Used by the URL-bar content switch and the start
+  /// page's terminal / finder quick actions (which need to inject the
+  /// new-pane defaults a plain address can't carry).
+  func replacePane(_ pane: PaneModel, with newPane: PaneModel) {
+    guard
+      let colIdx = columns.firstIndex(where: { $0.panes.contains { $0.id == pane.id } }),
+      let paneIdx = columns[colIdx].panes.firstIndex(where: { $0.id == pane.id })
+    else { return }
+    let column = columns[colIdx]
+    // The new pane joins the window's global toggle; any peek reveal
+    // active on the outgoing pane belongs to the dismissed bar's
+    // lifecycle and shouldn't carry over.
+    newPane.setURLBarVisible(urlBarVisible)
+    setupPaneCallbacks(pane: newPane, column: column)
+    column.panes[paneIdx] = newPane
+    rebuildColumnView(column: column)
+    view.layoutSubtreeIfNeeded()
+    setFocus(columnIndex: colIdx, paneIndex: paneIdx)
+  }
+
+  /// Build the pane `Split Vertical` inserts, honoring the configured
+  /// ``SplitPaneKindPreset``. `Duplicate` clones the focused pane; the
+  /// other kinds open a fresh terminal / browser / finder. A missing or
+  /// unsupported duplicate source falls back to a fresh terminal.
+  private func makeSplitPane(from source: PaneModel?) -> PaneModel {
+    switch SplitPaneKindPreset.resolve(PreferencesStore.shared.preferences.splitPaneKind) {
+    case .terminal:
+      return makePane(address: .terminal, dependencies: newTerminalPaneDependencies)
+    case .browser:
+      return makePane(address: .newPaneHome)
+    case .finder:
+      return makePane(address: newFinderPaneAddress())
+    case .duplicate:
+      return makeDuplicatePane(of: source)
+        ?? makePane(address: .terminal, dependencies: newTerminalPaneDependencies)
+    }
+  }
+
+  /// Build a copy of `source`: same URL + back/forward/scroll state for
+  /// a browser, same cwd for a terminal, same path for a finder.
+  /// Returns nil for a missing / unsupported source so the caller can
+  /// fall back.
+  private func makeDuplicatePane(of source: PaneModel?) -> PaneModel? {
+    guard let source else { return nil }
+    if let bv = source.browserView, let url = bv.currentURLForDuplication {
+      var deps = PaneDependencies()
+      deps.initialInteractionState = bv.interactionStateForDuplication
+      deps.initialTitle = source.title
+      return makePane(address: PaneAddress(url), dependencies: deps)
+    }
+    if let tv = source.terminalView {
+      var deps = PaneDependencies()
+      // The focused terminal's live cwd; libghostty's inherit would
+      // land in the same place, but passing it explicitly keeps the
+      // copy correct even if inherit is disabled in the user's config.
+      deps.terminalWorkingDirectory = tv.currentWorkingDirectory
+      return makePane(address: .terminal, dependencies: deps)
+    }
+    if source.address.kind == .finder {
+      return makePane(address: source.address)
+    }
+    return nil
+  }
+
+  /// Launch cwd for a freshly opened terminal pane, from
+  /// ``E05Preferences/newTerminalDirectory``. `nil` (empty preference)
+  /// leaves `working_directory` unset so libghostty inherits from the
+  /// focused surface — the historical behaviour.
+  private var resolvedNewTerminalDirectory: String? {
+    let dir = PreferencesStore.shared.preferences.newTerminalDirectory ?? ""
+    let trimmed = dir.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let expanded = (trimmed as NSString).expandingTildeInPath
+    // A configured folder that has since been deleted/moved falls back
+    // to inherit rather than handing libghostty a dead launch dir.
+    return Self.directoryExists(expanded) ? expanded : nil
+  }
+
+  /// True when `path` names an existing directory. Guards the
+  /// configured new-pane folders so a since-deleted choice degrades to
+  /// inherit / home instead of opening a pane on a dead path.
+  private static func directoryExists(_ path: String) -> Bool {
+    var isDir: ObjCBool = false
+    return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+  }
+
+  /// Dependencies for a freshly opened terminal pane, carrying the
+  /// configured launch cwd (if any). Shared by `Split Vertical` and the
+  /// new-workspace terminal seed.
+  var newTerminalPaneDependencies: PaneDependencies {
+    var deps = PaneDependencies()
+    deps.terminalWorkingDirectory = resolvedNewTerminalDirectory
+    return deps
+  }
+
+  /// Directory of the most-recently-focused finder pane across every
+  /// workspace, or nil when none is open. The finder analogue of
+  /// libghostty's terminal cwd inheritance (`lastActiveAt` is stamped
+  /// on focus in `setFocus`).
+  private var latestFinderDirectory: String? {
+    workspaces
+      .flatMap { $0.columns.flatMap(\.panes) }
+      .filter { $0.finderView != nil }
+      .max { $0.lastActiveAt < $1.lastActiveAt }?
+      .finderView?.currentURL.path(percentEncoded: false)
+  }
+
+  /// Address for a freshly opened finder pane, resolved at call time so
+  /// the setting takes effect on the next new pane. A configured
+  /// specific folder wins (unless it has been deleted); otherwise
+  /// inherit the latest finder pane's directory, falling back to the
+  /// bare `e05://finder` address (which ``PaneModel`` substitutes with
+  /// the home directory).
+  func newFinderPaneAddress() -> PaneAddress {
+    let dir = (PreferencesStore.shared.preferences.newFinderDirectory ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if !dir.isEmpty {
+      let expanded = (dir as NSString).expandingTildeInPath
+      if Self.directoryExists(expanded) { return .finder(path: expanded) }
+      // Configured folder gone → fall through to inherit / home.
+    }
+    if let latest = latestFinderDirectory { return .finder(path: latest) }
+    return .finder(path: "")
   }
 
   // MARK: - Pane Removal
@@ -2029,6 +2164,10 @@ extension PaneContainerViewController {
       return
     }
     switch actionId {
+    case "_ws_new_start_pane":
+      addColumnAndToast(
+        .start, toWorkspaceId: workspaceId,
+        toastLabel: "New Start Pane")
     case "_ws_new_browser_pane":
       addColumnAndToast(
         .newPaneHome, toWorkspaceId: workspaceId,
@@ -2036,10 +2175,10 @@ extension PaneContainerViewController {
     case "_ws_new_terminal_pane":
       addColumnAndToast(
         .terminal, toWorkspaceId: workspaceId,
-        toastLabel: "New Terminal Pane")
+        toastLabel: "New Terminal Pane", dependencies: newTerminalPaneDependencies)
     case "_ws_new_finder_pane":
       addColumnAndToast(
-        PaneAddress.finder(path: ""), toWorkspaceId: workspaceId,
+        newFinderPaneAddress(), toWorkspaceId: workspaceId,
         toastLabel: "New Finder Pane")
     case "_ws_new_workspace_after":
       createWorkspace(after: workspaceId)

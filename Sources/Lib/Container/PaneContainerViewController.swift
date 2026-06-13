@@ -304,7 +304,9 @@ public final class PaneContainerViewController: NSViewController {
       restoreSession(session)
     }
     if columns.isEmpty {
-      addColumn()
+      // Cold-start fallback when the session restored no columns. A
+      // fresh terminal, so honor the new-terminal cwd preference.
+      addColumn(dependencies: newTerminalPaneDependencies)
     }
     // Install sidebar last so its view sits on top of every
     // workspace VC. The pinned flag decides whether the sidebar

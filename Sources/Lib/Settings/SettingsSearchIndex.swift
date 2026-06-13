@@ -91,14 +91,12 @@ enum SettingsSearchIndex {
 
   private static let generalEntries: [SettingsSearchEntry] = [
     SettingsSearchEntry(
-      id: "general.new-browser-pane", title: "New Browser Pane", tab: .general,
+      id: "general.new-panes", title: "New Panes", tab: .general,
       keywords: [
-        "new pane", "new browser pane", "start page", "homepage", "home page",
-        "startup", "blank page", "specific url",
+        "new pane", "browser pane", "blank page", "specific url", "terminal pane",
+        "cwd", "working directory", "finder pane", "folder", "directory", "inherit",
+        "specific folder", "split vertical", "duplicate", "new workspace",
       ]),
-    SettingsSearchEntry(
-      id: "general.new-workspace", title: "New Workspace", tab: .general,
-      keywords: ["initial pane", "default pane", "seed pane", "terminal", "browser", "finder"]),
     SettingsSearchEntry(
       id: "general.navigation", title: "Navigation", tab: .general,
       keywords: [

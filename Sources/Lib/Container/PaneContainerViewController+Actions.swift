@@ -30,14 +30,14 @@ extension PaneContainerViewController {
         id: "new_terminal_pane",
         title: "New Terminal Pane",
         menuTitle: "New Terminal Pane Here",
-        // No keyboard shortcut: ⌘T is now claimed by
-        // `new_browser_pane` because a browser pane is the more
-        // common new-tab gesture. Terminal panes are still
-        // creatable from the palette and can be re-bound during
-        // the customisation phase.
+        // No keyboard shortcut: ⌘T is claimed by `new_start_pane`,
+        // the start page being the common new-tab gesture. Terminal
+        // panes are still creatable from the palette and can be
+        // re-bound during the customisation phase.
         handler: { [weak self] in
-          self?.addColumn()
-          self?.showToast("New Terminal Pane")
+          guard let self else { return }
+          self.addColumn(dependencies: self.newTerminalPaneDependencies)
+          self.showToast("New Terminal Pane")
         }
       ),
       Action(
@@ -491,13 +491,29 @@ extension PaneContainerViewController {
         validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) }
       ),
       Action(
-        id: "new_browser_pane",
-        title: "New Pane",
-        menuTitle: "New Pane Here",
+        id: "new_start_pane",
+        title: "New Start Pane",
+        menuTitle: "New Start Pane Here",
+        // ⌘T opens the start page — the native new-tab launcher with
+        // its terminal / finder quick actions — which is the common
+        // new-pane gesture. A browser pane (blank / Specific URL) is
+        // the separate `new_browser_pane` action below.
         keyEquivalent: "t",
         handler: { [weak self] in
+          self?.addColumn(address: .start)
+          self?.showToast("New Start Pane")
+        }
+      ),
+      Action(
+        id: "new_browser_pane",
+        title: "New Browser Pane",
+        menuTitle: "New Browser Pane Here",
+        // No keyboard shortcut: ⌘T opens the start page. A blank /
+        // Specific-URL browser pane is reachable from the palette and
+        // can be re-bound during the customisation phase.
+        handler: { [weak self] in
           self?.addColumn(address: .newPaneHome)
-          self?.showToast("New Pane")
+          self?.showToast("New Browser Pane")
         }
       ),
       Action(
@@ -509,8 +525,9 @@ extension PaneContainerViewController {
         // a binding can be added once the customisation phase exposes
         // a way for users to claim a free chord.
         handler: { [weak self] in
-          self?.addColumn(address: PaneAddress.finder(path: ""))
-          self?.showToast("New Finder Pane")
+          guard let self else { return }
+          self.addColumn(address: self.newFinderPaneAddress())
+          self.showToast("New Finder Pane")
         }
       ),
       Action(
