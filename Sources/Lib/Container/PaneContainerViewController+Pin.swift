@@ -58,6 +58,7 @@ extension PaneContainerViewController {
   func releasePinnedOverlay(_ column: ColumnModel) {
     guard column.isPinned else { return }
     setPinnedShadow(column, enabled: false)
+    removePinResizeHandle(column)
     NSLayoutConstraint.deactivate(column.pinConstraints)
     column.pinConstraints = []
     column.pinLeadingConstraint = nil
@@ -82,11 +83,6 @@ extension PaneContainerViewController {
     // One pin per workspace: retire any existing pin first.
     if let existing = pinnedColumn(in: vc), existing !== column {
       unpinColumn(existing)
-    }
-    // A pinned column keeps a fixed width, so fold and pin are mutually
-    // exclusive — unfold first (`toggleFold` acts on the focused column).
-    if column.isFolded, columns[safe: focusedColumnIndex] === column {
-      toggleFold()
     }
     applyPin(column, in: vc)
     view.layoutSubtreeIfNeeded()
@@ -128,6 +124,39 @@ extension PaneContainerViewController {
     rebuildStackView(in: vc)
     applyLeadingInset(in: vc)
     setPinnedShadow(column, enabled: true)
+    installPinResizeHandle(for: column, in: vc)
+  }
+
+  /// Resize handle on the pinned column's trailing edge so the column
+  /// can be dragged wider / narrower in place, with the leading reserve
+  /// following. Sits in the overlay (above the scroll view), so it is
+  /// always active rather than gated on focus like the in-stack handles.
+  private func installPinResizeHandle(for column: ColumnModel, in vc: WorkspaceViewController) {
+    let handle = PaneResizeHandle(orientation: .horizontal)
+    handle.isActive = true
+    vc.view.addSubview(handle, positioned: .above, relativeTo: vc.scrollView)
+    let margin = WorkspaceViewController.outerMargin
+    NSLayoutConstraint.activate(
+      PaneResizeHandle.makeConstraints(for: handle) + [
+        handle.leadingAnchor.constraint(equalTo: column.containerView.trailingAnchor),
+        handle.topAnchor.constraint(equalTo: vc.view.topAnchor, constant: margin),
+        handle.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor, constant: -margin),
+      ])
+    handle.onDrag = { [weak self, weak column, weak vc] deltaX in
+      guard let self, let column, let vc, let constraint = column.widthConstraint else { return }
+      // Fold owns the width while folded, mirroring the in-stack handles.
+      guard !column.isFolded else { return }
+      constraint.constant = max(Self.minPaneWidth, constraint.constant + deltaX)
+      column.currentPreset = nil
+      self.applyLeadingInset(in: vc)
+    }
+    column.pinResizeHandle = handle
+  }
+
+  /// Drop the pinned column's resize handle from the overlay.
+  private func removePinResizeHandle(_ column: ColumnModel) {
+    column.pinResizeHandle?.removeFromSuperview()
+    column.pinResizeHandle = nil
   }
 
   /// Soft drop shadow biased to the trailing edge of a pinned column's
@@ -159,6 +188,7 @@ extension PaneContainerViewController {
     let vc = currentWorkspaceVC
     column.isPinned = false
     setPinnedShadow(column, enabled: false)
+    removePinResizeHandle(column)
     NSLayoutConstraint.deactivate(column.pinConstraints)
     column.pinConstraints = []
     column.pinLeadingConstraint = nil

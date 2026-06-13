@@ -52,6 +52,10 @@ public final class ColumnModel {
   /// separately so its `constant` can track the sidebar's leading
   /// inset as the sidebar reveals / hides.
   var pinLeadingConstraint: NSLayoutConstraint?
+  /// Resize handle pinned to the column's trailing edge while pinned, so
+  /// a pinned column can be dragged wider / narrower in place. Held so
+  /// unpin / teardown can remove it from the overlay.
+  var pinResizeHandle: PaneResizeHandle?
 
   /// Vertical stack view holding the pane terminal views.
   public let containerView: NSStackView = {

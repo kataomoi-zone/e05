@@ -286,6 +286,11 @@ extension PaneContainerViewController {
     let preset = cycle[nextIndex]
     column.currentPreset = preset
     applyPreset(preset, to: column)
+    // A pinned column's width drives its leading reserve; recompute it
+    // so the scrolling columns track the new width.
+    if column.isPinned {
+      applyLeadingInset(in: currentWorkspaceVC)
+    }
     view.layoutSubtreeIfNeeded()
     scrollToColumn(at: focusedColumnIndex)
     showToast("Cycle Width (\(preset.displayLabel))")

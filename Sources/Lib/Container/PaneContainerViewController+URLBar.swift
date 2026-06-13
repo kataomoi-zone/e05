@@ -737,9 +737,6 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex],
       let constraint = column.widthConstraint
     else { return }
-    // A pinned column is held at a fixed width in the leading overlay;
-    // fold and pin are mutually exclusive (pinning unfolds first).
-    guard !column.isPinned else { return }
 
     if column.isFolded {
       // Unfold: restore the previous width. Drop `widthConstraint`
@@ -832,6 +829,12 @@ extension PaneContainerViewController {
     // to repaint the active flag (otherwise the arrow chrome and
     // mouseDown gate stay tied to the pre-toggle state).
     updateHandleActiveStates()
+    // A pinned column's width drives its leading reserve, so recompute
+    // it after a fold / unfold so the scrolling columns track the new
+    // (folded-strip or restored) width.
+    if column.isPinned {
+      applyLeadingInset(in: currentWorkspaceVC)
+    }
   }
 
   /// Restore a column to a folded state from a persisted session.
