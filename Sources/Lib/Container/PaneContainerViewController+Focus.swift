@@ -477,7 +477,7 @@ extension PaneContainerViewController {
     }
     for (i, column) in cols.enumerated() {
       if i > 0 {
-        let handle = makeColumnResizeHandle(leftColumn: cols[i - 1], rightColumn: column)
+        let handle = makeColumnResizeHandle(for: cols[i - 1])
         sv.addArrangedSubview(handle)
         NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
       }
@@ -485,16 +485,22 @@ extension PaneContainerViewController {
     }
     // Add a trailing resize handle on the last column so single-pane layouts can be resized
     if let lastColumn = cols.last {
-      let handle = makeTrailingResizeHandle(column: lastColumn)
+      let handle = makeColumnResizeHandle(for: lastColumn)
       sv.addArrangedSubview(handle)
       NSLayoutConstraint.activate(PaneResizeHandle.makeConstraints(for: handle))
     }
   }
 
-  private func makeTrailingResizeHandle(column: ColumnModel) -> PaneResizeHandle {
+  /// A horizontal handle is the right-edge grip of the column to its left.
+  /// The strip is left-anchored, so the divider position is the cumulative
+  /// width to its left — dragging it can only resize that left column (the
+  /// columns to the right simply follow). Every column is reachable this way:
+  /// the between-columns handles grab their left neighbour, the trailing
+  /// handle grabs the last column. Active state (folded columns excepted) is
+  /// handled by `updateHandleActiveStates`; `mouseDown` blocks drag when
+  /// `!isActive`, so `onDrag` only re-checks the fold.
+  private func makeColumnResizeHandle(for column: ColumnModel) -> PaneResizeHandle {
     let handle = PaneResizeHandle(orientation: .horizontal)
-    // Active state is managed by updateHandleActiveStates (left-side neighbor === focused column).
-    // mouseDown blocks drag when !isActive, so onDrag doesn't need to re-check focus.
     handle.onDrag = { [weak self, weak column] deltaX in
       // `self` is captured weakly to break the retain cycle with the
       // handle's stored closure; the body site only reaches for the
@@ -509,34 +515,6 @@ extension PaneContainerViewController {
       let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX)
       constraint.constant = newWidth
       column.currentPreset = nil
-    }
-    return handle
-  }
-
-  private func makeColumnResizeHandle(leftColumn: ColumnModel, rightColumn: ColumnModel)
-    -> PaneResizeHandle
-  {
-    let handle = PaneResizeHandle(orientation: .horizontal)
-    handle.onDrag = { [weak self, weak leftColumn, weak rightColumn] deltaX in
-      guard let self, let leftColumn, let rightColumn else { return }
-      let isLeftFocused = leftColumn.id == self.columns[safe: self.focusedColumnIndex]?.id
-      let isRightFocused = rightColumn.id == self.columns[safe: self.focusedColumnIndex]?.id
-      guard isLeftFocused || isRightFocused else { return }
-      let focusedColumn = isLeftFocused ? leftColumn : rightColumn
-      guard let constraint = focusedColumn.widthConstraint else { return }
-      // Same fold guard as `makeTrailingResizeHandle` — a folded
-      // column's width belongs to the fold path, not to drag.
-      guard !focusedColumn.isFolded else { return }
-      let sign: CGFloat = isLeftFocused ? 1 : -1
-      let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX * sign)
-      let actualDelta = newWidth - constraint.constant
-      constraint.constant = newWidth
-      focusedColumn.currentPreset = nil
-      if isRightFocused, actualDelta != 0 {
-        var origin = self.scrollView.contentView.bounds.origin
-        origin.x += actualDelta
-        self.scrollView.contentView.setBoundsOrigin(origin)
-      }
     }
     return handle
   }
@@ -705,21 +683,18 @@ extension PaneContainerViewController {
     return handle
   }
 
-  /// Update which resize handles are active based on focused column.
-  /// A folded column suppresses its neighbouring handles entirely —
-  /// the strip's width is owned by the fold path, so the resize
-  /// affordance has nothing to grab.
+  /// Update which horizontal resize handles are active. Each handle grips the
+  /// right edge of the column to its left (see `makeColumnResizeHandle(for:)`),
+  /// so every column is resizable regardless of focus. A folded column
+  /// suppresses its own handle — the strip's width is owned by the fold path,
+  /// so the resize affordance has nothing to grab.
   func updateHandleActiveStates() {
-    guard let focusedColumn = columns[safe: focusedColumnIndex] else { return }
-    for v in stackView.arrangedSubviews {
+    let arranged = stackView.arrangedSubviews
+    for (i, v) in arranged.enumerated() {
       guard let handle = v as? PaneResizeHandle else { continue }
-      guard let handleIndex = stackView.arrangedSubviews.firstIndex(of: handle) else { continue }
-      let leftView = stackView.arrangedSubviews[safe: handleIndex - 1]
-      let rightView = stackView.arrangedSubviews[safe: handleIndex + 1]
-      handle.isActive =
-        !focusedColumn.isFolded
-        && (leftView === focusedColumn.containerView
-          || rightView === focusedColumn.containerView)
+      let leftView = arranged[safe: i - 1]
+      let leftColumn = columns.first { $0.containerView === leftView }
+      handle.isActive = leftColumn.map { !$0.isFolded } ?? false
     }
   }
 
