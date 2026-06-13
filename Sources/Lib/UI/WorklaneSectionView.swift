@@ -389,6 +389,10 @@ final class WorklaneSectionView: NSView {
       (
         _ paneId: ULID, _ workspaceId: ULID, _ position: Int?
       ) -> Void
+    let onMoveColumnToWorkspace:
+      (
+        _ columnId: ULID, _ targetWorkspaceId: ULID, _ position: Int?
+      ) -> Void
     /// Commit a pane move into an existing column. `position` is
     /// the pane index inside the target column (`nil` = append at
     /// the trailing edge). Covers in-column reorder (source column
@@ -1518,6 +1522,20 @@ private final class MoveToWorkspacePayload: NSObject {
   }
 }
 
+/// Payload for the "Move to Workspace ▶" submenu's per-workspace
+/// items for column moves: enough to route
+/// ``ReloadInput.onMoveColumnToWorkspace`` without a sentinel string.
+@MainActor
+private final class MoveColumnToWorkspacePayload: NSObject {
+  let columnId: ULID
+  let targetWorkspaceId: ULID
+  init(columnId: ULID, targetWorkspaceId: ULID) {
+    self.columnId = columnId
+    self.targetWorkspaceId = targetWorkspaceId
+    super.init()
+  }
+}
+
 /// Same-shape payload for column-row menu items. Distinct type from
 /// ``WorklanePaneMenuPayload`` so the dispatch handler can tell
 /// pane / column actions apart at `as?` cast time instead of
@@ -1801,6 +1819,60 @@ extension WorklaneSectionView: NSMenuDelegate {
       payload.paneId, payload.targetWorkspaceId, nil)
   }
 
+  /// Append the parent "Move to Workspace ▶" item for a column row.
+  /// Mirrors ``appendMoveToWorkspace`` for panes. Items for the source
+  /// workspace and for workspaces that cross the private boundary are
+  /// disabled. Skipped entirely if the source workspace can't be
+  /// resolved from `columnId`.
+  private func appendMoveColumnToWorkspace(
+    to menu: NSMenu, columnId: ULID, input: ReloadInput
+  ) {
+    guard
+      let sourceWs = input.workspaces.first(where: {
+        $0.columns.contains(where: { $0.id == columnId })
+      })
+    else { return }
+    let item = NSMenuItem(
+      title: "Move to Workspace", action: nil, keyEquivalent: "")
+    item.submenu = buildMoveColumnToWorkspaceSubmenu(
+      columnId: columnId, sourceWs: sourceWs, input: input)
+    menu.addItem(item)
+  }
+
+  private func buildMoveColumnToWorkspaceSubmenu(
+    columnId: ULID, sourceWs: WorkspaceModel, input: ReloadInput
+  ) -> NSMenu {
+    let submenu = NSMenu()
+    // Opt out of auto-enable so the source / cross-private items stay
+    // disabled — see `buildMoveToWorkspaceSubmenu` for why the default
+    // `validateMenuItem:` path would otherwise re-enable them.
+    submenu.autoenablesItems = false
+    let sourceIsPrivate = sourceWs.isPrivate
+    for (index, ws) in input.workspaces.enumerated() {
+      let item = NSMenuItem(
+        title: ws.displayName(at: index),
+        action: #selector(handleMoveColumnToWorkspace(_:)),
+        keyEquivalent: "")
+      item.target = self
+      if ws.id == sourceWs.id {
+        item.isEnabled = false
+      } else if ws.isPrivate != sourceIsPrivate {
+        item.isEnabled = false
+      }
+      item.representedObject = MoveColumnToWorkspacePayload(
+        columnId: columnId, targetWorkspaceId: ws.id)
+      submenu.addItem(item)
+    }
+    return submenu
+  }
+
+  @objc private func handleMoveColumnToWorkspace(_ sender: NSMenuItem) {
+    guard let payload = sender.representedObject as? MoveColumnToWorkspacePayload,
+      let input = lastInput
+    else { return }
+    input.onMoveColumnToWorkspace(payload.columnId, payload.targetWorkspaceId, nil)
+  }
+
   /// Append a menu item that mirrors an existing palette `Action`.
   /// The displayed text defaults to `action.menuTitle ?? action.title`
   /// so the action registry stays the single source of truth — a
@@ -1902,6 +1974,9 @@ extension WorklaneSectionView: NSMenuDelegate {
     menu.addItem(.separator())
     appendColumnAction(to: menu, actionId: "move_column_left", columnId: columnId, input: input)
     appendColumnAction(to: menu, actionId: "move_column_right", columnId: columnId, input: input)
+    if input.workspaces.count > 1 {
+      appendMoveColumnToWorkspace(to: menu, columnId: columnId, input: input)
+    }
     menu.addItem(.separator())
     appendColumnCloseAll(to: menu, columnId: columnId)
   }

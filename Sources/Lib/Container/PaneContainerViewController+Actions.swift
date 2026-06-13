@@ -713,6 +713,20 @@ extension PaneContainerViewController {
           handler: { [weak self] in self?.movePane(toWorkspaceId: wsId) }
         ))
     }
+    // "Move Column" is offered only when the focused column holds more
+    // than one pane — for a single-pane column it is identical to the
+    // "Move Pane" entry above, so listing both would just be noise.
+    if (columns[safe: focusedColumnIndex]?.panes.count ?? 0) >= 2 {
+      for (i, ws) in workspaces.enumerated() where i != focusedWorkspaceIndex {
+        let wsId = ws.id
+        result.append(
+          Action(
+            id: "workspace_move_column_\(wsId)",
+            title: "Move Column to \(ws.displayName(at: i))",
+            handler: { [weak self] in self?.moveColumn(toWorkspaceId: wsId) }
+          ))
+      }
+    }
 
     // Dynamic actions: one "Focus: <title>" entry per pane across ALL
     // workspaces. `focusPane(id:)` switches workspace as needed, so the

@@ -840,6 +840,169 @@ extension PaneContainerViewController {
     }
   }
 
+  // MARK: - Move column across workspaces
+
+  /// Move the focused column to another workspace, keeping its panes,
+  /// height ratios, and fold state intact. `nil` position appends at the
+  /// trailing edge (palette / menu default).
+  public func moveColumn(toWorkspaceId id: ULID, position: Int? = nil) {
+    guard let target = workspaces.firstIndex(where: { $0.id == id }),
+      columns[safe: focusedColumnIndex] != nil
+    else { return }
+    performCrossWorkspaceColumnMove(
+      sourceIndex: focusedWorkspaceIndex,
+      sourceColumnIndex: focusedColumnIndex,
+      target: target,
+      position: position)
+  }
+
+  /// Id-based variant for the worklane menu / drag-drop, which name a
+  /// column that may not be focused (or even in the current workspace).
+  public func moveColumn(
+    _ columnId: ULID, toWorkspaceId targetId: ULID, position: Int? = nil
+  ) {
+    guard let loc = locateColumnLocation(id: columnId),
+      let target = workspaces.firstIndex(where: { $0.id == targetId })
+    else { return }
+    performCrossWorkspaceColumnMove(
+      sourceIndex: loc.workspaceIndex,
+      sourceColumnIndex: loc.columnIndex,
+      target: target,
+      position: position)
+  }
+
+  /// Relocate a whole column across workspaces. Mirrors
+  /// ``performCrossWorkspaceMove`` but reparents the column's
+  /// `containerView` intact instead of splitting a pane out — the panes,
+  /// their height ratios, and a folded strip all travel together. A
+  /// pinned column is unpinned first (the pin overlay is per-workspace),
+  /// matching how moving a pane out of a pinned column drops the pin.
+  private func performCrossWorkspaceColumnMove(
+    sourceIndex: Int, sourceColumnIndex: Int, target: Int, position: Int?
+  ) {
+    let sourceWs = workspaces[sourceIndex]
+    let sourceVC = workspaceVCs[sourceIndex]
+    let column = sourceWs.columns[sourceColumnIndex]
+    let originalFocusedIndex = focusedWorkspaceIndex
+    let isSameWs = sourceIndex == target
+
+    if sourceIndex == originalFocusedIndex {
+      dismissAllFindSessions(in: sourceWs)
+      focusedPane?.urlBar.dismissSuggestionDropdown()
+    }
+    if sourceWs.isPrivate != workspaces[target].isPrivate {
+      logger.error("moveColumn blocked: cross-private-boundary move")
+      showCrossPrivateBoundaryToast()
+      return
+    }
+    if sourceIndex == originalFocusedIndex {
+      sourceWs.scrollX =
+        sourceVC.scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    }
+    preserveSurfaces(in: sourceWs)
+    clearAllFocusBorders(in: sourceWs)
+    clearAllFocusBorders(in: workspaces[target])
+
+    // 1. Detach the whole column from the source workspace. A pinned
+    // column lives in the source overlay, so tear that down first
+    // (vc-agnostic) and recompute the source inset once the column is
+    // out so the freed pin reserve collapses.
+    let wasPinned = column.isPinned
+    if wasPinned { releasePinnedOverlay(column) }
+    column.heightPin?.isActive = false
+    column.containerView.removeFromSuperview()
+    sourceWs.columns.remove(at: sourceColumnIndex)
+
+    var adjustedTarget = target
+    var sourceDestroyed = false
+    if sourceWs.columns.isEmpty {
+      if isSameWs {
+        // Drained but reseeded by the insert below — leave the empty
+        // workspace in place rather than tearing it down and back up.
+      } else {
+        workspaces.remove(at: sourceIndex)
+        workspaceVCs.remove(at: sourceIndex)
+        sourceDestroyed = true
+        if adjustedTarget > sourceIndex { adjustedTarget -= 1 }
+        // Re-anchor the focused index before further AppKit mutations
+        // fire observers (same rationale as `performCrossWorkspaceMove`).
+        if focusedWorkspaceIndex >= workspaces.count {
+          focusedWorkspaceIndex = max(0, workspaces.count - 1)
+        } else if sourceIndex < focusedWorkspaceIndex {
+          focusedWorkspaceIndex -= 1
+        }
+      }
+    } else {
+      sourceWs.focusedColumnIndex = min(
+        sourceWs.focusedColumnIndex, sourceWs.columns.count - 1)
+      rebuildStackView(in: sourceVC)
+      if wasPinned { applyLeadingInset(in: sourceVC) }
+    }
+
+    // 2. Insert the column into the target workspace.
+    let targetWs = workspaces[adjustedTarget]
+    let targetVC = workspaceVCs[adjustedTarget]
+    let adjustedPosition: Int?
+    if isSameWs, let rawPos = position, sourceColumnIndex < rawPos {
+      adjustedPosition = rawPos - 1
+    } else {
+      adjustedPosition = position
+    }
+    let insertIndex = min(
+      max(adjustedPosition ?? targetWs.columns.count, 0), targetWs.columns.count)
+    targetWs.columns.insert(column, at: insertIndex)
+    targetWs.focusedColumnIndex = insertIndex
+
+    rebuildStackView(in: targetVC)
+    // Re-pin the column's height to the target stack, after the rebuild
+    // so both anchors share an ancestor (the same
+    // NSInternalInconsistencyException risk `performCrossWorkspaceMove`
+    // documents at its heightPin call site).
+    let heightPin = column.containerView.heightAnchor.constraint(
+      equalTo: targetVC.stackView.heightAnchor,
+      constant: -(WorkspaceViewController.outerMargin * 2))
+    heightPin.isActive = true
+    column.heightPin = heightPin
+
+    let toastLabel =
+      isSameWs
+      ? "Move Column"
+      : "Move Column to \(workspaces[adjustedTarget].displayName(at: adjustedTarget))"
+    let paneIndex = column.focusedPaneIndex
+    if sourceIndex == originalFocusedIndex, !isSameWs {
+      focusedWorkspaceIndex = adjustedTarget
+      restoreScroll(in: currentWorkspace)
+      showToast(toastLabel)
+      let slidingUp = target > sourceIndex
+      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) { [weak self] in
+        guard let self else { return }
+        if sourceDestroyed {
+          sourceVC.view.removeFromSuperview()
+          sourceVC.removeFromParent()
+        }
+        self.setFocus(columnIndex: insertIndex, paneIndex: paneIndex)
+      }
+    } else if isSameWs {
+      showToast(toastLabel)
+      if sourceIndex == originalFocusedIndex {
+        setFocus(columnIndex: insertIndex, paneIndex: paneIndex)
+      } else {
+        notifySidebarWorklaneDidChange()
+      }
+    } else {
+      if sourceDestroyed {
+        sourceVC.view.removeFromSuperview()
+        sourceVC.removeFromParent()
+      }
+      if adjustedTarget == focusedWorkspaceIndex {
+        setFocus(columnIndex: insertIndex, paneIndex: paneIndex)
+      } else {
+        notifySidebarWorklaneDidChange()
+      }
+      showToast(toastLabel)
+    }
+  }
+
   // MARK: - Move pane into a specific column
 
   /// Move a pane into the column identified by `targetColumnId`.
