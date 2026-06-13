@@ -117,8 +117,14 @@ public final class PaneResizeHandle: NSView {
     onDrag?(delta)
   }
 
-  public override func mouseUp(with _: NSEvent) {
+  public override func mouseUp(with event: NSEvent) {
     isDragging = false
+    // AppKit suppresses mouseEntered/Exited while a button is held, so the
+    // resize drag often ends with the cursor pushed off the handle (the
+    // divider moved out from under it) without an exit ever firing. Re-derive
+    // hover state from the actual pointer location instead of trusting the
+    // stale flag, otherwise the highlight and resize cursor get stranded.
+    isHovering = bounds.contains(convert(event.locationInWindow, from: nil))
     if !isHovering {
       layer?.backgroundColor = nil
       if cursorPushed {
