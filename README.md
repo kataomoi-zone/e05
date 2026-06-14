@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/e05logo-dark.svg">
+    <img src=".github/assets/e05logo-light.svg" alt="e05 logo" width="120">
+  </picture>
+</p>
+
 # e05
 
 A single-window, scrollable-tiling environment for macOS. Rather than managing OS windows, e05 brings terminals (libghostty), browsers (WKWebView), and a native file browser inside as its own panes and tiles them in horizontally-scrolling columns (a.k.a. niri-style) across multiple workspaces — freeing those workflows from macOS's native window management.

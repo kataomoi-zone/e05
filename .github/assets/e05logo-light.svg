@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- e05 app icon — LIGHT variant. Refactored from the Affinity export:
+     transforms baked into coordinates, the ring rebuilt as four arcs
+     (one 270° + three 30°) on a single circle, shared stroke attrs
+     hoisted to groups. Letters use currentColor so only the root
+     `color` + background swap between Light/Dark. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"
+     width="1024" height="1024" style="color:#262626">
+  <!-- background: opposite of the ink color -->
+  <rect width="1024" height="1024" fill="#F7F7F7"/>
+
+  <!-- Color ring: circle centre (512,512) r=375, stroke 80.
+       Appearance-invariant (fixed palette). 3/4 + three 1/12 arcs. -->
+  <g fill="none" stroke-width="80" stroke-linecap="butt">
+    <path d="M512 887 A375 375 0 1 1 887 512" stroke="#ce055b"/>
+    <path d="M887 512 A375 375 0 0 1 836.7 699.5" stroke="#b0bf1f"/>
+    <path d="M836.7 699.5 A375 375 0 0 1 699.3 836.8" stroke="#ec6e65"/>
+    <path d="M699.3 836.8 A375 375 0 0 1 512 887" stroke="#0279c2"/>
+  </g>
+
+  <!-- Letters: appearance-variable ink, uniform 48px stroke. -->
+  <g fill="none" stroke="currentColor" stroke-width="48"
+     stroke-linecap="square" stroke-linejoin="miter" stroke-miterlimit="2.2">
+    <!-- E -->
+    <path d="M591.81 227.51 L449.87 227.51 L449.87 447.51 L599.88 447.51"/>
+    <path d="M449.86 337.51 L589.88 337.51"/>
+    <!-- 0 -->
+    <ellipse cx="397.75" cy="648.86" rx="95" ry="110"/>
+    <!-- 5 -->
+    <path d="M699.77 538.86 L603.42 538.86 L581.97 624.85
+             C636.16 624.85 720.68 623.69 721.24 692.69
+             C721.81 764.21 620.08 778.43 563.15 734.66"/>
+  </g>
+</svg>
