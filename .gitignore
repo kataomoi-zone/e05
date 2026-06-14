@@ -32,3 +32,10 @@ result-*
 
 # .app bundle output (assembled by scripts/build_app.sh)
 /build/
+
+# Signing / notarization material (downloaded into the working tree
+# during Developer ID cert setup; never commit keys or certificates)
+*.cer
+*.certSigningRequest
+*.p8
+*.p12
