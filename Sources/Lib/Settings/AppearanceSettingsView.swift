@@ -269,10 +269,18 @@ struct AppearanceSettingsView: View {
 
   @ViewBuilder
   private func widthCycleRowView(row: Binding<WidthCycleRow>) -> some View {
+    let id = row.wrappedValue.id
+    let index = widthCycleRows.firstIndex(where: { $0.id == id }) ?? 0
     WidthCycleRowView(
       row: row,
       canRemove: widthCycleRows.count > 1,
-      onRemove: { remove(rowId: row.wrappedValue.id) },
+      canMoveUp: index > 0,
+      canMoveDown: index < widthCycleRows.count - 1,
+      onMoveToTop: { moveToTop(rowId: id) },
+      onMoveUp: { moveUp(rowId: id) },
+      onMoveDown: { moveDown(rowId: id) },
+      onMoveToBottom: { moveToBottom(rowId: id) },
+      onRemove: { remove(rowId: id) },
       onCommit: writeBackPresets)
   }
 
@@ -287,6 +295,38 @@ struct AppearanceSettingsView: View {
   private func remove(rowId: UUID) {
     guard widthCycleRows.count > 1 else { return }
     widthCycleRows.removeAll { $0.id == rowId }
+    writeBackPresets()
+  }
+
+  private func moveToTop(rowId: UUID) {
+    guard let from = widthCycleRows.firstIndex(where: { $0.id == rowId }), from > 0
+    else { return }
+    let moved = widthCycleRows.remove(at: from)
+    widthCycleRows.insert(moved, at: 0)
+    writeBackPresets()
+  }
+
+  private func moveUp(rowId: UUID) {
+    guard let from = widthCycleRows.firstIndex(where: { $0.id == rowId }), from > 0
+    else { return }
+    widthCycleRows.swapAt(from, from - 1)
+    writeBackPresets()
+  }
+
+  private func moveDown(rowId: UUID) {
+    guard let from = widthCycleRows.firstIndex(where: { $0.id == rowId }),
+      from < widthCycleRows.count - 1
+    else { return }
+    widthCycleRows.swapAt(from, from + 1)
+    writeBackPresets()
+  }
+
+  private func moveToBottom(rowId: UUID) {
+    guard let from = widthCycleRows.firstIndex(where: { $0.id == rowId }),
+      from < widthCycleRows.count - 1
+    else { return }
+    let moved = widthCycleRows.remove(at: from)
+    widthCycleRows.append(moved)
     writeBackPresets()
   }
 
@@ -347,6 +387,41 @@ struct AppearanceSettingsView: View {
   }
 }
 
+/// One inline row-action icon button (reorder / remove). A real
+/// `Button` for the native hover highlight and click feedback. It stays
+/// enabled even at the list edges — the action no-ops there — so `.help`
+/// still surfaces a tooltip (SwiftUI on macOS drops help inside a
+/// disabled `Button`); the edge state shows through reduced opacity, and
+/// the hover highlight only appears while the action is live.
+@MainActor
+private struct RowActionButton: View {
+  let symbol: String
+  let help: String
+  let enabled: Bool
+  let action: () -> Void
+
+  @State private var hovering = false
+
+  var body: some View {
+    Button {
+      if enabled { action() }
+    } label: {
+      Image(systemName: symbol)
+        .foregroundStyle(.secondary)
+        .opacity(enabled ? 1 : 0.35)
+        .frame(width: 24, height: 22)
+        .background(
+          RoundedRectangle(cornerRadius: 5)
+            .fill(hovering && enabled ? Color.secondary.opacity(0.15) : Color.clear)
+        )
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .help(help)
+  }
+}
+
 /// Single editable row inside the Cycle Width Presets section.
 /// Lives in its own view so each row owns a `@FocusState` for the
 /// TextField — focus loss commits the value back to preferences,
@@ -357,6 +432,12 @@ struct AppearanceSettingsView: View {
 private struct WidthCycleRowView: View {
   @Binding var row: WidthCycleRow
   let canRemove: Bool
+  let canMoveUp: Bool
+  let canMoveDown: Bool
+  let onMoveToTop: () -> Void
+  let onMoveUp: () -> Void
+  let onMoveDown: () -> Void
+  let onMoveToBottom: () -> Void
   let onRemove: () -> Void
   let onCommit: () -> Void
 
@@ -395,26 +476,28 @@ private struct WidthCycleRowView: View {
 
       Spacer()
 
-      // Plain Image instead of a Button: SwiftUI on macOS blocks
-      // `.help` from surfacing inside a `.disabled` Button (and even a
-      // Button's enabled label sometimes drops the hover layer), so
-      // the tap-to-remove affordance is implemented with
-      // `onTapGesture` and the disabled state is expressed via
-      // foreground opacity. The Image itself receives hover, which
-      // lets `.help` show the hint over both states.
-      Image(systemName: "minus.circle")
-        .foregroundStyle(
-          canRemove ? Color.secondary : Color.secondary.opacity(0.35)
-        )
-        .help(
-          canRemove
-            ? "Remove preset"
-            : "Cycle Width needs at least one preset"
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-          if canRemove { onRemove() }
-        }
+      // Inline row actions: the row has width to spare, so the reorder
+      // and remove commands sit as a strip of icon buttons rather than
+      // behind an ellipsis menu. Hover shows each one's tooltip even
+      // while disabled (see `RowActionButton`).
+      HStack(spacing: 2) {
+        RowActionButton(
+          symbol: "arrow.up.to.line", help: "Move to Top",
+          enabled: canMoveUp, action: onMoveToTop)
+        RowActionButton(
+          symbol: "arrow.up", help: "Move Up",
+          enabled: canMoveUp, action: onMoveUp)
+        RowActionButton(
+          symbol: "arrow.down", help: "Move Down",
+          enabled: canMoveDown, action: onMoveDown)
+        RowActionButton(
+          symbol: "arrow.down.to.line", help: "Move to Bottom",
+          enabled: canMoveDown, action: onMoveToBottom)
+        RowActionButton(
+          symbol: "trash",
+          help: canRemove ? "Remove" : "Cycle Width needs at least one preset",
+          enabled: canRemove, action: onRemove)
+      }
     }
   }
 }
