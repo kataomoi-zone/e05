@@ -2,21 +2,19 @@ import Foundation
 
 /// One pane of the Settings window. `allCases` order drives the
 /// sidebar row order: About sits at the bottom by convention so the
-/// most-edited tabs (General first, Terminal / Sites / Appearance /
-/// Shortcuts / Content Blocker above About) stay near the top.
-/// Terminal sits right after General because the terminal pane is
-/// e05's founding feature and the `config.ghostty` it edits is shared
-/// with the libghostty runtime rather than being a downstream feature
-/// toggle.
+/// most-edited tabs (General first, then Appearance, then Terminal /
+/// Sites / Shortcuts / Content Blocker) stay near the top. Appearance
+/// sits right after General because its theme and pane-width presets
+/// are the settings most often reached for after the General defaults.
 ///
 /// Lives in its own file rather than nested in ``SettingsRootView``
 /// because the cross-tab search index (``SettingsSearchIndex``) keys
 /// every searchable setting back to the tab that owns it.
 enum SettingsTab: CaseIterable, Hashable, Identifiable, Sendable {
   case general
+  case appearance
   case terminal
   case sites
-  case appearance
   case shortcuts
   case contentBlocker
   case about
