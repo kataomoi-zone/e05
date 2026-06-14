@@ -112,9 +112,10 @@ if [[ ! -d "$APP_PATH" ]]; then
     exit 1
 fi
 
-# Read the bundle's user-facing version string. Use PlistBuddy to
-# stay consistent with build_app.sh (which writes the same plist
-# via PlistBuddy) and to avoid mixing two plist-reading tools.
+# Read the bundle's user-facing version string with PlistBuddy
+# (build_app.sh writes the plist by `sed`-substituting Info.plist.in,
+# so there's no shared writer to match — PlistBuddy is just the
+# clean way to read one key back out here).
 SHORT_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "")"
 if [[ -z "$SHORT_VERSION" ]]; then
     echo "notarize.sh: could not read CFBundleShortVersionString from $APP_PATH/Contents/Info.plist" >&2
@@ -124,8 +125,9 @@ fi
 # Sanitise the same way build_app.sh sanitises the SHORT_VERSION
 # constant before writing it into Info.plist, so the zip name and
 # the bundle metadata stay aligned even if a future git tag
-# introduces shell metacharacters.
-SHORT_VERSION="${SHORT_VERSION//[^A-Za-z0-9.]/_}"
+# introduces shell metacharacters. `-` is whitelisted to match
+# build_app.sh's `dev-<sha>` prefix.
+SHORT_VERSION="${SHORT_VERSION//[^A-Za-z0-9.-]/_}"
 
 if [[ -z "$ZIP_PATH" ]]; then
     ZIP_PATH="$REPO_ROOT/build/release/e05-${SHORT_VERSION}.zip"

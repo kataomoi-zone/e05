@@ -43,36 +43,42 @@ esac
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Dev builds ride on git HEAD's short SHA so every rebuild has a
-# distinct, traceable version string in the sidebar header without
-# forcing a tag. Release builds extract the tag from `git describe`
-# so Launch Services has an N[.N[.N]] string to compare against
-# (Apple treats non-numeric as version 0, which would make `open`
-# pick the wrong .app when more than one release shares a bundle
-# id family). The integer commit count goes into CFBundleVersion
-# regardless of flavor.
+# The version string that lands in CFBundleShortVersionString.
+# Dev builds always ride on a `dev-<sha>` string so every rebuild
+# is distinct and traceable in the sidebar header without forcing
+# a tag. Release builds prefer a tag *on HEAD* — a numeric CalVer
+# (`2026.0614.1`) or SemVer, leading `v` stripped — so Launch
+# Services can version-compare (Apple treats non-numeric as
+# version 0, which would let `open` pick the wrong .app when
+# releases share a bundle id family). An untagged HEAD is a
+# dev/preview build, so it falls back to the same `dev-<sha>`
+# string — non-numeric-leading, so Launch Services reads it as
+# version 0 and it never shadows a real release — yielding a
+# traceable e05-dev-<sha>.zip rather than a bogus 0.0.0.
+# The integer commit count goes into CFBundleVersion regardless.
 case "$FLAVOR" in
     dev)
-        SHORT_VERSION="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        SHORT_VERSION="dev-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
         ;;
     release)
-        RAW_VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0)"
-        # Require at least N.N so an all-digit short SHA (the
-        # `--always` fallback when no tag exists, ~4% are all
-        # decimal) does not get mistaken for a version. The regex
-        # also accepts CalVer-style tags like `2026.05.15` without
-        # special-casing.
-        SHORT_VERSION="$(echo "${RAW_VERSION#v}" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)*' || true)"
-        SHORT_VERSION="${SHORT_VERSION:-0.0.0}"
+        if TAG="$(git describe --tags --exact-match 2>/dev/null)"; then
+            # Extract the numeric core; a malformed tag falls to 0.0.0.
+            SHORT_VERSION="$(echo "${TAG#v}" | grep -oE '^[0-9]+\.[0-9]+(\.[0-9]+)*' || true)"
+            SHORT_VERSION="${SHORT_VERSION:-0.0.0}"
+        else
+            SHORT_VERSION="dev-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+        fi
         ;;
 esac
 BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 
 # Sanitize dynamic values so future git tags containing
 # placeholder substitution metachars cannot break the rewrite.
-# Constants (BUNDLE_ID, DISPLAY_NAME) are author-controlled
-# and need no sanitization.
-SHORT_VERSION="${SHORT_VERSION//[^A-Za-z0-9.]/_}"
+# `-` is whitelisted for the `dev-<sha>` prefix (not a sed
+# metachar, so it is safe in the replacement text). Constants
+# (BUNDLE_ID, DISPLAY_NAME) are author-controlled and need no
+# sanitization.
+SHORT_VERSION="${SHORT_VERSION//[^A-Za-z0-9.-]/_}"
 BUILD_NUMBER="${BUILD_NUMBER//[^0-9]/}"
 
 APP_DIR="$REPO_ROOT/build/$FLAVOR/e05.app"
