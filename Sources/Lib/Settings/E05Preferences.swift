@@ -115,11 +115,11 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   public var widthCyclePresets: [PaneWidthPreset]?
 
   /// Identifier of the pane kind seeded into a freshly created
-  /// workspace (see ``InitialPaneKindPreset``). `nil` keeps the
-  /// historical terminal default. Unknown values resolve back to
-  /// terminal at the call site so a typo doesn't quarantine the file.
-  /// Link-opened workspaces ("Open in New Workspace") ignore this and
-  /// seed the destination browser pane instead.
+  /// workspace (see ``InitialPaneKindPreset``). `nil` defaults to the
+  /// start page. Unknown values resolve back to start at the call site
+  /// so a typo doesn't quarantine the file. Link-opened workspaces
+  /// ("Open in New Workspace") ignore this and seed the destination
+  /// browser pane instead.
   public var initialPaneKind: String?
 
   /// Whether `Next Pane` / `Previous Pane` wrap from the last pane back

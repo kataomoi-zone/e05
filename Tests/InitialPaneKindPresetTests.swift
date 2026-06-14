@@ -6,15 +6,15 @@ import Testing
 @Suite("InitialPaneKindPreset")
 @MainActor
 struct InitialPaneKindPresetTests {
-  @Test("resolve nil falls back to terminal")
+  @Test("resolve nil falls back to start")
   func resolveNil() {
-    #expect(InitialPaneKindPreset.resolve(nil) == .terminal)
+    #expect(InitialPaneKindPreset.resolve(nil) == .start)
   }
 
-  @Test("resolve unknown identifier falls back to terminal")
+  @Test("resolve unknown identifier falls back to start")
   func resolveUnknown() {
-    #expect(InitialPaneKindPreset.resolve("unknown") == .terminal)
-    #expect(InitialPaneKindPreset.resolve("") == .terminal)
+    #expect(InitialPaneKindPreset.resolve("unknown") == .start)
+    #expect(InitialPaneKindPreset.resolve("") == .start)
   }
 
   @Test("resolve known identifier returns the matching case")
@@ -33,6 +33,7 @@ struct InitialPaneKindPresetTests {
 
   @Test("each preset seeds the matching pane kind")
   func addressKind() {
+    #expect(InitialPaneKindPreset.start.address.kind == .start)
     #expect(InitialPaneKindPreset.terminal.address.kind == .terminal)
     #expect(InitialPaneKindPreset.finder.address.kind == .finder)
     // Browser delegates to the new-pane home address: the configured

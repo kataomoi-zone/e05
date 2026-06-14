@@ -3,9 +3,10 @@ import Foundation
 /// Pane opened below the focused one by `Split Vertical`. Resolves
 /// through ``E05Preferences/splitPaneKind``.
 ///
+/// - ``start`` — the native start page (`e05://start`) launcher.
 /// - ``terminal`` — a terminal pane (the historical split, cwd from
 ///   ``E05Preferences/newTerminalDirectory``).
-/// - ``browser`` — the start page / configured home URL, via
+/// - ``browser`` — a blank browser / configured home URL, via
 ///   ``PaneAddress/newPaneHome``.
 /// - ``finder`` — a finder pane rooted at
 ///   ``E05Preferences/newFinderDirectory`` (home by default).
@@ -16,6 +17,7 @@ import Foundation
 /// An unset / unknown identifier resolves to ``duplicate`` — splitting
 /// usually means "another of what I'm looking at".
 public enum SplitPaneKindPreset: String, CaseIterable, Identifiable, Sendable {
+  case start
   case terminal
   case browser
   case finder
@@ -25,6 +27,7 @@ public enum SplitPaneKindPreset: String, CaseIterable, Identifiable, Sendable {
 
   public var displayName: String {
     switch self {
+    case .start: "Start page"
     case .terminal: "Terminal"
     case .browser: "Browser"
     case .finder: "Finder"
@@ -35,6 +38,7 @@ public enum SplitPaneKindPreset: String, CaseIterable, Identifiable, Sendable {
   /// SF Symbol shown next to the label in the picker.
   public var symbol: String {
     switch self {
+    case .start: "sparkles"
     case .terminal: "apple.terminal"
     case .browser: "globe"
     case .finder: "folder"

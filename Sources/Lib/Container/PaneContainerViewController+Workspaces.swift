@@ -257,7 +257,7 @@ extension PaneContainerViewController {
 
   /// Seed address for a new workspace's first pane when the caller
   /// doesn't override it: the user's configured initial-pane kind
-  /// (default terminal). Resolved at call time so toggling the
+  /// (default start page). Resolved at call time so toggling the
   /// preference takes effect on the next new workspace.
   private var configuredInitialPaneAddress: PaneAddress {
     let preset = InitialPaneKindPreset.resolve(PreferencesStore.shared.preferences.initialPaneKind)
@@ -269,7 +269,7 @@ extension PaneContainerViewController {
   /// Create a new workspace with an auto-assigned accent color and an
   /// initial pane, then slide it into view. The seed pane is the
   /// user's configured initial-pane kind (``InitialPaneKindPreset``,
-  /// default terminal) unless a caller passes `initialAddress` — the
+  /// default start page) unless a caller passes `initialAddress` — the
   /// "Open in New Workspace" link path does, so the destination
   /// browser pane is the workspace's only pane instead of landing
   /// next to a seeded terminal. `isPrivate`

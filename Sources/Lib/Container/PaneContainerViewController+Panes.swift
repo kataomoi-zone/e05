@@ -942,6 +942,8 @@ extension PaneContainerViewController {
   /// unsupported duplicate source falls back to a fresh terminal.
   private func makeSplitPane(from source: PaneModel?) -> PaneModel {
     switch SplitPaneKindPreset.resolve(PreferencesStore.shared.preferences.splitPaneKind) {
+    case .start:
+      return makePane(address: .start)
     case .terminal:
       return makePane(address: .terminal, dependencies: newTerminalPaneDependencies)
     case .browser:
