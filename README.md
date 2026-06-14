@@ -1,6 +1,6 @@
 # e05
 
-A macOS window manager that tiles libghostty terminal panes, WKWebView browser panes, and a native finder pane in horizontally-scrolling columns across multiple workspaces inside a single window.
+A single-window, scrollable-tiling environment for macOS. Rather than managing OS windows, e05 brings terminals (libghostty), browsers (WKWebView), and a native file browser inside as its own panes and tiles them in horizontally-scrolling columns (a.k.a. niri-style) across multiple workspaces — freeing those workflows from macOS's native window management.
 
 Alpha. macOS 26+ only.
 
@@ -160,6 +160,13 @@ e05 notify <message>            # Surface a toast in the running app
 ```
 
 Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-typed `open .` / `open https://...` becomes a new finder / browser column. `open -a App` / `open file.pdf` etc. fall through to the system `/usr/bin/open` and keep their stock Launch Services behaviour.
+
+## Related projects
+
+e05's scrollable-tiling, panes-inside-one-window approach was most directly informed by two macOS apps that put terminals and browsers in horizontally-scrolling columns:
+
+- [watchtower](https://github.com/markhuot/watchtower) — open source.
+- [ribari](https://github.com/dalvlatko/ribari-releases) — closed source (releases only).
 
 ## License
 
