@@ -13,8 +13,8 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "AdBlocker")
 /// process, so network blocks and declarative `css-display-none`
 /// selectors apply without any JS on the page. Procedural cosmetic
 /// (`:has-text()`, `:upward()` …) runs in a separate content-script
-/// runtime inside ``CosmeticFilterEngine``; scriptlet injection is
-/// not implemented.
+/// runtime inside ``CosmeticFilterEngine``, and scriptlet injection
+/// (`##+js(...)`) runs in ``ScriptletEngine``.
 ///
 /// Extensions that ship their own ad filtering (layer B, `WKWebExtension`)
 /// stay out of this path entirely; placing an adblocker extension under

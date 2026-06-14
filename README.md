@@ -11,8 +11,8 @@ Alpha. macOS 26+ only.
 - Multiple workspaces inside one window, plus ephemeral "private" workspaces with a non-persistent data store.
 - Sidebar with five modes — Tabs (workspace + pane tree), Bookmarks, History, Downloads, Extensions — hover-peek and pin.
 - Per-tab WKWebExtensions: install from the Chrome Web Store, or load an unpacked extension folder or ZIP archive. Firefox `.xpi` and Safari `.appex` bundles are not supported.
-- Built-in adblocker (declarative + procedural cosmetic runtime) with a catalog of filter lists — EasyList, EasyPrivacy, uBlock Origin, AdGuard regional lists, and more — fetched and cached at runtime, with a default-on subset plus optional and custom sources.
-- Memory saver: idle browser panes auto-suspend after a configurable idle timeout (60 minutes by default) and on system memory pressure, with cross-launch back/forward history restoration via a shadow URL stack.
+- Built-in adblocker (declarative + procedural cosmetic + scriptlet injection runtime) with a catalog of filter lists — EasyList, EasyPrivacy, uBlock Origin, AdGuard regional lists, and more — fetched and cached at runtime, with a default-on subset plus optional and custom sources.
+- Memory saver: idle browser panes auto-suspend after a configurable idle timeout (60 minutes by default) and on system memory pressure, restoring each pane's full back/forward history and scroll position on relaunch via the WKWebView interaction state.
 - Web Notifications routed to native macOS banners with deep-link dispatch through the page's Service Worker.
 - Per-host site permissions for camera / microphone / geolocation / notifications, and per-site mute.
 - Finder pane (`e05://finder`) with inline rename, undo/redo across move / trash / new folder / duplicate / drag-drop, icon view with QuickLook thumbnails, and a rich right-click menu (Open, Open With, Get Info, Rename, Compress, Duplicate, Make Alias, Quick Look, Copy / Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection).
@@ -78,9 +78,9 @@ The bindings below are the **defaults** — remap, clear, or reset any of them i
 | | `⌃ Tab` / `⌃⇧ Tab` | Next / previous pane (cycle) |
 | Pane order | `⌥⌃⇧ H` / `L` | Move column left / right |
 | | `⌥⌃⇧ J` / `K` | Move pane down / up within column |
-| New pane | `⌘ T` | New browser column |
+| New pane | `⌘ T` | New start page column (`e05://start`) |
 | | `⌘⇧ D` | Vertical split within column |
-| | (palette) | New Terminal Column, New Finder Column |
+| | (palette) | New Browser Column, New Terminal Column, New Finder Column |
 | Close / restore | `⌘ W` | Close pane (with confirmation for live terminals) |
 | | `⌘⇧ T` | Reopen last closed pane (within 10s) |
 | Layout | `⌥⌃ /` | Cycle pane width preset (defaults to 640 pt → 1/2 → 1/3; editable in Settings → Appearance) |
@@ -121,19 +121,23 @@ Runtime data and caches live under macOS-native locations, keyed by bundle id so
 
 ```
 ~/Library/Application Support/<bundle-id>/
-├── bookmarks.db          SQLite bookmarks
-├── history.db            SQLite browsing history
-├── downloads.db          SQLite downloads log
-├── session.json          Workspace / pane state
-├── permissions.json      Per-host camera / mic / location / notification grants
-├── muted-sites.json      Per-host mute list
-├── finder-modes.json     Per-directory finder view mode
-├── resume/               Per-pane download resume state
-├── extensions/           Installed WKWebExtension bundles + state
-└── control.sock          e05 CLI Unix domain socket
+├── bookmarks.db              SQLite bookmarks
+├── history.db                SQLite browsing history
+├── downloads.db              SQLite downloads log
+├── input-history.db          URL-bar input history
+├── session.json              Workspace / pane state
+├── preferences.json          e05 settings (edited via Settings)
+├── permissions.json          Per-host camera / mic / location / notification grants
+├── muted-sites.json          Per-host mute list
+├── suspend-exempt.json       Per-host auto-suspend exemptions
+├── adblocker-whitelist.json  Per-host adblocker whitelist
+├── finder-modes.json         Per-directory finder view mode
+├── resume/                   Per-pane download resume state
+├── extensions/               Installed WKWebExtension bundles + state
+└── control.sock              e05 CLI Unix domain socket
 ~/Library/Caches/<bundle-id>/
-├── adblocker/            Compiled WKContentRuleList cache + filterlist sources
-└── favicons/             HTTP-fetched favicon cache
+├── adblocker/                Compiled WKContentRuleList cache + filterlist sources
+└── favicons/                 HTTP-fetched favicon cache
 ```
 
 There is no automatic data migration between the dev and release bundle ids. Copy by hand if you want to carry a dev session over to release.

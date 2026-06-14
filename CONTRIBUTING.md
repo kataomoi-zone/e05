@@ -131,17 +131,20 @@ Review feedback is applied via `git commit --fixup=<sha>` or `--amend` to the or
 ```
 Sources/
   App/                    — NSApplicationMain entrypoint, AppDelegate, menus
+  CLI/                    — e05 CLI executable (bundled as Contents/Resources/bin/e05)
   Lib/
     Ghostty/              — libghostty C API wrapping (runtime, surface, input)
     Browser/              — WKWebView wrapper, history/bookmarks/downloads stores, ad blocker
-    Pane/                 — PaneModel, ColumnModel, PaneAddress, session state
+    Pane/                 — PaneModel, ColumnModel, WorkspaceModel, PaneAddress, session state
     Container/            — PaneContainerViewController + partial extensions (+Panes, +Focus,
-                            +Workspaces, +URLBar, +Actions, +Session, +Sidebar)
+                            +Workspaces, +URLBar, +Actions, +Session, +Sidebar, +Pin,
+                            +Appearance, +FindBar, …)
     UI/                   — Sidebar, URL bar, command palette, suggestions, list panes
     Finder/               — native file-browser pane (e05://finder)
     Settings/             — Settings window (SwiftUI) + preferences store
-    IPC/                  — control socket + e05 CLI protocol
-    Utility/              — FuzzyMatcher, ULID, Action registry, Collection+safe
+    IPC/                  — control socket the e05 CLI connects to
+    Utility/              — FuzzyMatcher, Frecency, ULID, Action registry, E05Paths,
+                            URLCanonicalizer, Collection+Safe
 Tests/                    — unit tests
-Package.swift             — SwiftPM manifest with GhosttyKit binary target
+Package.swift             — SwiftPM manifest with GhosttyKit + e05cli targets
 ```
