@@ -1593,6 +1593,16 @@ extension WorklaneSectionView: NSOutlineViewDelegate {
       }
     } else if let ws = item as? WorklaneWorkspaceNode {
       input.onWorkspaceClick(ws.index)
+      // A workspace-header click is a "switch to this workspace"
+      // gesture, not a selection change — the highlight belongs on the
+      // focused pane, never the header. Switching to a *different*
+      // workspace reloads the worklane and re-runs `syncSelection`, but
+      // clicking the *current* workspace's header is a no-op switch that
+      // reloads nothing, stranding the gray highlight on the header.
+      // Re-assert the focused-pane highlight so the header never keeps
+      // a residue (cascades back to the pane's nearest visible ancestor
+      // when its own row is collapsed).
+      syncSelection(to: input.focusedPaneId)
     }
   }
 
