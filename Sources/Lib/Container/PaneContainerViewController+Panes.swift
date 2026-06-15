@@ -197,6 +197,22 @@ extension PaneContainerViewController {
     // scroll from a width-0 start would land on the wrong X.
     let wc = installColumnWidthConstraints(on: column, initial: defaultPaneWidth)
 
+    // A fresh add (window attached) opens at the user's first width-cycle
+    // preset and seeds `currentPreset`, so the column starts at the
+    // configured new-pane width and the first Cycle Width press steps to
+    // the *next* preset instead of re-applying the width it already has.
+    // Applied before the expand animation so there's no width jump.
+    // Restore runs before the window attaches (animated == false) and
+    // keeps the saved width the caller assigns after the insert.
+    if animated, let firstPreset = Self.resolvedWidthCycle().first {
+      column.currentPreset = firstPreset
+      applyPreset(firstPreset, to: column)
+    }
+    // Width the column settles at — the seeded preset for a fresh add,
+    // otherwise the default. The insert animation below tweens to this
+    // (it would otherwise snap every column back to the default width).
+    let targetWidth = wc.constant
+
     if animated {
       // Hide the new column's contents while the slot expands so
       // its WKWebView / ghostty surface doesn't render at every
@@ -276,7 +292,7 @@ extension PaneContainerViewController {
         ? { @MainActor @Sendable [column] in column.containerView.alphaValue = 1 }
         : nil
     ) {
-      wc.animator().constant = defaultPaneWidth
+      wc.animator().constant = targetWidth
     }
     if let scrollTarget {
       animateScroll(toX: scrollTarget)
