@@ -207,10 +207,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     guard !isRenaming, let node else { return }
     isRenaming = true
     label.stringValue = node.model.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    // Placeholder is always the positional fallback, not displayName:
-    // it previews what an emptied field reverts to, so it stays
-    // "Workspace N" even when the workspace currently has a name.
-    label.placeholderString = "Workspace \(node.index + 1)"
+    // Placeholder previews what an emptied field reverts to — the
+    // unnamed fallback, which is "Private" for a private workspace and
+    // the positional "Workspace N" otherwise (matches
+    // `WorkspaceModel.displayName`), even when the workspace currently
+    // has a name.
+    label.placeholderString = node.model.isPrivate ? "Private" : "Workspace \(node.index + 1)"
     label.isEditable = true
     label.isSelectable = true
     label.isBezeled = true

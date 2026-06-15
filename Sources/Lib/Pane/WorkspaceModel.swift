@@ -56,16 +56,20 @@ public final class WorkspaceModel {
   }
 
   /// User-facing label: the custom `name` when set (trimmed,
-  /// non-empty), else the positional "Workspace N" fallback. The
-  /// index is passed in because numbering is positional — the model
-  /// doesn't know its own slot in the container's `workspaces` array
-  /// (see the type doc on why accent / number live outside the model).
+  /// non-empty), else a fallback. The index is passed in because
+  /// numbering is positional — the model doesn't know its own slot in
+  /// the container's `workspaces` array (see the type doc on why accent
+  /// / number live outside the model). An unnamed private workspace
+  /// falls back to a plain "Private" label rather than "Workspace N" so
+  /// the mode is legible at a glance in the worklane, matching the
+  /// dashed accent bar; a named one keeps its name (the bar still marks
+  /// it private).
   public func displayName(at index: Int) -> String {
     if let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines),
       !trimmed.isEmpty
     {
       return trimmed
     }
-    return "Workspace \(index + 1)"
+    return isPrivate ? "Private" : "Workspace \(index + 1)"
   }
 }

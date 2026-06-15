@@ -137,6 +137,13 @@ extension PaneContainerViewController {
     }
     updateHandleActiveStates()
     showHeaderForFocusedPane()
+    // Keep the OS-visible window title in step with the focused pane,
+    // masking private-workspace panes. A plain focus change doesn't
+    // re-fire a title event, so without this switching into a private
+    // workspace would keep surfacing the previously focused public
+    // pane's title (and switching back out would leave "Private
+    // Browsing" stranded) until the next navigation.
+    view.window?.title = maskedWindowTitle(for: pane)
     if scroll {
       scrollToColumn(at: columnIndex)
     }

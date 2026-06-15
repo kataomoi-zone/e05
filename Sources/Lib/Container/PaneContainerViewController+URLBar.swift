@@ -1033,6 +1033,23 @@ extension PaneContainerViewController {
 
   // MARK: - Header
 
+  /// The `NSWindow.title` to surface for `pane`, masked to a fixed
+  /// string when the pane lives in a private workspace so its URL /
+  /// page title never reaches Mission Control, the ⌘-Tab switcher, or a
+  /// screen recording — all of which read `NSWindow.title`, which e05
+  /// keeps populated even though the titlebar text itself is hidden
+  /// (`titleVisibility = .hidden`). A non-private pane with no title yet
+  /// falls back to the app name (the window's initial title) rather than
+  /// blanking — and, critically, rather than leaving a prior "Private
+  /// Browsing" stranded when focus leaves a private workspace for a
+  /// still-untitled public pane.
+  func maskedWindowTitle(for pane: PaneModel) -> String {
+    if workspaceContaining(pane: pane)?.isPrivate == true {
+      return "Private Browsing"
+    }
+    return pane.title.isEmpty ? "e05" : pane.title
+  }
+
   func showHeaderForFocusedPane() {
     guard !urlBarVisible else { return }
     guard let pane = focusedPane, !pane.title.isEmpty else { return }
@@ -1059,9 +1076,10 @@ extension PaneContainerViewController {
 
     let isFocused = pane.id == focusedPane?.id
 
-    // Window title: immediate (matches ghostty behavior)
+    // Window title: immediate (matches ghostty behavior), masked for
+    // private-workspace panes (see `maskedWindowTitle`).
     if isFocused {
-      view.window?.title = title
+      view.window?.title = maskedWindowTitle(for: pane)
     }
 
     guard titleChanged else { return }

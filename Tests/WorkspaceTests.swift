@@ -43,6 +43,20 @@ struct WorkspaceTests {
     #expect(ws.displayName(at: 1) == "Workspace 2")
   }
 
+  @Test("displayName labels an unnamed private workspace as Private")
+  @MainActor func displayNamePrivateFallback() {
+    let ws = WorkspaceModel(isPrivate: true)
+    #expect(ws.displayName(at: 0) == "Private")
+    #expect(ws.displayName(at: 3) == "Private")
+  }
+
+  @Test("a named private workspace keeps its custom name")
+  @MainActor func displayNamePrivateCustom() {
+    let ws = WorkspaceModel(isPrivate: true)
+    ws.name = "Banking"
+    #expect(ws.displayName(at: 0) == "Banking")
+  }
+
   @Test("accentColor returns the palette in order for the first cycle")
   @MainActor func accentColorPalette() {
     let palette = PaneContainerViewController.accentColorPalette
