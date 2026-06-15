@@ -30,6 +30,93 @@ struct AdBlockerWhitelistStoreTests {
     }
   }
 
+  @Test("normalizeHost reduces a pasted URL to a bare host")
+  func normalizeHostStripsSchemeAndPath() {
+    #expect(
+      AdBlockerWhitelistStore.normalizeHost("https://www.youtube.com/watch?v=abc&t=1")
+        == "www.youtube.com")
+    #expect(AdBlockerWhitelistStore.normalizeHost("  HTTP://Example.COM/path  ") == "example.com")
+    #expect(AdBlockerWhitelistStore.normalizeHost("example.com:8080") == "example.com")
+    #expect(
+      AdBlockerWhitelistStore.normalizeHost("user:pass@host.example.com/p") == "host.example.com")
+    #expect(AdBlockerWhitelistStore.normalizeHost("example.com") == "example.com")
+    #expect(AdBlockerWhitelistStore.normalizeHost("   ") == "")
+  }
+
+  @Test("setWhitelisted normalizes a pasted URL so it matches the bare host")
+  func setWhitelistedNormalizesURL() throws {
+    try withTempStoreURL { storeURL in
+      let store = AdBlockerWhitelistStore(storeURL: storeURL)
+      store.setWhitelisted(true, host: "https://www.youtube.com/watch?v=abc")
+      #expect(store.isWhitelisted(host: "www.youtube.com"))
+      #expect(store.allHosts == ["www.youtube.com"])
+    }
+  }
+
+  @Test("isWhitelisted matches the host and any subdomain of an entry")
+  func isWhitelistedCoversSubdomains() throws {
+    try withTempStoreURL { storeURL in
+      let store = AdBlockerWhitelistStore(storeURL: storeURL)
+      store.setWhitelisted(true, host: "youtube.com")
+      // The entry itself and any subdomain of it.
+      #expect(store.isWhitelisted(host: "youtube.com"))
+      #expect(store.isWhitelisted(host: "www.youtube.com"))
+      #expect(store.isWhitelisted(host: "m.youtube.com"))
+      #expect(store.isWhitelisted(host: "a.b.youtube.com"))
+      // A sibling domain that merely ends in the same letters must not
+      // match (parent walk is label-aware, not a suffix test).
+      #expect(!store.isWhitelisted(host: "notyoutube.com"))
+      #expect(!store.isWhitelisted(host: "youtube.com.evil.com"))
+      #expect(!store.isWhitelisted(host: "example.com"))
+    }
+  }
+
+  @Test("isWhitelisted never matches on a bare TLD entry")
+  func isWhitelistedIgnoresBareTLD() throws {
+    try withTempStoreURL { storeURL in
+      let store = AdBlockerWhitelistStore(storeURL: storeURL)
+      store.setWhitelisted(true, host: "com")
+      // A subdomain walk that reached the bare TLD would blanket every
+      // .com site; it must stop above the registrable domain.
+      #expect(!store.isWhitelisted(host: "youtube.com"))
+      #expect(store.isWhitelisted(host: "com"))
+    }
+  }
+
+  @Test("isWhitelisted matches a single-label host like localhost")
+  func isWhitelistedSingleLabelHost() throws {
+    try withTempStoreURL { storeURL in
+      let store = AdBlockerWhitelistStore(storeURL: storeURL)
+      store.setWhitelisted(true, host: "localhost")
+      // A dotless host must match its own entry across every layer; the
+      // JS `hostnameChain` mirrors this by always including the full host.
+      #expect(store.isWhitelisted(host: "localhost"))
+      #expect(!store.isWhitelisted(host: "notlocalhost"))
+    }
+  }
+
+  @Test("normalizeHost keeps a bracketed IPv6 literal as a bare address")
+  func normalizeHostIPv6() {
+    #expect(AdBlockerWhitelistStore.normalizeHost("[::1]:8080") == "::1")
+    #expect(AdBlockerWhitelistStore.normalizeHost("http://[::1]:8080/path") == "::1")
+    #expect(
+      AdBlockerWhitelistStore.normalizeHost("https://user@[2001:db8::1]:443/x") == "2001:db8::1")
+  }
+
+  @Test("normalizeHost trims a trailing dot")
+  func normalizeHostTrailingDot() {
+    #expect(AdBlockerWhitelistStore.normalizeHost("Example.COM.") == "example.com")
+  }
+
+  @Test("replaceAll normalizes pasted URLs and drops empties")
+  func replaceAllNormalizes() throws {
+    try withTempStoreURL { storeURL in
+      let store = AdBlockerWhitelistStore(storeURL: storeURL)
+      store.replaceAll(with: ["https://www.youtube.com/watch?v=x", "example.com:8080", "   "])
+      #expect(store.allHosts == ["example.com", "www.youtube.com"])
+    }
+  }
+
   @Test("allHosts returns sorted lowercase entries")
   func allHostsSortedLowercase() throws {
     try withTempStoreURL { storeURL in

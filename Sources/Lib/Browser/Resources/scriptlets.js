@@ -44,13 +44,18 @@
 
   // ---- hostname scoping -------------------------------------------------
 
-  // Mirror the Swift side's `parentHostnames`: walk from the full
-  // hostname up toward the registrable domain, never yielding a bare
-  // TLD ("a.b.com" → ["a.b.com", "b.com"]).
+  // Mirror the Swift side's `parentHostnames`: the full hostname plus
+  // each parent up toward the registrable domain, never yielding a bare
+  // TLD ("a.b.com" → ["a.b.com", "b.com"]). The full host is always
+  // included first, so a single-label host ("localhost") still yields
+  // ["localhost"] rather than [] — keeping the whitelist and index
+  // lookups consistent with the cosmetic / declarative layers.
   function hostnameChain(host) {
-    const parts = String(host).toLowerCase().split(".");
-    const out = [];
-    for (let i = 0; i < parts.length - 1; i++) {
+    const h = String(host).toLowerCase();
+    if (!h) return [];
+    const parts = h.split(".");
+    const out = [h];
+    for (let i = 1; i < parts.length - 1; i++) {
       out.push(parts.slice(i).join("."));
     }
     return out;
@@ -68,12 +73,12 @@
 
   const chain = hostnameChain(location.hostname);
   const entities = entityChain(location.hostname);
-  // Whitelist on the full host only, matching the cosmetic and
-  // declarative layers (host keys are full hosts, not eTLD+1). A
-  // parent-domain walk here would suppress scriptlets on a subdomain
-  // the user never whitelisted, diverging from those layers.
+  // Whitelist matches the host or any parent domain, so whitelisting
+  // "youtube.com" also exempts "www.youtube.com" — same parent walk the
+  // cosmetic / declarative layers use (`chain` excludes the bare TLD, so
+  // a stray "com" entry can't blanket every site).
   const whitelisted = new Set(whitelist.map((h) => String(h).toLowerCase()));
-  if (whitelisted.has(location.hostname.toLowerCase())) return;
+  if (chain.some((h) => whitelisted.has(h))) return;
 
   // ---- set-constant -----------------------------------------------------
 

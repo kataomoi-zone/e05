@@ -60,11 +60,28 @@ public final class AdBlockerWhitelistStore {
 
   // MARK: - Read
 
-  /// Whether `host` (case-insensitive) is on the whitelist. Used both
-  /// for the per-host content rule list bypass and for the cosmetic
-  /// engine's hostname-query suppression.
+  /// Whether `host` (case-insensitive) is exempt — it matches an entry
+  /// directly or sits under one. Whitelisting `youtube.com` therefore
+  /// also exempts `www.youtube.com` / `m.youtube.com`, which is what
+  /// users expect from a per-site toggle (and what the Settings copy
+  /// promises). Walks the parent chain down to but excluding the bare
+  /// TLD so a stray `com` entry can't blanket every site — the same walk
+  /// the cosmetic / declarative / scriptlet layers use
+  /// (mirrors `CosmeticFilterEngine.parentHostnames` and the JS
+  /// `hostnameChain`). Used for the per-host content rule list bypass
+  /// and the cosmetic engine's hostname-query suppression.
   public func isWhitelisted(host: String) -> Bool {
-    hosts.contains(host.lowercased())
+    let normalized = host.lowercased()
+    guard !normalized.isEmpty else { return false }
+    if hosts.contains(normalized) { return true }
+    var current = normalized[...]
+    while let dot = current.firstIndex(of: ".") {
+      let parent = current[current.index(after: dot)...]
+      guard parent.contains(".") else { break }  // stop above the bare TLD
+      if hosts.contains(String(parent)) { return true }
+      current = parent
+    }
+    return false
   }
 
   /// Every host on the whitelist, sorted for deterministic UI
@@ -75,6 +92,41 @@ public final class AdBlockerWhitelistStore {
 
   // MARK: - Write
 
+  /// Reduce free-form input to a bare host so a pasted URL still lands a
+  /// usable entry: `https://www.youtube.com/watch?v=…` → `www.youtube.com`.
+  /// Drops a scheme prefix, then any path / query / fragment, then
+  /// userinfo, then a `:port` (bracketed IPv6 literals keep the address
+  /// and lose the brackets, matching what `URL.host` reports), then a
+  /// trailing dot, and lowercases. Returns "" when nothing host-like
+  /// remains. The match side (`isWhitelisted`) reads a bare `URL.host`,
+  /// so an un-normalized entry with a scheme or path could never match —
+  /// this keeps both sides in the same shape.
+  public static func normalizeHost(_ raw: String) -> String {
+    var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !s.isEmpty else { return "" }
+    if let scheme = s.range(of: "://") {
+      s = String(s[scheme.upperBound...])
+    }
+    if let cut = s.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) {
+      s = String(s[..<cut])
+    }
+    if let at = s.lastIndex(of: "@") {
+      s = String(s[s.index(after: at)...])
+    }
+    if s.hasPrefix("["), let close = s.firstIndex(of: "]") {
+      // Bracketed IPv6 literal (`[::1]:8080`): keep the address, drop the
+      // brackets and any `:port`. `URL.host` reports IPv6 unbracketed, so
+      // this matches the lookup side.
+      s = String(s[s.index(after: s.startIndex)..<close])
+    } else if let port = s.firstIndex(of: ":") {
+      s = String(s[..<port])
+    }
+    if s.hasSuffix(".") {
+      s.removeLast()
+    }
+    return s
+  }
+
   /// Add or remove `host` from the whitelist and persist. Idempotent
   /// — setting the same state that's already stored is a no-op (no
   /// file write). A `save` failure rolls the in-memory mutation back
@@ -82,9 +134,11 @@ public final class AdBlockerWhitelistStore {
   /// Propagating the change to the live rule list is the caller's
   /// responsibility — there is no broadcast notification because the
   /// only call site that needs to react synchronously is the
-  /// Settings tab.
+  /// Settings tab. `host` is run through ``normalizeHost(_:)`` so a
+  /// pasted URL still lands a matchable entry.
   public func setWhitelisted(_ whitelisted: Bool, host: String) {
-    let normalized = host.lowercased()
+    let normalized = Self.normalizeHost(host)
+    guard !normalized.isEmpty else { return }
     let alreadyContains = hosts.contains(normalized)
     if whitelisted == alreadyContains { return }
     if whitelisted {
@@ -109,9 +163,11 @@ public final class AdBlockerWhitelistStore {
 
   /// Replace the whitelist with `newHosts`. Used by bulk operations
   /// (Reset, Import) so the caller does not have to drive a sequence
-  /// of single-host writes through ``setWhitelisted(_:host:)``.
+  /// of single-host writes through ``setWhitelisted(_:host:)``. Each
+  /// entry goes through ``normalizeHost(_:)`` so an imported URL lands
+  /// the same matchable shape a single add would.
   public func replaceAll(with newHosts: [String]) {
-    let normalized = Set(newHosts.map { $0.lowercased() })
+    let normalized = Set(newHosts.map { Self.normalizeHost($0) }.filter { !$0.isEmpty })
     if normalized == hosts { return }
     let previous = hosts
     hosts = normalized

@@ -485,8 +485,15 @@ struct ContentBlockerSettingsView: View {
 
   private var addRow: some View {
     HStack {
-      TextField("host (e.g. example.com)", text: $pendingHost)
+      TextField("Host", text: $pendingHost, prompt: Text("host (e.g. example.com)"))
         .textFieldStyle(.roundedBorder)
+        // Single-line + hidden label: a long pasted URL scrolls inside
+        // the field instead of forcing the row's label above it (which
+        // looked like the field was wrapping). The hint lives in the
+        // `prompt` placeholder so it survives `.labelsHidden()`.
+        // `commitPendingHost` normalizes the entry to a bare host anyway.
+        .lineLimit(1)
+        .labelsHidden()
         .onSubmit { commitPendingHost() }
       Button("Add") { commitPendingHost() }
         .disabled(normalizedPendingHost.isEmpty)
@@ -525,7 +532,7 @@ struct ContentBlockerSettingsView: View {
   }
 
   private var normalizedPendingHost: String {
-    pendingHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    AdBlockerWhitelistStore.normalizeHost(pendingHost)
   }
 
   // Whitelist edits do not trigger `AdBlocker.reload()`: enforcement
