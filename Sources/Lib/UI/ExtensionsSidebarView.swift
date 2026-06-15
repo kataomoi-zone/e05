@@ -326,6 +326,11 @@ enum ExtensionRowAction {
   /// Drop the URL-bar permanent slot. The extension is still
   /// reachable via the puzzle-piece menu.
   case unpinFromURLBar
+  /// Grant the extension access to private workspaces. Toggles to
+  /// `.disallowPrivate` on next click.
+  case allowPrivate
+  /// Revoke private-workspace access.
+  case disallowPrivate
   /// Move the extension's source archive to the Trash and clear all
   /// caches.
   case remove
@@ -372,6 +377,10 @@ extension ExtensionsSidebarView {
       ExtensionController.shared.setPinned(true, for: sourceURL)
     case .unpinFromURLBar:
       ExtensionController.shared.setPinned(false, for: sourceURL)
+    case .allowPrivate:
+      ExtensionController.shared.setAllowsPrivate(true, for: sourceURL)
+    case .disallowPrivate:
+      ExtensionController.shared.setAllowsPrivate(false, for: sourceURL)
     case .remove:
       ExtensionController.shared.removeExtension(for: sourceURL)
     }
@@ -429,6 +438,10 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   /// between `Pin to URL Bar` and `Unpin from URL Bar` without
   /// re-querying the controller during pop-up runloop.
   private var currentIsPinned = false
+
+  /// Mirrors `LoadedExtension.allowsPrivate` so the menu's private-access
+  /// item shows the right checkmark without a controller hop.
+  private var currentAllowsPrivate = false
 
   /// Fired when the user flips the trailing switch. The parent list
   /// view forwards the request to `ExtensionController.setEnabled`,
@@ -589,6 +602,19 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
         enabled: currentIsEnabled
       )
     )
+    // Private-workspace access is a per-extension grant (a checkmark,
+    // not a label flip): off by default so private browsing stays
+    // invisible to extensions until the user opts this one in.
+    let privateItem = buildMenuItem(
+      title: "Allow in Private Workspaces",
+      symbol: "hand.raised",
+      action: #selector(menuToggleAllowsPrivate(_:)),
+      sourceURL: sourceURL,
+      enabled: currentIsEnabled
+    )
+    privateItem.state = currentAllowsPrivate ? .on : .off
+    menu.addItem(privateItem)
+
     menu.addItem(.separator())
     menu.addItem(
       buildMenuItem(
@@ -644,6 +670,11 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     onRowAction?(sourceURL, currentIsPinned ? .unpinFromURLBar : .pinToURLBar)
   }
 
+  @objc private func menuToggleAllowsPrivate(_ sender: NSMenuItem) {
+    guard let sourceURL = sourceURL(from: sender) else { return }
+    onRowAction?(sourceURL, currentAllowsPrivate ? .disallowPrivate : .allowPrivate)
+  }
+
   @objc private func menuRemove(_ sender: NSMenuItem) {
     guard let sourceURL = sourceURL(from: sender) else { return }
     onRowAction?(sourceURL, .remove)
@@ -671,6 +702,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     currentHasOptionsPage = entry.hasOptionsPage
     currentIsEnabled = entry.isEnabled
     currentIsPinned = entry.isPinned
+    currentAllowsPrivate = entry.allowsPrivate
     titleLabel.stringValue = entry.displayName
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"

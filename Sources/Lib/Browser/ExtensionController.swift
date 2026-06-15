@@ -153,6 +153,17 @@ public final class ExtensionController {
   /// same way at scan time.
   private var pinnedExtensions: Set<String> = []
 
+  /// Extensions the user has granted access to private workspaces, same
+  /// basename-keyed convention as `disabledExtensions`. Drives each
+  /// context's `WKWebExtensionContext.hasAccessToPrivateData`, which is
+  /// what gates WebKit's delivery of the private window and its tabs:
+  /// an extension not on this list never sees a private-workspace pane.
+  /// Defaults to empty (off) so private browsing stays invisible to
+  /// extensions until the user opts one in (Chrome's `incognito`
+  /// per-extension grant). Persisted alongside the others and pruned the
+  /// same way at scan time.
+  private var allowsPrivateExtensions: Set<String> = []
+
   /// Chrome Web Store extension IDs whose install is currently in
   /// flight. ``installFromChromeWebStore(extensionID:)`` is the CWS
   /// overlay's only install entry point, and the rebranded button
@@ -917,6 +928,10 @@ public final class ExtensionController {
     /// state.json written before the URL-bar pinning feature shipped
     /// decodes to "all unpinned" without a migration step.
     var pinnedExtensions: [String] = []
+    /// Per-extension private-workspace access grants. Empty default for
+    /// files written before the feature shipped, so they decode to "no
+    /// extension sees private" without a migration step.
+    var allowsPrivateExtensions: [String] = []
   }
 
   /// Domain shared by every NSError thrown from this controller.
@@ -1041,9 +1056,11 @@ public final class ExtensionController {
     let presentFilenames = Set(contextsByFilename.keys)
     let staleDisabled = disabledExtensions.subtracting(presentFilenames)
     let stalePinned = pinnedExtensions.subtracting(presentFilenames)
-    if !staleDisabled.isEmpty || !stalePinned.isEmpty {
+    let staleAllowsPrivate = allowsPrivateExtensions.subtracting(presentFilenames)
+    if !staleDisabled.isEmpty || !stalePinned.isEmpty || !staleAllowsPrivate.isEmpty {
       disabledExtensions.formIntersection(presentFilenames)
       pinnedExtensions.formIntersection(presentFilenames)
+      allowsPrivateExtensions.formIntersection(presentFilenames)
       savePersistedState()
     }
   }
@@ -1178,6 +1195,10 @@ public final class ExtensionController {
 
     let filename = sourceURL.lastPathComponent
     contextsByFilename[filename] = ctx
+    // Grant private-workspace access before `controller.load`, so WebKit
+    // delivers the private window and its tabs to this extension only
+    // when the user has opted it in (default off = private invisible).
+    ctx.hasAccessToPrivateData = allowsPrivateExtensions.contains(filename)
     let isEnabled = !disabledExtensions.contains(filename)
     logger.info(
       "activate '\(name, privacy: .public)' filename=\(filename, privacy: .public) isEnabled=\(isEnabled)"
@@ -1219,6 +1240,7 @@ public final class ExtensionController {
       icon: Self.bestIcon(for: ext),
       isEnabled: isEnabled,
       isPinned: pinnedExtensions.contains(filename),
+      allowsPrivate: allowsPrivateExtensions.contains(filename),
       hasOptionsPage: ext.hasOptionsPage
     )
     loadedExtensions.append(entry)
@@ -1428,6 +1450,7 @@ public final class ExtensionController {
     displayName: String
   ) {
     contextsByFilename[filename] = oldCtx
+    oldCtx.hasAccessToPrivateData = allowsPrivateExtensions.contains(filename)
     if wasEnabled {
       do {
         try controller.load(oldCtx)
@@ -1459,6 +1482,7 @@ public final class ExtensionController {
       icon: Self.bestIcon(for: oldExt),
       isEnabled: wasEnabled,
       isPinned: pinnedExtensions.contains(filename),
+      allowsPrivate: allowsPrivateExtensions.contains(filename),
       hasOptionsPage: oldExt.hasOptionsPage
     )
     loadedExtensions.append(entry)
@@ -1877,6 +1901,29 @@ public final class ExtensionController {
     NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
   }
 
+  /// Grant or revoke an extension's access to private workspaces. Flips
+  /// the live context's `hasAccessToPrivateData` so WebKit re-evaluates
+  /// the private window's visibility on the next query — no reload
+  /// needed for the gate itself, though an extension caches its own tab
+  /// list and may not surface already-open private tabs until it
+  /// re-queries.
+  public func setAllowsPrivate(_ allowed: Bool, for sourceURL: URL) {
+    let filename = sourceURL.lastPathComponent
+    let wasAllowed = allowsPrivateExtensions.contains(filename)
+    guard allowed != wasAllowed else { return }
+    if allowed {
+      allowsPrivateExtensions.insert(filename)
+    } else {
+      allowsPrivateExtensions.remove(filename)
+    }
+    contextsByFilename[filename]?.hasAccessToPrivateData = allowed
+    if let i = loadedExtensions.firstIndex(where: { $0.sourceURL == sourceURL }) {
+      loadedExtensions[i].allowsPrivate = allowed
+    }
+    savePersistedState()
+    NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+  }
+
   private func loadPersistedState() {
     let url = Self.extensionsStateFileURL
     guard let data = try? Data(contentsOf: url) else {
@@ -1889,6 +1936,7 @@ public final class ExtensionController {
       let decoded = try JSONDecoder().decode(PersistedState.self, from: data)
       disabledExtensions = Set(decoded.disabledExtensions)
       pinnedExtensions = Set(decoded.pinnedExtensions)
+      allowsPrivateExtensions = Set(decoded.allowsPrivateExtensions)
     } catch {
       logger.error(
         """
@@ -1904,7 +1952,8 @@ public final class ExtensionController {
     let url = Self.extensionsStateFileURL
     let payload = PersistedState(
       disabledExtensions: disabledExtensions.sorted(),
-      pinnedExtensions: pinnedExtensions.sorted()
+      pinnedExtensions: pinnedExtensions.sorted(),
+      allowsPrivateExtensions: allowsPrivateExtensions.sorted()
     )
     do {
       let encoder = JSONEncoder()
@@ -2003,6 +2052,10 @@ public struct LoadedExtension {
   /// slot. Mutated through `ExtensionController.setPinned`; the
   /// snapshot field exists so cell renders skip a controller hop.
   public internal(set) var isPinned: Bool
+  /// Whether the user has granted this extension access to private
+  /// workspaces (drives `WKWebExtensionContext.hasAccessToPrivateData`).
+  /// Off by default; mutated through `ExtensionController.setAllowsPrivate`.
+  public internal(set) var allowsPrivate: Bool
   /// Mirrors `WKWebExtension.hasOptionsPage` at activation time.
   /// Captured into the snapshot so the sidebar's row menu can gate
   /// the `Open Options Page` item without a per-render lookup
