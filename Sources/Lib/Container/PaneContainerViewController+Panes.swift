@@ -973,9 +973,9 @@ extension PaneContainerViewController {
   }
 
   /// Build a copy of `source`: same URL + back/forward/scroll state for
-  /// a browser, same cwd for a terminal, same path for a finder.
-  /// Returns nil for a missing / unsupported source so the caller can
-  /// fall back.
+  /// a browser, same cwd for a terminal, same path for a finder, another
+  /// start page for a start pane. Returns nil for a missing / unsupported
+  /// source so the caller can fall back.
   private func makeDuplicatePane(of source: PaneModel?) -> PaneModel? {
     guard let source else { return nil }
     if let bv = source.browserView, let url = bv.currentURLForDuplication {
@@ -994,6 +994,11 @@ extension PaneContainerViewController {
     }
     if source.address.kind == .finder {
       return makePane(address: source.address)
+    }
+    if source.address.kind == .start {
+      // A start page is a stateless launcher; its duplicate is just
+      // another start page.
+      return makePane(address: .start)
     }
     return nil
   }
