@@ -273,6 +273,9 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   public func adopt(_ wkDownload: WKDownload, isPrivate: Bool = false) {
     wkDownload.delegate = self
     let url = wkDownload.originalRequest?.url?.absoluteString ?? ""
+    logger.info(
+      "[downloads] adopt url=\(url, privacy: .public) isPrivate=\(isPrivate ? "yes" : "no", privacy: .public)"
+    )
     let id: Int64
     if isPrivate {
       // A private-workspace download is never written to the store, so

@@ -68,6 +68,26 @@ extension BrowserPaneView {
     "WKMenuItemIdentifierOpenLinkInNewWindow"
   ]
 
+  /// Native "Download X" context-menu items keyed by their WebKit
+  /// identifier, paired with the `_WKHitTestResult` selector that yields
+  /// the URL to fetch (linked file → link URL, image, media). Each of
+  /// these starts its transfer through a WebKit-internal path that never
+  /// hands a `WKDownload` to our `WKNavigationDelegate` `didBecome`
+  /// callbacks — traced live (macOS 26.4, 2026-06-15), the item fires but
+  /// no download reaches the delegate, so it silently dies with no save
+  /// panel and no file. We rebind each to drive the download ourselves
+  /// through the public `WKWebView.startDownload(using:)` API instead.
+  ///
+  /// Overwriting `target`/`action` fully replaces WebKit's internal
+  /// `forwardContextMenuAction:` for the item — the same trace shows our
+  /// handler runs and the native download does not fire in parallel, so
+  /// there's no double download (re-verify here if a future macOS regresses).
+  private static let downloadItemURLSelectors: [(identifier: String, urlSelector: String)] = [
+    ("WKMenuItemIdentifierDownloadLinkedFile", "absoluteLinkURL"),
+    ("WKMenuItemIdentifierDownloadImage", "absoluteImageURL"),
+    ("WKMenuItemIdentifierDownloadMedia", "absoluteMediaURL"),
+  ]
+
   /// `@objc` name override binds this Swift method to WebKit's
   /// underscored selector. The argument labels match the selector
   /// piece-by-piece, otherwise WebKit's `respondsToSelector:` check
@@ -80,7 +100,10 @@ extension BrowserPaneView {
     userInfo _: NSSecureCoding?,
     completionHandler: @escaping (NSMenu?) -> Void
   ) {
-    let linkURL = Self.linkURL(from: element)
+    // Resolve the hit-test result once — every URL below reads off the
+    // same object, so fetching it per selector would repeat the SPI hop.
+    let hit = Self.hitTestResult(from: element)
+    let linkURL = hit.flatMap { Self.url(from: $0, selector: "absoluteLinkURL") }
 
     logger.debug(
       "proposed menu items=\(menu.items.count) linkURL=\(linkURL?.absoluteString ?? "nil", privacy: .public)"
@@ -105,6 +128,22 @@ extension BrowserPaneView {
         return true
       }
       return false
+    }
+
+    // Rebind every native "Download X" item (linked file / image /
+    // media) to our own handler so the download funnels into the same
+    // pipeline as response-driven ones (see `downloadItemURLSelectors`).
+    // WebKit's native action skips our delegate entirely. Independent of
+    // `linkURL` — image / media downloads have no link.
+    if let hit {
+      for (identifier, urlSelector) in Self.downloadItemURLSelectors {
+        guard let url = Self.url(from: hit, selector: urlSelector) else { continue }
+        for item in menu.items where item.identifier?.rawValue == identifier {
+          item.target = self
+          item.action = #selector(e05DownloadFile(_:))
+          item.representedObject = url
+        }
+      }
     }
 
     if let url = linkURL {
@@ -141,27 +180,36 @@ extension BrowserPaneView {
     completionHandler(menu)
   }
 
-  /// Probe `_WKContextMenuElementInfo` for the clicked link's URL.
+  /// Resolve the clicked element's `_WKHitTestResult` SPI object once, so
+  /// callers can read several URLs (`absolute{Link,Image,Media}URL`) off
+  /// it without repeating the SPI hop.
   ///
-  /// `_WKContextMenuElementInfo` does **not** expose `linkURL` itself
+  /// `_WKContextMenuElementInfo` does **not** expose the URLs itself
   /// (verified against WebKit/WebKit `main`, header
   /// `_WKContextMenuElementInfo.h`); it only carries a `hitTestResult`
-  /// of type `_WKHitTestResult`, which in turn exposes
-  /// `absoluteLinkURL`. Both classes are SPI, so the access goes via
-  /// `responds(to:)` + `perform(_:)` with stringified selectors —
-  /// every step bails to `nil` on mismatch, so a future signature
-  /// change downgrades the link-aware menu items rather than
-  /// crashing the app.
+  /// of type `_WKHitTestResult`. Both classes are SPI, so the access goes
+  /// via `responds(to:)` + `perform(_:)` — it bails to `nil` on mismatch,
+  /// so a future signature change downgrades the affected menu items
+  /// rather than crashing the app.
   ///
   /// `valueForKey:` is intentionally avoided here: it raises
   /// `NSUnknownKeyException` on any non-KVC-compliant property,
   /// which is exactly the crash this function replaces.
-  private static func linkURL(from element: NSObject) -> URL? {
+  private static func hitTestResult(from element: NSObject) -> NSObject? {
     let hitSel = NSSelectorFromString("hitTestResult")
     guard element.responds(to: hitSel),
       let hit = element.perform(hitSel)?.takeUnretainedValue() as? NSObject
     else { return nil }
-    let urlSel = NSSelectorFromString("absoluteLinkURL")
+    return hit
+  }
+
+  /// A URL off an already-resolved `_WKHitTestResult` via one of its
+  /// `absolute{Link,Image,Media}URL` getters. `takeUnretainedValue()` is
+  /// correct because those getters return +0 (autoreleased) per the ARC
+  /// naming convention (no `copy`/`create`/`new`/`alloc` prefix); a
+  /// missing selector bails to `nil`.
+  private static func url(from hit: NSObject, selector: String) -> URL? {
+    let urlSel = NSSelectorFromString(selector)
     guard hit.responds(to: urlSel),
       let url = hit.perform(urlSel)?.takeUnretainedValue() as? URL,
       !url.absoluteString.isEmpty
@@ -177,5 +225,19 @@ extension BrowserPaneView {
   @objc fileprivate func e05OpenLinkInWorkspace(_ sender: NSMenuItem) {
     guard let url = sender.representedObject as? URL else { return }
     onOpenInNewWorkspace?(url)
+  }
+
+  /// Drive a context-menu download (linked file / image / media)
+  /// ourselves. WebKit's native items never surface their `WKDownload`
+  /// to our navigation delegate, so kick off the transfer through the
+  /// public API on this pane's webView — that keeps the page's cookies /
+  /// session — and funnel the result into the same `onDownloadStarted`
+  /// hook (→ `DownloadsManager.adopt` → save panel / default dir) that
+  /// response-driven downloads use.
+  @objc fileprivate func e05DownloadFile(_ sender: NSMenuItem) {
+    guard let url = sender.representedObject as? URL else { return }
+    webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
+      self?.onDownloadStarted?(download)
+    }
   }
 }
