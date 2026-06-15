@@ -110,7 +110,7 @@ extension PaneContainerViewController {
     // regardless of what subsequent UI work (popup webView, find bar,
     // URL field editor) does to first responder. Apple's
     // `chrome.tabs.query({active})` is sourced from this sticky state.
-    ExtensionController.shared.workspaceBridge.noteFocusChanged(pane)
+    ExtensionController.shared.noteFocusChanged(pane)
     applyFocusBorder(pane)
     // Activate the incoming pane's top-edge hit zone so the hover
     // scheduler (wireURLBarHoverScheduler) observes the next hover near

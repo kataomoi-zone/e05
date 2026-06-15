@@ -194,13 +194,20 @@ public final class ExtensionController {
   weak var pendingPopupAnchorView: NSView?
   var pendingPopupAnchorRect: NSRect = .zero
 
-  /// Single host-window bridge. Held strongly so the controller's
-  /// delegate can hand back the same instance from
+  /// Normal host-window bridge (non-private workspaces). Held strongly
+  /// so the controller's delegate can hand back the same instance from
   /// `openWindowsFor` / `focusedWindowFor` on every query — the
   /// `WKWebExtensionContext.openTabs` set is keyed off `NSObject`
   /// identity, so a fresh wrapper per call would invalidate
   /// extension-side per-tab state.
   let workspaceBridge = WorkspaceExtensionBridge()
+
+  /// Private host-window bridge (private workspaces). A separate stable
+  /// instance because `WKWebExtensionWindow.isPrivate` is cached for the
+  /// window's lifetime. Only handed to extensions whose context is
+  /// granted private access (`allowsPrivate(for:)`), so un-granted
+  /// extensions never observe a private-workspace pane.
+  let privateWorkspaceBridge = WorkspaceExtensionBridge(isPrivate: true)
 
   /// Cache of per-pane bridge wrappers keyed by `PaneModel.id`.
   /// Built lazily by `bridge(for:)` and pruned by `notifyTabClosed`
@@ -741,7 +748,26 @@ public final class ExtensionController {
   /// an empty `chrome.tabs` view that never recovers.
   public func bindContainer(_ container: PaneContainerViewController) {
     workspaceBridge.container = container
-    logger.info("Bound PaneContainer to extension workspace bridge")
+    privateWorkspaceBridge.container = container
+    logger.info("Bound PaneContainer to extension workspace bridges")
+  }
+
+  /// Keep both window bridges' sticky-active-pane fallback fresh on
+  /// every focus change so a private extension's `tabs.query({active})`
+  /// resolves the private tab even after a popup steals first responder.
+  public func noteFocusChanged(_ pane: PaneModel?) {
+    workspaceBridge.noteFocusChanged(pane)
+    privateWorkspaceBridge.noteFocusChanged(pane)
+  }
+
+  /// Whether the extension behind `context` is granted private-workspace
+  /// access. Reverse-looks-up the source filename so the private window
+  /// is only exposed to opted-in extensions.
+  func allowsPrivate(for context: WKWebExtensionContext) -> Bool {
+    for (filename, ctx) in contextsByFilename where ctx === context {
+      return allowsPrivateExtensions.contains(filename)
+    }
+    return false
   }
 
   /// Tear down every live native messaging host so quit doesn't
@@ -827,12 +853,13 @@ public final class ExtensionController {
   /// tab's window membership, and a not-yet-inserted pane fails
   /// that validation silently.
   ///
-  /// Private workspaces are skipped: `WorkspaceExtensionBridge.tabs(for:)`
-  /// already filters them out of the enumerated tab set, so emitting
-  /// `didOpenTab` for a pane that won't appear in the next walk would
-  /// leave extensions with a phantom-tab identity.
+  /// A pane not yet inserted into a workspace is skipped: it appears in
+  /// neither window's `tabs(for:)`, so emitting `didOpenTab` would leave
+  /// extensions with a phantom-tab identity. Private panes are *not*
+  /// skipped — they belong to the private window, and WebKit only
+  /// forwards the event to extensions granted private access.
   public func notifyTabOpened(_ pane: PaneModel) {
-    guard pane.address.kind == .browser, !isPanePrivate(pane) else { return }
+    guard pane.address.kind == .browser, paneHasWorkspace(pane) else { return }
     let tab = bridge(for: pane)
     controller.didOpenTab(tab)
   }
@@ -842,14 +869,14 @@ public final class ExtensionController {
   /// so a later undo / restore lands a fresh tab identity rather
   /// than reusing the now-detached one.
   ///
-  /// Private panes never fired `didOpenTab`, so a `didCloseTab` here
-  /// would also be phantom; the bridge cache is still cleared so a
-  /// future cross-private-boundary reattach (currently blocked, but
-  /// belt-and-braces) can't reuse a dangling identity.
+  /// The cached bridge is the gate: a pane only has one if it was
+  /// enumerated into a window (so it fired `didOpenTab`). That covers
+  /// private panes too — if a granted extension opened the private tab,
+  /// its close must fire; if none did, there's no bridge and we return
+  /// early. WebKit forwards the close only to extensions that saw it.
   public func notifyTabClosed(_ pane: PaneModel) {
     guard pane.address.kind == .browser else { return }
     guard let bridge = tabBridgesByPaneID.removeValue(forKey: pane.id) else { return }
-    guard !isPanePrivate(pane) else { return }
     controller.didCloseTab(bridge, windowIsClosing: false)
   }
 
@@ -882,20 +909,20 @@ public final class ExtensionController {
   public func notifyTabPropertiesChanged(
     _ pane: PaneModel, properties: WKWebExtension.TabChangedProperties
   ) {
-    guard pane.address.kind == .browser, !isPanePrivate(pane) else { return }
+    guard pane.address.kind == .browser else { return }
     guard let bridge = tabBridgesByPaneID[pane.id] else { return }
     controller.didChangeTabProperties(properties, for: bridge)
   }
 
-  /// Whether `pane` belongs to a private workspace. Resolved through
-  /// the `workspaceBridge`'s container reference so the check stays
-  /// in lockstep with the same source of truth `tabs(for:)` filters
-  /// against. Returns `false` when the bridge isn't yet bound — the
-  /// pane is "in flight" and the safe default is to suppress
-  /// notifications until it lands somewhere with a known privacy
-  /// scope.
-  private func isPanePrivate(_ pane: PaneModel) -> Bool {
-    workspaceBridge.container?.workspaceContaining(pane: pane)?.isPrivate ?? true
+  /// Whether `pane` is currently inserted into a workspace (so it
+  /// belongs to one of the window bridges). `false` for an "in flight"
+  /// pane not yet placed — the safe default is to suppress tab-open
+  /// notifications until it lands somewhere enumerable. Privacy itself
+  /// is no longer gated here: a private pane belongs to the private
+  /// window, and WebKit's `hasAccessToPrivateData` decides which
+  /// extensions receive its events.
+  private func paneHasWorkspace(_ pane: PaneModel) -> Bool {
+    workspaceBridge.container?.workspaceContaining(pane: pane) != nil
   }
 
   /// Root directory scanned at launch. Each immediate child (either an
@@ -2132,20 +2159,38 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   // session.
   func webExtensionController(
     _: WKWebExtensionController,
-    openWindowsFor _: WKWebExtensionContext
+    openWindowsFor context: WKWebExtensionContext
   ) -> [any WKWebExtensionWindow] {
     guard let controller, controller.workspaceBridge.container != nil else {
       return []
     }
-    return [controller.workspaceBridge]
+    // The private window is exposed only to granted extensions —
+    // belt-and-braces alongside `hasAccessToPrivateData`, so a private
+    // pane can never reach an un-granted extension even if WebKit's own
+    // gate regresses.
+    var windows: [any WKWebExtensionWindow] = [controller.workspaceBridge]
+    if controller.allowsPrivate(for: context) {
+      windows.append(controller.privateWorkspaceBridge)
+    }
+    return windows
   }
 
   func webExtensionController(
     _: WKWebExtensionController,
-    focusedWindowFor _: WKWebExtensionContext
+    focusedWindowFor context: WKWebExtensionContext
   ) -> (any WKWebExtensionWindow)? {
-    guard let controller, controller.workspaceBridge.container != nil else {
+    guard let controller, let container = controller.workspaceBridge.container else {
       return nil
+    }
+    // Report the private window as focused only when a private pane is
+    // focused *and* the extension may see it; otherwise the normal
+    // window, so an un-granted extension never learns a private window
+    // is active.
+    let focusedPane = controller.workspaceBridge.currentBrowserPane()
+    let focusedPrivate =
+      focusedPane.flatMap { container.workspaceContaining(pane: $0)?.isPrivate } ?? false
+    if focusedPrivate, controller.allowsPrivate(for: context) {
+      return controller.privateWorkspaceBridge
     }
     return controller.workspaceBridge
   }

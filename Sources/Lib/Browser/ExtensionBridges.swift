@@ -10,23 +10,39 @@ import WebKit
 /// per pane id without polluting `PaneModel` with WebExtension-only
 /// fields.
 ///
-/// niri-style WMs treat all workspaces as one continuous editing
-/// surface, so e05 surfaces every browser pane across every
-/// workspace as a single "window" to extensions. Workspace switches
-/// then look like an active-tab change rather than a window-focus
-/// change. The single window stays identity-stable for the host's
-/// process lifetime; pane bridges are cached by `PaneModel.id` so
-/// repeated `tabs(for:)` walks return the same instance and
-/// extension-side per-tab state survives popup re-opens.
+/// e05 surfaces its browser panes to extensions as two windows: a
+/// normal window holding the non-private workspaces' panes and a
+/// private window holding the private workspaces'. Within a window,
+/// workspace switches look like an active-tab change rather than a
+/// window-focus change. Both windows stay identity-stable for the
+/// host's process lifetime; pane bridges are cached by `PaneModel.id`
+/// so repeated `tabs(for:)` walks return the same instance and
+/// extension-side per-tab state survives popup re-opens. The split
+/// exists because `WKWebExtensionWindow.isPrivate` is fixed per window
+/// lifetime — see `WorkspaceExtensionBridge`.
 
-/// Reports e05's browser panes to web extensions as the single
-/// host window. Held strongly by `ExtensionController`; the
-/// controller hands the same instance back from
-/// `openWindowsFor` / `focusedWindowFor` on every query so identity
-/// (used by `WKWebExtensionContext.openTabs`'s set semantics) stays
-/// stable.
+/// Reports e05's browser panes to web extensions as a host window.
+/// The controller keeps two stable instances — a normal window
+/// (non-private workspaces) and a private window (private workspaces) —
+/// because `WKWebExtensionWindow.isPrivate(for:)` is cached for a
+/// window's lifetime and so can't flip on one instance. WebKit only
+/// delivers the private window and its tabs to extensions whose
+/// `WKWebExtensionContext.hasAccessToPrivateData` is set, so the split
+/// is what isolates private browsing from un-granted extensions. Both
+/// instances are held strongly by `ExtensionController` and handed back
+/// from `openWindowsFor` / `focusedWindowFor` so identity (used by
+/// `WKWebExtensionContext.openTabs`'s set semantics) stays stable.
 @MainActor
 final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
+  /// `true` for the private-browsing window (its tabs are the
+  /// private-workspace panes), `false` for the normal window.
+  let isPrivate: Bool
+
+  init(isPrivate: Bool = false) {
+    self.isPrivate = isPrivate
+    super.init()
+  }
+
   /// PaneContainer that owns the workspaces this bridge reports.
   /// Weak so the bridge doesn't keep the container alive past app
   /// teardown; nil means "no window yet" — every accessor returns
@@ -45,34 +61,50 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
   /// in `PaneContainerViewController` via `noteFocusChanged(_:)`.
   weak var stickyActiveBrowserPane: PaneModel?
 
+  /// Whether `pane`'s workspace privacy matches this window, so the
+  /// normal window only ever tracks / answers with non-private panes
+  /// and the private window only private ones. Without this, focusing a
+  /// private pane would overwrite the normal window's sticky too,
+  /// blanking a non-granted extension's `tabs.query({active})` the
+  /// moment the user switches into a private workspace.
+  private func belongsToThisWindow(_ pane: PaneModel) -> Bool {
+    container?.workspaceContaining(pane: pane)?.isPrivate == isPrivate
+  }
+
   /// Resolve the browser pane that should answer "active tab"
-  /// queries. Prefers the live focused pane (in case it's a browser
-  /// pane), otherwise falls back to the sticky reference so popup
-  /// webViews and transient terminal-pane focus don't blank out
-  /// `chrome.tabs.query({active})`.
+  /// queries for this window. Prefers the live focused pane (when it's
+  /// a browser pane in this window's privacy scope), otherwise falls
+  /// back to the sticky reference so popup webViews and transient
+  /// terminal-pane focus don't blank out `chrome.tabs.query({active})`.
   func currentBrowserPane() -> PaneModel? {
     refreshSticky()
-    if let focused = container?.focusedPane, focused.address.kind == .browser {
+    if let focused = container?.focusedPane, focused.address.kind == .browser,
+      belongsToThisWindow(focused)
+    {
       return focused
     }
     return stickyActiveBrowserPane
   }
 
-  /// Snapshot the focused pane into `stickyActiveBrowserPane` if it
-  /// currently is a browser pane. No-op if the focused pane is a
-  /// terminal / e05:// pane — the previous sticky value survives,
-  /// which is the desired fallback for popup-driven focus shifts.
+  /// Snapshot the focused pane into `stickyActiveBrowserPane` if it's a
+  /// browser pane in this window's privacy scope. No-op for a terminal /
+  /// e05:// pane, or a pane belonging to the *other* window — the
+  /// previous sticky value survives, which is the desired fallback for
+  /// popup-driven focus shifts and cross-window focus changes.
   func refreshSticky() {
-    if let focused = container?.focusedPane, focused.address.kind == .browser {
+    if let focused = container?.focusedPane, focused.address.kind == .browser,
+      belongsToThisWindow(focused)
+    {
       stickyActiveBrowserPane = focused
     }
   }
 
   /// Direct hook called by `PaneContainerViewController` whenever
   /// focus moves. Lets the bridge keep `stickyActiveBrowserPane`
-  /// fresh without depending on extension-side query timing.
+  /// fresh without depending on extension-side query timing. Each
+  /// window only records panes in its own privacy scope.
   func noteFocusChanged(_ pane: PaneModel?) {
-    if let pane, pane.address.kind == .browser {
+    if let pane, pane.address.kind == .browser, belongsToThisWindow(pane) {
       stickyActiveBrowserPane = pane
     }
   }
@@ -81,7 +113,7 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
     guard let container else { return [] }
     refreshSticky()
     var tabs: [any WKWebExtensionTab] = []
-    for workspace in container.workspaces where !workspace.isPrivate {
+    for workspace in container.workspaces where workspace.isPrivate == isPrivate {
       for column in workspace.columns {
         for pane in column.panes where pane.address.kind == .browser {
           tabs.append(ExtensionController.shared.bridge(for: pane))
@@ -91,21 +123,20 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
     return tabs
   }
 
-  /// Active-tab queries from extensions never resolve to a private
-  /// workspace's pane: enumerating private tabs to a content extension
-  /// running off the persistent profile would defeat the mode's
-  /// promise. e05 doesn't yet support per-extension "allow in private"
-  /// opt-in (Chrome's `incognito.spanning`), so the gate is global.
+  /// The active tab *for this window*: the focused browser pane only
+  /// when its workspace privacy matches this window's. WebKit asks both
+  /// the normal and private window, so a private focused pane answers
+  /// the private window (and `nil` for the normal one) and vice versa.
   func activeTab(for _: WKWebExtensionContext) -> (any WKWebExtensionTab)? {
     guard let pane = currentBrowserPane(),
       let container,
       let owning = container.workspaceContaining(pane: pane),
-      !owning.isPrivate
+      owning.isPrivate == isPrivate
     else { return nil }
     return ExtensionController.shared.bridge(for: pane)
   }
 
-  func isPrivate(for _: WKWebExtensionContext) -> Bool { false }
+  func isPrivate(for _: WKWebExtensionContext) -> Bool { isPrivate }
 
   // Default identity values — e05 is a single normal-state window;
   // there's no separate popup window, no minimised / maximised
@@ -209,11 +240,14 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   /// WebKit's `chrome.tabs.query({currentWindow: true})` filter
   /// loses the tab→window association — `windowId` arrives at
   /// extensions as `-1` and the active-tab query returns an empty
-  /// set even when `tabs(for:)` enumerates tabs correctly.
-  /// e05 is single-window by design, so every browser pane belongs
-  /// to the same workspace bridge.
+  /// set even when `tabs(for:)` enumerates tabs correctly. A pane in a
+  /// private workspace belongs to the private window so its privacy is
+  /// reported correctly; everything else belongs to the normal window.
   func window(for _: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
-    ExtensionController.shared.workspaceBridge
+    let isPrivate = pane.flatMap { container?.workspaceContaining(pane: $0)?.isPrivate } ?? false
+    return isPrivate
+      ? ExtensionController.shared.privateWorkspaceBridge
+      : ExtensionController.shared.workspaceBridge
   }
 
   /// Bypass standard host permission checks. e05 already auto-grants
