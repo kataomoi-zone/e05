@@ -652,6 +652,10 @@ extension PaneContainerViewController {
         guard let self, let pane else { return }
         self.replacePane(pane, with: self.makePane(address: self.newFinderPaneAddress()))
       }
+      sv.onFocusChanged = { [weak self, weak pane] in
+        guard let self, let pane else { return }
+        self.handleFocusChange(from: pane)
+      }
       pane.urlBar.setNavigationEnabled(back: false, forward: false)
       pane.urlBar.setReloadEnabled(false)
     } else {

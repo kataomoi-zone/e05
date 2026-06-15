@@ -11,6 +11,11 @@ public final class StartPaneView: NSView {
   public var onOpenTerminal: (() -> Void)?
   /// Called when the user picks "Finder".
   public var onOpenFinder: (() -> Void)?
+  /// Fired when the pane body is clicked, so the host can move focus
+  /// onto this pane — mirrors the other pane views' `onFocusChanged`.
+  /// The quick-action buttons are subviews, so a click on them is
+  /// delivered to the button and never reaches `mouseDown` below.
+  public var onFocusChanged: (() -> Void)?
 
   public override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -47,6 +52,13 @@ public final class StartPaneView: NSView {
 
   @objc private func openTerminalClicked() { onOpenTerminal?() }
   @objc private func openFinderClicked() { onOpenFinder?() }
+
+  /// A click on the empty pane body focuses the pane (the start page
+  /// has no first-responder content of its own, so without this the
+  /// pane is unfocusable except via its buttons or the worklane).
+  public override func mouseDown(with _: NSEvent) {
+    onFocusChanged?()
+  }
 
   private static func makeActionButton(
     title: String, symbol: String, action: Selector
