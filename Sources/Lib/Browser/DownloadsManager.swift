@@ -32,6 +32,18 @@ public final class Download {
   public let startedAt: Date
   public var completedAt: Date?
   public var errorMessage: String?
+  /// True for a download started from a private workspace. Such entries
+  /// live only in memory — they never touch the SQLite `DownloadsStore`
+  /// — so they disappear when the app quits, matching how Safari /
+  /// Firefox / Brave drop private-session downloads.
+  public let isPrivate: Bool
+  /// WebKit resume blob for a *paused private* download, held in memory
+  /// instead of the on-disk `resume/<id>.resume` sidecar that public
+  /// downloads use — a private download must leave no trace on disk, and
+  /// the sidecar would otherwise outlive the (un-persisted) entry as an
+  /// orphan after a relaunch. nil for public downloads (they keep using
+  /// the sidecar) and for any download that isn't paused.
+  public var privateResumeData: Data?
   /// Live handle used to cancel an active download. Released once the
   /// download terminates (completed / failed / cancelled).
   public weak var wkDownload: WKDownload?
@@ -40,7 +52,7 @@ public final class Download {
     id: Int64, url: String, filename: String, destination: String,
     state: DownloadState, bytesWritten: Int64, totalBytes: Int64,
     startedAt: Date, completedAt: Date? = nil, errorMessage: String? = nil,
-    wkDownload: WKDownload? = nil
+    isPrivate: Bool = false, wkDownload: WKDownload? = nil
   ) {
     self.id = id
     self.url = url
@@ -52,6 +64,7 @@ public final class Download {
     self.startedAt = startedAt
     self.completedAt = completedAt
     self.errorMessage = errorMessage
+    self.isPrivate = isPrivate
     self.wkDownload = wkDownload
   }
 }
@@ -82,6 +95,13 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   /// Maps live WKDownload to its DB id so delegate callbacks can
   /// locate the corresponding record without scanning `downloads`.
   private var activeByWKDownload: [ObjectIdentifier: Int64] = [:]
+  /// Next synthetic id for a private (in-memory only) download.
+  /// Decrements from -1 so private ids never collide with the positive
+  /// SQLite rowids real downloads carry. The negative id is the whole
+  /// trick: every downstream `store.update*(id:)` matches no row and
+  /// no-ops, so the private download is tracked in `downloads` and the
+  /// UI without ever being persisted — no per-call-site guarding needed.
+  private var nextEphemeralDownloadId: Int64 = -1
   /// KVO observations per active download, keyed by id.
   private var progressObservations: [Int64: NSKeyValueObservation] = [:]
   /// Registered mutation observers, keyed by token id. Insertion order
@@ -250,21 +270,32 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   /// Adopt a `WKDownload` that just emerged from a navigation
   /// response. Inserts a placeholder record immediately so the UI
   /// can show the new row before `decideDestinationUsing` fires.
-  public func adopt(_ wkDownload: WKDownload) {
+  public func adopt(_ wkDownload: WKDownload, isPrivate: Bool = false) {
     wkDownload.delegate = self
     let url = wkDownload.originalRequest?.url?.absoluteString ?? ""
-    let id = store.insert(
-      url: url, filename: "", destination: "",
-      state: DownloadState.downloading.rawValue
-    )
-    guard id >= 0 else {
-      logger.error("Failed to insert download record for URL \(url, privacy: .public)")
-      return
+    let id: Int64
+    if isPrivate {
+      // A private-workspace download is never written to the store, so
+      // its URL / filename / destination leave no trace once the app
+      // quits. The synthetic negative id keeps it out of the DB-rowid
+      // namespace; every later `store.update*(id:)` then targets a
+      // non-existent row and silently no-ops.
+      id = nextEphemeralDownloadId
+      nextEphemeralDownloadId -= 1
+    } else {
+      id = store.insert(
+        url: url, filename: "", destination: "",
+        state: DownloadState.downloading.rawValue
+      )
+      guard id >= 0 else {
+        logger.error("Failed to insert download record for URL \(url, privacy: .public)")
+        return
+      }
     }
     let entry = Download(
       id: id, url: url, filename: "", destination: "",
       state: .downloading, bytesWritten: 0, totalBytes: 0,
-      startedAt: Date(), wkDownload: wkDownload
+      startedAt: Date(), isPrivate: isPrivate, wkDownload: wkDownload
     )
     downloads.insert(entry, at: 0)
     activeByWKDownload[ObjectIdentifier(wkDownload)] = id
@@ -506,22 +537,32 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     Task { @MainActor in
       let resumeData = await wk.cancel()
       if let data = resumeData {
-        Self.ensureResumeDir()
-        do {
-          try data.write(to: Self.sidecarURL(for: id), options: .atomic)
+        if entry.isPrivate {
+          // Private downloads keep their resume blob in memory — writing
+          // the sidecar would leave partial bytes on disk that outlive
+          // the un-persisted entry as an orphan (no DB row reclaims it
+          // on relaunch). The store update is a no-op for the negative
+          // id anyway, so it's skipped.
+          entry.privateResumeData = data
           entry.state = .paused
-          store.updateState(
-            id: id, state: entry.state.rawValue,
-            completedAt: nil, errorMessage: nil
-          )
-        } catch {
-          entry.state = .failed
-          entry.errorMessage = "Failed to save resume data: \(error.localizedDescription)"
-          entry.completedAt = Date()
-          store.updateState(
-            id: id, state: entry.state.rawValue,
-            completedAt: entry.completedAt, errorMessage: entry.errorMessage
-          )
+        } else {
+          Self.ensureResumeDir()
+          do {
+            try data.write(to: Self.sidecarURL(for: id), options: .atomic)
+            entry.state = .paused
+            store.updateState(
+              id: id, state: entry.state.rawValue,
+              completedAt: nil, errorMessage: nil
+            )
+          } catch {
+            entry.state = .failed
+            entry.errorMessage = "Failed to save resume data: \(error.localizedDescription)"
+            entry.completedAt = Date()
+            store.updateState(
+              id: id, state: entry.state.rawValue,
+              completedAt: entry.completedAt, errorMessage: entry.errorMessage
+            )
+          }
         }
       } else {
         entry.state = .cancelled
@@ -549,9 +590,12 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
       entry.state == .paused
     else { return }
 
+    // Private downloads carry their resume blob in memory; public ones
+    // read it back from the on-disk sidecar.
     let sidecar = Self.sidecarURL(for: id)
-    guard let data = try? Data(contentsOf: sidecar) else {
-      // Sidecar missing or unreadable — treat same as
+    let resumeData = entry.isPrivate ? entry.privateResumeData : try? Data(contentsOf: sidecar)
+    guard let data = resumeData else {
+      // Resume data missing or unreadable — treat same as
       // loadFromDB's recovery path.
       entry.state = .failed
       entry.errorMessage = "Resume data missing"
@@ -578,11 +622,14 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
       newDownload.delegate = self
       activeByWKDownload[ObjectIdentifier(newDownload)] = id
       entry.wkDownload = newDownload
-      // Sidecar is "consumed" — once the new download starts,
-      // the old resume data is stale (a fresh pause would
-      // produce its own). If this resumed transfer itself
-      // fails, the user restarts from zero.
+      // Resume data is "consumed" — once the new download starts, the
+      // old blob is stale (a fresh pause would produce its own). If this
+      // resumed transfer itself fails, the user restarts from zero. The
+      // sidecar remove is a harmless no-op for private downloads (they
+      // never wrote one); clearing the in-memory blob is the no-op for
+      // public ones.
       try? FileManager.default.removeItem(at: sidecar)
+      entry.privateResumeData = nil
       // `decideDestinationUsing` (the resumed-path branch) will
       // install a fresh progress observation, so no setup is
       // needed here.

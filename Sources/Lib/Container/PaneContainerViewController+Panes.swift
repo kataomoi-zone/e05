@@ -545,8 +545,13 @@ extension PaneContainerViewController {
         // `applySiteMutePreference` after navigation.
         self?.applyMuteToPanes(matchingHost: host, muted: nextMuted)
       }
-      bv.onDownloadStarted = { [weak self] wkDownload in
-        self?.downloadsManager.adopt(wkDownload)
+      bv.onDownloadStarted = { [weak self, weak pane] wkDownload in
+        guard let self else { return }
+        // Downloads started from a private workspace stay in-memory
+        // only — same paired private check as the history-store skips
+        // above (`onURLChange` / `onTitleChange`).
+        let isPrivate = pane.flatMap { self.workspaceContaining(pane: $0) }?.isPrivate ?? false
+        self.downloadsManager.adopt(wkDownload, isPrivate: isPrivate)
       }
       bv.onOpenInNewPane = { [weak self] url in
         // Mirrors the bookmark / history "open in new browser
