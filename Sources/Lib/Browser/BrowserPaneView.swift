@@ -1871,6 +1871,25 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
+    // A link WebKit flagged for download — the `<a download>` attribute
+    // or the context menu's "Download Linked File" — must convert to a
+    // WKDownload instead of loading. Answer `.download` so WebKit routes
+    // it to `navigationAction:didBecome:`; returning `.allow` would load
+    // the URL inline (or render nothing for an inline type) and silently
+    // drop the save intent. This precedes the navigation tracking below
+    // because a download isn't a visit.
+    //
+    // The download intent intentionally beats the Shift/Cmd-click
+    // new-pane / new-workspace handling further down: a `download`-
+    // attribute link Shift-clicked is still a download (it just saves
+    // into the current workspace's download list rather than opening a
+    // private workspace). Re-routing such a click as a private-workspace
+    // download is a deliberate non-goal — the case is rare and the
+    // optimistic "download wins" rule keeps this branch simple.
+    if navigationAction.shouldPerformDownload {
+      decisionHandler(.download)
+      return
+    }
     // Track every accepted main-frame navigation so the error page
     // keeps the attempted URL even when `NSError.userInfo` arrives
     // without `NSURLErrorFailingURLErrorKey` (Apple doesn't promise
@@ -2106,6 +2125,21 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   public func webView(
     _: WKWebView,
     navigationResponse _: WKNavigationResponse,
+    didBecome download: WKDownload
+  ) {
+    onDownloadStarted?(download)
+  }
+
+  /// A navigation *action* that turns into a download — the context
+  /// menu's "Download Linked File", an `<a download>` link, or any
+  /// action `decidePolicyFor` answered with `.download`. Without this
+  /// twin of the `navigationResponse` variant above, WebKit hands back
+  /// a `WKDownload` with no delegate set, so `decideDestinationUsing`
+  /// never fires and the download silently dies — no save panel, no
+  /// file. Both paths funnel into the same `onDownloadStarted` hook.
+  public func webView(
+    _: WKWebView,
+    navigationAction _: WKNavigationAction,
     didBecome download: WKDownload
   ) {
     onDownloadStarted?(download)
