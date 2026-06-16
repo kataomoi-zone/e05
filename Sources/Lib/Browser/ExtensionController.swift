@@ -133,6 +133,14 @@ public final class ExtensionController {
   /// directory or ZIP basename is persisted).
   private var contextsByFilename: [String: WKWebExtensionContext] = [:]
 
+  /// Identity reverse-index for `contextsByFilename`: a context's
+  /// `ObjectIdentifier` to its source filename. Kept in lockstep through
+  /// `registerContext` / `unregisterContext` so a context→filename
+  /// reverse-lookup (`allowsPrivate(for:)` / `extensionDirectory(for:)`)
+  /// stays O(1) instead of scanning every loaded context — both run on
+  /// WebKit's high-frequency window / tab routing path.
+  private var filenamesByContextID: [ObjectIdentifier: String] = [:]
+
   /// Extensions the user has explicitly disabled. Each value is the
   /// extension's directory or ZIP basename — the same identifier used
   /// across `contextsByFilename` and the JSON file — but the property
@@ -760,14 +768,36 @@ public final class ExtensionController {
     privateWorkspaceBridge.noteFocusChanged(pane)
   }
 
+  /// Register `ctx` under `filename`, keeping the identity reverse-index
+  /// in sync so context→filename lookups stay O(1). The sole insertion
+  /// path into `contextsByFilename`. Overwriting a filename drops the
+  /// superseded context's reverse entry first, so the two maps stay exact
+  /// inverses even if a caller re-registers without unregistering.
+  private func registerContext(_ ctx: WKWebExtensionContext, filename: String) {
+    if let superseded = contextsByFilename[filename] {
+      filenamesByContextID.removeValue(forKey: ObjectIdentifier(superseded))
+    }
+    contextsByFilename[filename] = ctx
+    filenamesByContextID[ObjectIdentifier(ctx)] = filename
+  }
+
+  /// Drop the context registered under `filename` from both maps so a
+  /// stale `ObjectIdentifier` can't resolve to a removed extension. The
+  /// sole removal path out of `contextsByFilename`.
+  private func unregisterContext(filename: String) {
+    if let ctx = contextsByFilename.removeValue(forKey: filename) {
+      filenamesByContextID.removeValue(forKey: ObjectIdentifier(ctx))
+    }
+  }
+
   /// Whether the extension behind `context` is granted private-workspace
   /// access. Reverse-looks-up the source filename so the private window
   /// is only exposed to opted-in extensions.
   func allowsPrivate(for context: WKWebExtensionContext) -> Bool {
-    for (filename, ctx) in contextsByFilename where ctx === context {
-      return allowsPrivateExtensions.contains(filename)
+    guard let filename = filenamesByContextID[ObjectIdentifier(context)] else {
+      return false
     }
-    return false
+    return allowsPrivateExtensions.contains(filename)
   }
 
   /// Tear down every live native messaging host so quit doesn't
@@ -840,10 +870,10 @@ public final class ExtensionController {
   /// pre-computed `_e05_caller_origin` when handing the host an
   /// authentic chrome-extension origin URL.
   func extensionDirectory(for context: WKWebExtensionContext) -> URL? {
-    for (filename, ctx) in contextsByFilename where ctx === context {
-      return Self.extensionsRoot.appendingPathComponent(filename)
+    guard let filename = filenamesByContextID[ObjectIdentifier(context)] else {
+      return nil
     }
-    return nil
+    return Self.extensionsRoot.appendingPathComponent(filename)
   }
 
   /// Tell every loaded extension that a new browser pane has come
@@ -1221,7 +1251,7 @@ public final class ExtensionController {
     )
 
     let filename = sourceURL.lastPathComponent
-    contextsByFilename[filename] = ctx
+    registerContext(ctx, filename: filename)
     // Grant private-workspace access before `controller.load`, so WebKit
     // delivers the private window and its tabs to this extension only
     // when the user has opted it in (default off = private invisible).
@@ -1435,7 +1465,7 @@ public final class ExtensionController {
         )
       }
     }
-    contextsByFilename.removeValue(forKey: filename)
+    unregisterContext(filename: filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
 
     do {
@@ -1476,7 +1506,7 @@ public final class ExtensionController {
     wasEnabled: Bool,
     displayName: String
   ) {
-    contextsByFilename[filename] = oldCtx
+    registerContext(oldCtx, filename: filename)
     oldCtx.hasAccessToPrivateData = allowsPrivateExtensions.contains(filename)
     if wasEnabled {
       do {
@@ -1829,7 +1859,7 @@ public final class ExtensionController {
       )
     }
 
-    contextsByFilename.removeValue(forKey: filename)
+    unregisterContext(filename: filename)
     disabledExtensions.remove(filename)
     pinnedExtensions.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
