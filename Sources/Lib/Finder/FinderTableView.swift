@@ -17,17 +17,21 @@ final class FinderTableView: NSTableView {
   override var acceptsFirstResponder: Bool { true }
 
   /// Advertises the operations this pane is willing to perform when a
-  /// drag originated here lands on a drop target. Returning
-  /// `[.move, .copy]` lets recipients (Finder, editors, other e05
-  /// panes) pick whichever applies — Finder uses `.move` within a
-  /// volume and `.copy` across volumes, editors typically pick
-  /// `.copy` to read the file open. The AppKit default (`[]`) causes
-  /// every drop to fail silently.
+  /// drag originated here lands on a drop target. `[.move, .copy, .link]`
+  /// lets recipients (Finder, editors, other e05 panes) pick whichever
+  /// applies — Finder uses `.move` within a volume and `.copy` across
+  /// volumes, editors typically pick `.copy` to read the file open, and
+  /// `.link` is what an Option-Command alias drop resolves to. AppKit
+  /// intersects this mask with the destination's `validateDrop` result,
+  /// so dropping `.link` here makes alias drops from a list-mode pane
+  /// fail silently; the icon-mode source mask carries it for the same
+  /// reason. The AppKit default (`[]`) causes every drop to fail
+  /// silently.
   override func draggingSession(
     _ session: NSDraggingSession,
     sourceOperationMaskFor context: NSDraggingContext
   ) -> NSDragOperation {
-    [.move, .copy]
+    [.move, .copy, .link]
   }
 
   override func becomeFirstResponder() -> Bool {

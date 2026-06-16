@@ -95,7 +95,7 @@ extension FinderPaneView {
   /// not `report alias.pdf` — because the alias file is a bookmark
   /// blob, not the same file type as the source, and renaming it to
   /// keep the source's extension would mislead Launch Services.
-  private func aliasTargetURL(for source: URL) -> URL {
+  func aliasTargetURL(for source: URL) -> URL {
     let dir = source.deletingLastPathComponent()
     let baseName = source.lastPathComponent
     let fm = FileManager.default

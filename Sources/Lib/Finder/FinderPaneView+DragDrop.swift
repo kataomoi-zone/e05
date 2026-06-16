@@ -23,10 +23,13 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 /// matches the source/destination volumes — `.move` within a volume,
 /// `.copy` across volumes — so the drag image's `+` overlay tells the
 /// user up-front when a copy will happen instead of a move (Finder's
-/// convention). Self-drops, descendant drops, and already-in-place
-/// sources are skipped per-source so a mixed drag still moves its valid
-/// items; only an all-invalid drop is refused. `acceptDrop:` performs
-/// the announced
+/// convention). Holding Option forces a copy and Option-Command makes an
+/// alias, read live so the badge tracks the keys as they are pressed.
+/// Self-drops and descendant drops are always skipped per-source (as is
+/// a move's already-in-place source — a same-folder copy / alias is kept
+/// and named `… copy` / `… alias`), so a mixed drag still acts on its
+/// valid items; only an all-invalid drop is refused. `acceptDrop:`
+/// performs the announced
 /// operation and falls back to copy if `moveItem` still surfaces an
 /// `EXDEV` (e.g. an external volume unmounts between validate and
 /// accept). Directory monitor coalesces the resulting reload into
@@ -90,7 +93,7 @@ extension FinderPaneView {
       return false
     }
 
-    let op = Self.dropOperation(sources: sources, destination: destURL)
+    let op = modifierDropOperation(sources: sources, destination: destURL)
     let sourcePane = Self.resolveDragSourcePane(from: info)
     return performDrop(
       sources: sources, destination: destURL, op: op, sourcePane: sourcePane)
@@ -111,7 +114,10 @@ extension FinderPaneView {
     draggingSession session: NSDraggingSession,
     sourceOperationMaskFor context: NSDraggingContext
   ) -> NSDragOperation {
-    [.move, .copy]
+    // `.link` is required for Option-Command alias drops: the collection
+    // view intersects this mask with the destination's validateDrop
+    // result, so omitting it would zero out an alias drop and reject it.
+    [.move, .copy, .link]
   }
 
   // MARK: - Icon drop target
@@ -147,7 +153,7 @@ extension FinderPaneView {
       let destURL = resolveIconDropDestination(
         proposedItem: indexPath.item, dropOperation: dropOperation)
     else { return false }
-    let op = Self.dropOperation(sources: sources, destination: destURL)
+    let op = modifierDropOperation(sources: sources, destination: destURL)
     let sourcePane = Self.resolveDragSourcePane(from: draggingInfo)
     return performDrop(
       sources: sources, destination: destURL, op: op, sourcePane: sourcePane)
@@ -164,33 +170,86 @@ extension FinderPaneView {
   private func validateDropOperation(
     sources: [URL], destination destURL: URL
   ) -> NSDragOperation? {
-    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    let op = modifierDropOperation(sources: sources, destination: destURL)
+    let acceptable = Self.acceptableDropSources(
+      sources, destination: destURL, op: op)
     guard !acceptable.isEmpty else { return nil }
-    return Self.dropOperation(sources: acceptable, destination: destURL)
+    return op
   }
 
-  /// The subset of `sources` that can actually move/copy onto `destURL`,
-  /// dropping the no-op / invalid ones individually rather than failing
-  /// the whole drop: a source that *is* the destination, a destination
-  /// inside a source (descendant), or a source already living directly
-  /// in the destination — dropping a file back into its own folder moves
-  /// nothing, so performDrop's conflict probe would match it against
-  /// itself and pop a spurious "already exists" dialog. Finder skips all
-  /// three silently and moves the rest. The skipped sources are
-  /// same-volume as the destination by construction (they sit at / in /
-  /// around it), so excluding them never changes the move-vs-copy
-  /// decision for the remaining sources.
+  /// The drop operation the held modifier keys ask for, matching
+  /// Finder's Option = copy and Option-Command = alias. Read live from
+  /// `NSEvent.modifierFlags` so the operation — and the drag image's
+  /// badge — tracks the keys held at this instant; validateDrop and
+  /// acceptDrop both consult it so the announced and performed
+  /// operations agree. Anything else, Command alone included, falls back
+  /// to the volume-based default (Finder's Command force-move isn't
+  /// wired yet).
+  private func modifierDropOperation(
+    sources: [URL], destination destURL: URL
+  ) -> NSDragOperation {
+    let mods = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
+    if mods.contains(.option), mods.contains(.command) { return .link }
+    if mods.contains(.option) { return .copy }
+    return Self.dropOperation(sources: sources, destination: destURL)
+  }
+
+  /// The subset of `sources` that can actually land on `destURL` under
+  /// `op`, dropping the no-op / invalid ones individually rather than
+  /// failing the whole drop. Always excluded: a source that *is* the
+  /// destination, and a destination inside a source (descendant) — both
+  /// degenerate for every operation. A source already living directly in
+  /// `destURL` is excluded only for a **move** (it would move nothing,
+  /// and performDrop's conflict probe would match the file against itself
+  /// and pop a spurious "already exists" dialog); a copy or an alias into
+  /// the same folder is valid and produces a `… copy` / `… alias`
+  /// sibling, so those keep it. Finder skips the excluded items silently
+  /// and acts on the rest. The excluded sources are same-volume as the
+  /// destination by construction (they sit at / in / around it), so
+  /// dropping them never changes the move-vs-copy decision for the
+  /// remaining sources.
   private static func acceptableDropSources(
-    _ sources: [URL], destination destURL: URL
+    _ sources: [URL], destination destURL: URL, op: NSDragOperation
   ) -> [URL] {
     let destPath = normalizedPath(destURL)
     return sources.filter { src in
       let srcPath = normalizedPath(src)
       if srcPath == destPath { return false }
       if destPath.hasPrefix(srcPath + "/") { return false }
-      if normalizedPath(src.deletingLastPathComponent()) == destPath { return false }
+      if op == .move, normalizedPath(src.deletingLastPathComponent()) == destPath {
+        return false
+      }
       return true
     }
+  }
+
+  /// The path a dropped source should occupy under `op`. A cross-folder
+  /// drop keeps the source's own name (any collision is resolved by the
+  /// dialog in `performDrop`). A same-folder copy or alias — reachable
+  /// only because `acceptableDropSources` lets those through — instead
+  /// auto-suffixes to a free `… copy` / `… alias` sibling so it never
+  /// collides with the source it sits beside, matching Duplicate and Make
+  /// Alias. A move never reaches the same-folder branch (it is filtered
+  /// out as a no-op upstream).
+  private func dropTarget(
+    for src: URL, op: NSDragOperation, destination destURL: URL
+  ) -> URL {
+    let sameFolder =
+      Self.normalizedPath(src.deletingLastPathComponent())
+      == Self.normalizedPath(destURL)
+    guard sameFolder else {
+      return destURL.appendingPathComponent(src.lastPathComponent)
+    }
+    if op == .copy {
+      return availableCopyURL(
+        in: destURL,
+        stem: src.deletingPathExtension().lastPathComponent,
+        ext: src.pathExtension)
+    }
+    if op == .link {
+      return aliasTargetURL(for: src)
+    }
+    return destURL.appendingPathComponent(src.lastPathComponent)
   }
 
   /// Execute the drop. Detects conflicts and runs the resolution
@@ -208,14 +267,14 @@ extension FinderPaneView {
   ) -> Bool {
     let fm = FileManager.default
 
-    // Skip the no-op / invalid sources (self, descendant, already in
-    // place) and act on the rest — Finder's partial accept. validateDrop
-    // already filtered the same way for the drag image, but the
-    // pasteboard is re-read on accept so re-filter here to stay in sync.
-    // A skipped source is never counted as a failure below: it drops out
-    // of `plans`, so the per-batch failure toast only reflects real
-    // move/copy errors among the acceptable sources.
-    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    // Skip the no-op / invalid sources (self, descendant, and — for a
+    // move only — sources already in place) and act on the rest, Finder's
+    // partial accept. validateDrop already filtered the same way for the
+    // drag image, but the pasteboard is re-read on accept so re-filter
+    // here to stay in sync. A skipped source is never counted as a
+    // failure below: it drops out of `plans`, so the per-batch failure
+    // toast only reflects real move/copy errors among the kept sources.
+    let acceptable = Self.acceptableDropSources(sources, destination: destURL, op: op)
     guard !acceptable.isEmpty else { return false }
 
     // Resolve every source's conflict (target path occupied) up front
@@ -226,7 +285,7 @@ extension FinderPaneView {
     // decision matches what most users want for "I dropped a folder
     // and a few file names happen to collide".
     let plans = acceptable.map { src in
-      (source: src, target: destURL.appendingPathComponent(src.lastPathComponent))
+      (source: src, target: dropTarget(for: src, op: op, destination: destURL))
     }
     let conflicts = plans.filter {
       fm.fileExists(atPath: $0.target.path(percentEncoded: false))
@@ -295,6 +354,26 @@ extension FinderPaneView {
           break
         }
       }
+      if op == .link {
+        // Alias drop (Option-Command): write a bookmark file pointing at
+        // the source — the same primitive as the Make Alias command. The
+        // source is left in place like a copy, and the alias is left out
+        // of the undo manager (⌘⌫ trashes it like any other file),
+        // matching Make Alias and system Finder.
+        do {
+          let bookmark = try plan.source.bookmarkData(
+            options: .suitableForBookmarkFile,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil)
+          try URL.writeBookmarkData(bookmark, to: actualTarget)
+          succeeded += 1
+        } catch {
+          logger.error(
+            "Drop alias failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+          )
+        }
+        continue
+      }
       if op == .copy {
         do {
           try fm.copyItem(at: plan.source, to: actualTarget)
@@ -342,8 +421,16 @@ extension FinderPaneView {
     // are already logged above.
     reportOperationFailure(
       succeeded: succeeded, total: plans.count - stopSkipped,
-      verbPhrase: op == .copy ? "copied" : "moved")
+      verbPhrase: Self.verbPhrase(for: op))
     return succeeded > 0
+  }
+
+  /// Past-tense verb for the per-batch failure toast, matched to the
+  /// operation the drop performed.
+  private static func verbPhrase(for op: NSDragOperation) -> String {
+    if op == .link { return "aliased" }
+    if op == .copy { return "copied" }
+    return "moved"
   }
 
   /// Three-way batch decision a drop's conflicting targets resolve
