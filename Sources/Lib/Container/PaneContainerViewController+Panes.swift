@@ -956,6 +956,15 @@ extension PaneContainerViewController {
     newPane.setURLBarVisible(urlBarVisible)
     setupPaneCallbacks(pane: newPane, column: column)
     column.panes[paneIdx] = newPane
+    // Announce the swap to extensions: the outgoing pane leaves the tab
+    // graph and the incoming one joins it. A start page → browser
+    // navigation lands here, so without the open the new browser tab is
+    // never `didOpenTab`'d — which a normal window papers over via the
+    // active-tab re-query but a private window does not, leaving granted
+    // extensions blind to the private tab. `notifyTabClosed` is a no-op
+    // when the outgoing pane never was a browser tab (e.g. start page).
+    ExtensionController.shared.notifyTabClosed(pane)
+    ExtensionController.shared.notifyTabOpened(newPane)
     rebuildColumnView(column: column)
     view.layoutSubtreeIfNeeded()
     setFocus(columnIndex: colIdx, paneIndex: paneIdx)
