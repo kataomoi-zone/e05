@@ -25,11 +25,12 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 /// user up-front when a copy will happen instead of a move (Finder's
 /// convention). Holding Option forces a copy and Option-Command makes an
 /// alias, read live so the badge tracks the keys as they are pressed.
-/// Self-drops and descendant drops are always skipped per-source (as is
-/// a move's already-in-place source — a same-folder copy / alias is kept
-/// and named `… copy` / `… alias`), so a mixed drag still acts on its
-/// valid items; only an all-invalid drop is refused. `acceptDrop:`
-/// performs the announced
+/// A drop is refused with the not-allowed cursor only when it is
+/// structurally impossible — every source is a self-drop or a descendant
+/// drop. A same-folder move is accepted but does nothing (Finder leaves
+/// the file in place), a same-folder copy / alias makes a `… copy` /
+/// `… alias` sibling, and a `.on` drop onto a file lands in the enclosing
+/// folder. `acceptDrop:` performs the announced
 /// operation and falls back to copy if `moveItem` still surfaces an
 /// `EXDEV` (e.g. an external volume unmounts between validate and
 /// accept). Directory monitor coalesces the resulting reload into
@@ -44,6 +45,19 @@ extension FinderPaneView {
     return items[row].url as NSURL
   }
 
+  /// An empty drag operation paired with an explicit not-allowed cursor.
+  /// AppKit does not reliably draw the no-drop "✖" for an intra-app
+  /// table / collection drag that returns an empty operation: a valid
+  /// copy / alias still shows its badge, but a rejected target keeps the
+  /// neutral cursor instead of signalling that the drop won't land. Set
+  /// the cursor here on every reject; moving onto a valid target next
+  /// returns a real operation and AppKit restores the move / copy / alias
+  /// cursor over it.
+  private func rejectDrop() -> NSDragOperation {
+    NSCursor.operationNotAllowed.set()
+    return []
+  }
+
   // MARK: - List drop target
 
   public func tableView(
@@ -53,31 +67,31 @@ extension FinderPaneView {
     proposedDropOperation dropOperation: NSTableView.DropOperation
   ) -> NSDragOperation {
     let sources = draggedURLs(from: info)
-    logger.debug(
-      "validateDrop row=\(row, privacy: .public) op=\(dropOperation.rawValue, privacy: .public) sources=\(sources.count, privacy: .public)"
-    )
-    guard !sources.isEmpty else {
-      logger.debug("validateDrop reject: no .fileURL on pasteboard")
-      return []
-    }
-    guard let destURL = resolveDropDestination(row: row, dropOperation: dropOperation) else {
-      logger.debug("validateDrop reject: destination unresolved (file row drop)")
-      return []
-    }
+    guard !sources.isEmpty else { return rejectDrop() }
+
+    // Resolve the destination from the row physically under the cursor
+    // rather than AppKit's proposed row / operation. A folder row is a
+    // drop *into* that folder; anything else (a file row, an inter-row
+    // gap, the empty area) drops into the cwd. This makes hovering a
+    // dragged folder's own row a self-drop (→ reject + ✖) instead of
+    // AppKit's silent reorder proposal, and stops a file row from being
+    // highlighted as if the drop were landing on it.
+    let point = tableView.convert(info.draggingLocation, from: nil)
+    let hitRow = tableView.row(at: point)
+    let overFolder =
+      hitRow >= 0 && hitRow < items.count
+      && items[hitRow].isDirectory && !items[hitRow].isPackage
+    let destURL = overFolder ? items[hitRow].url : currentURL
 
     guard let op = validateDropOperation(sources: sources, destination: destURL) else {
-      return []
+      return rejectDrop()
     }
 
-    // AppKit funnels both inter-row gaps and the empty area below the
-    // last row into `.above`, so a single check covers both — the
-    // table's own per-row highlight is wrong for either case, repaint
-    // it as a whole-pane highlight instead.
-    if dropOperation == .above {
-      tableView.setDropRow(-1, dropOperation: .above)
-    }
-
-    logger.debug("validateDrop accept: \(op.rawValue, privacy: .public)")
+    // Highlight the target folder's row for an into-folder drop, the
+    // whole pane otherwise (the table's own per-row highlight would
+    // wrongly point at a file row that really drops into the cwd).
+    tableView.setDropRow(
+      overFolder ? hitRow : -1, dropOperation: overFolder ? .on : .above)
     return op
   }
 
@@ -129,14 +143,31 @@ extension FinderPaneView {
     dropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>
   ) -> NSDragOperation {
     let sources = draggedURLs(from: draggingInfo)
-    guard !sources.isEmpty else { return [] }
-    let proposedItem = proposedIndexPath.pointee.item
-    guard
-      let destURL = resolveIconDropDestination(
-        proposedItem: proposedItem, dropOperation: dropOperation.pointee)
-    else { return [] }
+    guard !sources.isEmpty else { return rejectDrop() }
+
+    // Resolve from the cell physically under the cursor (mirrors the
+    // list path): a folder cell is a drop into it; anything else drops
+    // into the cwd. Hovering a dragged folder's own cell becomes a
+    // self-drop (→ reject + ✖) instead of a silent gap proposal, and no
+    // file cell is highlighted for a drop that lands in the cwd.
+    let point = collectionView.convert(draggingInfo.draggingLocation, from: nil)
+    let hitItem = collectionView.indexPathForItem(at: point)?.item
+    let folderItem = hitItem.flatMap { item -> Int? in
+      item >= 0 && item < items.count && items[item].isDirectory
+        && !items[item].isPackage ? item : nil
+    }
+    let destURL = folderItem.map { items[$0].url } ?? currentURL
+
     guard let op = validateDropOperation(sources: sources, destination: destURL) else {
-      return []
+      return rejectDrop()
+    }
+
+    if let folderItem {
+      proposedIndexPath.pointee = IndexPath(item: folderItem, section: 0) as NSIndexPath
+      dropOperation.pointee = .on
+    } else {
+      proposedIndexPath.pointee = IndexPath(item: items.count, section: 0) as NSIndexPath
+      dropOperation.pointee = .before
     }
     return op
   }
@@ -170,11 +201,9 @@ extension FinderPaneView {
   private func validateDropOperation(
     sources: [URL], destination destURL: URL
   ) -> NSDragOperation? {
-    let op = modifierDropOperation(sources: sources, destination: destURL)
-    let acceptable = Self.acceptableDropSources(
-      sources, destination: destURL, op: op)
+    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
     guard !acceptable.isEmpty else { return nil }
-    return op
+    return modifierDropOperation(sources: acceptable, destination: destURL)
   }
 
   /// The drop operation the held modifier keys ask for, matching
@@ -194,31 +223,25 @@ extension FinderPaneView {
     return Self.dropOperation(sources: sources, destination: destURL)
   }
 
-  /// The subset of `sources` that can actually land on `destURL` under
-  /// `op`, dropping the no-op / invalid ones individually rather than
-  /// failing the whole drop. Always excluded: a source that *is* the
-  /// destination, and a destination inside a source (descendant) — both
-  /// degenerate for every operation. A source already living directly in
-  /// `destURL` is excluded only for a **move** (it would move nothing,
-  /// and performDrop's conflict probe would match the file against itself
-  /// and pop a spurious "already exists" dialog); a copy or an alias into
-  /// the same folder is valid and produces a `… copy` / `… alias`
-  /// sibling, so those keep it. Finder skips the excluded items silently
-  /// and acts on the rest. The excluded sources are same-volume as the
-  /// destination by construction (they sit at / in / around it), so
-  /// dropping them never changes the move-vs-copy decision for the
-  /// remaining sources.
+  /// The subset of `sources` whose drop onto `destURL` is structurally
+  /// possible: everything except a source that *is* the destination
+  /// (self-drop) or a destination sitting inside a source (descendant).
+  /// Those two are impossible for any operation, so a drag made up
+  /// entirely of them is refused with the not-allowed cursor. Everything
+  /// else is "droppable" and keeps a normal cursor — including a
+  /// same-folder move, which Finder accepts and silently leaves in place
+  /// rather than rejecting; `performDrop` skips that no-op. The excluded
+  /// sources are same-volume as the destination by construction (they sit
+  /// at / in / around it), so dropping them never changes the
+  /// move-vs-copy decision for the remaining sources.
   private static func acceptableDropSources(
-    _ sources: [URL], destination destURL: URL, op: NSDragOperation
+    _ sources: [URL], destination destURL: URL
   ) -> [URL] {
     let destPath = normalizedPath(destURL)
     return sources.filter { src in
       let srcPath = normalizedPath(src)
       if srcPath == destPath { return false }
       if destPath.hasPrefix(srcPath + "/") { return false }
-      if op == .move, normalizedPath(src.deletingLastPathComponent()) == destPath {
-        return false
-      }
       return true
     }
   }
@@ -267,15 +290,22 @@ extension FinderPaneView {
   ) -> Bool {
     let fm = FileManager.default
 
-    // Skip the no-op / invalid sources (self, descendant, and — for a
-    // move only — sources already in place) and act on the rest, Finder's
-    // partial accept. validateDrop already filtered the same way for the
-    // drag image, but the pasteboard is re-read on accept so re-filter
-    // here to stay in sync. A skipped source is never counted as a
-    // failure below: it drops out of `plans`, so the per-batch failure
-    // toast only reflects real move/copy errors among the kept sources.
-    let acceptable = Self.acceptableDropSources(sources, destination: destURL, op: op)
+    // Drop the structurally-impossible sources (self, descendant); the
+    // pasteboard is re-read on accept so re-filter to match validateDrop.
+    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
     guard !acceptable.isEmpty else { return false }
+
+    // A same-folder move does nothing — the source is already here.
+    // Finder accepts the drop and leaves it in place rather than popping
+    // a self-conflict dialog, so skip those from the action while still
+    // reporting success so the drag doesn't bounce. A same-folder copy /
+    // alias is NOT skipped: it makes a `… copy` / `… alias` sibling.
+    let actionable = acceptable.filter { src in
+      !(op == .move
+        && Self.normalizedPath(src.deletingLastPathComponent())
+          == Self.normalizedPath(destURL))
+    }
+    guard !actionable.isEmpty else { return true }
 
     // Resolve every source's conflict (target path occupied) up front
     // so the user is asked exactly once per drop. The chosen
@@ -284,7 +314,7 @@ extension FinderPaneView {
     // alert sheet, which interrupts a drag flow. A single batch
     // decision matches what most users want for "I dropped a folder
     // and a few file names happen to collide".
-    let plans = acceptable.map { src in
+    let plans = actionable.map { src in
       (source: src, target: dropTarget(for: src, op: op, destination: destURL))
     }
     let conflicts = plans.filter {
@@ -422,7 +452,11 @@ extension FinderPaneView {
     reportOperationFailure(
       succeeded: succeeded, total: plans.count - stopSkipped,
       verbPhrase: Self.verbPhrase(for: op))
-    return succeeded > 0
+    // A Stop that skips every conflicting source is a deliberate cancel,
+    // not a failed drop — report success even with nothing moved so
+    // AppKit dismisses the drag instead of bouncing it back to the
+    // source, matching Finder's Stop.
+    return succeeded > 0 || stopSkipped > 0
   }
 
   /// Past-tense verb for the per-batch failure toast, matched to the
@@ -492,21 +526,26 @@ extension FinderPaneView {
       if item.isDirectory && !item.isPackage {
         return item.url
       }
-      // `.on` aimed at a file or package row: rejected. The user
-      // clearly meant "into this row", so collapsing onto its parent
-      // would be misleading.
-      return nil
+      // `.on` aimed at a file or package row resolves to the enclosing
+      // folder. validateDrop retargets such hovers to a whole-pane
+      // `.above` drop, so accept normally never lands here with `.on` on
+      // a file; this is a defensive fallback that still drops into the
+      // cwd (matching Finder, a no-op when the item already lives here)
+      // rather than rejecting.
+      return currentURL
     }
     // `.above` (between rows or below the last row), or `.on` with an
     // out-of-range row: drop into the pane's cwd.
     return currentURL
   }
 
-  /// Icon-mode counterpart of `resolveDropDestination`. The collection
-  /// view's `.on` aimed at a directory cell drops into that cell;
-  /// `.on` aimed at a file/package cell is rejected; `.before`
-  /// (gap drop, including the empty area at the end of the grid)
-  /// drops into the pane's cwd. Out-of-range items collapse to cwd.
+  /// Icon-mode counterpart of `resolveDropDestination`, resolving the
+  /// row/operation accept receives back from validateDrop. The collection
+  /// view's `.on` aimed at a directory cell drops into that cell; `.before`
+  /// (gap drop, including the empty area at the end of the grid) drops
+  /// into the pane's cwd. The `.on`-a-file/package branch is a defensive
+  /// fallback (still the cwd): validateDrop retargets a file cell to a
+  /// `.before` cwd drop, so accept does not normally reach it with `.on`.
   func resolveIconDropDestination(
     proposedItem: Int, dropOperation: NSCollectionView.DropOperation
   ) -> URL? {
@@ -515,7 +554,7 @@ extension FinderPaneView {
       if item.isDirectory && !item.isPackage {
         return item.url
       }
-      return nil
+      return currentURL
     }
     return currentURL
   }
