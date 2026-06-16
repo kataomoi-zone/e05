@@ -275,15 +275,15 @@ extension FinderPaneView {
     return destURL.appendingPathComponent(src.lastPathComponent)
   }
 
-  /// Execute the drop. Detects conflicts and runs the resolution
-  /// alert (single batch decision applied to every conflicting
-  /// source), performs each per-source `moveItem` / `copyItem`,
-  /// falls back to copy on cross-volume race, and registers the
-  /// successfully-moved pairs with the undo manager. Returns
-  /// `true` when at least one source landed on the destination so
-  /// AppKit dismisses the drop animation correctly. Shared between
-  /// the list and icon entry points; behaviour is identical
-  /// regardless of which presentation drove the call.
+  /// Execute the drop. On the main actor: filter to the actionable
+  /// sources, run the conflict-resolution alert (one batch decision for
+  /// every collision) and resolve each plan into a final target. The
+  /// per-source `moveItem` / `copyItem` / alias work then runs off the
+  /// main actor in `runDropBatch` so a large or cross-volume drop doesn't
+  /// freeze the window. Returns `true` once the batch is launched (or the
+  /// drop is a deliberate no-op) so AppKit dismisses the drag; per-item
+  /// failures surface later through a toast. Shared between the list and
+  /// icon entry points.
   private func performDrop(
     sources: [URL], destination destURL: URL, op: NSDragOperation,
     sourcePane: FinderPaneView?
@@ -328,135 +328,212 @@ extension FinderPaneView {
         conflictCount: conflicts.count,
         firstName: conflicts[0].target.lastPathComponent)
     }
-    // Non-conflicting sources always move; the resolution governs only
-    // the conflicting ones, so Stop skips just the conflicts (Finder
-    // leaves the rest moved) rather than cancelling the whole batch.
-    // Skipped conflicts are subtracted from the failure total below so
-    // they don't read as errors.
-    var succeeded = 0
-    var stopSkipped = 0
-    // Track only `.move` successes — cross-volume `copyItem` results
-    // are deliberately not registered with the undo manager. System
-    // Finder treats those copies the same way (no undo entry) since
-    // the source is still on disk; ⌘⌫ on the copy is the obvious
-    // recovery path.
-    var movePairs: [(origin: URL, destination: URL)] = []
+    // Resolve each plan against the conflict decision into a flat list
+    // for the off-main batch. Keep Both's free-slot numbering runs here
+    // (cheap `fileExists` probes); Replace defers the existing item's
+    // trash into the batch so a folder full of replacements doesn't block
+    // the main actor either. Stop drops the conflicting plans entirely —
+    // the non-conflicting sources still move.
+    var execPlans: [DropPlan] = []
+    // Targets already claimed by earlier plans. The batch writes nothing
+    // until every target is resolved here, so without tracking these a
+    // Keep Both of two same-named sources would number both to the same
+    // free slot and the second would fail against the first on disk.
+    var reserved: Set<URL> = []
     for plan in plans {
       let hasConflict =
         fm.fileExists(atPath: plan.target.path(percentEncoded: false))
-      var actualTarget = plan.target
-      if hasConflict {
-        switch resolution {
-        case .replace:
-          // Send the existing target to Trash so the user can still
-          // recover it from `~/.Trash`. The trashed file is
-          // intentionally not registered with the undo manager — ⌘Z
-          // reverses the move only, leaving the trashed original in
-          // Trash for the user to inspect or restore manually. Same
-          // semantics as system Finder's Replace. The `resultingItemURL`
-          // out-param is required by the signature but the actual
-          // trash URL isn't needed downstream.
+      guard hasConflict else {
+        execPlans.append(
+          .init(source: plan.source, target: plan.target, replaceExisting: false))
+        reserved.insert(plan.target)
+        continue
+      }
+      switch resolution {
+      case .replace:
+        execPlans.append(
+          .init(source: plan.source, target: plan.target, replaceExisting: true))
+        reserved.insert(plan.target)
+      case .keepBoth:
+        // Number-suffix the new target (`README 2.md`) — Finder's Keep
+        // Both convention for cross-directory drops. The ` copy` suffix
+        // `availableCopyURL` produces is reserved for ⌘D Duplicate.
+        let stem = plan.target.deletingPathExtension().lastPathComponent
+        let ext = plan.target.pathExtension
+        let target = availableNumberedURL(
+          in: destURL, stem: stem, ext: ext, reserved: reserved)
+        execPlans.append(
+          .init(source: plan.source, target: target, replaceExisting: false))
+        reserved.insert(target)
+      case .stop:
+        continue
+      case .proceed:
+        // `.proceed` only arises with no conflicts, so a conflicting plan
+        // never reaches here.
+        execPlans.append(
+          .init(source: plan.source, target: plan.target, replaceExisting: false))
+        reserved.insert(plan.target)
+      }
+    }
+    // Everything was Stopped (or filtered out): a deliberate no-op.
+    // Report success so AppKit dismisses the drag instead of bouncing it
+    // back to the source, matching Finder's Stop.
+    guard !execPlans.isEmpty else { return true }
+
+    runDropBatch(execPlans: execPlans, op: op, sourcePane: sourcePane)
+    return true
+  }
+
+  /// One resolved drop action for the off-main batch: the source, its
+  /// final on-disk target (already collision-numbered for Keep Both), and
+  /// whether an existing item at the target must be trashed first
+  /// (Replace). `Sendable` so the batch `Task` can carry the whole list
+  /// across the actor hop.
+  private struct DropPlan: Sendable {
+    let source: URL
+    let target: URL
+    let replaceExisting: Bool
+  }
+
+  /// Run a resolved drop's move / copy / alias actions off the main
+  /// actor, mirroring `runCopyBatch` so a several-hundred-file drag
+  /// doesn't freeze the window — a same-volume move is instant, but a
+  /// cross-volume copy or a large tree blocks until the bytes land. The
+  /// conflict alert and Keep Both numbering already ran on the main actor
+  /// in `performDrop`; this executes the per-plan filesystem work and,
+  /// back on the main actor, registers the moves with the undo manager
+  /// and surfaces a partial-failure toast. The op is registered with
+  /// `FinderOperationTracker` so the progress panel and the dest pane's
+  /// greyed placeholder rows appear while a slow batch runs; cancel is
+  /// best-effort between plans (`Task.isCancelled`), so the failure tally
+  /// counts only the plans actually attempted.
+  private func runDropBatch(
+    execPlans: [DropPlan], op: NSDragOperation, sourcePane: FinderPaneView?
+  ) {
+    let opID = FinderOperationTracker.OperationID()
+    let targets = execPlans.map { $0.target }
+    let verbPhrase = Self.verbPhrase(for: op)
+    // Created before `register` so the cancel closure can capture it.
+    let task = Task.detached(priority: .userInitiated) {
+      defer {
+        Task { @MainActor in
+          FinderOperationTracker.shared.unregister(opID)
+          OperationsProgressPanel.dismissIfEmpty()
+        }
+      }
+      let fm = FileManager()
+      var movePairs: [(origin: URL, destination: URL)] = []
+      var succeeded = 0
+      var attempted = 0
+      for plan in execPlans {
+        if Task.isCancelled { break }
+        attempted += 1
+        if plan.replaceExisting {
+          // Send the existing target to Trash so the user can recover it
+          // from `~/.Trash` — not registered with the undo manager (⌘Z
+          // reverses the move only), matching system Finder's Replace.
           do {
             try fm.trashItem(at: plan.target, resultingItemURL: nil)
           } catch {
             logger.error(
-              "Drop replace: trash existing target \(plan.target.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+              "Drop replace: trash \(plan.target.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
             )
             continue
           }
-        case .keepBoth:
-          // Number-suffix the new target (`README 2.md`) — Finder's
-          // Keep Both convention for cross-directory drops. The
-          // ` copy` suffix that `availableCopyURL` produces is
-          // reserved for ⌘D Duplicate where the verb makes that
-          // suffix natural.
-          let stem = plan.target.deletingPathExtension().lastPathComponent
-          let ext = plan.target.pathExtension
-          actualTarget = availableNumberedURL(in: destURL, stem: stem, ext: ext)
-        case .stop:
-          // Leave this conflicting target untouched and move on — the
-          // non-conflicting sources in the same drop still proceed.
-          stopSkipped += 1
+        }
+        if op == .link {
+          do {
+            let bookmark = try plan.source.bookmarkData(
+              options: .suitableForBookmarkFile,
+              includingResourceValuesForKeys: nil,
+              relativeTo: nil)
+            try URL.writeBookmarkData(bookmark, to: plan.target)
+            succeeded += 1
+          } catch {
+            logger.error(
+              "Drop alias failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
           continue
-        case .proceed:
-          // `.proceed` only arises when there were no conflicts at all,
-          // so a conflicting plan never reaches this case.
-          break
         }
-      }
-      if op == .link {
-        // Alias drop (Option-Command): write a bookmark file pointing at
-        // the source — the same primitive as the Make Alias command. The
-        // source is left in place like a copy, and the alias is left out
-        // of the undo manager (⌘⌫ trashes it like any other file),
-        // matching Make Alias and system Finder.
+        if op == .copy {
+          do {
+            try fm.copyItem(at: plan.source, to: plan.target)
+            succeeded += 1
+          } catch {
+            logger.error(
+              "Drop copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
+          continue
+        }
         do {
-          let bookmark = try plan.source.bookmarkData(
-            options: .suitableForBookmarkFile,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil)
-          try URL.writeBookmarkData(bookmark, to: actualTarget)
+          try fm.moveItem(at: plan.source, to: plan.target)
           succeeded += 1
+          movePairs.append((plan.source, plan.target))
+        } catch let error as NSError where Self.isCrossVolumeError(error) {
+          // The source's volume disappeared (or was reclassified) between
+          // validate and accept. Fall back to copy so the drop completes;
+          // a cross-volume copy is deliberately not undo-registered, same
+          // as the explicit `.copy` branch.
+          do {
+            try fm.copyItem(at: plan.source, to: plan.target)
+            succeeded += 1
+          } catch {
+            logger.error(
+              "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+          }
         } catch {
           logger.error(
-            "Drop alias failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            "Drop move failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
         }
-        continue
       }
-      if op == .copy {
-        do {
-          try fm.copyItem(at: plan.source, to: actualTarget)
-          succeeded += 1
-        } catch {
-          logger.error(
-            "Drop copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-          )
+      let finalMovePairs = movePairs
+      let finalSucceeded = succeeded
+      let finalAttempted = attempted
+      await MainActor.run { [weak self, weak sourcePane] in
+        guard let self else { return }
+        // Only `.move` successes are registered — cross-volume copies and
+        // explicit copy / alias leave the source on disk, so ⌘⌫ is the
+        // recovery path (matching system Finder).
+        if !finalMovePairs.isEmpty {
+          FinderUndoCenter.registerMove(
+            pairs: finalMovePairs, sourcePane: sourcePane, in: self)
         }
-        continue
-      }
-      do {
-        try fm.moveItem(at: plan.source, to: actualTarget)
-        succeeded += 1
-        movePairs.append((plan.source, actualTarget))
-      } catch let error as NSError where Self.isCrossVolumeError(error) {
-        // Validate said `.move`, but the source's volume disappeared
-        // (or was reclassified) between validate and accept. Fall
-        // back to copy so the drop completes instead of evaporating.
-        // The fallback isn't appended to `movePairs` either —
-        // cross-volume copies are intentionally not registered with
-        // the undo manager, same as the explicit `.copy` branch
-        // above.
-        do {
-          try fm.copyItem(at: plan.source, to: actualTarget)
-          succeeded += 1
-        } catch {
-          logger.error(
-            "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-          )
-        }
-      } catch {
-        logger.error(
-          "Drop move failed \(plan.source.path, privacy: .public) → \(actualTarget.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-        )
+        // A live drop posts no success toast (matching Finder); this is
+        // the only feedback for a partial / full failure. `attempted`
+        // excludes Stop-skipped and cancel-skipped plans so neither reads
+        // as an error.
+        self.reportOperationFailure(
+          succeeded: finalSucceeded, total: finalAttempted, verbPhrase: verbPhrase)
       }
     }
-    if !movePairs.isEmpty {
-      FinderUndoCenter.registerMove(
-        pairs: movePairs, sourcePane: sourcePane, in: self)
+
+    FinderOperationTracker.shared.register(
+      .init(
+        id: opID,
+        label: Self.dropProgressLabel(for: op, count: execPlans.count),
+        targetURLs: targets,
+        cancel: { task.cancel() }))
+    OperationsProgressPanel.scheduleShowIfNeeded(near: window)
+  }
+
+  /// Present-tense progress-panel label for a drop batch ("Moving 5
+  /// items"), mirroring `runCopyBatch`'s "Pasting …" phrasing and
+  /// contrasting with the past-tense failure verb from `verbPhrase`.
+  private static func dropProgressLabel(for op: NSDragOperation, count: Int) -> String {
+    let verb: String
+    if op == .link {
+      verb = "Aliasing"
+    } else if op == .copy {
+      verb = "Copying"
+    } else {
+      verb = "Moving"
     }
-    // Surface a per-batch error toast when any source failed to land.
-    // A live drop posts no success toast (matching Finder), so this is
-    // the only feedback for a partial / full failure; per-item causes
-    // are already logged above.
-    reportOperationFailure(
-      succeeded: succeeded, total: plans.count - stopSkipped,
-      verbPhrase: Self.verbPhrase(for: op))
-    // A Stop that skips every conflicting source is a deliberate cancel,
-    // not a failed drop — report success even with nothing moved so
-    // AppKit dismisses the drag instead of bouncing it back to the
-    // source, matching Finder's Stop.
-    return succeeded > 0 || stopSkipped > 0
+    let suffix = count == 1 ? "1 item" : "\(count) items"
+    return "\(verb) \(suffix)"
   }
 
   /// Past-tense verb for the per-batch failure toast, matched to the
@@ -623,7 +700,7 @@ extension FinderPaneView {
   /// straddle two filesystems. FileManager surfaces the condition
   /// either directly in `NSPOSIXErrorDomain` or wrapped under
   /// `NSUnderlyingErrorKey`; catch both shapes.
-  private static func isCrossVolumeError(_ error: NSError) -> Bool {
+  private nonisolated static func isCrossVolumeError(_ error: NSError) -> Bool {
     let exdev = 18
     if error.domain == NSPOSIXErrorDomain, error.code == exdev { return true }
     if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError,

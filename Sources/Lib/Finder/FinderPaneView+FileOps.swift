@@ -279,7 +279,13 @@ extension FinderPaneView {
   /// reserved for ⌘D Duplicate, where the verb makes the suffix
   /// natural; cross-directory drops have no such verb context and
   /// the numeric form is what Finder uses there.
-  func availableNumberedURL(in dir: URL, stem: String, ext: String) -> URL {
+  /// `reserved` holds slots already handed out earlier in the same batch
+  /// but not yet written to disk — a drop resolves every Keep Both target
+  /// up front (before any move lands), so without it two same-named
+  /// sources would both probe a clean disk and claim the same `… 2` slot.
+  func availableNumberedURL(
+    in dir: URL, stem: String, ext: String, reserved: Set<URL> = []
+  ) -> URL {
     let fm = FileManager.default
 
     func candidate(_ index: Int) -> URL {
@@ -292,7 +298,11 @@ extension FinderPaneView {
     var n = 2
     while true {
       let url = candidate(n)
-      if !fm.fileExists(atPath: url.path(percentEncoded: false)) { return url }
+      if !reserved.contains(url),
+        !fm.fileExists(atPath: url.path(percentEncoded: false))
+      {
+        return url
+      }
       n += 1
     }
   }
