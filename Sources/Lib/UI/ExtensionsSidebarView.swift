@@ -235,7 +235,27 @@ final class ExtensionsSidebarView: NSView {
     )
   }
 
+  /// Whether the focused workspace is private. When it is, an enabled
+  /// extension that isn't granted private access reads as inactive in
+  /// the list — "on overall, off here". Refreshed on every reload and
+  /// on workspace switches via `refreshPrivateContext()`.
+  private var isPrivateContext = false
+
+  private func currentWorkspaceIsPrivate() -> Bool {
+    ExtensionController.shared.workspaceBridge.container?.currentWorkspace.isPrivate ?? false
+  }
+
+  /// Re-render when the focused workspace may have changed (a switch
+  /// into or out of a private workspace). Reloads only when the private
+  /// context actually flipped — the worklane reload that drives this
+  /// fires on every focus change, most of which don't cross the boundary.
+  func refreshPrivateContext() {
+    guard currentWorkspaceIsPrivate() != isPrivateContext else { return }
+    reload()
+  }
+
   private func reload() {
+    isPrivateContext = currentWorkspaceIsPrivate()
     rows = ExtensionController.shared.loadedExtensions
     tableView.reloadData()
     emptyLabel.isHidden = !rows.isEmpty
@@ -252,6 +272,10 @@ final class ExtensionsSidebarView: NSView {
     guard row >= 0, row < rows.count else { return }
     let entry = rows[row]
     guard entry.isEnabled else { return }
+    // Inactive in the focused private workspace: the popup would act on
+    // the non-private context, so the row is a no-op just like a disabled
+    // one (it reads as dimmed for the same reason).
+    guard !(isPrivateContext && !entry.allowsPrivate) else { return }
     guard
       let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
         as? ExtensionsSidebarCellView
@@ -293,7 +317,7 @@ extension ExtensionsSidebarView: NSTableViewDelegate {
     let cell =
       tableView.makeView(withIdentifier: identifier, owner: self)
       as? ExtensionsSidebarCellView ?? ExtensionsSidebarCellView(identifier: identifier)
-    cell.configure(with: rows[row])
+    cell.configure(with: rows[row], isPrivateContext: isPrivateContext)
     cell.onToggleEnabled = { sourceURL, enabled in
       ExtensionController.shared.setEnabled(enabled, for: sourceURL)
     }
@@ -697,13 +721,19 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     onToggleEnabled?(sourceURL, toggle.state == .on)
   }
 
-  func configure(with entry: LoadedExtension) {
+  func configure(with entry: LoadedExtension, isPrivateContext: Bool) {
     currentSourceURL = entry.sourceURL
     currentHasOptionsPage = entry.hasOptionsPage
     currentIsEnabled = entry.isEnabled
     currentIsPinned = entry.isPinned
     currentAllowsPrivate = entry.allowsPrivate
     titleLabel.stringValue = entry.displayName
+    // Enabled globally but not granted private access while the focused
+    // workspace is private: the extension is loaded but does nothing in
+    // this tab. The dimming below carries that visually; the row text
+    // stays the version so the layout doesn't shift (the explanation
+    // lives in the tooltip).
+    let inactiveInPrivate = isPrivateContext && entry.isEnabled && !entry.allowsPrivate
     if let version = entry.version, !version.isEmpty {
       subtitleLabel.stringValue = "v\(version)"
     } else {
@@ -716,14 +746,20 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     iconView.image =
       entry.icon
       ?? NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
-    // Dim the metadata in the disabled state so the row reads as
-    // inert at a glance, matching how Safari and Chrome dim disabled
-    // extensions in their management UIs.
-    let alpha: CGFloat = entry.isEnabled ? 1.0 : 0.45
+    // Dim the metadata when the row is inert at a glance — disabled
+    // globally, or enabled-but-inactive in the current private
+    // workspace — matching how Safari and Chrome dim such rows. The
+    // switch keeps its true (global) on/off so the user sees it's still
+    // enabled overall; the `⋯` menu's "Allow in Private Workspaces"
+    // grant is how they light it up here.
+    let alpha: CGFloat = (entry.isEnabled && !inactiveInPrivate) ? 1.0 : 0.45
     iconView.alphaValue = alpha
     titleLabel.alphaValue = alpha
     subtitleLabel.alphaValue = alpha
     toggle.state = entry.isEnabled ? .on : .off
-    toolTip = entry.displayName
+    toolTip =
+      inactiveInPrivate
+      ? "\(entry.displayName) — enabled, but not allowed in private workspaces (⋯ to allow)"
+      : entry.displayName
   }
 }

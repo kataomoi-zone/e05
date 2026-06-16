@@ -302,6 +302,10 @@ final class SidebarViewController: NSViewController {
   /// has been lost.
   func reloadWorklane() {
     guard let container else { return }
+    // A focus change may have crossed the private-workspace boundary;
+    // let the extensions list re-dim rows that are inactive in private.
+    // Cheap: it no-ops unless the private context actually flipped.
+    (overlay.extensionsView as? ExtensionsSidebarView)?.refreshPrivateContext()
     let focusedPaneId: ULID? = {
       guard container.workspaces.indices.contains(container.focusedWorkspaceIndex)
       else { return nil }
