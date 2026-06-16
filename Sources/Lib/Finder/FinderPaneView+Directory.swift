@@ -319,13 +319,32 @@ extension FinderPaneView {
     guard !cwdTargets.isEmpty else {
       return loaded
     }
-    let knownURLs = Set(loaded.map { $0.url })
-    let synthetics = cwdTargets.subtracting(knownURLs).map { FileItem(placeholder: $0) }
+    // Dedup on a trailing-slash-insensitive path key, not raw `URL`
+    // equality: a directory / bundle target composed via
+    // `appendingPathComponent` carries no trailing slash, but the
+    // enumerator marks the real on-disk directory with one, so a `URL`
+    // Set subtraction misses the match and leaves a duplicate placeholder
+    // beside the partially-copied real row (e.g. a big `.app` mid-copy).
+    let knownKeys = Set(loaded.map { Self.inFlightDedupKey($0.url) })
+    let synthetics =
+      cwdTargets
+      .filter { !knownKeys.contains(Self.inFlightDedupKey($0)) }
+      .map { FileItem(placeholder: $0) }
     if synthetics.isEmpty {
       return loaded
     }
     return Self.sortItems(
       loaded + synthetics, key: currentSortKey, ascending: sortAscending)
+  }
+
+  /// Trailing-slash-insensitive path key for matching an in-flight
+  /// target against an enumerator-produced row URL — the enumerator
+  /// appends `/` to directory / bundle URLs while a composed
+  /// `appendingPathComponent` target does not, so a raw `URL` compare
+  /// would treat the two as distinct.
+  private static func inFlightDedupKey(_ url: URL) -> String {
+    let path = url.path(percentEncoded: false)
+    return path.count > 1 && path.hasSuffix("/") ? String(path.dropLast()) : path
   }
 
   /// Re-render the in-flight overlay against the cached
