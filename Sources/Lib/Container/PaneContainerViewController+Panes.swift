@@ -1514,19 +1514,28 @@ extension PaneContainerViewController {
 
   private static let maxRecentlyClosed = 10
 
-  /// Look up the workspace owning `pane`. The walk is O(workspaces ×
-  /// columns × panes) but in practice handful-per-handful, and pane
-  /// callbacks fire often enough that an `id → workspace` index would
-  /// add lifecycle bookkeeping for negligible savings. Used by
-  /// browser callbacks so private workspaces can suppress history
-  /// writes and closed-pane stashing.
+  /// Look up the workspace owning `pane`. Trusts `pane.workspace` as a
+  /// hint once it's confirmed to still hold the pane — the common case,
+  /// scanning a single workspace — and otherwise walks every workspace
+  /// and repairs the hint. The hint self-heals (no eager maintenance at
+  /// move sites) and lets the high-frequency extension-bridge lookups
+  /// (`activeTab` / `window(for:)` / privacy checks) skip the workspaces
+  /// ahead of the pane's own. Used by browser callbacks so private
+  /// workspaces can suppress history writes and closed-pane stashing.
   func workspaceContaining(pane: PaneModel) -> WorkspaceModel? {
+    if let cached = pane.workspace,
+      cached.columns.contains(where: { $0.panes.contains { $0 === pane } })
+    {
+      return cached
+    }
     for workspace in workspaces {
       for column in workspace.columns
-      where column.panes.contains(where: { $0.id == pane.id }) {
+      where column.panes.contains(where: { $0 === pane }) {
+        pane.workspace = workspace
         return workspace
       }
     }
+    pane.workspace = nil
     return nil
   }
 

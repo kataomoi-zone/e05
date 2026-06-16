@@ -99,6 +99,17 @@ public final class PaneModel {
   public var address: PaneAddress
   public private(set) var content: PaneContent
 
+  /// Cached owning-workspace hint for
+  /// `PaneContainerViewController.workspaceContaining(pane:)`. A pane's
+  /// specific workspace can change — it can be moved between workspaces —
+  /// but never its privacy, because cross-private-boundary moves are
+  /// blocked, so the hint is always privacy-correct even while momentarily
+  /// stale. `workspaceContaining` confirms the hint still holds the pane
+  /// before trusting it and rebuilds it from a full walk otherwise, so the
+  /// field self-heals and needs no eager update at every move site. Weak
+  /// so a closed workspace can still deallocate.
+  weak var workspace: WorkspaceModel?
+
   /// Terminal title or page title.
   public var title: String = ""
 
