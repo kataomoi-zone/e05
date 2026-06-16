@@ -23,8 +23,10 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "FinderPane")
 /// matches the source/destination volumes — `.move` within a volume,
 /// `.copy` across volumes — so the drag image's `+` overlay tells the
 /// user up-front when a copy will happen instead of a move (Finder's
-/// convention). Self-drops and descendant drops are rejected before
-/// any move is attempted. `acceptDrop:` performs the announced
+/// convention). Self-drops, descendant drops, and already-in-place
+/// sources are skipped per-source so a mixed drag still moves its valid
+/// items; only an all-invalid drop is refused. `acceptDrop:` performs
+/// the announced
 /// operation and falls back to copy if `moveItem` still surfaces an
 /// `EXDEV` (e.g. an external volume unmounts between validate and
 /// accept). Directory monitor coalesces the resulting reload into
@@ -153,32 +155,42 @@ extension FinderPaneView {
 
   // MARK: - Shared validate / accept core
 
-  /// Reject no-op / invalid drops, then resolve the drag operation
-  /// (move within volume, copy across volumes). A drop is rejected
-  /// (returns `nil`) when a source *is* the destination, when the
-  /// destination sits inside a source (descendant), or when a source
-  /// already lives directly in the destination — dropping a file back
-  /// into its own folder moves nothing, so it is a no-op rather than a
-  /// spurious "already exists" conflict (Finder's behaviour).
-  /// `validateDrop` callers translate `nil` into the empty
-  /// `NSDragOperation`.
+  /// Resolve the drag operation (move within volume, copy across
+  /// volumes) for the sources that can actually land on `destURL`.
+  /// Returns `nil` — which `validateDrop` callers translate into the
+  /// empty `NSDragOperation` — only when *every* source is a no-op /
+  /// invalid one, so a drag mixing one bad item with several good ones
+  /// still validates and the good ones move (Finder's partial accept).
   private func validateDropOperation(
     sources: [URL], destination destURL: URL
   ) -> NSDragOperation? {
-    let destPath = Self.normalizedPath(destURL)
-    for src in sources {
-      let srcPath = Self.normalizedPath(src)
-      if srcPath == destPath { return nil }
-      if destPath.hasPrefix(srcPath + "/") { return nil }
-      // Source already in the destination: the move resolves to the
-      // file's current path, so performDrop's conflict probe would
-      // match the file against itself and pop an "already exists"
-      // dialog for a move that does nothing. Reject as a no-op.
-      if Self.normalizedPath(src.deletingLastPathComponent()) == destPath {
-        return nil
-      }
+    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    guard !acceptable.isEmpty else { return nil }
+    return Self.dropOperation(sources: acceptable, destination: destURL)
+  }
+
+  /// The subset of `sources` that can actually move/copy onto `destURL`,
+  /// dropping the no-op / invalid ones individually rather than failing
+  /// the whole drop: a source that *is* the destination, a destination
+  /// inside a source (descendant), or a source already living directly
+  /// in the destination — dropping a file back into its own folder moves
+  /// nothing, so performDrop's conflict probe would match it against
+  /// itself and pop a spurious "already exists" dialog. Finder skips all
+  /// three silently and moves the rest. The skipped sources are
+  /// same-volume as the destination by construction (they sit at / in /
+  /// around it), so excluding them never changes the move-vs-copy
+  /// decision for the remaining sources.
+  private static func acceptableDropSources(
+    _ sources: [URL], destination destURL: URL
+  ) -> [URL] {
+    let destPath = normalizedPath(destURL)
+    return sources.filter { src in
+      let srcPath = normalizedPath(src)
+      if srcPath == destPath { return false }
+      if destPath.hasPrefix(srcPath + "/") { return false }
+      if normalizedPath(src.deletingLastPathComponent()) == destPath { return false }
+      return true
     }
-    return Self.dropOperation(sources: sources, destination: destURL)
   }
 
   /// Execute the drop. Detects conflicts and runs the resolution
@@ -196,6 +208,16 @@ extension FinderPaneView {
   ) -> Bool {
     let fm = FileManager.default
 
+    // Skip the no-op / invalid sources (self, descendant, already in
+    // place) and act on the rest — Finder's partial accept. validateDrop
+    // already filtered the same way for the drag image, but the
+    // pasteboard is re-read on accept so re-filter here to stay in sync.
+    // A skipped source is never counted as a failure below: it drops out
+    // of `plans`, so the per-batch failure toast only reflects real
+    // move/copy errors among the acceptable sources.
+    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    guard !acceptable.isEmpty else { return false }
+
     // Resolve every source's conflict (target path occupied) up front
     // so the user is asked exactly once per drop. The chosen
     // resolution applies batch-wide — Finder's per-conflict prompt
@@ -203,7 +225,7 @@ extension FinderPaneView {
     // alert sheet, which interrupts a drag flow. A single batch
     // decision matches what most users want for "I dropped a folder
     // and a few file names happen to collide".
-    let plans = sources.map { src in
+    let plans = acceptable.map { src in
       (source: src, target: destURL.appendingPathComponent(src.lastPathComponent))
     }
     let conflicts = plans.filter {
@@ -217,9 +239,13 @@ extension FinderPaneView {
         conflictCount: conflicts.count,
         firstName: conflicts[0].target.lastPathComponent)
     }
-    guard resolution != .stop else { return false }
-
+    // Non-conflicting sources always move; the resolution governs only
+    // the conflicting ones, so Stop skips just the conflicts (Finder
+    // leaves the rest moved) rather than cancelling the whole batch.
+    // Skipped conflicts are subtracted from the failure total below so
+    // they don't read as errors.
     var succeeded = 0
+    var stopSkipped = 0
     // Track only `.move` successes — cross-volume `copyItem` results
     // are deliberately not registered with the undo manager. System
     // Finder treats those copies the same way (no undo entry) since
@@ -258,7 +284,14 @@ extension FinderPaneView {
           let stem = plan.target.deletingPathExtension().lastPathComponent
           let ext = plan.target.pathExtension
           actualTarget = availableNumberedURL(in: destURL, stem: stem, ext: ext)
-        case .proceed, .stop:
+        case .stop:
+          // Leave this conflicting target untouched and move on — the
+          // non-conflicting sources in the same drop still proceed.
+          stopSkipped += 1
+          continue
+        case .proceed:
+          // `.proceed` only arises when there were no conflicts at all,
+          // so a conflicting plan never reaches this case.
           break
         }
       }
@@ -308,7 +341,7 @@ extension FinderPaneView {
     // the only feedback for a partial / full failure; per-item causes
     // are already logged above.
     reportOperationFailure(
-      succeeded: succeeded, total: plans.count,
+      succeeded: succeeded, total: plans.count - stopSkipped,
       verbPhrase: op == .copy ? "copied" : "moved")
     return succeeded > 0
   }
