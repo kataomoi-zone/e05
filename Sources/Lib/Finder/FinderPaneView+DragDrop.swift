@@ -418,6 +418,9 @@ extension FinderPaneView {
     // Shared with the cancel closure: the ✕ flips it, and the off-main
     // copyfile callback observes it to abort a cross-volume copy mid-file.
     let token = CopyCancellationToken()
+    // Byte tally for the determinate progress bar — copy only; a move is an
+    // instant rename and an alias a tiny bookmark write, neither worth a bar.
+    let progress: FinderCopyProgress? = op == .copy ? FinderCopyProgress() : nil
     // Created before `register` so the cancel closure can capture it.
     let task = Task.detached(priority: .userInitiated) {
       defer {
@@ -427,24 +430,38 @@ extension FinderPaneView {
         }
       }
       let fm = FileManager()
+      // Preparing phase (copy only): tally each source's size so the bar has
+      // a denominator (it sits at an empty determinate bar until the total
+      // lands), then credit each plan's walked size as it finishes so a
+      // clone — which streams no callback bytes — still drives it to 100%.
+      // Parallel to `execPlans` when `progress` is set (op == .copy), empty
+      // otherwise; `sizes[index]` is read only under `if let progress`, so
+      // the index stays in range.
+      let sizes: [Int64] =
+        progress == nil ? [] : execPlans.map { Self.allocatedSize(of: $0.source) }
+      progress?.setTotalBytes(sizes.reduce(0, +))
       var movePairs: [(origin: URL, destination: URL)] = []
       var succeeded = 0
       var attempted = 0
-      planLoop: for plan in execPlans {
+      planLoop: for (index, plan) in execPlans.enumerated() {
         if token.isCancelled { break }
         attempted += 1
-        switch Self.executeDropPlan(plan, op: op, token: token, fm: fm) {
+        switch Self.executeDropPlan(
+          plan, op: op, token: token, fm: fm, progress: progress)
+        {
         case .succeeded(let movePair):
           succeeded += 1
           if let movePair { movePairs.append(movePair) }
+          if let progress { progress.completePlan(bytes: sizes[index]) }
         case .cancelled:
           // The ✕ stopped this plan partway through. It neither finished
           // nor failed, so drop it from the attempted tally (the toast
           // would otherwise read it as an error) and abandon the rest.
           attempted -= 1
+          progress?.discardCurrentPlan()
           break planLoop
         case .failed:
-          break
+          progress?.discardCurrentPlan()
         }
       }
       let finalMovePairs = movePairs
@@ -476,7 +493,8 @@ extension FinderPaneView {
         cancel: {
           token.cancel()
           task.cancel()
-        }))
+        },
+        progress: progress))
     OperationsProgressPanel.scheduleShowIfNeeded(near: window)
   }
 
@@ -499,7 +517,7 @@ extension FinderPaneView {
   /// `.cancelled` propagates up so `runDropBatch` stops the whole batch.
   private nonisolated static func executeDropPlan(
     _ plan: DropPlan, op: NSDragOperation, token: CopyCancellationToken,
-    fm: FileManager
+    fm: FileManager, progress: FinderCopyProgress?
   ) -> DropPlanOutcome {
     if plan.replaceExisting {
       // Send the existing target to Trash so the user can recover it from
@@ -535,7 +553,9 @@ extension FinderPaneView {
       // copyfile clones a same-volume copy when the filesystem allows
       // (instant) and otherwise does a cancellable data copy — unlike
       // FileManager.copyItem, which never clones and can't be interrupted.
-      switch cancellableCopy(from: plan.source, to: plan.target, token: token) {
+      switch cancellableCopy(
+        from: plan.source, to: plan.target, token: token, progress: progress)
+      {
       case .completed: return .succeeded(movePair: nil)
       case .cancelled: return .cancelled
       case .failed(let error):
@@ -557,7 +577,9 @@ extension FinderPaneView {
       try fm.moveItem(at: plan.source, to: plan.target)
       return .succeeded(movePair: (plan.source, plan.target))
     } catch let error as NSError where isCrossVolumeError(error) {
-      switch cancellableCopy(from: plan.source, to: plan.target, token: token) {
+      switch cancellableCopy(
+        from: plan.source, to: plan.target, token: token, progress: progress)
+      {
       case .completed: return .succeeded(movePair: nil)
       case .cancelled: return .cancelled
       case .failed(let copyError):

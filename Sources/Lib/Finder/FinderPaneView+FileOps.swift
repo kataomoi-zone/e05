@@ -150,6 +150,7 @@ extension FinderPaneView {
     // detached task can land, so the panel never flashes for an op
     // that completes faster than the delay.
     let token = CopyCancellationToken()
+    let progress = FinderCopyProgress()
     let task = Task.detached(priority: .userInitiated) {
       defer {
         Task { @MainActor in
@@ -157,15 +158,26 @@ extension FinderPaneView {
           OperationsProgressPanel.dismissIfEmpty()
         }
       }
+      // Preparing phase: tally each source's size for the determinate bar
+      // (the panel stays indeterminate until the total lands), then credit
+      // each plan's walked size as it finishes so the bar reaches exactly
+      // 100% even for clones, which stream no callback bytes.
+      let sizes = plans.map { Self.allocatedSize(of: $0.source) }
+      progress.setTotalBytes(sizes.reduce(0, +))
       var done: [URL] = []
-      copyLoop: for plan in plans {
+      copyLoop: for (plan, size) in zip(plans, sizes) {
         if token.isCancelled { break }
-        switch Self.cancellableCopy(from: plan.source, to: plan.target, token: token) {
+        switch Self.cancellableCopy(
+          from: plan.source, to: plan.target, token: token, progress: progress)
+        {
         case .completed:
           done.append(plan.target)
+          progress.completePlan(bytes: size)
         case .cancelled:
+          progress.discardCurrentPlan()
           break copyLoop
         case .failed(let error):
+          progress.discardCurrentPlan()
           logger.error(
             "\(label, privacy: .public) failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
@@ -187,7 +199,8 @@ extension FinderPaneView {
         cancel: {
           token.cancel()
           task.cancel()
-        }))
+        },
+        progress: progress))
     OperationsProgressPanel.scheduleShowIfNeeded(near: window)
   }
 
