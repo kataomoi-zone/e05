@@ -141,15 +141,35 @@ extension PaneContainerViewController {
     return pane
   }
 
-  /// Duplicate the focused browser pane into a new column with its full
-  /// history. No-op for non-browser panes.
-  func duplicateFocusedBrowserPane() {
-    guard let pane = focusedPane, let bv = pane.browserView,
-      let url = bv.currentURLForDuplication
-    else { return }
-    openDuplicatedBrowser(
-      url: url, interactionState: bv.interactionStateForDuplication,
-      inNewWorkspace: false, focus: true)
+  /// Whether `duplicateFocusedPane` would actually produce a copy — the
+  /// gate for the Duplicate Pane command so it greys out on a pane that
+  /// can't be duplicated rather than no-opping silently. Mirrors the kinds
+  /// `openDuplicatedBrowser` / `makeDuplicatePane` handle: a browser needs
+  /// a duplicable URL; terminal, finder and start always copy.
+  var canDuplicateFocusedPane: Bool {
+    guard let source = focusedPane else { return false }
+    if let bv = source.browserView { return bv.currentURLForDuplication != nil }
+    if source.terminalView != nil { return true }
+    return source.address.kind == .finder || source.address.kind == .start
+  }
+
+  /// Duplicate the focused pane into a new column to its right. A browser
+  /// carries its full back/forward history via the `openDuplicatedBrowser`
+  /// adoption path; a terminal copies its cwd, a finder its path, and a
+  /// start page opens another launcher (`makeDuplicatePane`, the same copy
+  /// Split Vertical's `Duplicate` kind makes). No-op when nothing is
+  /// focused or the focused kind can't be duplicated.
+  func duplicateFocusedPane() {
+    guard let source = focusedPane else { return }
+    if let bv = source.browserView, let url = bv.currentURLForDuplication {
+      openDuplicatedBrowser(
+        url: url, interactionState: bv.interactionStateForDuplication,
+        inNewWorkspace: false, focus: true)
+      showToast("Duplicate Pane")
+      return
+    }
+    guard let dup = makeDuplicatePane(of: source) else { return }
+    insertColumn(with: dup, focusOnInsert: true)
     showToast("Duplicate Pane")
   }
 
@@ -990,35 +1010,40 @@ extension PaneContainerViewController {
     }
   }
 
-  /// Build a copy of `source`: same URL + back/forward/scroll state for
-  /// a browser, same cwd for a terminal, same path for a finder, another
-  /// start page for a start pane. Returns nil for a missing / unsupported
-  /// source so the caller can fall back.
-  private func makeDuplicatePane(of source: PaneModel?) -> PaneModel? {
+  /// The address + dependencies a duplicate of `source` should be built
+  /// from, or nil when the kind can't be duplicated. Split out of
+  /// `makeDuplicatePane` so the per-kind decision is unit-testable without
+  /// constructing real panes: a browser carries its URL + back/forward
+  /// state (and needs a duplicable URL), a terminal its live cwd, a finder
+  /// its current path, a start page another stateless launcher.
+  static func duplicatePlan(
+    for source: PaneModel?
+  ) -> (address: PaneAddress, dependencies: PaneDependencies)? {
     guard let source else { return nil }
     if let bv = source.browserView, let url = bv.currentURLForDuplication {
       var deps = PaneDependencies()
       deps.initialInteractionState = bv.interactionStateForDuplication
       deps.initialTitle = source.title
-      return makePane(address: PaneAddress(url), dependencies: deps)
+      return (PaneAddress(url), deps)
     }
     if let tv = source.terminalView {
       var deps = PaneDependencies()
-      // The focused terminal's live cwd; libghostty's inherit would
-      // land in the same place, but passing it explicitly keeps the
-      // copy correct even if inherit is disabled in the user's config.
+      // The focused terminal's live cwd; libghostty's inherit would land in
+      // the same place, but passing it explicitly keeps the copy correct
+      // even if inherit is disabled in the user's config.
       deps.terminalWorkingDirectory = tv.currentWorkingDirectory
-      return makePane(address: .terminal, dependencies: deps)
+      return (.terminal, deps)
     }
-    if source.address.kind == .finder {
-      return makePane(address: source.address)
-    }
-    if source.address.kind == .start {
-      // A start page is a stateless launcher; its duplicate is just
-      // another start page.
-      return makePane(address: .start)
-    }
+    if source.address.kind == .finder { return (source.address, .init()) }
+    if source.address.kind == .start { return (.start, .init()) }
     return nil
+  }
+
+  /// Build a copy of `source` from its ``duplicatePlan``, or nil for a
+  /// missing / unsupported source so the caller can fall back.
+  private func makeDuplicatePane(of source: PaneModel?) -> PaneModel? {
+    guard let plan = Self.duplicatePlan(for: source) else { return nil }
+    return makePane(address: plan.address, dependencies: plan.dependencies)
   }
 
   /// Launch cwd for a freshly opened terminal pane, from

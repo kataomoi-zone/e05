@@ -534,11 +534,12 @@ extension PaneContainerViewController {
         id: "duplicate_pane",
         title: "Duplicate Pane",
         menuTitle: "Duplicate Pane",
-        // Palette-only: browsers ship no standard duplicate-tab chord,
-        // and claiming one here would risk a collision.
-        handler: { [weak self] in self?.duplicateFocusedBrowserPane() },
+        // No keyboard shortcut: browsers ship no standard duplicate-tab
+        // chord and claiming one here would risk a collision. Reachable
+        // from the palette and the worklane pane menu.
+        handler: { [weak self] in self?.duplicateFocusedPane() },
         validate: { [weak self] in
-          (self?.focusedPane?.browserView != nil, nil)
+          (self?.canDuplicateFocusedPane ?? false, nil)
         }
       ),
       Action(
