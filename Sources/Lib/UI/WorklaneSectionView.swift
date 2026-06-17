@@ -1877,6 +1877,7 @@ extension WorklaneSectionView: NSMenuDelegate {
       appendPaletteAction(to: menu, actionId: "move_column_right", paneId: paneId, input: input)
       menu.addItem(.separator())
     }
+    appendPaletteAction(to: menu, actionId: "duplicate_pane", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "split_vertical", paneId: paneId, input: input)
     if input.workspaces.count > 1 {
       appendMoveToWorkspace(to: menu, paneNode: paneNode, input: input)
