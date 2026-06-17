@@ -122,23 +122,19 @@ extension FinderPaneView {
   /// place.
   ///
   /// `Task.detached` is what keeps the pane responsive during a
-  /// multi-GB or cross-volume copy. APFS same-volume copies
-  /// short-circuit to `clonefile(2)` inside `FileManager` and finish
-  /// instantly, but cross-volume / HFS+ paths block until the bytes
-  /// are actually written — and `FinderPaneView` is `@MainActor`,
-  /// so a synchronous `copyItem` would freeze every other pane on
-  /// the same window. A per-`Task` `FileManager()` keeps Sendable
-  /// strictness happy and avoids sharing the global default's
-  /// delegate slot across tasks.
+  /// multi-GB or cross-volume copy. Each plan runs through
+  /// `cancellableCopy`, which clones via `copyfile(3)` on an APFS
+  /// same-volume target (instant) and otherwise does a real data
+  /// copy — and `FinderPaneView` is `@MainActor`, so doing that work
+  /// synchronously would freeze every other pane on the same window.
   ///
   /// The op is registered with `FinderOperationTracker` so the
-  /// progress panel surfaces "Pasting …" / "Duplicating …" while
-  /// the copy runs, and so the panel's ✕ button can ask the task
-  /// to stop. Cancel is best-effort: `Task.cancel()` only takes
-  /// effect between plans, so a cancel mid-`copyItem(at:to:)` lets
-  /// the current file finish and skips the rest. `FileManager`
-  /// doesn't surface a per-file cancel hook, and writing a chunked
-  /// manual copy purely for the cancel path is out of scope here.
+  /// progress panel surfaces "Pasting …" / "Duplicating …" while the
+  /// copy runs, and so the panel's ✕ button can stop it. The button
+  /// flips a `CopyCancellationToken` the loop checks between plans and
+  /// the `copyfile` callback checks mid-file, so a cancel aborts even
+  /// partway through a single large file; the partial target is
+  /// removed and the remaining plans are skipped.
   func runCopyBatch(plans: [(source: URL, target: URL)], label: String) {
     let opID = FinderOperationTracker.OperationID()
     let targets = plans.map { $0.target }
@@ -153,6 +149,7 @@ extension FinderPaneView {
     // any child `Task { @MainActor in ... }` enqueued from the
     // detached task can land, so the panel never flashes for an op
     // that completes faster than the delay.
+    let token = CopyCancellationToken()
     let task = Task.detached(priority: .userInitiated) {
       defer {
         Task { @MainActor in
@@ -160,14 +157,15 @@ extension FinderPaneView {
           OperationsProgressPanel.dismissIfEmpty()
         }
       }
-      let fm = FileManager()
       var done: [URL] = []
-      for plan in plans {
-        if Task.isCancelled { break }
-        do {
-          try fm.copyItem(at: plan.source, to: plan.target)
+      copyLoop: for plan in plans {
+        if token.isCancelled { break }
+        switch Self.cancellableCopy(from: plan.source, to: plan.target, token: token) {
+        case .completed:
           done.append(plan.target)
-        } catch {
+        case .cancelled:
+          break copyLoop
+        case .failed(let error):
           logger.error(
             "\(label, privacy: .public) failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
@@ -186,7 +184,10 @@ extension FinderPaneView {
         id: opID,
         label: progressLabel(for: label, count: plans.count),
         targetURLs: targets,
-        cancel: { task.cancel() }))
+        cancel: {
+          token.cancel()
+          task.cancel()
+        }))
     OperationsProgressPanel.scheduleShowIfNeeded(near: window)
   }
 
