@@ -405,6 +405,10 @@ public final class FinderPaneView: NSView {
     // from, before the user clicks any header.
     tableView.sortDescriptors = [NSSortDescriptor(key: SortKey.name.rawValue, ascending: true)]
 
+    // Focus the pane on a header click, not just a body click — the
+    // default `NSTableHeaderView` sorts without moving first responder.
+    tableView.headerView = FinderTableHeaderView()
+
     tableView.rowHeight = 22
     tableView.intercellSpacing = NSSize(width: 8, height: 0)
     tableView.usesAlternatingRowBackgroundColors = true

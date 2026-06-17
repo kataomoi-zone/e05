@@ -161,3 +161,19 @@ final class FinderTableView: NSTableView {
     return nil
   }
 }
+
+/// `NSTableHeaderView` that focuses its pane on a header click. Clicking a
+/// column header sorts the table but, unlike a click in the table body,
+/// never moves first responder — so clicking the header of an *unfocused*
+/// finder pane re-sorted it without focusing it. Move first responder to
+/// the table first (firing `onFocusChanged` through the table's
+/// `becomeFirstResponder`), then let `super` carry out the sort.
+@MainActor
+final class FinderTableHeaderView: NSTableHeaderView {
+  override func mouseDown(with event: NSEvent) {
+    if let tableView {
+      window?.makeFirstResponder(tableView)
+    }
+    super.mouseDown(with: event)
+  }
+}
