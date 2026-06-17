@@ -14,11 +14,12 @@ import AppKit
 /// there is no UI surface, satisfying the "don't add a sidebar mode
 /// that's empty most of the time" constraint.
 ///
-/// Real progress (per-file fraction for Compress, byte-counts for
-/// copy) is deferred — `zip -q` emits nothing, `FileManager.copyItem`
-/// doesn't expose bytes. The indeterminate spinner is enough to make
-/// "something is happening" obvious; precise progress sources land
-/// in a follow-up phase.
+/// A copy batch supplies a `FinderCopyProgress` byte tally, so its row
+/// draws a determinate bar plus a "1.2 GB of 15 GB" subtitle, repainted
+/// from a timer while the panel is up (the tally is written off-main by
+/// the copy callback, so the panel polls it rather than the tracker
+/// posting on every byte). Ops without a tally (Compress — `zip -q`
+/// emits no byte counts) keep the indeterminate spinner.
 @MainActor
 public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
   /// Strong reference to the live panel so successive `showIfNeeded`
@@ -28,6 +29,23 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
   static var shared: OperationsProgressPanel?
 
   private let stackView = NSStackView()
+
+  /// Per-op determinate bar + byte subtitle, keyed by id so the progress
+  /// timer can repaint a row in place independently of the
+  /// register/unregister-driven full rebuild. Cleared and repopulated by
+  /// `refresh()`.
+  private var progressBars: [FinderOperationTracker.OperationID: NSProgressIndicator] = [:]
+  private var byteLabels: [FinderOperationTracker.OperationID: NSTextField] = [:]
+  /// Repaints the determinate bars while the panel is up. The byte tally is
+  /// written off-main by the copy callback at write frequency, so the panel
+  /// polls it here rather than the tracker posting a notification per byte.
+  private var progressTimer: Timer?
+  private static let byteFormatter: ByteCountFormatter = {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter
+  }()
+
   /// `nonisolated(unsafe)` so Swift 6's nonisolated `deinit` can
   /// hand the token back to `NotificationCenter.removeObserver`
   /// without a MainActor hop. The token isn't `Sendable` but
@@ -90,6 +108,13 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
     }
 
     refresh()
+
+    // 10 Hz is smooth for a progress bar without churning the run loop; the
+    // tick is a cheap dictionary walk that no-ops for indeterminate ops.
+    progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) {
+      [weak self] _ in
+      MainActor.assumeIsolated { self?.updateProgressBars() }
+    }
   }
 
   deinit {
@@ -162,6 +187,8 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
   }
 
   public func windowWillClose(_ notification: Notification) {
+    progressTimer?.invalidate()
+    progressTimer = nil
     if Self.shared === self {
       Self.shared = nil
     }
@@ -176,6 +203,8 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
     for view in stackView.arrangedSubviews {
       view.removeFromSuperview()
     }
+    progressBars.removeAll()
+    byteLabels.removeAll()
     for op in ops {
       stackView.addArrangedSubview(makeRow(op))
     }
@@ -193,13 +222,38 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
 
     let progress = NSProgressIndicator()
     progress.style = .bar
-    progress.isIndeterminate = true
-    progress.usesThreadedAnimation = true
     progress.translatesAutoresizingMaskIntoConstraints = false
     progress.heightAnchor.constraint(equalToConstant: 6).isActive = true
-    progress.startAnimation(nil)
+    if op.progress != nil {
+      // Determinate from creation: the timer drives doubleValue. Toggling an
+      // animating indeterminate bar to determinate doesn't reliably stop the
+      // barber-pole sweep (especially with threaded animation), so a
+      // byte-tracked bar never animates — it sits empty for the brief
+      // "preparing" size walk, then fills.
+      progress.isIndeterminate = false
+      progress.minValue = 0
+      progress.maxValue = 1
+      progress.doubleValue = 0
+    } else {
+      progress.isIndeterminate = true
+      progress.usesThreadedAnimation = true
+      progress.startAnimation(nil)
+    }
+    progressBars[op.id] = progress
 
-    let textCol = NSStackView(views: [label, progress])
+    var textColViews: [NSView] = [label, progress]
+    if op.progress != nil {
+      let detail = NSTextField(labelWithString: "")
+      detail.font = .systemFont(ofSize: 10)
+      detail.textColor = .secondaryLabelColor
+      detail.lineBreakMode = .byTruncatingTail
+      detail.translatesAutoresizingMaskIntoConstraints = false
+      detail.setContentHuggingPriority(.defaultLow, for: .horizontal)
+      byteLabels[op.id] = detail
+      textColViews.append(detail)
+    }
+
+    let textCol = NSStackView(views: textColViews)
     textCol.orientation = .vertical
     textCol.alignment = .leading
     textCol.spacing = 4
@@ -237,6 +291,26 @@ public final class OperationsProgressPanel: NSPanel, NSWindowDelegate {
       row.widthAnchor.constraint(equalToConstant: 336)
     ])
     return row
+  }
+
+  /// Pull each byte-tracked op's latest fraction and repaint its bar +
+  /// subtitle. A byte-tracked op still in its preparing phase
+  /// (`fraction == nil`, total not yet tallied) is left at its empty
+  /// determinate bar — it doesn't animate. An op with no tally at all
+  /// (Compress) is skipped here and keeps the indeterminate spinner its
+  /// row started with.
+  private func updateProgressBars() {
+    for op in FinderOperationTracker.shared.operations {
+      guard let bar = progressBars[op.id], let progress = op.progress,
+        let fraction = progress.fraction
+      else { continue }
+      bar.doubleValue = fraction
+      if let summary = progress.byteSummary, let detail = byteLabels[op.id] {
+        detail.stringValue =
+          "\(Self.byteFormatter.string(fromByteCount: summary.copied)) of "
+          + Self.byteFormatter.string(fromByteCount: summary.total)
+      }
+    }
   }
 
   @objc private func cancelClicked(_ sender: CancelButton) {

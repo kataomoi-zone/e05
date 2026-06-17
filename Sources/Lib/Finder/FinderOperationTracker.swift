@@ -43,21 +43,26 @@ public final class FinderOperationTracker {
   /// means the op has no abort path — the panel hides the ✕ button
   /// in that case (Make Alias is fast enough not to register at all,
   /// but the option is there for future ops where cancel isn't
-  /// straightforward).
+  /// straightforward). `progress: nil` means no byte tally is
+  /// available (e.g. Compress, whose `zip` emits none) — the panel
+  /// falls back to an indeterminate bar; a copy batch supplies a
+  /// `FinderCopyProgress` so the panel can draw a determinate bar.
   public struct Operation {
     public let id: OperationID
     public let label: String
     public let targetURLs: [URL]
     public let cancel: (() -> Void)?
+    public let progress: FinderCopyProgress?
 
     public init(
       id: OperationID, label: String, targetURLs: [URL],
-      cancel: (() -> Void)?
+      cancel: (() -> Void)?, progress: FinderCopyProgress? = nil
     ) {
       self.id = id
       self.label = label
       self.targetURLs = targetURLs
       self.cancel = cancel
+      self.progress = progress
     }
   }
 
