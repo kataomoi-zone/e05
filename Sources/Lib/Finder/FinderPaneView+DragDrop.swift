@@ -404,15 +404,20 @@ extension FinderPaneView {
   /// back on the main actor, registers the moves with the undo manager
   /// and surfaces a partial-failure toast. The op is registered with
   /// `FinderOperationTracker` so the progress panel and the dest pane's
-  /// greyed placeholder rows appear while a slow batch runs; cancel is
-  /// best-effort between plans (`Task.isCancelled`), so the failure tally
-  /// counts only the plans actually attempted.
+  /// greyed placeholder rows appear while a slow batch runs. The panel's ✕
+  /// flips a shared `CopyCancellationToken` the per-plan loop checks at each
+  /// boundary and the off-main `copyfile` callback checks mid-file, so a
+  /// cancel aborts even a single large cross-volume copy; the failure tally
+  /// counts only the plans actually attempted, never the cancelled one.
   private func runDropBatch(
     execPlans: [DropPlan], op: NSDragOperation, sourcePane: FinderPaneView?
   ) {
     let opID = FinderOperationTracker.OperationID()
     let targets = execPlans.map { $0.target }
     let verbPhrase = Self.verbPhrase(for: op)
+    // Shared with the cancel closure: the ✕ flips it, and the off-main
+    // copyfile callback observes it to abort a cross-volume copy mid-file.
+    let token = CopyCancellationToken()
     // Created before `register` so the cancel closure can capture it.
     let task = Task.detached(priority: .userInitiated) {
       defer {
@@ -425,69 +430,21 @@ extension FinderPaneView {
       var movePairs: [(origin: URL, destination: URL)] = []
       var succeeded = 0
       var attempted = 0
-      for plan in execPlans {
-        if Task.isCancelled { break }
+      planLoop: for plan in execPlans {
+        if token.isCancelled { break }
         attempted += 1
-        if plan.replaceExisting {
-          // Send the existing target to Trash so the user can recover it
-          // from `~/.Trash` — not registered with the undo manager (⌘Z
-          // reverses the move only), matching system Finder's Replace.
-          do {
-            try fm.trashItem(at: plan.target, resultingItemURL: nil)
-          } catch {
-            logger.error(
-              "Drop replace: trash \(plan.target.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
-            )
-            continue
-          }
-        }
-        if op == .link {
-          do {
-            let bookmark = try plan.source.bookmarkData(
-              options: .suitableForBookmarkFile,
-              includingResourceValuesForKeys: nil,
-              relativeTo: nil)
-            try URL.writeBookmarkData(bookmark, to: plan.target)
-            succeeded += 1
-          } catch {
-            logger.error(
-              "Drop alias failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-          }
-          continue
-        }
-        if op == .copy {
-          do {
-            try fm.copyItem(at: plan.source, to: plan.target)
-            succeeded += 1
-          } catch {
-            logger.error(
-              "Drop copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-          }
-          continue
-        }
-        do {
-          try fm.moveItem(at: plan.source, to: plan.target)
+        switch Self.executeDropPlan(plan, op: op, token: token, fm: fm) {
+        case .succeeded(let movePair):
           succeeded += 1
-          movePairs.append((plan.source, plan.target))
-        } catch let error as NSError where Self.isCrossVolumeError(error) {
-          // The source's volume disappeared (or was reclassified) between
-          // validate and accept. Fall back to copy so the drop completes;
-          // a cross-volume copy is deliberately not undo-registered, same
-          // as the explicit `.copy` branch.
-          do {
-            try fm.copyItem(at: plan.source, to: plan.target)
-            succeeded += 1
-          } catch {
-            logger.error(
-              "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-          }
-        } catch {
-          logger.error(
-            "Drop move failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
-          )
+          if let movePair { movePairs.append(movePair) }
+        case .cancelled:
+          // The ✕ stopped this plan partway through. It neither finished
+          // nor failed, so drop it from the attempted tally (the toast
+          // would otherwise read it as an error) and abandon the rest.
+          attempted -= 1
+          break planLoop
+        case .failed:
+          break
         }
       }
       let finalMovePairs = movePairs
@@ -516,8 +473,105 @@ extension FinderPaneView {
         id: opID,
         label: Self.dropProgressLabel(for: op, count: execPlans.count),
         targetURLs: targets,
-        cancel: { task.cancel() }))
+        cancel: {
+          token.cancel()
+          task.cancel()
+        }))
     OperationsProgressPanel.scheduleShowIfNeeded(near: window)
+  }
+
+  /// Outcome of one plan's filesystem work, accumulated by `runDropBatch`.
+  /// `movePair` is non-nil only for a same-volume move that should be
+  /// undo-registered; copies, aliases and the cross-volume fallback leave
+  /// the source in place and carry `nil`.
+  private enum DropPlanOutcome {
+    case succeeded(movePair: (origin: URL, destination: URL)?)
+    case cancelled
+    case failed
+  }
+
+  /// Perform one resolved plan's trash-then-move / copy / alias work off
+  /// the main actor. Same-volume moves rename instantly; same-volume copies
+  /// clonefile through `FileManager`; only the genuinely slow cross-volume
+  /// copies — and the rare cross-volume fallback of a move whose volume was
+  /// reclassified between validate and accept — route through the
+  /// interruptible `cancellableCopy` so the ✕ can abort them mid-file.
+  /// `.cancelled` propagates up so `runDropBatch` stops the whole batch.
+  private nonisolated static func executeDropPlan(
+    _ plan: DropPlan, op: NSDragOperation, token: CopyCancellationToken,
+    fm: FileManager
+  ) -> DropPlanOutcome {
+    if plan.replaceExisting {
+      // Send the existing target to Trash so the user can recover it from
+      // `~/.Trash` — not undo-registered (⌘Z reverses the move only),
+      // matching system Finder's Replace.
+      do {
+        try fm.trashItem(at: plan.target, resultingItemURL: nil)
+      } catch {
+        logger.error(
+          "Drop replace: trash \(plan.target.path, privacy: .public) failed: \(error.localizedDescription, privacy: .public)"
+        )
+        return .failed
+      }
+    }
+
+    if op == .link {
+      do {
+        let bookmark = try plan.source.bookmarkData(
+          options: .suitableForBookmarkFile,
+          includingResourceValuesForKeys: nil,
+          relativeTo: nil)
+        try URL.writeBookmarkData(bookmark, to: plan.target)
+        return .succeeded(movePair: nil)
+      } catch {
+        logger.error(
+          "Drop alias failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+        return .failed
+      }
+    }
+
+    if op == .copy {
+      // copyfile clones a same-volume copy when the filesystem allows
+      // (instant) and otherwise does a cancellable data copy — unlike
+      // FileManager.copyItem, which never clones and can't be interrupted.
+      switch cancellableCopy(from: plan.source, to: plan.target, token: token) {
+      case .completed: return .succeeded(movePair: nil)
+      case .cancelled: return .cancelled
+      case .failed(let error):
+        logger.error(
+          "Drop copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+        return .failed
+      }
+    }
+
+    // Move. A cross-volume drag validates as `.copy` (the `+` badge), so a
+    // move is same-volume by construction and renames instantly — unless
+    // the source's volume was reclassified between validate and accept,
+    // surfacing as `EXDEV`. Complete that rare case as a cancellable
+    // cross-volume copy, leaving the source in place and out of the undo
+    // stack (the same fallback as before, now interruptible); a cancel
+    // there abandons the copy and likewise keeps the source.
+    do {
+      try fm.moveItem(at: plan.source, to: plan.target)
+      return .succeeded(movePair: (plan.source, plan.target))
+    } catch let error as NSError where isCrossVolumeError(error) {
+      switch cancellableCopy(from: plan.source, to: plan.target, token: token) {
+      case .completed: return .succeeded(movePair: nil)
+      case .cancelled: return .cancelled
+      case .failed(let copyError):
+        logger.error(
+          "Cross-volume copy failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(copyError.localizedDescription, privacy: .public)"
+        )
+        return .failed
+      }
+    } catch {
+      logger.error(
+        "Drop move failed \(plan.source.path, privacy: .public) → \(plan.target.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+      return .failed
+    }
   }
 
   /// Present-tense progress-panel label for a drop batch ("Moving 5
