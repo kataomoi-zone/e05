@@ -963,9 +963,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// timer can't outlive the load it was started for — that would
   /// otherwise fade the bar in moments after the page already settled.
   private func applyLoadingStateForProgressBar(isLoading: Bool) {
-    logger.info(
-      "[nav/loading \(self.logTag, privacy: .public)] isLoading=\(isLoading, privacy: .public) url=\(self.webView.url?.absoluteString ?? "—", privacy: .public)"
-    )
     progressBarRevealTimer?.cancel()
     progressBarRevealTimer = nil
     if isLoading {
@@ -2145,23 +2142,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     onDownloadStarted?(download)
   }
 
-  public func webView(
-    _ webView: WKWebView, didStartProvisionalNavigation _: WKNavigation!
-  ) {
-    logger.info(
-      "[nav/start \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
-    )
-  }
-
-  public func webView(
-    _ webView: WKWebView,
-    didReceiveServerRedirectForProvisionalNavigation _: WKNavigation!
-  ) {
-    logger.info(
-      "[nav/redirect \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
-    )
-  }
-
   /// The web content process backing this pane terminated (renderer
   /// crash, out-of-memory, Jetsam). WebKit leaves the pane blank with
   /// no live process and reloads nothing on its own, stranding the user
@@ -2224,10 +2204,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     )
   }
 
-  public func webView(_ webView: WKWebView, didCommit _: WKNavigation!) {
-    logger.info(
-      "[nav/commit \(self.logTag, privacy: .public)] url=\(webView.url?.absoluteString ?? "—", privacy: .public)"
-    )
+  public func webView(_: WKWebView, didCommit _: WKNavigation!) {
     // The committed URL determines whether the adblocker rule
     // lists belong on this pane. A subsequent commit (link click,
     // history navigation) re-evaluates the host so a whitelisted
@@ -2243,9 +2220,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   }
 
   public func webView(_: WKWebView, didFinish _: WKNavigation!) {
-    logger.info(
-      "[nav/finish \(self.logTag, privacy: .public)] url=\(self.webView.url?.absoluteString ?? "—", privacy: .public)"
-    )
     // Scan the rendered DOM for a `<link rel="icon">` (or apple-touch
     // variant) and feed the highest-resolution hit to the favicon
     // cache. This covers sites whose `/favicon.ico` route 404s (they
@@ -2322,9 +2296,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // rather than let it fire on a later, unrelated commit.
     onceAfterNextCommit = nil
     let nsError = error as NSError
-    logger.info(
-      "[nav/fail \(self.logTag, privacy: .public)] domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) url=\(self.webView.url?.absoluteString ?? self.lastAttemptedURL?.absoluteString ?? "—", privacy: .public)"
-    )
     if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
       return
     }
@@ -2334,6 +2305,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
       return
     }
+    // Log only real failures — those that reach the error page below.
+    // Logging before the benign cancellation / frame-load-interrupt
+    // returns above would spam on every superseded load.
+    logger.info(
+      "[nav/fail \(self.logTag, privacy: .public)] domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) url=\(self.webView.url?.absoluteString ?? self.lastAttemptedURL?.absoluteString ?? "—", privacy: .public)"
+    )
     // Resolution order: NSError userInfo (most precise when set) →
     // tracker captured in `decidePolicyFor` (covers errors that don't
     // populate userInfo) → live `webView.url` (cleared on some
