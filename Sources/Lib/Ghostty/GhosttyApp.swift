@@ -313,7 +313,12 @@ public final class GhosttyApp {
           "[ghostty/open-url] URL(string:) rejected \(urlString, privacy: .public)")
         return false
       }
-      view.onOpenURL?(url)
+      // A ⌘-click fires OPEN_URL synchronously from inside libghostty's
+      // mouse handling, while the surface lock is held. Opening the URL
+      // adds a column and refocuses a surface, which re-enters libghostty
+      // and tries to take that same lock recursively — an os_unfair_lock
+      // abort. Defer so the click unwinds and the lock releases first.
+      DispatchQueue.main.async { view.onOpenURL?(url) }
       return true
     default:
       return false
