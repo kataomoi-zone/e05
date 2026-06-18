@@ -438,7 +438,7 @@ extension FinderPaneView {
       // otherwise; `sizes[index]` is read only under `if let progress`, so
       // the index stays in range.
       let sizes: [Int64] =
-        progress == nil ? [] : execPlans.map { Self.allocatedSize(of: $0.source) }
+        progress == nil ? [] : execPlans.map { Self.totalSize(of: $0.source) }
       progress?.setTotalBytes(sizes.reduce(0, +))
       var movePairs: [(origin: URL, destination: URL)] = []
       var succeeded = 0

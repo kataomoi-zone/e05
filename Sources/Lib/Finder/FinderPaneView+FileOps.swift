@@ -162,7 +162,7 @@ extension FinderPaneView {
       // (the panel stays indeterminate until the total lands), then credit
       // each plan's walked size as it finishes so the bar reaches exactly
       // 100% even for clones, which stream no callback bytes.
-      let sizes = plans.map { Self.allocatedSize(of: $0.source) }
+      let sizes = plans.map { Self.totalSize(of: $0.source) }
       progress.setTotalBytes(sizes.reduce(0, +))
       var done: [URL] = []
       copyLoop: for (plan, size) in zip(plans, sizes) {

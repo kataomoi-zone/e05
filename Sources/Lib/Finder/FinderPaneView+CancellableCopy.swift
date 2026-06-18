@@ -91,14 +91,16 @@ private final class CopyfileContext {
   }
 }
 
-/// On-disk allocated size (`st_blocks` × 512) of the file at C path `path`,
-/// read with `lstat` so it can be called from inside the @convention(c)
-/// copyfile callback. Matches the `totalFileAllocatedSize` the batch tallies
-/// as the progress denominator, so per-file credits and the total agree.
-private func allocatedSizeOnDisk(_ path: UnsafePointer<CChar>) -> Int64 {
+/// Logical size (`st_size`) of the file at C path `path`, read with `lstat`
+/// so it can be called from inside the @convention(c) copyfile callback.
+/// Matches the logical sizes `totalSize` tallies as the progress denominator
+/// — and what Finder shows in its Size column. The on-disk allocated size
+/// (`st_blocks` × 512) can be far smaller for an APFS-cloned bundle like
+/// Xcode.app, where many files share blocks, so it's the wrong metric here.
+private func fileLogicalSize(_ path: UnsafePointer<CChar>) -> Int64 {
   var info = stat()
   guard lstat(path, &info) == 0 else { return 0 }
-  return Int64(info.st_blocks) * 512
+  return Int64(info.st_size)
 }
 
 extension FinderPaneView {
@@ -134,7 +136,7 @@ extension FinderPaneView {
     // persistent failure such as a full destination (stash the real errno
     // first, since COPYFILE_QUIT then sets it to ECANCELED). For the
     // progress bar, stream the in-flight file's bytes on each data tick and
-    // credit each finished file's on-disk size — a same-volume clone copies
+    // credit each finished file's logical size — a same-volume clone copies
     // no data bytes, so per-file credit is the only signal that moves it.
     let context = CopyfileContext(token: token, progress: progress)
     let callback: copyfile_callback_t = { what, stage, copyState, _, dst, ctx in
@@ -156,10 +158,14 @@ extension FinderPaneView {
       } else if what == COPYFILE_RECURSE_FILE, stage == COPYFILE_FINISH {
         // A file in the tree finished. A clone copies no data bytes, so
         // COPYFILE_COPY_DATA never fires for it — crediting the file's
-        // on-disk size here is what advances the bar for a same-volume APFS
-        // duplicate, where the byte counter alone would sit at 0.
+        // logical size here is what advances the bar for a same-volume APFS
+        // duplicate, where the byte counter alone would sit at 0. This
+        // per-file credit isn't hard-link-deduped like the `totalSize`
+        // denominator, so a hard-link-heavy bundle can push the numerator
+        // past the total — `fraction` clamps at 100% and `completePlan`
+        // snaps it exactly on the plan's completion.
         if let dst {
-          context.creditedBytes += allocatedSizeOnDisk(dst)
+          context.creditedBytes += fileLogicalSize(dst)
         }
         progress.setCurrentPlanBytes(context.creditedBytes)
       }
@@ -201,28 +207,44 @@ extension FinderPaneView {
     return .failed(NSError(domain: NSPOSIXErrorDomain, code: Int(code)))
   }
 
-  /// Total allocated size of `url` (recursively for a directory / bundle) —
-  /// the denominator for the copy progress bar, tallied off-main before the
-  /// copy loop. Best-effort: unreadable entries contribute 0.
-  /// `totalFileAllocatedSize` counts on-disk blocks, which drifts slightly
-  /// from the bytes copyfile streams, but the batch credits each finished
-  /// plan's walked size so the bar still lands exactly on the total.
-  nonisolated static func allocatedSize(of url: URL) -> Int64 {
-    let keys: [URLResourceKey] = [
-      .isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey,
-    ]
-    func size(_ values: URLResourceValues?) -> Int64 {
-      Int64(values?.totalFileAllocatedSize ?? values?.fileAllocatedSize ?? 0)
+  /// Total size of `url` the way Finder's Size column reports it (matching
+  /// `du -A`): the sum of apparent (logical `st_size`) byte sizes, counting
+  /// each hard-linked inode once and not following symlinks. Used off-main
+  /// as the package Size cell and the copy progress bar's denominator.
+  ///
+  /// Both naive metrics are wrong, in opposite directions. A plain
+  /// `fileSize` sum over-counts: it re-counts hard-linked inodes and
+  /// follows symlinks to re-count their targets — Xcode.app does enough of
+  /// both to read ~5% high (12.48 GB vs Finder's 11.89). On-disk allocated
+  /// size under-counts: an APFS clone shares blocks, so Xcode.app allocates
+  /// only ~5 GB. Best-effort: unreadable entries contribute 0.
+  nonisolated static func totalSize(of url: URL) -> Int64 {
+    struct FileID: Hashable {
+      let device: dev_t
+      let inode: ino_t
     }
-    let values = try? url.resourceValues(forKeys: Set(keys))
-    guard values?.isDirectory == true else { return size(values) }
-
+    var seen = Set<FileID>()
     var total: Int64 = 0
+
+    func tally(_ path: String) {
+      var info = stat()
+      guard lstat(path, &info) == 0 else { return }
+      // A hard-linked inode recurs under several paths; count it once.
+      guard seen.insert(FileID(device: info.st_dev, inode: info.st_ino)).inserted
+      else { return }
+      total += Int64(info.st_size)
+    }
+
+    tally(url.path(percentEncoded: false))
+    let isDirectory =
+      (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+    guard isDirectory else { return total }
+
     if let enumerator = FileManager().enumerator(
-      at: url, includingPropertiesForKeys: keys, options: [])
+      at: url, includingPropertiesForKeys: nil, options: [])
     {
       for case let child as URL in enumerator {
-        total += size(try? child.resourceValues(forKeys: Set(keys)))
+        tally(child.path(percentEncoded: false))
       }
     }
     return total
