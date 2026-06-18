@@ -96,6 +96,14 @@ public final class FinderPaneView: NSView {
   // MARK: - Internal state (shared with extensions / subclasses)
 
   var items: [FileItem] = []
+  /// Recursively-measured sizes for package rows (.app, .bundle), keyed by
+  /// URL and filled off the main actor by `computePackageSizes`. A package
+  /// has no `fileSize` of its own, so the Size column reads this instead of
+  /// the inode's 0 bytes. Cleared on navigation; survives same-dir reloads.
+  var packageSizes: [URL: Int64] = [:]
+  /// The in-flight package-size walk, cancelled when a reload or navigation
+  /// starts a new one.
+  var packageSizeTask: Task<Void, Never>?
   var backStack: [URL] = []
   var forwardStack: [URL] = []
 

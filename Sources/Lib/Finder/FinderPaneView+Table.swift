@@ -82,7 +82,7 @@ extension FinderPaneView: NSTableViewDelegate {
     case Self.dateColumn:
       cell.textField?.stringValue = item.displayDate
     case Self.sizeColumn:
-      cell.textField?.stringValue = item.displaySize
+      cell.textField?.stringValue = sizeDisplay(for: item)
       cell.textField?.alignment = .right
     case Self.kindColumn:
       cell.textField?.stringValue = item.displayKind

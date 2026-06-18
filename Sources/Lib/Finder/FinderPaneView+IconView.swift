@@ -246,6 +246,10 @@ extension FinderPaneView {
     reloadAllRows()
     selectRows(byURLs: preserved)
     FinderModeStore.shared.setMode(mode, for: currentURL)
+    // Entering list view: measure package sizes now, since a load while in
+    // icon view skips the walk. A no-op when leaving list view or when the
+    // sizes are already cached from an earlier list-view pass.
+    computePackageSizes()
 
     // Move first-responder onto the now-visible view so palette /
     // menu invocations don't leave keyboard focus on a hidden table
@@ -281,6 +285,7 @@ extension FinderPaneView {
     }
     reloadAllRows()
     selectRows(byURLs: preserved)
+    computePackageSizes()
   }
 
   /// Reflect `currentMode` onto the two scroll views. Called from

@@ -84,6 +84,14 @@ public final class FileItem: Sendable {
     return Self.byteFormatter.string(fromByteCount: size)
   }
 
+  /// Format a byte count for the Size column the same way `displaySize`
+  /// does. Lets the finder pane render a package's recursively-measured
+  /// size, which `FileItem` can't know at construction (`fileSizeKey` is 0
+  /// for the bundle directory).
+  public static func formattedSize(_ bytes: Int64) -> String {
+    byteFormatter.string(fromByteCount: bytes)
+  }
+
   /// Table-cell display for the Date Modified column. Matches Finder's
   /// default list view: today renders as "Today at 14:22", yesterday
   /// as "Yesterday at 09:15", and anything older as a calendar date

@@ -148,6 +148,11 @@ extension FinderPaneView {
     items = []
     lastLoadedItems = []
     inFlightURLs = []
+    // Package sizes are keyed by URL in the directory just left, so drop
+    // them (and abandon the in-flight walk) on navigation; a same-dir
+    // reload keeps them so already-measured packages don't re-walk.
+    packageSizeTask?.cancel()
+    packageSizes = [:]
     // Filter is bound to the cwd it was opened in — carrying the
     // needle across navigate would silently filter the new dir and
     // surprise the user with an empty pane. The find bar itself
@@ -276,6 +281,7 @@ extension FinderPaneView {
     items = applyFilterIfActive(mergeWithInFlightOverlay(loaded))
     reloadAllRows()
     updateStatusBar()
+    computePackageSizes()
 
     if let selectAfterLoad, !selectAfterLoad.isEmpty {
       // `selectAfterLoad` URLs are composed via `appendingPathComponent`
