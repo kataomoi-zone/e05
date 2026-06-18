@@ -340,7 +340,8 @@ extension FinderPaneView {
       return loaded
     }
     return Self.sortItems(
-      loaded + synthetics, key: currentSortKey, ascending: sortAscending)
+      loaded + synthetics, key: currentSortKey, ascending: sortAscending,
+      packageSizes: packageSizes)
   }
 
   /// Trailing-slash-insensitive path key for matching an in-flight
@@ -418,9 +419,12 @@ extension FinderPaneView {
   /// loaded items before hopping back to MainActor; the call site
   /// passes the captured `currentSortKey` / `sortAscending` snapshot.
   nonisolated static func sortItems(
-    _ items: [FileItem], key: SortKey, ascending: Bool
+    _ items: [FileItem], key: SortKey, ascending: Bool,
+    packageSizes: [URL: Int64] = [:]
   ) -> [FileItem] {
-    items.sorted { compare($0, $1, key: key, ascending: ascending) }
+    items.sorted {
+      compare($0, $1, key: key, ascending: ascending, packageSizes: packageSizes)
+    }
   }
 
   /// Return `true` iff `a` should precede `b` under the given sort
@@ -430,7 +434,8 @@ extension FinderPaneView {
   /// descriptor's `key` string, maps it back to `SortKey`, and
   /// dispatches here so the comparison logic lives fully in Swift.
   nonisolated static func compare(
-    _ a: FileItem, _ b: FileItem, key: SortKey, ascending: Bool
+    _ a: FileItem, _ b: FileItem, key: SortKey, ascending: Bool,
+    packageSizes: [URL: Int64] = [:]
   ) -> Bool {
     switch key {
     case .name:
@@ -446,23 +451,23 @@ extension FinderPaneView {
       let db = b.dateModified ?? .distantPast
       return ascending ? da < db : da > db
     case .size:
-      // Finder's Size column groups folders together: the column
-      // renders "--" for directories since their byte size isn't
-      // meaningful, and both sort directions keep the folder cluster
-      // intact. Ascending puts the cluster at the top, descending at
-      // the bottom — folders always sit at whichever end an
-      // "unknown size" maps to. Modelling non-package directory size
-      // as `Int64.min` makes folders the smallest value in the key
-      // space; a name-ascending tiebreaker keeps the cluster's
-      // internal alphabetical order (`bin → deno → …`) identical
-      // regardless of the direction applied to the surrounding files.
-      // The same tiebreaker applies to any pair with equal effective
-      // size (e.g. multiple 0-byte files) — Finder breaks same-size
-      // ties the same way.
-      let aIsDir = a.isDirectory && !a.isPackage
-      let bIsDir = b.isDirectory && !b.isPackage
-      let sa = aIsDir ? Int64.min : a.size
-      let sb = bIsDir ? Int64.min : b.size
+      // Finder's Size column groups plain folders together: it renders
+      // "--" for them (a folder's byte size isn't meaningful) and keeps
+      // the cluster intact at whichever end "unknown size" maps to —
+      // modelling a non-package directory as `Int64.min` puts it there.
+      // A package (.app / .bundle) instead sorts by its measured size
+      // (`packageSizes`, 0 until `computePackageSizes` fills it and then
+      // re-sorts) so apps order by real size alongside files. A
+      // name-ascending tiebreaker keeps equal-size groups (the folder
+      // cluster, or 0-byte / not-yet-measured items) in stable
+      // alphabetical order, matching how Finder breaks same-size ties.
+      func sizeKey(_ item: FileItem) -> Int64 {
+        if item.isPackage { return packageSizes[item.url] ?? 0 }
+        if item.isDirectory { return Int64.min }
+        return item.size
+      }
+      let sa = sizeKey(a)
+      let sb = sizeKey(b)
       if sa != sb {
         return ascending ? sa < sb : sa > sb
       }

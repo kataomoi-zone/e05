@@ -31,13 +31,16 @@ extension FinderPaneView: NSTableViewDataSource {
     let previouslySelectedURLs = selectedURLs
     currentSortKey = sortKey
     sortAscending = descriptor.ascending
-    items = Self.sortItems(items, key: sortKey, ascending: descriptor.ascending)
+    items = Self.sortItems(
+      items, key: sortKey, ascending: descriptor.ascending,
+      packageSizes: packageSizes)
     // Keep `lastLoadedItems` in lockstep with the active sort so a
     // later in-flight overlay refresh that hits the no-synthetics
     // fast path (cwdTargets empty) returns rows in the user's
     // current order rather than the pre-click one.
     lastLoadedItems = Self.sortItems(
-      lastLoadedItems, key: sortKey, ascending: descriptor.ascending)
+      lastLoadedItems, key: sortKey, ascending: descriptor.ascending,
+      packageSizes: packageSizes)
     reloadAllRows()
     selectRows(byURLs: previouslySelectedURLs)
     updateStatusBar()

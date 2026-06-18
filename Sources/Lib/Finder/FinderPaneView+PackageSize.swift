@@ -26,6 +26,11 @@ extension FinderPaneView {
   func computePackageSizes() {
     packageSizeTask?.cancel()
     guard currentMode == .list else { return }
+    // A same-directory reload keeps the cache, but the off-main load sort
+    // can't see it (packages came back sorted at 0). Re-sort + reload to
+    // apply the cached sizes — harmlessly redundant with the load's own
+    // reloadAllRows, and only when sorted by Size with a warm cache.
+    if !packageSizes.isEmpty { resortBySizeIfActive() }
     let pending = items.filter { $0.isPackage && packageSizes[$0.url] == nil }
       .map { $0.url }
     guard !pending.isEmpty else { return }
@@ -47,7 +52,33 @@ extension FinderPaneView {
           self.refreshSizeCell(forURL: url)
         }
       }
+      // The walk finished (not cancelled): settle the order into the
+      // freshly-measured sizes once, rather than re-sorting on every
+      // landing. `resortBySizeIfActive` re-reads the active sort key +
+      // direction, so a Size→Name switch (or a flip) during the walk is
+      // honoured — this block only guards that the directory is unchanged.
+      await MainActor.run { [weak self] in
+        guard let self, self.currentURL == snapshotURL else { return }
+        self.resortBySizeIfActive()
+      }
     }
+  }
+
+  /// Re-sort by the measured package sizes when the Size column is the
+  /// active sort, so a folder of apps settles into real-size order once
+  /// `computePackageSizes` fills the cache — otherwise a package sorts at 0,
+  /// clustered with empty files. A no-op for any other sort key (package
+  /// sizes don't affect Name / Date / Kind) and outside list view. Preserves
+  /// selection like the other in-place reorders (`refreshInFlightOverlay`).
+  func resortBySizeIfActive() {
+    guard currentMode == .list, currentSortKey == .size else { return }
+    let selected = selectedURLs
+    lastLoadedItems = Self.sortItems(
+      lastLoadedItems, key: .size, ascending: sortAscending,
+      packageSizes: packageSizes)
+    items = applyFilterIfActive(mergeWithInFlightOverlay(lastLoadedItems))
+    reloadAllRows()
+    selectRows(byURLs: selected)
   }
 
   /// Repaint a single row's Size cell after its package size is measured,
