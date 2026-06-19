@@ -500,6 +500,20 @@ extension PaneContainerViewController {
         separatorBefore: true
       ),
       Action(
+        id: "terminal_copy_last_command_and_output",
+        title: "Copy Last Command + Output",
+        // No default chord — assignable in Settings → Shortcuts. Needs
+        // shell integration (OSC 133) to know command boundaries.
+        handler: { [weak self] in self?.copyLastCommand(scope: .commandAndOutput) },
+        validate: { [weak self] in (self?.focusedPane?.terminalView != nil, nil) }
+      ),
+      Action(
+        id: "terminal_copy_last_command_output",
+        title: "Copy Last Command Output",
+        handler: { [weak self] in self?.copyLastCommand(scope: .output) },
+        validate: { [weak self] in (self?.focusedPane?.terminalView != nil, nil) }
+      ),
+      Action(
         id: "new_start_pane",
         title: "New Start Pane",
         menuTitle: "New Start Pane Here",
@@ -796,6 +810,26 @@ extension PaneContainerViewController {
 
     let overrides = PreferencesStore.shared.preferences.keyboardShortcuts ?? [:]
     return result.map { $0.applyingOverride(overrides[$0.id]) }
+  }
+
+  /// Copy the most recently completed shell command's text per `scope` to
+  /// the pasteboard. Needs shell integration (OSC 133); toasts when there's
+  /// nothing to copy.
+  private func copyLastCommand(scope: TerminalCommandScope) {
+    guard let text = focusedPane?.terminalView?.commandText(at: nil, scope: scope), !text.isEmpty
+    else {
+      showToast("Nothing to copy")
+      return
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    let label: String
+    switch scope {
+    case .commandAndOutput: label = "Copy Last Command + Output"
+    case .command: label = "Copy Last Command"
+    case .output: label = "Copy Last Command Output"
+    }
+    showToast(label)
   }
 
   static let defaultWidthCycle: [PaneWidthPreset] = [

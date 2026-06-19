@@ -11,6 +11,11 @@ e05 links against a locally-built `GhosttyKit.xcframework`. The binary is **not*
 cd /path/to/ghostty
 git checkout main && git pull
 
+# Apply e05's local libghostty patch(es) before building. They add
+# ghostty_* C symbols e05 links against (e.g. ghostty_surface_command_text
+# for OSC 133 command-output copy) and are not upstream. See patches/.
+git apply /path/to/e05/patches/*.patch
+
 # macOS-only minimal build (use Homebrew's zig@0.15, not Nix's)
 /opt/homebrew/opt/zig@0.15/bin/zig build \
   -Doptimize=ReleaseFast \
@@ -44,6 +49,8 @@ Notes:
 - `-Dxcframework-target=native` produces a host-arch binary only. Use `universal` for a fat xcframework
 - `-Dapp-runtime=none` selects the embedding runtime; on macOS `emit-xcframework` is implied
 - `libghostty-spm` is intentionally **not** used. Empirically it has key-handling problems and unstable API tracking
+- **Local libghostty patches** live under `patches/`. Because `include/ghostty.h` is hand-written (not generated), each patch touches both `src/apprt/embedded.zig` (the export) and `include/ghostty.h` (the declaration). Re-verify on a ghostty bump: the internal APIs they call (`highlightSemanticContent`, `promptIterator`) are not C-stable. The `*.snippet.zig` files document the canonical insertion point
+- If the macOS app build fails at `CodeSign` with `resource fork, Finder information, or similar detritus not allowed`, strip extended attributes and rebuild: `xattr -cr macos zig-out` (or `xattr -cr .` for the whole checkout)
 
 ## Build and test
 

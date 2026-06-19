@@ -52,13 +52,34 @@ extension GhosttyTerminalView {
     if let metrics = gridMetrics(),
       let cell = cell(
         at: event.locationInWindow, size: metrics.size,
-        cellWidth: metrics.cellWidth, cellHeight: metrics.cellHeight),
-      let line = readRowText(row: cell.row, columns: Int(metrics.size.columns)),
-      let token = TerminalTextScanner.token(at: cell.column, in: line)
+        cellWidth: metrics.cellWidth, cellHeight: metrics.cellHeight)
     {
-      addTokenItems(
-        kind: token.kind, text: linkText(for: token, in: line, size: metrics.size), to: menu)
-      menu.addItem(.separator())
+      var addedContextItem = false
+
+      // A URL / path / hash under the cursor.
+      if let line = readRowText(row: cell.row, columns: Int(metrics.size.columns)),
+        let token = TerminalTextScanner.token(at: cell.column, in: line)
+      {
+        addTokenItems(
+          kind: token.kind, text: linkText(for: token, in: line, size: metrics.size), to: menu)
+        addedContextItem = true
+      }
+
+      // The shell command whose region was clicked (OSC 133). `.command`
+      // (the typed command alone) isn't surfaced: it needs the OSC 133 B
+      // input mark, which dynamic prompts like starship don't emit, so it
+      // would appear only sometimes — confusing rather than helpful.
+      if let text = commandText(at: cell, scope: .commandAndOutput) {
+        menu.addItem(
+          item("Copy Command + Output", #selector(contextCopyString(_:)), represents: text))
+        addedContextItem = true
+      }
+      if let text = commandText(at: cell, scope: .output) {
+        menu.addItem(item("Copy Output", #selector(contextCopyString(_:)), represents: text))
+        addedContextItem = true
+      }
+
+      if addedContextItem { menu.addItem(.separator()) }
     }
 
     let copy = item("Copy", #selector(contextCopySelection))
