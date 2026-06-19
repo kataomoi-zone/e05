@@ -14,6 +14,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// This distinction lets insertText know whether to accumulate or send directly.
   private var keyTextAccumulator: [String]?
 
+  /// Active keyboard link-hint overlay, or nil when hints aren't showing.
+  /// While set, key and mouse events drive hint selection instead of the
+  /// surface — see `GhosttyTerminalView+Hints`.
+  var hintsOverlay: TerminalHintsOverlayView?
+
   public var onTitleChange: ((String) -> Void)?
   public var onClose: (() -> Void)?
   public var onFocusChanged: ((Bool) -> Void)?
@@ -323,6 +328,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   public override func resignFirstResponder() -> Bool {
     let result = super.resignFirstResponder()
     if result {
+      // Tear down link hints on real focus loss so a stale overlay can't
+      // outlive a detach (undo close) or workspace switch and silently
+      // swallow keystrokes after the view comes back. Showing hints keeps
+      // this view first responder, so this doesn't fire on show.
+      dismissLinkHints()
       ghostty_surface_set_focus(surface, false)
       onFocusChanged?(false)
     }
@@ -347,6 +357,13 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   public override func keyDown(with event: NSEvent) {
     guard surface != nil else { return }
+
+    // Link hints own the keyboard while up: a letter picks a hint, Esc or
+    // anything else cancels. Don't forward to the surface.
+    if hintsOverlay != nil {
+      handleHintKey(event)
+      return
+    }
 
     let action: ghostty_input_action_e =
       event.isARepeat
@@ -460,6 +477,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   public override func mouseDown(with event: NSEvent) {
     guard let surface else { return }
+    // A click anywhere dismisses link hints instead of reaching the shell.
+    if hintsOverlay != nil {
+      dismissLinkHints()
+      return
+    }
     ghostty_surface_mouse_button(
       surface, GHOSTTY_MOUSE_PRESS,
       GHOSTTY_MOUSE_LEFT,
@@ -484,6 +506,12 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   public override func scrollWheel(with event: NSEvent) {
     guard let surface else { return }
+    // Scrolling moves content out from under the fixed hint badges, so drop
+    // them rather than leave them pointing at the wrong rows.
+    if hintsOverlay != nil {
+      dismissLinkHints()
+      return
+    }
     ghostty_surface_mouse_scroll(
       surface,
       event.scrollingDeltaX,

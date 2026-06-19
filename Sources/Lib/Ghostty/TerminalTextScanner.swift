@@ -75,10 +75,19 @@ public enum TerminalTextScanner {
     tokens(in: line, patterns: Patterns())
   }
 
-  /// The token covering `column` on the row, if any — the one a right-click
-  /// at that cell should act on.
+  /// The token covering grid `column` on the row, if any — the one a
+  /// right-click at that cell should act on. Compares against each token's
+  /// *cell* span (not its character offsets) so a wide (CJK) glyph earlier
+  /// on the row doesn't shift the hit test.
   public static func token(at column: Int, in line: String) -> TerminalToken? {
-    tokens(in: line).first { $0.start <= column && column < $0.end }
+    for token in tokens(in: line) {
+      let startIndex = line.index(line.startIndex, offsetBy: token.start)
+      let endIndex = line.index(line.startIndex, offsetBy: token.end)
+      let cellStart = TerminalDisplayWidth.width(of: line[..<startIndex])
+      let cellEnd = cellStart + TerminalDisplayWidth.width(of: line[startIndex..<endIndex])
+      if cellStart <= column, column < cellEnd { return token }
+    }
+    return nil
   }
 
   /// Reunite a token clipped by a soft wrap with its full text. A token at

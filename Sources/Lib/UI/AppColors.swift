@@ -101,6 +101,23 @@ enum AppColors {
     light: NSColor(white: 0.0, alpha: 0.15),
     dark: NSColor(white: 1.0, alpha: 0.15))
 
+  // MARK: - Terminal link hints
+
+  /// Dim wash over a terminal surface while the keyboard hint overlay is
+  /// up, so the bright label badges read against the content.
+  static let hintDim = dynamic(
+    light: NSColor(white: 0.0, alpha: 0.18),
+    dark: NSColor(white: 0.0, alpha: 0.4))
+
+  /// Hint label badge fill — a vivid, theme-independent marker (the same
+  /// idea as the terminal-hints kitten's yellow tags).
+  static let hintBadge = NSColor.systemYellow
+
+  /// Hint label text — always dark for contrast on `hintBadge`.
+  static let hintBadgeText = dynamic(
+    light: NSColor(white: 0.0, alpha: 1.0),
+    dark: NSColor(white: 0.0, alpha: 1.0))
+
   // MARK: - Helpers
 
   /// Build a dynamic `NSColor` that resolves to `dark` under

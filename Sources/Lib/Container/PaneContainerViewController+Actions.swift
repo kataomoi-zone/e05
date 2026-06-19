@@ -491,6 +491,15 @@ extension PaneContainerViewController {
         validate: { [weak self] in (self?.focusedPane?.findHelper != nil, nil) }
       ),
       Action(
+        id: "terminal_show_link_hints",
+        title: "Show Link Hints",
+        // No default chord — assignable in Settings → Shortcuts. A label
+        // press copies the URL / path / hash; Shift opens it.
+        handler: { [weak self] in self?.focusedPane?.terminalView?.showLinkHints() },
+        validate: { [weak self] in (self?.focusedPane?.terminalView != nil, nil) },
+        separatorBefore: true
+      ),
+      Action(
         id: "new_start_pane",
         title: "New Start Pane",
         menuTitle: "New Start Pane Here",

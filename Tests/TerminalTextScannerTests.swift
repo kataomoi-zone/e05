@@ -81,6 +81,15 @@ struct TerminalTextScannerTests {
     #expect(TerminalTextScanner.token(at: line.count - 1, in: line) == nil)
   }
 
+  @Test("token(at:) uses cell columns, not character offsets")
+  func tokenAtColumnWithWideGlyphs() {
+    // "あ " is 3 cells (2 + 1), so the URL starts at column 3, not 2.
+    let line = "あ https://x.test"
+    #expect(TerminalTextScanner.token(at: 3, in: line)?.kind == .url)
+    #expect(TerminalTextScanner.token(at: 0, in: line) == nil)  // the wide glyph
+    #expect(TerminalTextScanner.token(at: 1, in: line) == nil)  // its second cell
+  }
+
   @Test("scan tags each token with its viewport row")
   func scanTagsRows() {
     let lines = ["nothing here", "go https://a.com", "/etc/hosts"]

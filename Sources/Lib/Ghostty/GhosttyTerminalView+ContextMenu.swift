@@ -14,6 +14,11 @@ extension GhosttyTerminalView {
       super.rightMouseDown(with: event)
       return
     }
+    // A click anywhere dismisses link hints instead of opening a menu.
+    if hintsOverlay != nil {
+      dismissLinkHints()
+      return
+    }
     // A full-screen TUI in mouse-reporting mode (an editor, a pager) owns
     // the right button itself, so forward it rather than stealing it for a
     // menu. mouse_captured tracks whether the program enabled mouse mode.
@@ -44,13 +49,15 @@ extension GhosttyTerminalView {
     menu.autoenablesItems = false
     guard let surface else { return menu }
 
-    let size = ghostty_surface_size(surface)
-    if let cell = cell(at: event.locationInWindow, size: size),
-      let line = readRowText(row: cell.row, columns: Int(size.columns)),
+    if let metrics = gridMetrics(),
+      let cell = cell(
+        at: event.locationInWindow, size: metrics.size,
+        cellWidth: metrics.cellWidth, cellHeight: metrics.cellHeight),
+      let line = readRowText(row: cell.row, columns: Int(metrics.size.columns)),
       let token = TerminalTextScanner.token(at: cell.column, in: line)
     {
       addTokenItems(
-        kind: token.kind, text: linkText(for: token, size: size), to: menu)
+        kind: token.kind, text: linkText(for: token, in: line, size: metrics.size), to: menu)
       menu.addItem(.separator())
     }
 
@@ -83,10 +90,18 @@ extension GhosttyTerminalView {
   /// The token's text, reunited with any soft-wrapped continuation. Only
   /// worth a whole-viewport read when the token sits against an edge: one
   /// ending at the last column may continue on the next row, one starting
-  /// at column 0 may continue a previous row.
-  private func linkText(for token: TerminalToken, size: ghostty_surface_size_s) -> String {
+  /// at column 0 may continue a previous row. The edge test is in display
+  /// cells, not character offsets, so a wide glyph earlier on the row
+  /// doesn't hide a clipped token.
+  private func linkText(for token: TerminalToken, in line: String, size: ghostty_surface_size_s)
+    -> String
+  {
     let columns = Int(size.columns)
-    guard token.end >= columns || token.start == 0 else { return token.text }
+    let startIndex = line.index(line.startIndex, offsetBy: token.start)
+    let endIndex = line.index(line.startIndex, offsetBy: token.end)
+    let cellStart = TerminalDisplayWidth.width(of: line[..<startIndex])
+    let cellEnd = cellStart + TerminalDisplayWidth.width(of: line[startIndex..<endIndex])
+    guard cellEnd >= columns || cellStart == 0 else { return token.text }
     guard let joined = readViewportText(rows: Int(size.rows), columns: columns) else {
       return token.text
     }
@@ -128,64 +143,4 @@ extension GhosttyTerminalView {
     }
   }
 
-  // MARK: - Grid reading
-
-  /// Grid cell under a window-space point, or nil when the click lands
-  /// outside the addressable grid. Cell metrics are in pixels; the view
-  /// works in points, so divide by the backing scale.
-  private func cell(at locationInWindow: NSPoint, size: ghostty_surface_size_s) -> (
-    column: Int, row: Int
-  )? {
-    guard let scale = window?.backingScaleFactor,
-      size.columns > 0, size.rows > 0, size.cell_width_px > 0, size.cell_height_px > 0
-    else { return nil }
-    let cellWidth = Double(size.cell_width_px) / scale
-    let cellHeight = Double(size.cell_height_px) / scale
-    let local = convert(locationInWindow, from: nil)
-    let xFromLeft = Double(local.x)
-    let yFromTop = Double(bounds.height - local.y)
-    guard xFromLeft >= 0, yFromTop >= 0 else { return nil }
-    let column = Int(xFromLeft / cellWidth)
-    let row = Int(yFromTop / cellHeight)
-    guard column < Int(size.columns), row < Int(size.rows) else { return nil }
-    return (column, row)
-  }
-
-  /// Text of one viewport row. A single-row read can carry a trailing
-  /// newline; drop it so column offsets stay aligned to the grid.
-  private func readRowText(row: Int, columns: Int) -> String? {
-    guard
-      let text = readText(
-        topRow: row, topColumn: 0, bottomRow: row, bottomColumn: columns - 1)
-    else { return nil }
-    return text.hasSuffix("\n") ? String(text.dropLast()) : text
-  }
-
-  /// The whole viewport as one read, newlines intact so a soft-wrapped row
-  /// stays joined onto one logical line and only hard breaks separate them.
-  /// Lets `linkText` recover a URL clipped by a wrap.
-  private func readViewportText(rows: Int, columns: Int) -> String? {
-    readText(topRow: 0, topColumn: 0, bottomRow: rows - 1, bottomColumn: columns - 1)
-  }
-
-  /// Read a point range through libghostty's selection-text API. Returns
-  /// "" for an empty range and nil on failure.
-  private func readText(topRow: Int, topColumn: Int, bottomRow: Int, bottomColumn: Int) -> String? {
-    guard let surface, bottomColumn >= 0, bottomRow >= 0 else { return nil }
-    let selection = ghostty_selection_s(
-      top_left: ghostty_point_s(
-        tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
-        x: UInt32(topColumn), y: UInt32(topRow)),
-      bottom_right: ghostty_point_s(
-        tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT,
-        x: UInt32(bottomColumn), y: UInt32(bottomRow)),
-      rectangle: false)
-    var out = ghostty_text_s()
-    guard ghostty_surface_read_text(surface, selection, &out) else { return nil }
-    defer { ghostty_surface_free_text(surface, &out) }
-    guard let ptr = out.text, out.text_len > 0 else { return "" }
-    return ptr.withMemoryRebound(to: UInt8.self, capacity: Int(out.text_len)) {
-      String(decoding: UnsafeBufferPointer(start: $0, count: Int(out.text_len)), as: UTF8.self)
-    }
-  }
 }
