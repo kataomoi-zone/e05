@@ -38,6 +38,18 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// and the new one carries the restored `interactionState`.
   public private(set) var webView: WKWebView
 
+  /// Parks the in-flight find's completion until the asynchronous
+  /// `_WKFindDelegate` callback drains it. `_findString:` reports its
+  /// `(total, current)` through `didFindMatches:` / `didFailToFindString:`
+  /// instead of returning, so the call site stashes its handler here.
+  private var pendingFindCompletion: (@MainActor ((total: Int, current: Int)) -> Void)?
+  /// Needle the parked ``pendingFindCompletion`` is waiting on. A native
+  /// find callback carries the string it resolved, so a delayed result
+  /// from a superseded query (needle changed before the callback landed)
+  /// is matched against this and dropped rather than draining the newer
+  /// query's completion with the wrong count.
+  private var pendingFindNeedle: String?
+
   /// Container for webView + Inspector. WebKit manages the split inside this.
   private let browserHostView = NSView()
 
@@ -1307,6 +1319,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     webView.navigationDelegate = nil
     webView.uiDelegate = nil
     webView.removeFromSuperview()
+    // The detached web view's find delegate won't fire again; release any
+    // parked find completion so it can't dangle (and pin this pane alive).
+    clearPendingFind()
 
     if wasLoading {
       onLoadingStateChange?(false)
@@ -1354,6 +1369,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
     let built = Self.makeWebView(
       extensionContext: nil, dataStore: savedDataStore)
+    // A find parked against the old web view will never resolve on the
+    // replacement; drop it before swapping so its callback can't drain.
+    clearPendingFind()
     webView = built.webView
     hoverLinkMessageHandler = built.hoverHandler
     chromeWebStoreInstallHandler = built.cwsInstallHandler
@@ -2983,20 +3001,23 @@ private final class ScrollEdgeMessageHandler: NSObject, WKScriptMessageHandler {
 // MARK: - FindHelper
 
 extension BrowserPaneView: FindHelper {
-  /// Perform an in-page find for `needle` using a self-contained JS
-  /// implementation built on `createTreeWalker` + `Range` + the CSS
-  /// Custom Highlight API. WKFindConfiguration isn't used, so
-  /// cross-origin iframes contribute neither matches nor highlights
-  /// (their DOMs are invisible to us, and skipping them entirely is
-  /// what users expect for embedded widgets).
+  /// Perform an in-page find for `needle` through WebKit's native find
+  /// engine (`_WKFind*` SPI) — the same engine Safari drives.
+  /// `_findString:options:maxCount:` paints the all-match highlight plus
+  /// the current-match indicator, scrolls the active hit into view, and,
+  /// because WebKit owns the highlight lifecycle, replaces the prior
+  /// match set on every call. That sidesteps the stale-paint bug the old
+  /// custom `CSS.highlights` engine hit on live-composited surfaces,
+  /// where dropping a needle's ranges didn't repaint the regions they
+  /// had highlighted.
   ///
-  /// State between invocations is parked on `window.__e05Find` so
-  /// the same needle can be navigated without re-walking the DOM;
-  /// changing the needle rebuilds the match array. The JS returns
-  /// `{ total, current }` and also applies two highlight layers:
-  /// `e05-find` over every match in yellow, `e05-find-current` over
-  /// the active one in orange. The DOM selection is moved to the
-  /// current match so Copy and screen readers follow along.
+  /// The match total and current index arrive asynchronously via the
+  /// `_WKFindDelegate` callbacks (`webViewDidFindMatches` /
+  /// `webViewDidFailToFindString`), which drain `pendingFindCompletion`.
+  /// Because the count comes from the same native pass that highlights,
+  /// cross-origin iframe matches stay consistent between the counter and
+  /// the visible highlights — the JS walker the custom engine used could
+  /// highlight those frames but never count them.
   public func performFind(
     _ needle: String,
     forward: Bool,
@@ -3004,203 +3025,122 @@ extension BrowserPaneView: FindHelper {
   ) {
     guard !needle.isEmpty else {
       endFind()
-      Task { @MainActor in completion((0, 0)) }
+      completion((0, 0))
       return
     }
-    webView.callAsyncJavaScript(
-      Self.findScript,
-      arguments: ["needle": needle, "forward": forward],
-      in: nil,
-      in: .defaultClient
-    ) { result in
-      let position: (total: Int, current: Int)
-      switch result {
-      case .success(let value):
-        if let dict = value as? [String: Any] {
-          let total = (dict["total"] as? NSNumber)?.intValue ?? 0
-          let current = (dict["current"] as? NSNumber)?.intValue ?? 0
-          position = (total, current)
-        } else {
-          position = (0, 0)
-        }
-      case .failure:
-        position = (0, 0)
-      }
-      Task { @MainActor in completion(position) }
-    }
+    // The find delegate is weak and rebinds to a fresh web view after a
+    // suspend/restore round-trip, so (re)wire it on every call instead of
+    // caching an "installed" flag.
+    installFindDelegate()
+    pendingFindCompletion = completion
+    pendingFindNeedle = needle
+    var options =
+      Self.findCaseInsensitive | Self.findWrapAround | Self.findShowHighlight
+      | Self.findShowFindIndicator | Self.findDetermineMatchIndex
+    if !forward { options |= Self.findBackwards }
+    callFindString(needle, options: options, maxCount: Self.findMaxCount)
   }
 
   public func endFind() {
-    // Belt-and-braces clear so no painted highlight survives a
-    // stale `CSS.highlights` registry entry on Tahoe-era WebKit:
-    // 1. Drop the registry entries (the documented kill switch).
-    // 2. Remove the injected `<style id="__e05FindStyle">` so the
-    //    `::highlight(...)` rules backing any leftover paint go
-    //    away with it. The find script's existence guard re-injects
-    //    the tag on the next session, so this stays self-healing.
-    // 3. Null the `__e05Find` state and clear the selection so the
-    //    follow-up session starts from scratch.
-    let script = """
-      (function() {
-        try {
-          window.__e05Find = null;
-          if (typeof CSS !== 'undefined' && CSS.highlights) {
-            CSS.highlights.delete('e05-find');
-            CSS.highlights.delete('e05-find-current');
-          }
-          const style = document.getElementById('__e05FindStyle');
-          if (style) style.remove();
-          const sel = window.getSelection();
-          if (sel) sel.removeAllRanges();
-        } catch (e) {}
-      })();
-      """
-    webView.evaluateJavaScript(script, completionHandler: nil)
+    clearPendingFind()
+    // `_hideFindUI` uninstalls the find overlay, unmarks every text
+    // match, and hides the find indicator in one shot — the clean
+    // teardown the custom CSS Custom Highlight engine never had a
+    // reliable equivalent for.
+    let sel = NSSelectorFromString("_hideFindUI")
+    if webView.responds(to: sel) {
+      webView.perform(sel)
+    }
   }
 
-  /// JavaScript body executed by `callAsyncJavaScript`. `needle` and
-  /// `forward` arrive as named arguments. The script collects every
-  /// match into a `Range`, paints all-match and current-match
-  /// highlight layers, scrolls the current into view, and returns
-  /// `{ total, current }` for the Swift side to display.
-  private static let findScript: String = """
-    if (!document.getElementById('__e05FindStyle')) {
-      const style = document.createElement('style');
-      style.id = '__e05FindStyle';
-      // Tuned for visibility against light-mode page backgrounds:
-      // alpha around 0.7 keeps the underlying text legible while
-      // making the all-match highlight stand out against white,
-      // and the orange current-match stays distinct from the
-      // yellow surround. Earlier values (0.45 yellow) blended into
-      // light text colours so the all-match layer looked absent.
-      style.textContent =
-        '::highlight(e05-find) { background-color: rgba(255, 215, 0, 0.7); color: inherit; } ' +
-        '::highlight(e05-find-current) { background-color: rgba(255, 140, 0, 0.9); color: inherit; }';
-      document.head.appendChild(style);
+  /// Drop any in-flight find without firing its completion. Called when
+  /// the web view is torn down (``suspend()``) or swapped
+  /// (``rebuildWebViewFromSnapshot()``), where the native delegate will
+  /// never deliver a result for the parked needle, so the parked handler
+  /// would otherwise dangle — and, because the find-bar completion
+  /// captures its pane, pin that pane (and this view) alive.
+  private func clearPendingFind() {
+    pendingFindCompletion = nil
+    pendingFindNeedle = nil
+  }
+
+  // MARK: _WKFindDelegate callbacks (private SPI)
+
+  /// Native find found at least one hit. `matches` is the total (capped
+  /// at ``findMaxCount``); `matchIndex` is the 0-based position of the
+  /// current match, or −1 when WebKit couldn't resolve it (e.g. the
+  /// count overflowed the cap). Report a 1-based index to drive the find
+  /// bar's "current / total" label; a non-positive index maps to 0 so
+  /// ``FindBarView`` keeps the previously shown position instead of
+  /// snapping to zero.
+  @objc(_webView:didFindMatches:forString:withMatchIndex:)
+  func webViewDidFindMatches(
+    _ webView: WKWebView, matches: UInt, forString string: String, withMatchIndex matchIndex: Int
+  ) {
+    let current = matchIndex >= 0 ? matchIndex + 1 : 0
+    finishFind(forString: string, total: Int(matches), current: current)
+  }
+
+  @objc(_webView:didFailToFindString:)
+  func webViewDidFailToFindString(_ webView: WKWebView, didFailToFindString string: String) {
+    finishFind(forString: string, total: 0, current: 0)
+  }
+
+  /// Drain the parked completion for `string`. Callbacks whose needle no
+  /// longer matches the in-flight find are dropped: with a single
+  /// completion slot, a delayed result for a superseded query would
+  /// otherwise fire the newer query's handler with the wrong count (the
+  /// find bar's `searchText == needle` guard only checks the closure's
+  /// needle, not the result's).
+  private func finishFind(forString string: String, total: Int, current: Int) {
+    guard string == pendingFindNeedle, let completion = pendingFindCompletion else { return }
+    clearPendingFind()
+    completion((total, current))
+  }
+
+  // MARK: Native find SPI bridges
+
+  /// Set this view as the web view's `_WKFindDelegate`. The property is
+  /// weak, so there's no retain cycle (the view owns and outlives the
+  /// web view); a no-op if the SPI is unavailable.
+  private func installFindDelegate() {
+    let sel = NSSelectorFromString("_setFindDelegate:")
+    if webView.responds(to: sel) {
+      webView.perform(sel, with: self)
     }
+  }
 
-    function acceptTextNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      const tag = parent.nodeName;
-      // Reject only text whose parent is a non-rendering element
-      // (SCRIPT / STYLE / NOSCRIPT / TEMPLATE) — SEO JSON-LD and
-      // stylesheet text that would otherwise inflate the count.
-      // Don't add a `checkVisibility` filter here: Safari and
-      // Chrome's native find do reach CSS-hidden branches, and any
-      // attempt to pre-screen by visibility drops real aside /
-      // sidebar / `content-visibility: auto` content that users
-      // expect the search to see.
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE') {
-        return NodeFilter.FILTER_REJECT;
-      }
-      return NodeFilter.FILTER_ACCEPT;
+  /// `_findString:options:maxCount:` takes primitive (`NSUInteger`)
+  /// arguments that `perform(_:with:)` can't carry, so resolve the IMP
+  /// and call it through a C function pointer. Reports 0/0 when the SPI
+  /// is absent so a future WebKit drop disables find rather than crashing.
+  private func callFindString(_ string: String, options: UInt, maxCount: UInt) {
+    let sel = NSSelectorFromString("_findString:options:maxCount:")
+    guard webView.responds(to: sel),
+      let method = class_getInstanceMethod(type(of: webView), sel)
+    else {
+      finishFind(forString: string, total: 0, current: 0)
+      return
     }
+    typealias FindString = @convention(c) (NSObject, Selector, NSString, UInt, UInt) -> Void
+    let invoke = unsafeBitCast(method_getImplementation(method), to: FindString.self)
+    invoke(webView, sel, string as NSString, options, maxCount)
+  }
 
-    function collect(win, out) {
-      try {
-        const doc = win.document;
-        if (!doc || !doc.body) return;
-        const walker = doc.createTreeWalker(
-          doc.body,
-          NodeFilter.SHOW_TEXT,
-          { acceptNode: acceptTextNode }
-        );
-        const pattern = needle.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-        const re = new RegExp(pattern, 'gi');
-        let node;
-        while ((node = walker.nextNode())) {
-          for (const hit of node.textContent.matchAll(re)) {
-            const r = new Range();
-            r.setStart(node, hit.index);
-            r.setEnd(node, hit.index + hit[0].length);
-            out.push(r);
-          }
-        }
-        const iframes = doc.querySelectorAll('iframe');
-        for (const iframe of iframes) {
-          try {
-            const cw = iframe.contentWindow;
-            if (cw && cw.document) collect(cw, out);
-          } catch (e) {
-            // cross-origin — silently skip; those frames contribute
-            // nothing to the find session.
-          }
-        }
-      } catch (e) {
-        // Swallow any unexpected DOM access error and fall through.
-      }
-    }
+  // `_WKFindOptions` bit values
+  // (Source/WebKit/UIProcess/API/Cocoa/_WKFindOptions.h). ShowHighlight
+  // marks every match, ShowFindIndicator pops the current one, and
+  // DetermineMatchIndex is required for `matchIndex` to be computed.
+  private static let findCaseInsensitive: UInt = 1 << 0
+  private static let findBackwards: UInt = 1 << 3
+  private static let findWrapAround: UInt = 1 << 4
+  private static let findShowFindIndicator: UInt = 1 << 6
+  private static let findShowHighlight: UInt = 1 << 7
+  private static let findDetermineMatchIndex: UInt = 1 << 9
+  /// Per-find cap on matches counted and highlighted. Beyond it WebKit
+  /// stops counting (and may leave `matchIndex` unresolved); 1000 keeps
+  /// the "current / total" label meaningful without walking pathological
+  /// pages exhaustively.
+  private static let findMaxCount: UInt = 1000
 
-    const state = window.__e05Find;
-    let matches;
-    if (state && state.needle === needle) {
-      matches = state.matches;
-    } else {
-      matches = [];
-      collect(window, matches);
-    }
-
-    if (matches.length === 0) {
-      if (typeof CSS !== 'undefined' && CSS.highlights) {
-        CSS.highlights.delete('e05-find');
-        CSS.highlights.delete('e05-find-current');
-      }
-      window.__e05Find = { needle: needle, matches: matches, current: 0 };
-      return { total: 0, current: 0 };
-    }
-
-    let current;
-    if (state && state.needle === needle && state.current > 0) {
-      // Clamp the resume index into the current array length so any
-      // future path that rebuilds `matches` shorter cannot leave us
-      // stuck past the end. Today's same-needle branch keeps the
-      // array identical, so `base === state.current`.
-      const base = Math.min(state.current, matches.length);
-      if (forward) {
-        current = base >= matches.length ? 1 : base + 1;
-      } else {
-        current = base <= 1 ? matches.length : base - 1;
-      }
-    } else {
-      current = 1;
-    }
-
-    const currentRange = matches[current - 1];
-    const currentNode = currentRange.startContainer;
-
-    if (typeof CSS !== 'undefined' && CSS.highlights) {
-      // Drop any prior registration before installing the new one.
-      // `CSS.highlights.set` is documented to replace the highlight
-      // at a given key, but WebKit (Tahoe-era) sometimes leaves the
-      // previous Range set painted when the registry entry is
-      // overwritten with a different match collection — the old
-      // needle's hits stay highlighted alongside the new ones.
-      // Explicit `delete` before `set` clears the painted state
-      // deterministically.
-      CSS.highlights.delete('e05-find');
-      CSS.highlights.delete('e05-find-current');
-      const allHl = new Highlight();
-      for (const r of matches) allHl.add(r);
-      CSS.highlights.set('e05-find', allHl);
-      const curHl = new Highlight();
-      curHl.add(currentRange);
-      CSS.highlights.set('e05-find-current', curHl);
-    }
-
-    // Skip the selection and scroll if the match's container has
-    // been detached from the document — dynamic SPA rendering can
-    // orphan Ranges cached in window.__e05Find, and scrolling into
-    // the orphan jumps to an off-document arbitrary position.
-    if (currentNode && currentNode.isConnected) {
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(currentRange);
-      const elem = currentNode.parentElement;
-      if (elem) elem.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-
-    window.__e05Find = { needle: needle, matches: matches, current: current };
-    return { total: matches.length, current: current };
-    """
 }

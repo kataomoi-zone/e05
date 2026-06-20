@@ -186,8 +186,12 @@ extension PaneContainerViewController {
   /// return from an older keystroke can't overwrite a newer label.
   private func applyFindResult(needle: String, forward: Bool, pane: PaneModel) {
     guard let helper = pane.findHelper else { return }
-    helper.performFind(needle, forward: forward) { position in
-      guard pane.findBar.searchText == needle else { return }
+    // `[weak pane]` so the handler the browser pane parks in
+    // `pendingFindCompletion` can't retain the pane (and through it the
+    // pane's view) if a native find callback never lands — matching the
+    // other find-bar closures in this file.
+    helper.performFind(needle, forward: forward) { [weak pane] position in
+      guard let pane, pane.findBar.searchText == needle else { return }
       pane.findBar.setMatchPosition(current: position.current, total: position.total)
     }
   }
