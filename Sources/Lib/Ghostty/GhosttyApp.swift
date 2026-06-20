@@ -36,6 +36,17 @@ public final class GhosttyApp {
   private(set) var app: ghostty_app_t?
   private(set) var config: ghostty_config_t?
 
+  /// Whether quitting needs a "running process" confirmation: true if
+  /// any live surface reports unfinished work. libghostty folds the
+  /// `confirm-close-surface` config, read-only state, child-exit state,
+  /// and shell-integration prompt position into this single answer, so
+  /// the app-quit path doesn't reimplement the policy. False when the
+  /// app handle is gone (nothing to confirm).
+  public var needsConfirmQuit: Bool {
+    guard let app else { return false }
+    return ghostty_app_needs_confirm_quit(app)
+  }
+
   /// Point libghostty at the resources bundled inside the app
   /// (themes / shell-integration / terminfo) before `ghostty_init`.
   /// A release launched from Finder inherits no `GHOSTTY_RESOURCES_DIR`

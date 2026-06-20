@@ -253,6 +253,12 @@ public final class PaneContainerViewController: NSViewController {
   /// id-based lookup instead.
   public var menuActionsSnapshot: [Action] = []
 
+  /// Set when closing the last pane/column cascades into quitting the
+  /// app: that gesture already confirmed killing its process at the pane
+  /// level, so `applicationShouldTerminate` consumes this to skip a
+  /// redundant second "Quit e05?" prompt. One-shot — cleared as it's read.
+  public var suppressQuitConfirmation = false
+
   // MARK: - Find in Page
   //
   // Each `PaneModel` owns its own `FindBarView`. `focusedPane`

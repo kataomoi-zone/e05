@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "Workspaces")
@@ -371,7 +372,38 @@ extension PaneContainerViewController {
   /// Close the current workspace. Flushes the recently-closed stack (its
   /// stashed surfaces belong to the workspace we're discarding) and
   /// terminates the app when the last workspace is gone.
+  /// Whether closing `workspace` should warn first: true if any of its
+  /// terminal panes still has a running process (per libghostty's
+  /// per-surface policy).
+  func workspaceNeedsCloseConfirm(_ workspace: WorkspaceModel) -> Bool {
+    workspace.columns.contains { column in
+      column.panes.contains { pane in
+        guard let surface = pane.terminalView?.surface else { return false }
+        return ghostty_surface_needs_confirm_quit(surface)
+      }
+    }
+  }
+
   public func closeCurrentWorkspace() {
+    // The only workspace: closing it quits the app, so route through
+    // `NSApp.terminate` and let the running-process quit confirmation own
+    // the prompt. A Cancel there leaves the workspace (and its panes)
+    // untouched because nothing is torn down before termination commits.
+    if workspaces.count == 1 {
+      NSApp.terminate(nil)
+      return
+    }
+    if workspaceNeedsCloseConfirm(currentWorkspace) {
+      presentCloseConfirmation(
+        messageText: "Close this workspace?",
+        informativeText: "One or more panes in this workspace have running processes."
+      ) { [weak self] in self?.performCloseCurrentWorkspace() }
+      return
+    }
+    performCloseCurrentWorkspace()
+  }
+
+  private func performCloseCurrentWorkspace() {
     logger.info(
       "closeCurrentWorkspace entry: focused=\(self.focusedWorkspaceIndex), wsCount=\(self.workspaces.count)"
     )
@@ -401,16 +433,14 @@ extension PaneContainerViewController {
     flushRecentlyClosed(in: closing)
 
     if workspaces.count == 1 {
-      // Last workspace: close the window without mutating the
-      // arrays first. Going through `workspaces.remove(at:)` here
-      // empties the model, and any callback that lands between
-      // the remove and the application's actual termination —
-      // responder chain queries, menu validation, layout passes
-      // — reads through `currentWorkspace`, which trips its
-      // `precondition(!workspaces.isEmpty, …)` and crashes the
-      // dev build. Letting the arrays carry the (now-orphan)
-      // workspace until process exit keeps every getter valid.
-      view.window?.close()
+      // Defensive fallback: the public entry already routes the
+      // last-workspace case to `NSApp.terminate` before any teardown, so
+      // this only fires if the count collapsed to one mid-flight. Quit
+      // rather than `workspaces.remove(at:)` — emptying the model would
+      // trip `currentWorkspace`'s `precondition(!workspaces.isEmpty, …)`
+      // on any callback (responder chain, menu validation, layout) that
+      // lands before the process exits.
+      NSApp.terminate(nil)
       return
     }
 
@@ -449,6 +479,24 @@ extension PaneContainerViewController {
       return
     }
     let closing = workspaces[index]
+    if workspaceNeedsCloseConfirm(closing) {
+      presentCloseConfirmation(
+        messageText: "Close this workspace?",
+        informativeText: "One or more panes in this workspace have running processes."
+      ) { [weak self] in self?.performCloseWorkspace(closing) }
+      return
+    }
+    performCloseWorkspace(closing)
+  }
+
+  // A non-current workspace close can't be the last one (the focused
+  // workspace always remains), so unlike `closeCurrentWorkspace` this
+  // never needs the quit path. The target is re-resolved by identity
+  // rather than a captured index: the confirmation sheet is async and a
+  // programmatic close (control socket / `open` URL) could shift indices
+  // while it's up, which would otherwise close the wrong workspace.
+  private func performCloseWorkspace(_ closing: WorkspaceModel) {
+    guard let index = workspaces.firstIndex(where: { $0 === closing }) else { return }
     let closingVC = workspaceVCs[index]
     logger.info(
       "closeWorkspace(at:\(index)) non-current: focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)"

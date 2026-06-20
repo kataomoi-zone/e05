@@ -5,7 +5,7 @@ import os.log
 private let logger = Logger(subsystem: LogSubsystem.app, category: "App")
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var window: NSWindow?
   private let ghosttyApp = GhosttyApp()
   private var paneContainer: PaneContainerViewController?
@@ -272,6 +272,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       defer: false
     )
     window.title = "e05"
+    // Own the window's close button so a red-button close routes through
+    // the same running-process quit confirmation as ⌘Q (`windowShouldClose`).
+    window.delegate = self
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.styleMask.insert(.fullSizeContentView)
@@ -569,6 +572,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
     true
+  }
+
+  /// Warn before quitting if any terminal pane still has a running
+  /// process. `ghosttyApp.needsConfirmQuit` aggregates every surface, so
+  /// this one prompt covers the whole single-window app — ⌘Q, the Quit
+  /// menu item, the window close button (via `windowShouldClose`), and
+  /// closing the last workspace (which routes here through
+  /// `NSApp.terminate`).
+  ///
+  /// The prompt is an app-modal `runModal` alert, not a window sheet:
+  /// quitting can be initiated while the window is minimized or hidden
+  /// (⌘H then ⌘Q), where a sheet would attach to an off-screen window
+  /// and, with `.terminateLater`, hang the app in an un-quittable state.
+  /// `runModal` shows regardless of window state and serializes repeat
+  /// gestures, so it answers synchronously here.
+  func applicationShouldTerminate(
+    _: NSApplication
+  ) -> NSApplication.TerminateReply {
+    // Closing the last pane/column already prompted at the pane level;
+    // don't ask again as that teardown cascades into quitting.
+    if paneContainer?.suppressQuitConfirmation == true {
+      paneContainer?.suppressQuitConfirmation = false
+      return .terminateNow
+    }
+    guard ghosttyApp.needsConfirmQuit else { return .terminateNow }
+    let alert = NSAlert()
+    alert.messageText = "Quit e05?"
+    alert.informativeText =
+      "A terminal still has a running process. If you quit, the process will be killed."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Quit")
+    alert.addButton(withTitle: "Cancel")
+    return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+  }
+
+  /// Route the window close button through `applicationShouldTerminate`
+  /// rather than confirming here: returning `false` keeps the window up
+  /// while `NSApp.terminate` decides (showing the quit sheet when a
+  /// process is running, or terminating immediately otherwise). This
+  /// keeps a single confirmation path and avoids closing the window out
+  /// from under a Cancel.
+  func windowShouldClose(_: NSWindow) -> Bool {
+    NSApp.terminate(nil)
+    return false
   }
 
   func applicationWillTerminate(_: Notification) {

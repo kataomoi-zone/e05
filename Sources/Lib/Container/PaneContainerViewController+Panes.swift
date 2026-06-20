@@ -1498,6 +1498,14 @@ extension PaneContainerViewController {
         pane.terminalView?.keepSurfaceAlive = false
         for v in stackView.arrangedSubviews { v.removeFromSuperview() }
         cascadedToWorkspaceClose = true
+        // Emptying the last workspace quits the app. The pane/column
+        // close that brought us here already prompted for its running
+        // process, so suppress the quit confirmation `closeCurrentWorkspace`
+        // would otherwise trigger via `NSApp.terminate` — otherwise the
+        // user is asked twice and a Cancel strands a torn-down workspace.
+        if workspaces.count == 1 {
+          suppressQuitConfirmation = true
+        }
         closeCurrentWorkspace()
         return
       }
@@ -1961,24 +1969,28 @@ extension PaneContainerViewController {
     return nil
   }
 
-  private func confirmCloseColumn(
-    count: Int, onConfirm: @escaping @MainActor () -> Void
+  /// Present the standard running-process close warning as a sheet on
+  /// the main window and run `onConfirm` only when the user clicks
+  /// Close. The button stays a generic "Close" across pane / column /
+  /// workspace scopes — "Close All" would misread for the keep-one
+  /// others-close case where one pane is intentionally spared; the
+  /// message text already conveys the scope. Callers re-validate inside
+  /// `onConfirm` since the sheet is async and any pane / column /
+  /// workspace state can drift between presentation and answer.
+  /// Shared by the pane / column close helpers here and the workspace
+  /// close path in `+Workspaces.swift` (hence not `private`).
+  func presentCloseConfirmation(
+    messageText: String, informativeText: String,
+    onConfirm: @escaping @MainActor () -> Void
   ) {
     guard let window = view.window else {
-      logger.error("[panes/close] no window for column-close confirmation")
+      logger.error("[panes/close] no window for close confirmation")
       return
     }
     let alert = NSAlert()
-    alert.messageText = "Close \(count) panes?"
-    alert.informativeText =
-      "One or more panes in this column have running processes."
+    alert.messageText = messageText
+    alert.informativeText = informativeText
     alert.alertStyle = .warning
-    // Generic "Close" rather than "Close All": the same sheet serves
-    // both whole-column close (`closeColumn(id:)`) and keep-one
-    // others-close (`closeOtherPanesInColumn(keepPaneId:)`), and
-    // "All" reads as a contradiction in the others-close case where
-    // one pane is intentionally spared. The count in messageText
-    // already conveys the scope.
     alert.addButton(withTitle: "Close")
     alert.addButton(withTitle: "Cancel")
     alert.beginSheetModal(for: window) { response in
@@ -1987,14 +1999,19 @@ extension PaneContainerViewController {
     }
   }
 
-  /// If the terminal surface reports unsaved work, present the
-  /// standard "Close this pane?" sheet on the main window and run
-  /// `onConfirm` only when the user clicks Close. Otherwise (no
-  /// terminal, no surface, or no unsaved work) run `onConfirm`
-  /// synchronously. Callers are expected to do their own
-  /// re-validation inside `onConfirm` since the sheet completion is
-  /// async and any pane / column / workspace state can drift between
-  /// presentation and answer.
+  private func confirmCloseColumn(
+    count: Int, onConfirm: @escaping @MainActor () -> Void
+  ) {
+    presentCloseConfirmation(
+      messageText: "Close \(count) panes?",
+      informativeText: "One or more panes in this column have running processes.",
+      onConfirm: onConfirm)
+  }
+
+  /// If the terminal surface reports a running process, present the
+  /// "Close this pane?" sheet and run `onConfirm` only on confirm.
+  /// Otherwise (no terminal, no surface, or the process finished) run
+  /// `onConfirm` synchronously.
   private func confirmCloseIfNeeded(
     surface: ghostty_surface_t?, onConfirm: @escaping @MainActor () -> Void
   ) {
@@ -2002,17 +2019,10 @@ extension PaneContainerViewController {
       onConfirm()
       return
     }
-    guard let window = view.window else { return }
-    let alert = NSAlert()
-    alert.messageText = "Close this pane?"
-    alert.informativeText = "A process is still running."
-    alert.alertStyle = .warning
-    alert.addButton(withTitle: "Close")
-    alert.addButton(withTitle: "Cancel")
-    alert.beginSheetModal(for: window) { response in
-      guard response == .alertFirstButtonReturn else { return }
-      MainActor.assumeIsolated { onConfirm() }
-    }
+    presentCloseConfirmation(
+      messageText: "Close this pane?",
+      informativeText: "A process is still running.",
+      onConfirm: onConfirm)
   }
 
   /// Flip the mute flag on a pane found by id across every workspace.
