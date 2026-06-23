@@ -91,6 +91,14 @@ A pre-commit hook in `.githooks/` rejects commits that violate the rules. Enable
 git config core.hooksPath .githooks
 ```
 
+The same `core.hooksPath` also activates a **pre-push** hook that scans the commits being pushed for secrets with [gitleaks](https://github.com/gitleaks/gitleaks). It is graceful — if gitleaks is not installed the hook skips with a notice instead of blocking the push — so install it to opt in:
+
+```bash
+brew install gitleaks
+```
+
+Known false positives are allowlisted in `.gitleaks.toml`.
+
 The bulk-reformat commit is recorded in `.git-blame-ignore-revs`; to skip it in local `git blame`:
 
 ```bash

@@ -1,0 +1,16 @@
+# gitleaks configuration for e05.
+#
+# Extends the built-in ruleset and allowlists known false positives so a
+# clean run reports zero leaks (and a CI gate stays meaningful). Run:
+#   gitleaks detect
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Internal identifier / dictionary-key-name constants flagged by generic-api-key but not secrets"
+regexes = [
+  # NotificationDeliveryDelegate.swift: userInfo dictionary key under
+  # which the page URL is stashed for the banner-tap handler. A key
+  # NAME, not an API key — the `…URLKey = "…"` shape trips the heuristic.
+  '''e05\.notification\.url''',
+]
