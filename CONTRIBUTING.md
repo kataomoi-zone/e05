@@ -38,7 +38,7 @@ rsync -a --delete zig-out/share/ghostty/shell-integration/ /path/to/e05/Resource
 rsync -a --delete zig-out/share/terminfo/                  /path/to/e05/Resources/terminfo/
 
 # Pin the commit so binary + resources stay in lockstep:
-git rev-parse --short HEAD   # write this into e05's GHOSTTY_VERSION
+git rev-parse HEAD   # write the FULL sha into e05's GHOSTTY_VERSION (release CI fetches it verbatim)
 ```
 
 Notes:

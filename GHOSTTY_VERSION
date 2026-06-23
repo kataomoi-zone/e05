@@ -5,4 +5,7 @@
 # committed. They MUST come from the same ghostty commit — when bumping,
 # rebuild ghostty at the new commit and refresh both together, then update
 # this file. See CONTRIBUTING.md ("Building GhosttyKit").
-5659cef41
+#
+# Must be the FULL 40-char SHA: release CI fetches this exact object name
+# (`git fetch <sha>` rejects an abbreviated prefix).
+5659cef41f4f2f7a478d0800a11836fa17e64d66

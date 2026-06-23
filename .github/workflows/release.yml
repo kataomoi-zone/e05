@@ -1,0 +1,274 @@
+# Build, sign, notarize, and publish an e05 release, then bump the
+# Homebrew cask. Manual-trigger only: a dispatch cuts a date-based
+# CalVer tag, builds everything from source in this public CI run
+# (GhosttyKit included, for supply-chain transparency), and attaches a
+# build-provenance attestation to the published zip.
+#
+# Required repository secrets:
+#   MACOS_CERT_P12_BASE64    Developer ID Application cert (.p12), base64.
+#   MACOS_CERT_PASSWORD      Password for that .p12.
+#   MACOS_SIGN_IDENTITY      "Developer ID Application: NAME (TEAMID)".
+#   MACOS_NOTARY_KEY_P8_BASE64  App Store Connect API key (.p8), base64.
+#   MACOS_NOTARY_KEY_ID      10-char API key id.
+#   MACOS_NOTARY_ISSUER      Issuer UUID.
+#   TAP_APP_ID               GitHub App id (installed on the org) for the
+#                            cross-repo cask push.
+#   TAP_APP_PRIVATE_KEY      That App's private key (PEM).
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      rebuild_ghostty:
+        description: "Force-rebuild GhosttyKit even if the cache hits"
+        type: boolean
+        default: false
+      note:
+        description: "Optional note (recorded in the run only)"
+        type: string
+        required: false
+
+# Serialize releases so the per-day CalVer counter can't race.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Least privilege: deny by default at the workflow level; the release job
+# grants exactly what it needs.
+permissions: {}
+
+env:
+  TAP_OWNER: kataomoi-zone
+  TAP_REPO: homebrew-tap
+  GHOSTTY_REPO: https://github.com/ghostty-org/ghostty
+  ZIG_VERSION: 0.15.2
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: macos-26   # Apple Silicon; arm64-only distribution
+    timeout-minutes: 90
+    permissions:
+      contents: write       # tag + release on this repo
+      id-token: write       # build-provenance attestation
+      attestations: write   # build-provenance attestation
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      # --- Version: date-based CalVer YYYY.MMDD.N, N = same-day counter ---
+      - name: Compute CalVer version
+        id: ver
+        run: |
+          set -euo pipefail
+          # Tags already arrived via checkout (fetch-tags + depth 0), and
+          # persist-credentials is false so an extra fetch couldn't auth
+          # anyway — read the same-day counter straight from local tags.
+          DATE="$(date -u +%Y.%m%d)"
+          # Highest existing same-day counter, else 0.
+          LAST="$(git tag -l "${DATE}.*" | awk -F. '{print $NF}' | sort -n | tail -1)"
+          N=$(( ${LAST:-0} + 1 ))
+          VERSION="${DATE}.${N}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}"
+
+      # build_app.sh derives CFBundleShortVersionString from a tag *on
+      # HEAD* (git describe --exact-match), so the tag must exist before
+      # the build. Push it now; the release is created later against it.
+      - name: Tag HEAD
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$VERSION"
+          # persist-credentials is false, so authenticate this push inline.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$VERSION"
+
+      # --- GhosttyKit: restore the patched xcframework, or build it from
+      # source. Keyed on the pinned ghostty commit + the local patches, so
+      # editing a patch (without a ghostty bump) invalidates the cache and
+      # a stale binary is never shipped. ---
+      - name: Restore GhosttyKit cache
+        id: ghostty_cache
+        if: ${{ ! inputs.rebuild_ghostty }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: GhosttyKit.xcframework
+          key: ghosttykit-${{ runner.os }}-${{ hashFiles('GHOSTTY_VERSION', 'patches/**') }}
+
+      - name: Set up zig (only on cache miss)
+        if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Download Metal Toolchain (only on cache miss)
+        if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          # The macOS app build links a Metal step that needs the toolchain
+          # component (not preinstalled) and a CoreSimulator in sync.
+          xcodebuild -downloadComponent MetalToolchain
+          sudo xcodebuild -runFirstLaunch || true
+
+      - name: Build patched GhosttyKit from source (only on cache miss)
+        if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          # Pinned ghostty commit (last non-comment line of GHOSTTY_VERSION).
+          GHOSTTY_SHA="$(grep -vE '^[[:space:]]*#' GHOSTTY_VERSION | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
+          echo "Building GhosttyKit from ghostty@${GHOSTTY_SHA}"
+          # Shallow-fetch exactly the pinned commit (full tree at that sha;
+          # GitHub serves a reachable SHA). No submodules: the documented
+          # local build needs none and zig fetches ghostty's deps itself.
+          git init -q ghostty
+          git -C ghostty remote add origin "$GHOSTTY_REPO"
+          git -C ghostty fetch -q --depth 1 origin "$GHOSTTY_SHA"
+          git -C ghostty checkout -q FETCH_HEAD
+          # e05's local libghostty patches (add ghostty_* C symbols e05
+          # links against). Touches src/apprt/embedded.zig + include/ghostty.h.
+          git -C ghostty apply "$GITHUB_WORKSPACE"/patches/*.patch
+          # macOS-only minimal build that emits the apprt-enabled xcframework.
+          ( cd ghostty && zig build \
+              -Doptimize=ReleaseFast \
+              -Dapp-runtime=none \
+              -Demit-xcframework=true \
+              -Dxcframework-target=native \
+              -Demit-exe=false \
+              -Dsentry=false )
+          # Strip xattrs that can fail the CodeSign step, then vendor in.
+          xattr -cr ghostty/macos/GhosttyKit.xcframework || true
+          rm -rf GhosttyKit.xcframework
+          cp -R ghostty/macos/GhosttyKit.xcframework ./GhosttyKit.xcframework
+
+      # --- Swift build ---
+      - name: swift build -c release
+        run: swift build -c release
+
+      # --- Signing identity into a temporary keychain ---
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          # Make the temp keychain searchable alongside the login keychain
+          # so codesign finds the identity. Re-splitting the existing list
+          # into separate args is intentional.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$CERT_PATH"
+
+      # --- Assemble + sign the .app, then notarize + staple into a zip ---
+      - name: Build, sign, notarize
+        id: build
+        env:
+          E05_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          E05_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          E05_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.MACOS_NOTARY_KEY_P8_BASE64 }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          export E05_NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"
+          echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$E05_NOTARY_KEY_PATH"
+          ./scripts/build_app.sh release
+          # tee so the 5-15 min notarization streams live; pipefail (set
+          # above) still propagates a notarize.sh failure through the tee.
+          ./scripts/notarize.sh | tee "$RUNNER_TEMP/notarize.log"
+          ZIP="$(tail -1 "$RUNNER_TEMP/notarize.log")"
+          rm -f "$E05_NOTARY_KEY_PATH"
+          test -f "$ZIP"
+          # Sanity: notarize.sh names the zip from the bundle version, which
+          # build_app.sh took from the tag — so it must match VERSION.
+          EXPECT="$GITHUB_WORKSPACE/build/release/e05-${VERSION}.zip"
+          if [ "$ZIP" != "$EXPECT" ]; then
+            echo "zip path $ZIP != expected $EXPECT" >&2
+            exit 1
+          fi
+          echo "zip=${ZIP}" >> "$GITHUB_OUTPUT"
+
+      # --- Supply-chain: attest that this artifact came from this run ---
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ steps.build.outputs.zip }}
+
+      # --- Publish the GitHub release (no `on: release` trigger is set) ---
+      - name: Create release
+        id: create_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          ZIP: ${{ steps.build.outputs.zip }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          set -euo pipefail
+          gh release create "$VERSION" "$ZIP" \
+            --title "$VERSION" \
+            --notes "Automated release. $NOTE"
+
+      # --- Bump the cask in the org's tap (cross-repo via GitHub App) ---
+      - name: Mint tap token
+        id: tap_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: ${{ env.TAP_OWNER }}
+          repositories: ${{ env.TAP_REPO }}
+          permission-contents: write
+
+      - name: Bump cask
+        env:
+          TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          ZIP: ${{ steps.build.outputs.zip }}
+        run: |
+          set -euo pipefail
+          SHA256="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_OWNER}/${TAP_REPO}.git" tap
+          CASK="tap/Casks/e05.rb"
+          test -f "$CASK"
+          # Replace the version and sha256 lines in place. Anchored to the
+          # leading keyword so only the cask's own fields are touched.
+          /usr/bin/perl -0pi -e "s/^(\s*version\s+)\"[^\"]*\"/\${1}\"$VERSION\"/m" "$CASK"
+          /usr/bin/perl -0pi -e "s/^(\s*sha256\s+)\"[0-9a-f]*\"/\${1}\"$SHA256\"/m" "$CASK"
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/e05.rb
+          git commit -m "e05 ${VERSION}"
+          git push
+
+      # If anything between tagging and publishing failed (including a
+      # cancel/timeout, which `failure()` alone misses), drop the tag so
+      # it isn't orphaned and the per-day CalVer counter isn't burned.
+      # Skip once the release is published: deleting the tag then would
+      # orphan a live release and collide on the next run's same version —
+      # a failed cask bump after publish is fixed forward, not rolled back.
+      - name: Delete tag on failure
+        if: ${{ (failure() || cancelled()) && steps.create_release.outcome != 'success' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "${VERSION:-}" ] || exit 0
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ":refs/tags/$VERSION" || true
+          git tag -d "$VERSION" || true
