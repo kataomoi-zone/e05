@@ -194,9 +194,6 @@ public final class PaneModel {
   /// should reach for the host-keyed store instead.
   public var isSuspendExempt: Bool = false
 
-  // TODO: wire this into vertical drag resize.
-  public var heightConstraint: NSLayoutConstraint?
-
   /// Container view holding URL bar + content. This is what gets added to the layout.
   public let containerView: NSView = {
     let v = NSView()
