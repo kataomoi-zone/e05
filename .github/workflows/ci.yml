@@ -1,0 +1,97 @@
+# Build e05 and run the test suite on every push to main and every pull
+# request. GhosttyKit is restored from cache (or built from the pinned
+# ghostty source on a miss), mirroring the release workflow so the same
+# patched binary the release ships against is exercised by the tests.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: deny by default; the job reads the repo only.
+permissions: {}
+
+# Cancel superseded runs on the same ref so a busy PR doesn't queue.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_REPO: https://github.com/ghostty-org/ghostty
+  ZIG_VERSION: 0.15.2
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-26   # Apple Silicon; matches the release runner
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      # --- GhosttyKit: restore the patched xcframework, or build it from
+      # source. Keyed on the pinned ghostty commit + the local patches so a
+      # patch edit (without a ghostty bump) rebuilds and a stale binary is
+      # never tested against. ---
+      - name: Restore GhosttyKit cache
+        id: ghostty_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: GhosttyKit.xcframework
+          key: ghosttykit-${{ runner.os }}-${{ hashFiles('GHOSTTY_VERSION', 'patches/**') }}
+
+      - name: Set up zig (only on cache miss)
+        if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Download Metal Toolchain (only on cache miss)
+        if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          # The GhosttyKit build links a Metal step that needs the toolchain
+          # component (not preinstalled) and a CoreSimulator in sync.
+          xcodebuild -downloadComponent MetalToolchain
+          sudo xcodebuild -runFirstLaunch || true
+
+      - name: Build patched GhosttyKit from source (only on cache miss)
+        if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          # Pinned ghostty commit (last non-comment line of GHOSTTY_VERSION).
+          GHOSTTY_SHA="$(grep -vE '^[[:space:]]*#' GHOSTTY_VERSION | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
+          echo "Building GhosttyKit from ghostty@${GHOSTTY_SHA}"
+          # Shallow-fetch exactly the pinned commit (GitHub serves a
+          # reachable SHA). No submodules: zig fetches ghostty's deps itself.
+          git init -q ghostty
+          git -C ghostty remote add origin "$GHOSTTY_REPO"
+          git -C ghostty fetch -q --depth 1 origin "$GHOSTTY_SHA"
+          git -C ghostty checkout -q FETCH_HEAD
+          # e05's local libghostty patches (add ghostty_* C symbols e05
+          # links against). Touches src/apprt/embedded.zig + include/ghostty.h.
+          git -C ghostty apply "$GITHUB_WORKSPACE"/patches/*.patch
+          # macOS-only minimal build that emits the apprt-enabled xcframework.
+          ( cd ghostty && zig build \
+              -Doptimize=ReleaseFast \
+              -Dapp-runtime=none \
+              -Demit-xcframework=true \
+              -Dxcframework-target=native \
+              -Demit-exe=false \
+              -Dsentry=false )
+          # Strip xattrs that can fail later steps, then vendor in.
+          xattr -cr ghostty/macos/GhosttyKit.xcframework || true
+          rm -rf GhosttyKit.xcframework
+          cp -R ghostty/macos/GhosttyKit.xcframework ./GhosttyKit.xcframework
+
+      # --- Swift build + test ---
+      - name: swift build
+        run: swift build --disable-sandbox
+
+      - name: swift test
+        run: swift test --disable-sandbox

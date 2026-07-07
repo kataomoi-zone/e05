@@ -148,9 +148,13 @@ jobs:
           rm -rf GhosttyKit.xcframework
           cp -R ghostty/macos/GhosttyKit.xcframework ./GhosttyKit.xcframework
 
-      # --- Swift build ---
+      # --- Swift build + test ---
       - name: swift build -c release
         run: swift build -c release
+
+      # Gate the release on the test suite so a red build never ships.
+      - name: swift test
+        run: swift test --disable-sandbox
 
       # --- Signing identity into a temporary keychain ---
       - name: Import Developer ID certificate
