@@ -1075,9 +1075,16 @@ extension PaneContainerViewController {
     pane.headerView.hideImmediately()
   }
 
-  /// Update a pane's title and show header if it's the focused pane.
-  /// Debounced: header only shows when the title is stable for a short time,
-  /// filtering out rapid changes from shell command execution.
+  /// Update a pane's title, refresh the worklane, and — for the focused
+  /// pane — show the header overlay once the title settles.
+  ///
+  /// The worklane refresh is throttled and the header overlay is
+  /// debounced; the two use separate timers (see the schedulers below)
+  /// because they want opposite things from a `SET_TITLE` storm: the
+  /// worklane must keep updating so a churning pane can't starve
+  /// another, while the header must stay hidden until the title stops
+  /// changing so a shell prompt / build progress bar doesn't flicker on
+  /// top of the content.
   ///
   /// Callers pass the `PaneModel` directly so cross-workspace SET_TITLE
   /// events stay correctly routed: the surface → view → pane path is
@@ -1097,25 +1104,49 @@ extension PaneContainerViewController {
     }
 
     guard titleChanged else { return }
+    scheduleWorklaneTitleRefresh()
+    if isFocused {
+      scheduleHeaderTitleOverlay()
+    }
+  }
 
-    // Sidebar worklane + header overlay share one debounce so the
-    // SET_TITLE storm from shell prompt redraws and progress bars is
-    // rate-limited to one rebuild per `titleDebounceInterval` per
-    // pane event. The worklane lists panes from every workspace, so
-    // this fires regardless of whether the updated pane is focused;
-    // the header overlay still gates on focus + URL bar hidden.
-    titleDebounceTimer?.invalidate()
-    titleDebounceTimer = Timer.scheduledTimer(
+  /// Throttle the worklane rebuild on a `SET_TITLE` storm. A pure
+  /// debounce reset on every call, and a single shared timer meant a
+  /// second pane spamming titles perpetually postponed the flush and
+  /// starved the first pane's worklane update. Here an already-scheduled
+  /// timer is left to fire — it reads live state when it does — so the
+  /// worklane refreshes at least once per interval no matter how many
+  /// panes are updating, while still collapsing bursts into one rebuild.
+  private func scheduleWorklaneTitleRefresh() {
+    guard worklaneTitleTimer == nil else { return }
+    worklaneTitleTimer = Timer.scheduledTimer(
       withTimeInterval: Self.titleDebounceInterval, repeats: false
-    ) { [weak self, weak pane] _ in
+    ) { [weak self] _ in
       DispatchQueue.main.async {
-        guard let self, let pane else { return }
+        guard let self else { return }
+        self.worklaneTitleTimer = nil
         self.notifySidebarWorklaneDidChange()
-        guard pane.id == self.focusedPane?.id else { return }
-        guard !self.urlBarVisible else { return }
-        guard pane.title != self.lastShownTitle else { return }
-        self.lastShownTitle = pane.title
-        pane.headerView.show(title: pane.title, autoHide: true)
+      }
+    }
+  }
+
+  /// Debounce the focused pane's header overlay: reset on every focused-
+  /// pane title change so the overlay only appears once the title
+  /// settles, filtering out the rapid churn a shell prompt or build
+  /// progress bar writes into the title. Reset (not throttle) is correct
+  /// here — this timer only follows the focused pane, so an unfocused
+  /// pane's storm can't starve it the way the old shared timer did.
+  private func scheduleHeaderTitleOverlay() {
+    headerTitleTimer?.invalidate()
+    headerTitleTimer = Timer.scheduledTimer(
+      withTimeInterval: Self.titleDebounceInterval, repeats: false
+    ) { [weak self] _ in
+      DispatchQueue.main.async {
+        guard let self, let focused = self.focusedPane, !self.urlBarVisible,
+          focused.title != self.lastShownTitle
+        else { return }
+        self.lastShownTitle = focused.title
+        focused.headerView.show(title: focused.title, autoHide: true)
       }
     }
   }

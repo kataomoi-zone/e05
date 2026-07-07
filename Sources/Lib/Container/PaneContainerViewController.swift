@@ -225,7 +225,15 @@ public final class PaneContainerViewController: NSViewController {
   var urlBarHoverInTimer: Timer?
   var urlBarHoverOutTimer: Timer?
 
-  var titleDebounceTimer: Timer?
+  /// Throttles the worklane rebuild on a title storm: left to fire
+  /// (not reset) so a churning pane can't starve another pane's update.
+  var worklaneTitleTimer: Timer?
+  /// Debounces the focused pane's header overlay: reset on every
+  /// focused-pane title change so the overlay only appears once the
+  /// title settles, filtering out rapid shell-prompt / progress-bar
+  /// churn. Keyed to the focused pane only, so an unfocused pane's
+  /// storm doesn't reset it.
+  var headerTitleTimer: Timer?
   var lastShownTitle: String = ""
   static let titleDebounceInterval: TimeInterval = 0.1
 
