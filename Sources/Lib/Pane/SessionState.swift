@@ -4,6 +4,14 @@ import os.log
 private let logger = Logger(subsystem: LogSubsystem.app, category: "Session")
 
 /// Serializable session layout state for save/restore.
+///
+/// Schema evolution: the synthesized `Codable` init rejects a payload
+/// that omits any non-optional stored property, and `load()` treats a
+/// decode failure as "drop the whole session" (now quarantining the
+/// file first). So a **new field must be added as `Optional` with a
+/// nil default** — a non-optional addition makes every existing
+/// session.json fail to decode and the user loses their layout on the
+/// next launch. Follow the `id` / `name` / `collapsedIds` fields below.
 public struct SessionState: Codable {
   public var workspaces: [WorkspaceState]
   public var focusedWorkspaceIndex: Int
@@ -141,7 +149,14 @@ public struct SessionState: Codable {
   // MARK: - Load
 
   public static func load() -> SessionState? {
-    let path = sessionFilePath
+    load(from: sessionFilePath)
+  }
+
+  /// Load and decode a session from an explicit path. `load()` passes
+  /// the live `sessionFilePath`; the parameter is a test seam so the
+  /// read / quarantine / drop behaviour can be exercised without
+  /// touching the user's real session.json.
+  static func load(from path: URL) -> SessionState? {
     // Read + decode are wrapped in explicit do/catch so an
     // unreadable / unparseable session.json leaves an audit trail
     // instead of silently disappearing. Returning nil is the
@@ -161,9 +176,27 @@ public struct SessionState: Codable {
     do {
       return try JSONDecoder().decode(SessionState.self, from: data)
     } catch {
-      logger.warning(
-        "[session/load] dropping unreadable session.json: \(error.localizedDescription)"
-      )
+      // Quarantine the file rather than leave it in place: the next
+      // autosave (2.5s debounce) overwrites session.json, so a decode
+      // failure — e.g. a synthesized `Codable` rejecting a session
+      // written before a new non-optional field was added — would
+      // otherwise lose the layout with no way to recover it. Mirrors
+      // `PreferencesStore.load`.
+      let timestamp = ISO8601DateFormatter().string(from: Date())
+      let quarantine =
+        path
+        .deletingLastPathComponent()
+        .appendingPathComponent("\(path.lastPathComponent).corrupt-\(timestamp)")
+      do {
+        try FileManager.default.moveItem(at: path, to: quarantine)
+        logger.warning(
+          "[session/load] quarantined unreadable session.json to \(quarantine.lastPathComponent, privacy: .public): \(error.localizedDescription)"
+        )
+      } catch let moveError {
+        logger.warning(
+          "[session/load] dropping unreadable session.json (quarantine failed: \(moveError.localizedDescription)): \(error.localizedDescription)"
+        )
+      }
       return nil
     }
   }

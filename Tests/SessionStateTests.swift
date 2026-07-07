@@ -168,6 +168,62 @@ struct SessionStateTests {
     #expect(result == nil)
   }
 
+  @Test("load(from:) reads back a saved session")
+  func loadFromValidFile() throws {
+    try withTempSessionDir { dir in
+      let file = dir.appendingPathComponent("session.json")
+      let session = SessionState(
+        workspaces: [
+          SessionState.WorkspaceState(
+            columns: [
+              SessionState.ColumnState(
+                panes: [SessionState.PaneState(address: "e05://terminal")],
+                focusedPaneIndex: 0, width: 640, heightRatios: [])
+            ],
+            focusedColumnIndex: 0, scrollX: 0)
+        ],
+        focusedWorkspaceIndex: 0)
+      try JSONEncoder().encode(session).write(to: file)
+
+      let loaded = SessionState.load(from: file)
+      #expect(loaded?.workspaces.count == 1)
+    }
+  }
+
+  @Test("load(from:) quarantines an unreadable session file instead of dropping it")
+  func loadFromCorruptFileQuarantines() throws {
+    try withTempSessionDir { dir in
+      let file = dir.appendingPathComponent("session.json")
+      try Data("{ not valid".utf8).write(to: file)
+
+      #expect(SessionState.load(from: file) == nil)
+      // The unreadable file is moved aside so the next autosave can't
+      // overwrite the only copy: it's gone from its path and a
+      // `.corrupt-*` sibling now holds it.
+      #expect(!FileManager.default.fileExists(atPath: file.path))
+      let siblings = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+      #expect(siblings.contains { $0.hasPrefix("session.json.corrupt-") })
+    }
+  }
+
+  @Test("load(from:) returns nil for a missing file without quarantining")
+  func loadFromMissingFile() throws {
+    try withTempSessionDir { dir in
+      let file = dir.appendingPathComponent("session.json")
+      #expect(SessionState.load(from: file) == nil)
+      let siblings = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+      #expect(siblings.isEmpty)
+    }
+  }
+
+  private func withTempSessionDir(_ body: (URL) throws -> Void) throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("session-load-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try body(dir)
+  }
+
   @Test("retired special-pane addresses round-trip intact for later fallback")
   func retiredAddressesRoundTrip() throws {
     // Old session files may still reference addresses whose panes
