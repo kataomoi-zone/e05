@@ -123,7 +123,14 @@ extension PaneContainerViewController {
   ) -> PaneModel? {
     let pane: PaneModel?
     if inNewWorkspace {
-      createWorkspace(initialAddress: PaneAddress(url))
+      // Inherit the source workspace's privacy so duplicating a private
+      // pane into a new workspace keeps it private — otherwise the
+      // duplicate's URL + interactionState would land in the persistent
+      // store. The source is a pane in `currentWorkspace` (the history
+      // menu's target, opened while that workspace is current), and
+      // privacy is per-workspace, so `currentWorkspace.isPrivate` is the
+      // right flag. Matches `onOpenInNewWorkspace`'s Shift-click rule.
+      createWorkspace(isPrivate: currentWorkspace.isPrivate, initialAddress: PaneAddress(url))
       pane = focusedPane
     } else {
       pane = addColumn(address: PaneAddress(url), focusOnInsert: focus).panes.first
