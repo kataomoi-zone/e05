@@ -12,7 +12,7 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Session")
 /// nil default** — a non-optional addition makes every existing
 /// session.json fail to decode and the user loses their layout on the
 /// next launch. Follow the `id` / `name` / `collapsedIds` fields below.
-public struct SessionState: Codable {
+public struct SessionState: Codable, Sendable {
   public var workspaces: [WorkspaceState]
   public var focusedWorkspaceIndex: Int
   /// Window-global URL bar visibility. The toggle action flips this
@@ -33,7 +33,7 @@ public struct SessionState: Codable {
   /// collapsed; the in-code reader treats nil and empty as identical.
   public var collapsedIds: [String]?
 
-  public struct WorkspaceState: Codable {
+  public struct WorkspaceState: Codable, Sendable {
     /// Workspace ULID at save time. `Optional` so a session.json
     /// written before id round-trip existed decodes cleanly — the
     /// restore path falls back to a fresh ULID, which one-time
@@ -51,7 +51,7 @@ public struct SessionState: Codable {
     public var scrollX: Double
   }
 
-  public struct ColumnState: Codable {
+  public struct ColumnState: Codable, Sendable {
     /// Column ULID at save time. See `WorkspaceState.id` for the
     /// optionality rationale.
     public var id: String?
@@ -81,7 +81,7 @@ public struct SessionState: Codable {
     public var isPinned: Bool = false
   }
 
-  public struct PaneState: Codable {
+  public struct PaneState: Codable, Sendable {
     public var address: String
     /// Browser page title captured at save time. Primes the sidebar
     /// worklane on restore so browser rows don't flash the hostname
@@ -130,7 +130,11 @@ public struct SessionState: Codable {
     }
 
     let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    // session.json is machine state, not hand-edited, so skip
+    // `.prettyPrinted` — it only inflates a payload that already
+    // carries base64 interactionState blobs. `.sortedKeys` stays for
+    // deterministic output.
+    encoder.outputFormatting = [.sortedKeys]
     let data: Data
     do {
       data = try encoder.encode(self)

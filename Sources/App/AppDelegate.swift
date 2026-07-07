@@ -483,8 +483,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         "[app/ipc] another e05 instance owns \(path, privacy: .public); aborting startup"
       )
       // Skip `NSApp.terminate` so `applicationWillTerminate` does not
-      // run — that path would call `paneContainer?.saveSession()` and
-      // overwrite the live instance's session with this aborted
+      // run — that path would call `paneContainer?.saveSessionAndWait()`
+      // and overwrite the live instance's session with this aborted
       // process's empty default state.
       Darwin.exit(75)  // EX_TEMPFAIL
     } catch {
@@ -619,7 +619,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   func applicationWillTerminate(_: Notification) {
-    paneContainer?.saveSession()
+    // Block until the write lands: the process is about to exit, so the
+    // async autosave path would race it and lose the final layout.
+    paneContainer?.saveSessionAndWait()
     // Native messaging hosts (Bitwarden's `desktop_proxy`, etc.)
     // are spawned per `chrome.runtime.connectNative` call and stay
     // alive as long as the e05 process holds the port. Without an

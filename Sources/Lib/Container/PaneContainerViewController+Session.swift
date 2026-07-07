@@ -158,9 +158,35 @@ extension PaneContainerViewController {
     )
   }
 
-  /// Save current session to disk.
+  /// Serial queue for the encode + atomic write half of a session
+  /// save. `captureSession()` still runs on the main actor (it reads
+  /// live layout and each web view's `interactionState`); only the
+  /// JSON serialization and file write — which scale with the base64
+  /// interactionState blobs and were previously blocking the main
+  /// thread on every autosave — move here. Serial so writes land in
+  /// capture order, which also lets the quit-time save barrier behind
+  /// any in-flight autosave with a `.sync`.
+  private static let sessionWriteQueue = DispatchQueue(
+    label: "com.kawarimidoll.e05.session-write", qos: .utility)
+
+  /// Save the current session to disk without blocking the main
+  /// thread on the write. Captures on the main actor, then hands the
+  /// Sendable snapshot to the write queue. This is the autosave path;
+  /// the clean-quit path uses ``saveSessionAndWait()`` so the process
+  /// can't exit before the final write lands.
   public func saveSession() {
-    captureSession().save()
+    let session = captureSession()
+    Self.sessionWriteQueue.async { session.save() }
+  }
+
+  /// Capture and write synchronously, blocking the caller until the
+  /// file lands. Used from `applicationWillTerminate`, where a clean
+  /// quit must not race the process exit. The `.sync` also barriers
+  /// behind any autosave still draining on the write queue, so the
+  /// final layout is what ends up on disk.
+  public func saveSessionAndWait() {
+    let session = captureSession()
+    Self.sessionWriteQueue.sync { session.save() }
   }
 
   /// Debounce window for autosave, matching Chromium's session-save
