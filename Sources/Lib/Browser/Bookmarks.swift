@@ -122,6 +122,10 @@ public final class Bookmarks {
     // are enabled (off by default in SQLite for back-compat reasons),
     // so removing a folder also removes its descendants in one call.
     sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
+    // WAL so a bookmark write no longer fsyncs on every commit. A power
+    // loss can drop the last commit (not corrupt the file) — the same
+    // durability trade Chrome and Firefox make for local user data.
+    if let db { enableWALWithNormalSync(db) }
   }
 
   private func runMigrations() {

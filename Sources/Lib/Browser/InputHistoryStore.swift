@@ -55,7 +55,11 @@ public final class InputHistoryStore {
     if sqlite3_open(path, &db) != SQLITE_OK {
       logger.error("Failed to open input-history database at \(path)")
       db = nil
+      return
     }
+    // WAL for cheaper writes without a per-commit fsync on the main
+    // thread; losing the last few entries on a crash is fine here.
+    if let db { enableWALWithNormalSync(db) }
   }
 
   private func createTable() {

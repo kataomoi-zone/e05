@@ -105,7 +105,10 @@ public final class BrowsingHistory {
     if sqlite3_open(path, &db) != SQLITE_OK {
       logger.error("Failed to open history database at \(path)")
       db = nil
+      return
     }
+    // WAL to avoid an fsync per visit/title write on the main thread.
+    if let db { enableWALWithNormalSync(db) }
   }
 
   // MARK: - Observers
