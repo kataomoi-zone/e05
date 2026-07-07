@@ -1348,6 +1348,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       onLoadingStateChange?(false)
     }
 
+    // Media is paused and the web view detached, so clear the audible /
+    // active flags now rather than waiting for the next 1Hz tick to
+    // notice — otherwise the worklane speaker glyph lingers on the
+    // placeholder for up to a second.
+    if hasActiveMedia || isPlayingAudio {
+      hasActiveMedia = false
+      isPlayingAudio = false
+      onAudioStateChanged?()
+    }
+
     suspendedSnapshot = snapshot
     showPlaceholder(title: snapshot.title, url: snapshot.url)
     onSuspendedStateChanged?()
@@ -2534,8 +2544,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// proportional to "1 per workspace" instead of "1 per pane".
   ///
   /// Skips for extension-hosted panes (no content script, no probe
-  /// to run). Idempotent: callers can poll any cadence they like
-  /// without state corruption.
+  /// to run) and for suspended panes (the web view is detached and
+  /// its media already paused, so the per-second IPC would be wasted).
+  /// Idempotent: callers can poll any cadence they like without state
+  /// corruption.
   ///
   /// Why the JS probe at all:
   /// `WKMediaPlaybackState.playing` and `.paused` both fire for any
@@ -2550,6 +2562,18 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// out of reach — escalation path is `_setPageMuted:` SPI.
   public func updateAudioStateOnce() async {
     if isExtensionHosted { return }
+    // A suspended pane's web view is detached and its media was paused
+    // by `suspend()`, so there's nothing to probe. Skip the IPC and
+    // clear any audible/active state left over from before suspend so
+    // the worklane speaker glyph doesn't linger on the placeholder.
+    if isSuspended {
+      if hasActiveMedia || isPlayingAudio {
+        hasActiveMedia = false
+        isPlayingAudio = false
+        onAudioStateChanged?()
+      }
+      return
+    }
     let state = await webView.requestMediaPlaybackState()
     var hasActive = false
     var audible = false
