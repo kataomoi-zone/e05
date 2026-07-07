@@ -107,6 +107,18 @@ public final class FinderPaneView: NSView {
   var backStack: [URL] = []
   var forwardStack: [URL] = []
 
+  /// Per-drag-session memo for the drop validators (see
+  /// `FinderPaneView+DragDrop`). AppKit calls `validateDrop` on every
+  /// cursor move, but the pasteboard sources and each URL's resolved
+  /// path / volume are fixed for the whole drag, so they're cached by
+  /// `draggingSequenceNumber`: a hover no longer re-reads the pasteboard
+  /// or re-stats every source (which can be a network round trip on a
+  /// remote volume). Reset when the sequence number changes.
+  var dragCacheSequence: Int?
+  var dragSourcesCache: [URL] = []
+  var normalizedPathMemo: [URL: String] = [:]
+  var volumeIdMemo: [URL: AnyHashable?] = [:]
+
   let tableView: FinderTableView
   let scrollView = NSScrollView()
   let iconCollectionView: FinderIconCollectionView

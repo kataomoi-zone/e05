@@ -201,7 +201,7 @@ extension FinderPaneView {
   private func validateDropOperation(
     sources: [URL], destination destURL: URL
   ) -> NSDragOperation? {
-    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    let acceptable = acceptableDropSources(sources, destination: destURL)
     guard !acceptable.isEmpty else { return nil }
     return modifierDropOperation(sources: acceptable, destination: destURL)
   }
@@ -220,7 +220,7 @@ extension FinderPaneView {
     let mods = NSEvent.modifierFlags.intersection([.command, .option, .control, .shift])
     if mods.contains(.option), mods.contains(.command) { return .link }
     if mods.contains(.option) { return .copy }
-    return Self.dropOperation(sources: sources, destination: destURL)
+    return dropOperation(sources: sources, destination: destURL)
   }
 
   /// The subset of `sources` whose drop onto `destURL` is structurally
@@ -234,12 +234,12 @@ extension FinderPaneView {
   /// sources are same-volume as the destination by construction (they sit
   /// at / in / around it), so dropping them never changes the
   /// move-vs-copy decision for the remaining sources.
-  private static func acceptableDropSources(
+  private func acceptableDropSources(
     _ sources: [URL], destination destURL: URL
   ) -> [URL] {
-    let destPath = normalizedPath(destURL)
+    let destPath = normalizedPathCached(destURL)
     return sources.filter { src in
-      let srcPath = normalizedPath(src)
+      let srcPath = normalizedPathCached(src)
       if srcPath == destPath { return false }
       if destPath.hasPrefix(srcPath + "/") { return false }
       return true
@@ -258,8 +258,8 @@ extension FinderPaneView {
     for src: URL, op: NSDragOperation, destination destURL: URL
   ) -> URL {
     let sameFolder =
-      Self.normalizedPath(src.deletingLastPathComponent())
-      == Self.normalizedPath(destURL)
+      normalizedPathCached(src.deletingLastPathComponent())
+      == normalizedPathCached(destURL)
     guard sameFolder else {
       return destURL.appendingPathComponent(src.lastPathComponent)
     }
@@ -292,7 +292,7 @@ extension FinderPaneView {
 
     // Drop the structurally-impossible sources (self, descendant); the
     // pasteboard is re-read on accept so re-filter to match validateDrop.
-    let acceptable = Self.acceptableDropSources(sources, destination: destURL)
+    let acceptable = acceptableDropSources(sources, destination: destURL)
     guard !acceptable.isEmpty else { return false }
 
     // A same-folder move does nothing — the source is already here.
@@ -302,8 +302,8 @@ extension FinderPaneView {
     // alias is NOT skipped: it makes a `… copy` / `… alias` sibling.
     let actionable = acceptable.filter { src in
       !(op == .move
-        && Self.normalizedPath(src.deletingLastPathComponent())
-          == Self.normalizedPath(destURL))
+        && normalizedPathCached(src.deletingLastPathComponent())
+          == normalizedPathCached(destURL))
     }
     guard !actionable.isEmpty else { return true }
 
@@ -718,8 +718,37 @@ extension FinderPaneView {
   /// non-bridgeable element, which would surface here as a phantom
   /// "no .fileURL on pasteboard" reject log.
   private func draggedURLs(from info: NSDraggingInfo) -> [URL] {
-    let raw = info.draggingPasteboard.readObjects(forClasses: [NSURL.self]) ?? []
-    return raw.compactMap { ($0 as? NSURL) as URL? }
+    // Cache the pasteboard read for the life of one drag session:
+    // `validateDrop` fires on every cursor move but the sources don't
+    // change, so re-deserializing the NSURLs each time is pure waste.
+    if dragCacheSequence != info.draggingSequenceNumber {
+      dragCacheSequence = info.draggingSequenceNumber
+      let raw = info.draggingPasteboard.readObjects(forClasses: [NSURL.self]) ?? []
+      dragSourcesCache = raw.compactMap { ($0 as? NSURL) as URL? }
+      normalizedPathMemo.removeAll(keepingCapacity: true)
+      volumeIdMemo.removeAll(keepingCapacity: true)
+    }
+    return dragSourcesCache
+  }
+
+  /// `normalizedPath` memoized for the current drag session. Keyed by
+  /// URL so source *and* destination paths (which recur as the cursor
+  /// moves between rows) each pay `resolvingSymlinksInPath` once.
+  private func normalizedPathCached(_ url: URL) -> String {
+    if let hit = normalizedPathMemo[url] { return hit }
+    let value = Self.normalizedPath(url)
+    normalizedPathMemo[url] = value
+    return value
+  }
+
+  /// `volumeIdentifier` memoized for the current drag session. The
+  /// nested-optional dictionary lookup distinguishes a cached `nil`
+  /// (volume couldn't be resolved) from a cache miss.
+  private func volumeIdCached(_ url: URL) -> AnyHashable? {
+    if let cached = volumeIdMemo[url] { return cached }
+    let value = Self.volumeIdentifier(of: url)
+    volumeIdMemo[url] = value
+    return value
   }
 
   /// `.copy` when any source lives on a different volume than the
@@ -727,10 +756,10 @@ extension FinderPaneView {
   /// drag image overlay (the `+` badge tells the user a copy is
   /// about to happen) and avoids the validate/accept lying to each
   /// other about move semantics.
-  private static func dropOperation(sources: [URL], destination: URL) -> NSDragOperation {
-    let destVolume = volumeIdentifier(of: destination)
+  private func dropOperation(sources: [URL], destination: URL) -> NSDragOperation {
+    let destVolume = volumeIdCached(destination)
     for src in sources {
-      if volumeIdentifier(of: src) != destVolume {
+      if volumeIdCached(src) != destVolume {
         return .copy
       }
     }
