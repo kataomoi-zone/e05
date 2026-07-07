@@ -439,22 +439,22 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
       shouldSendText = false
     }
 
+    // The hex renderings are built inside the log interpolation so
+    // os.Logger's autoclosure defers them: this is the keystroke hot
+    // path, and with debug logging off the `String(format:)` work never
+    // runs.
     let result: Bool
     if shouldSendText, let text {
-      let textHex = text.unicodeScalars.map { String(format: "0x%02X", $0.value) }.joined(
-        separator: " ")
-      let kc = String(format: "0x%02X", event.keyCode)
       logger.debug(
-        "[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=\"\(text, privacy: .public)\" hex=[\(textHex, privacy: .public)]"
+        "[key] keyCode=\(String(format: "0x%02X", event.keyCode), privacy: .public) action=\(action.rawValue) text=\"\(text, privacy: .public)\" hex=[\(text.unicodeScalars.map { String(format: "0x%02X", $0.value) }.joined(separator: " "), privacy: .public)]"
       )
       result = text.withCString { ptr in
         key.text = ptr
         return ghostty_surface_key(surface, key)
       }
     } else {
-      let kc = String(format: "0x%02X", event.keyCode)
       logger.debug(
-        "[key] keyCode=\(kc, privacy: .public) action=\(action.rawValue) text=nil (raw=\(text ?? "nil", privacy: .public))"
+        "[key] keyCode=\(String(format: "0x%02X", event.keyCode), privacy: .public) action=\(action.rawValue) text=nil (raw=\(text ?? "nil", privacy: .public))"
       )
       result = ghostty_surface_key(surface, key)
     }
