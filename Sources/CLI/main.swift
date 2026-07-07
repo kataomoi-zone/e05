@@ -197,6 +197,8 @@ func resolveSocketPath() -> String {
   }
   let bundleId = locateBundleIdentifier() ?? "com.kawarimidoll.e05"
   let home = FileManager.default.homeDirectoryForCurrentUser
+  // This target doesn't depend on E05Lib, so the socket name is
+  // duplicated from `E05Filenames.controlSocket` — keep the two in sync.
   return
     home
     .appendingPathComponent("Library/Application Support/\(bundleId)/control.sock")

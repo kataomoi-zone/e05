@@ -3,6 +3,9 @@
 *.swp
 *~
 
+# Editor logs (e.g. nvim's :messages log written into the working tree)
+nvim.log
+
 # Xcode
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/

@@ -15,6 +15,10 @@ public enum E05Filenames {
   public static let session = "session.json"
   public static let preferences = "preferences.json"
   public static let adblockerWhitelist = "adblocker-whitelist.json"
+  /// Unix-domain control socket the `e05` CLI connects to. The CLI
+  /// target does not depend on `E05Lib`, so `Sources/CLI/main.swift`
+  /// hardcodes this same literal — keep the two in sync.
+  public static let controlSocket = "control.sock"
   /// User-editable ghostty config inside `configDir` (XDG). Used by
   /// the Terminal settings tab and the libghostty runtime at launch.
   public static let terminalConfig = "config.ghostty"

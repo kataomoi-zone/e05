@@ -470,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   private func installControlSocket() {
     let path = E05Paths.default.dataDir
-      .appendingPathComponent("control.sock").path
+      .appendingPathComponent(E05Filenames.controlSocket).path
     let socket = ControlSocket(socketPath: path) { [weak self] request in
       self?.handleControlRequest(request)
         ?? ControlSocket.Response(ok: false, error: "host not ready")
