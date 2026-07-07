@@ -89,9 +89,16 @@ public final class BrowsingHistory {
   init(databasePath: String) {
     openDatabase(at: databasePath)
     createTable()
+    // Prune once at startup so the table — and the per-URL aggregation
+    // the URL bar runs on every keystroke — doesn't grow without bound.
+    pruneOlderThan(Date().addingTimeInterval(-Double(Self.retentionDays) * 86_400))
     // Warm up cache
     lastRecordedURL = mostRecent(limit: 1).first?.url
   }
+
+  /// How long a visit is retained. Older rows are pruned at startup.
+  /// 90 days matches Chromium's default history retention.
+  static let retentionDays = 90
 
   deinit {
     if let db {
@@ -149,12 +156,34 @@ public final class BrowsingHistory {
           visit_type INTEGER NOT NULL DEFAULT 1
       );
       CREATE INDEX IF NOT EXISTS idx_history_visited_at ON history(visited_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_history_url ON history(url);
       """
     if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
       logger.error("Failed to create history table: \(String(cString: sqlite3_errmsg(db)))")
     }
     addVisitTypeColumnIfMissing()
+    createAggregationIndex()
+  }
+
+  /// Covering index for the per-URL `GROUP BY` the URL bar runs on
+  /// every keystroke (`mostRecentAggregated`): `url` groups the rows,
+  /// `visited_at` supplies `MAX(...)`, and `visit_type` feeds the
+  /// typed-visit `SUM(...)` — so the aggregation subquery (the heavy
+  /// all-rows scan) is served entirely from the index (the outer join
+  /// still reads `title` from the heap, once per distinct URL). Created
+  /// after `addVisitTypeColumnIfMissing` since it references
+  /// `visit_type`, and it supersedes the old url-only index (url is its
+  /// leading column), which is dropped.
+  private func createAggregationIndex() {
+    guard let db else { return }
+    let sql = """
+      CREATE INDEX IF NOT EXISTS idx_history_url_agg
+          ON history(url, visited_at, visit_type);
+      DROP INDEX IF EXISTS idx_history_url;
+      """
+    if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
+      logger.error(
+        "Failed to create history aggregation index: \(String(cString: sqlite3_errmsg(db)))")
+    }
   }
 
   /// Databases created before `visit_type` existed carry the old
@@ -344,6 +373,28 @@ public final class BrowsingHistory {
     sqlite3_exec(db, "DELETE FROM history", nil, nil, nil)
     lastRecordedURL = nil
     fireListeners()
+  }
+
+  /// Delete every visit older than `cutoff`. Called once at startup
+  /// with the retention window; the `cutoff` parameter is a test seam.
+  /// Returns the number of rows removed. Listeners fire only when
+  /// something was actually pruned, so the startup call on an already-
+  /// trimmed database is silent.
+  @discardableResult
+  func pruneOlderThan(_ cutoff: Date) -> Int {
+    guard let db else { return 0 }
+    let sql = "DELETE FROM history WHERE visited_at < ?"
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else { return 0 }
+    defer { sqlite3_finalize(stmt) }
+    sqlite3_bind_double(stmt, 1, cutoff.timeIntervalSince1970)
+    guard sqlite3_step(stmt) == SQLITE_DONE else {
+      logger.error("Failed to prune history: \(String(cString: sqlite3_errmsg(db)))")
+      return 0
+    }
+    let removed = Int(sqlite3_changes(db))
+    if removed > 0 { fireListeners() }
+    return removed
   }
 
   // MARK: - Internal

@@ -141,4 +141,30 @@ struct BrowsingHistoryTests {
     #expect(aRow?.visits == 1)
     #expect(aRow?.typedVisits == 0)
   }
+
+  @Test("pruneOlderThan removes visits before the cutoff")
+  func pruneRemovesOldVisits() {
+    let history = BrowsingHistory(inMemory: true)
+    history.deleteAll()
+    history.recordVisit(url: "https://a.com", title: "A")
+    history.recordVisit(url: "https://b.com", title: "B")
+
+    // A cutoff in the future is newer than every just-recorded visit,
+    // so all of them prune.
+    let removed = history.pruneOlderThan(Date().addingTimeInterval(3600))
+    #expect(removed == 2)
+    #expect(history.mostRecent(limit: 10).isEmpty)
+  }
+
+  @Test("pruneOlderThan keeps visits after the cutoff")
+  func pruneKeepsRecentVisits() {
+    let history = BrowsingHistory(inMemory: true)
+    history.deleteAll()
+    history.recordVisit(url: "https://a.com", title: "A")
+
+    // A cutoff in the past is older than the visit, so nothing prunes.
+    let removed = history.pruneOlderThan(Date().addingTimeInterval(-3600))
+    #expect(removed == 0)
+    #expect(history.mostRecent(limit: 10).count == 1)
+  }
 }
