@@ -612,7 +612,7 @@ public final class AdBlocker {
     store: WKContentRuleListStore,
     identifier: String
   ) async -> WKContentRuleList? {
-    guard let json = encode(rules: rules) else { return nil }
+    guard let json = await encode(rules: rules) else { return nil }
     do {
       return try await store.compileContentRuleList(
         forIdentifier: identifier,
@@ -623,16 +623,23 @@ public final class AdBlocker {
     }
   }
 
-  private func encode(rules: [ABPtoSafariConverter.Rule]) -> String? {
-    do {
-      let data = try JSONEncoder().encode(rules)
-      return String(data: data, encoding: .utf8)
-    } catch {
-      logger.error(
-        "Rule list JSON encoding failed: \(String(describing: error), privacy: .public)"
-      )
-      return nil
-    }
+  /// Encode the rule set to the JSON WebKit compiles. Runs off the main
+  /// actor: the rule list can reach ~140k entries (tens of MB of JSON),
+  /// and doing that serialization on the main thread stalled the UI on
+  /// every filterlist compile / reload. `[Rule]` is `Sendable`, so the
+  /// slice crosses to the detached task safely.
+  private func encode(rules: [ABPtoSafariConverter.Rule]) async -> String? {
+    await Task.detached(priority: .userInitiated) {
+      do {
+        let data = try JSONEncoder().encode(rules)
+        return String(data: data, encoding: .utf8)
+      } catch {
+        logger.error(
+          "Rule list JSON encoding failed: \(String(describing: error), privacy: .public)"
+        )
+        return nil
+      }
+    }.value
   }
 
   /// Tries to probe-compile the full rule set; if that fails, splits
@@ -712,7 +719,7 @@ public final class AdBlocker {
     }
 
     if rules.count == 1 {
-      let json = encode(rules: rules) ?? "(unencodable)"
+      let json = await encode(rules: rules) ?? "(unencodable)"
       logger.error(
         """
         Dropping unsupported rule at source index \(offsetInOriginal): \
@@ -762,14 +769,23 @@ public final class AdBlocker {
 
   // MARK: - Filterlist IO
 
+  /// Read a cached filterlist off the main actor. The lists reach
+  /// several MB each and are read for every source on startup / reload,
+  /// so keeping the `String(contentsOf:)` on the main thread stalled the
+  /// UI. `nil` for a missing / unreadable file. Shared by the cosmetic
+  /// and scriptlet engines, which read the same cache files.
+  static func readCachedText(_ url: URL) async -> String? {
+    await Task.detached(priority: .userInitiated) {
+      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+      return try? String(contentsOf: url, encoding: .utf8)
+    }.value
+  }
+
   private func loadFilterText(source: FilterSource) async -> String? {
     let cacheURL = Self.cacheRoot.appendingPathComponent(source.cacheFilename)
     let fm = FileManager.default
 
-    if fm.fileExists(atPath: cacheURL.path),
-      let cached = try? String(contentsOf: cacheURL, encoding: .utf8),
-      !cached.isEmpty
-    {
+    if let cached = await Self.readCachedText(cacheURL), !cached.isEmpty {
       let attrs = try? fm.attributesOfItem(atPath: cacheURL.path)
       let mtime = attrs?[.modificationDate] as? Date ?? .distantPast
       let age = Date().timeIntervalSince(mtime)

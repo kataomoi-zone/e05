@@ -469,10 +469,18 @@ public final class CosmeticFilterEngine {
       parsedRules.append(contentsOf: rules)
     }
 
-    var newIndex = CosmeticIndex()
-    for rule in parsedRules {
-      newIndex.add(rule)
-    }
+    // Build the index off the main actor too: classifying and bucketing
+    // ~100k parsed rules is a CPU-heavy dictionary build that otherwise
+    // ran on the main thread after the (already-detached) parse. Both
+    // `[ParsedRule]` in and `CosmeticIndex` out are `Sendable`.
+    let parsed = parsedRules
+    let newIndex = await Task.detached(priority: .userInitiated) {
+      var index = CosmeticIndex()
+      for rule in parsed {
+        index.add(rule)
+      }
+      return index
+    }.value
     self.index = newIndex
     self.isReady = true
     let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
@@ -524,11 +532,7 @@ public final class CosmeticFilterEngine {
   // MARK: - Filter source IO
 
   private func readCached(filename: String) async -> String? {
-    let url = AdBlocker.cacheRoot.appendingPathComponent(filename)
-    guard FileManager.default.fileExists(atPath: url.path) else {
-      return nil
-    }
-    return try? String(contentsOf: url, encoding: .utf8)
+    await AdBlocker.readCachedText(AdBlocker.cacheRoot.appendingPathComponent(filename))
   }
 
   // MARK: - Content script

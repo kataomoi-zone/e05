@@ -81,9 +81,7 @@ public final class ScriptletEngine {
   }
 
   private func readCached(_ filename: String) async -> String? {
-    let url = AdBlocker.cacheRoot.appendingPathComponent(filename)
-    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-    return try? String(contentsOf: url, encoding: .utf8)
+    await AdBlocker.readCachedText(AdBlocker.cacheRoot.appendingPathComponent(filename))
   }
 
   /// Parse the `##+js(...)` rules out of the given filter texts into a
