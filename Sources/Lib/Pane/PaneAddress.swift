@@ -171,6 +171,47 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     internalScheme, "https", "http", "about", extensionScheme,
   ]
 
+  /// Schemes a browser pane may open in a *new* pane in response to a
+  /// web-content gesture (`target="_blank"`, `window.open`, Cmd-click,
+  /// a notification action URL). Deliberately excludes the `e05`
+  /// internal scheme so a page can't spawn a native terminal or finder
+  /// pane by linking to `e05://terminal` / `e05://finder`, and
+  /// `webkit-extension` so page links can't reach extension resources —
+  /// both open only through trusted in-app paths, never arbitrary web
+  /// content.
+  private static let webLinkSchemes: Set<String> = ["https", "http", "about"]
+
+  /// Build a new-pane address from a URL a browser pane surfaced from
+  /// web content. Returns `nil` for any scheme outside
+  /// ``webLinkSchemes`` so an untrusted page link can't open a native
+  /// `e05://` pane. Callers drop the request on `nil`.
+  public static func webLink(_ url: URL) -> PaneAddress? {
+    guard let scheme = url.scheme?.lowercased(), webLinkSchemes.contains(scheme) else {
+      return nil
+    }
+    return PaneAddress(url)
+  }
+
+  /// Schemes a browser extension may open via `chrome.tabs.create`:
+  /// the web schemes plus `webkit-extension` for its own pages (options
+  /// / popup HTML). Still excludes the `e05` internal scheme so a
+  /// third-party extension — one reachable in a single click from the
+  /// Chrome Web Store — can't spawn a native terminal or finder pane.
+  private static let extensionTabSchemes: Set<String> = [
+    "https", "http", "about", extensionScheme,
+  ]
+
+  /// Build a new-tab address from a URL an extension passed to
+  /// `chrome.tabs.create`. Returns `nil` for the `e05` internal scheme
+  /// (and anything else outside ``extensionTabSchemes``); callers fall
+  /// back to a benign home tab rather than routing to a native pane.
+  public static func extensionTab(_ url: URL) -> PaneAddress? {
+    guard let scheme = url.scheme?.lowercased(), extensionTabSchemes.contains(scheme) else {
+      return nil
+    }
+    return PaneAddress(url)
+  }
+
   /// Parse user input from the URL bar. Adds `https://` if no scheme is present.
   /// Only allows known schemes (e05, https, http). Unknown schemes return nil.
   public static func fromUserInput(_ input: String) -> PaneAddress? {

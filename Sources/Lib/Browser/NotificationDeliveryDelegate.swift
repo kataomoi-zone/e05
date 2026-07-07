@@ -295,6 +295,12 @@ public final class NotificationDeliveryDelegate: NSObject {
   /// existing state.
   fileprivate func openURL(_ url: URL, allowRedirect: Bool = true) {
     guard let container else { return }
+    // Gate up front: a notification action URL must be web content.
+    // The declarative-web-push action-URL path (navigateToNotification-
+    // ActionURL) reaches here without an e05-side scheme check, so a
+    // non-web scheme (`e05://terminal` / `e05://finder`) must neither
+    // navigate an existing pane nor open a new one.
+    guard let address = PaneAddress.webLink(url) else { return }
     let host = url.host?.lowercased() ?? ""
     if !host.isEmpty,
       let pane = Self.firstPane(matchingHost: host, in: container)
@@ -307,7 +313,7 @@ public final class NotificationDeliveryDelegate: NSObject {
       }
       return
     }
-    container.addColumn(address: PaneAddress(url))
+    container.addColumn(address: address)
   }
 
   /// First non-private pane whose address host matches `host`.

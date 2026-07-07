@@ -254,6 +254,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// the individual web view).
   private let savedDataStore: WKWebsiteDataStore?
 
+  /// Whether this pane lives in a private (ephemeral) workspace,
+  /// derived from the non-persistent data store it was constructed
+  /// with (`WorkspaceModel.dataStore` hands a `nonPersistent()` store
+  /// to private workspaces and `nil` — the shared persistent store —
+  /// to public ones). Private panes must not write host traces to the
+  /// persistent favicon cache, matching the history / download stores
+  /// that already skip private workspaces.
+  ///
+  /// Extension-hosted panes take their store from the extension
+  /// configuration rather than `savedDataStore`, so the flag may not
+  /// match the web view's real store there — but the favicon paths are
+  /// already `http`/`https`-only and extension pages are
+  /// `webkit-extension://`, so those panes never reach them regardless.
+  private var isPrivateBrowsing: Bool {
+    guard let savedDataStore else { return false }
+    return !savedDataStore.isPersistent
+  }
+
   /// Snapshot captured by `suspend()`, consumed by `restore()`. While
   /// non-nil the pane shows `placeholderView` instead of a live web
   /// view. The `interactionState` blob (macOS 12+) carries the
@@ -938,8 +956,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         // bar suggestions can stop showing the generic `globe`
         // placeholder for this host. Synchronous main-thread call
         // because FaviconCache is `@MainActor`; the actual network
-        // fetch runs inside its own Task.
-        if let scheme = url.scheme, scheme == "http" || scheme == "https",
+        // fetch runs inside its own Task. Skipped for private panes:
+        // the cache persists `<host>.bin` to disk, which would leave a
+        // trace of a private-workspace visit.
+        if !self.isPrivateBrowsing, let scheme = url.scheme,
+          scheme == "http" || scheme == "https",
           let host = url.host(percentEncoded: false)
         {
           FaviconCache.shared.prefetch(for: host)
@@ -2366,8 +2387,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private func scanPageFavicon() {
     // Skip chrome-less navigations (about:blank, data:, custom
     // schemes) so we don't evaluate the script on pages that can't
-    // carry a meaningful `<link rel="icon">`.
-    guard let url = webView.url,
+    // carry a meaningful `<link rel="icon">`. Private panes are
+    // skipped too: ingest persists `<host>.bin` to the shared favicon
+    // cache, leaving a disk trace of a private-workspace visit.
+    guard !isPrivateBrowsing,
+      let url = webView.url,
       let scheme = url.scheme?.lowercased(),
       scheme == "http" || scheme == "https",
       let host = url.host(percentEncoded: false), !host.isEmpty

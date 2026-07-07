@@ -2648,7 +2648,12 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
       )
       return
     }
-    let address: PaneAddress = url.map(PaneAddress.init) ?? .newPaneHome
+    // Gate the extension-supplied URL: `extensionTab` admits web
+    // schemes and the extension's own `webkit-extension://` pages but
+    // drops `e05://`, so `tabs.create({url: "e05://terminal"})` can't
+    // spawn a native pane. A rejected or absent URL falls back to a
+    // benign home tab.
+    let address = url.flatMap(PaneAddress.extensionTab) ?? .newPaneHome
     let column = container.addColumn(address: address)
     guard let pane = column.panes.first else {
       completionHandler(

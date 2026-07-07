@@ -301,15 +301,16 @@ struct AdBlockerCustomSourcesTests {
     #expect(first.defaultEnabled)
   }
 
-  @Test("http URL is allowed")
-  func httpURLMaps() {
+  @Test("plaintext http URL is dropped (https required)")
+  func httpURLDropped() {
     let raw = source(url: "http://example.com/list.txt")
-    #expect(AdBlocker.customSources([raw]).count == 1)
+    #expect(AdBlocker.customSources([raw]).isEmpty)
   }
 
-  @Test("non-http(s) schemes are silently dropped")
+  @Test("non-https schemes are silently dropped")
   func badSchemesDropped() {
     let entries = [
+      source(id: "HTTP", url: "http://example.com/list.txt"),
       source(id: "FILE", url: "file:///etc/passwd"),
       source(id: "JS", url: "javascript:alert(1)"),
       source(id: "FTP", url: "ftp://example.com/list.txt"),

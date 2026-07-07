@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import E05Lib
@@ -459,5 +460,39 @@ struct PaneAddressTests {
     #expect(addr != nil)
     #expect(addr?.kind == .browser)
     #expect(addr?.url.absoluteString.hasPrefix("https://duckduckgo.com/?q=") == true)
+  }
+
+  // MARK: - webLink (new-pane scheme gate)
+
+  @Test("webLink passes web schemes through to a browser address")
+  func webLinkAllowsWebSchemes() {
+    #expect(PaneAddress.webLink(URL(string: "https://example.com")!)?.kind == .browser)
+    #expect(PaneAddress.webLink(URL(string: "http://example.com")!)?.kind == .browser)
+    #expect(PaneAddress.webLink(URL(string: "about:blank")!)?.kind == .browser)
+  }
+
+  @Test("webLink rejects e05 internal and other non-web schemes")
+  func webLinkRejectsNonWebSchemes() {
+    #expect(PaneAddress.webLink(URL(string: "e05://terminal")!) == nil)
+    #expect(PaneAddress.webLink(URL(string: "e05://finder/Users/me/.ssh")!) == nil)
+    #expect(PaneAddress.webLink(URL(string: "webkit-extension://abc/options.html")!) == nil)
+    #expect(PaneAddress.webLink(URL(string: "file:///etc/passwd")!) == nil)
+    #expect(PaneAddress.webLink(URL(string: "javascript:alert(1)")!) == nil)
+    #expect(PaneAddress.webLink(URL(string: "data:text/html,x")!) == nil)
+  }
+
+  @Test("extensionTab allows web schemes and the extension's own pages")
+  func extensionTabAllowsExtensionResources() {
+    #expect(PaneAddress.extensionTab(URL(string: "https://example.com")!)?.kind == .browser)
+    #expect(
+      PaneAddress.extensionTab(URL(string: "webkit-extension://abc/options.html")!)?.kind
+        == .browser)
+  }
+
+  @Test("extensionTab still rejects the e05 internal scheme")
+  func extensionTabRejectsInternalScheme() {
+    #expect(PaneAddress.extensionTab(URL(string: "e05://terminal")!) == nil)
+    #expect(PaneAddress.extensionTab(URL(string: "e05://finder/Users/me")!) == nil)
+    #expect(PaneAddress.extensionTab(URL(string: "file:///etc/passwd")!) == nil)
   }
 }

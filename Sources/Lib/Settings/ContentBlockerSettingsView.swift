@@ -145,13 +145,17 @@ struct ContentBlockerSettingsView: View {
   private var customListsSection: some View {
     Section {
       let rows = customRows
-      if rows.isEmpty && !showAddRow {
+      let invalid = invalidCustomEntries
+      if rows.isEmpty && invalid.isEmpty && !showAddRow {
         Text("No custom lists yet.")
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
       } else {
         ForEach(rows) { source in
           filterListRow(source, removable: true)
+        }
+        ForEach(invalid) { entry in
+          invalidCustomRow(entry)
         }
       }
       if showAddRow { addCustomRow }
@@ -184,6 +188,18 @@ struct ContentBlockerSettingsView: View {
   private var customRows: [AdBlocker.FilterSource] {
     _ = revision
     return AdBlocker.customSources()
+  }
+
+  /// Custom entries in preferences whose URL is not https. The runtime
+  /// adapter drops these (a plaintext filter list is a MITM inject
+  /// point), so they no longer block anything — but they must stay
+  /// visible here, otherwise a source added before the https
+  /// requirement becomes an undeletable orphan the user can neither
+  /// see nor remove.
+  private var invalidCustomEntries: [AdblockerCustomSource] {
+    _ = revision
+    return (PreferencesStore.shared.preferences.adblockerCustomSources ?? [])
+      .filter { URL(string: $0.url)?.scheme?.lowercased() != "https" }
   }
 
   private func filterListRow(
@@ -240,6 +256,36 @@ struct ContentBlockerSettingsView: View {
     }
   }
 
+  /// Row for a custom entry the runtime adapter no longer loads because
+  /// its URL is not https. Shown greyed-out with a reason and a Remove
+  /// button so the user can clear it rather than being stuck with an
+  /// invisible, non-functional source.
+  private func invalidCustomRow(_ entry: AdblockerCustomSource) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(entry.name)
+          .foregroundStyle(.secondary)
+        Text(entry.url)
+          .font(.caption)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .foregroundStyle(.secondary)
+        Text("Not loaded — a custom list URL must be https.")
+          .font(.caption)
+          .foregroundStyle(.orange)
+      }
+      Spacer()
+      Button {
+        removeInvalidCustom(entry)
+      } label: {
+        Image(systemName: "xmark.circle.fill")
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.borderless)
+      .help("Remove")
+    }
+  }
+
   // MARK: - Custom Source Add Row
 
   /// Inline expansion shown when the user clicks "Add…". Avoids
@@ -278,11 +324,10 @@ struct ContentBlockerSettingsView: View {
     let urlString = newSourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty, !urlString.isEmpty else { return (false, nil) }
     guard let url = URL(string: urlString),
-      let scheme = url.scheme?.lowercased(),
-      scheme == "http" || scheme == "https",
+      url.scheme?.lowercased() == "https",
       let host = url.host, !host.isEmpty
     else {
-      return (false, "URL must start with http:// or https:// and include a host.")
+      return (false, "URL must start with https:// and include a host.")
     }
     let existing = PreferencesStore.shared.preferences.adblockerCustomSources ?? []
     if existing.contains(where: { $0.url == urlString }) {
@@ -370,6 +415,23 @@ struct ContentBlockerSettingsView: View {
       )
     }
     Task { await AdBlocker.shared.reload() }
+  }
+
+  /// Remove a non-https custom entry that the runtime adapter never
+  /// loaded. No cache file or reload is involved — such an entry never
+  /// compiled — so this only drops it from preferences (and the
+  /// enabled set, in case it was toggled on before the requirement).
+  private func removeInvalidCustom(_ entry: AdblockerCustomSource) {
+    let runtimeID = "\(AdBlocker.customSourceIdPrefix)\(entry.id)"
+    PreferencesStore.shared.update { prefs in
+      var customs = prefs.adblockerCustomSources ?? []
+      customs.removeAll { $0.id == entry.id }
+      prefs.adblockerCustomSources = customs.isEmpty ? nil : customs
+      if var enabled = prefs.adblockerEnabledSources {
+        enabled.removeAll { $0 == runtimeID }
+        prefs.adblockerEnabledSources = enabled
+      }
+    }
   }
 
   /// Open `url` in a fresh e05 browser column rather than handing

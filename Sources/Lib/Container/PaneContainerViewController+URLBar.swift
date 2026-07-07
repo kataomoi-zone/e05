@@ -577,6 +577,12 @@ extension PaneContainerViewController {
     let items = direction == .back ? bv.backHistoryItems : bv.forwardHistoryItems
     guard !items.isEmpty else { return }
 
+    // A private pane's back/forward hosts must not warm the persistent
+    // favicon cache (it writes `<host>.bin` to disk), matching the
+    // prefetch/ingest skip inside `BrowserPaneView`. Cached-icon reads
+    // stay; only the miss-path prefetch is suppressed.
+    let isPrivatePane = workspaceContaining(pane: pane)?.isPrivate ?? false
+
     let menu = NSMenu()
     for item in items {
       let menuItem = NSMenuItem(
@@ -597,7 +603,7 @@ extension PaneContainerViewController {
       if let host, !host.isEmpty, let icon = FaviconCache.shared.image(for: host) {
         menuItem.image = Self.menuFaviconImage(icon)
       } else {
-        if let host, !host.isEmpty { FaviconCache.shared.prefetch(for: host) }
+        if let host, !host.isEmpty, !isPrivatePane { FaviconCache.shared.prefetch(for: host) }
         menuItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
       }
       menu.addItem(menuItem)

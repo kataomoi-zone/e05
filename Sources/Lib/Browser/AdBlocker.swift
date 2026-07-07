@@ -252,8 +252,10 @@ public final class AdBlocker {
 
   /// Adapter from the preferences-side ``AdblockerCustomSource`` shape
   /// to runtime ``FilterSource`` entries. Entries with an invalid URL
-  /// (unparseable or non-http(s) scheme) are silently dropped so a
-  /// hand-edited preferences file does not quarantine.
+  /// (unparseable or non-https scheme) are silently dropped so a
+  /// hand-edited preferences file does not quarantine. https is
+  /// required — a plaintext filter list is a man-in-the-middle inject
+  /// point, since its rules drive main-world scriptlet injection.
   ///
   /// The `raw` parameter is a test seam: production callers pass
   /// `nil` and the adapter reads the live ``PreferencesStore``. Tests
@@ -268,8 +270,7 @@ public final class AdBlocker {
       ?? []
     return entries.compactMap { custom -> FilterSource? in
       guard let url = URL(string: custom.url),
-        let scheme = url.scheme?.lowercased(),
-        scheme == "http" || scheme == "https"
+        url.scheme?.lowercased() == "https"
       else { return nil }
       let homepage = custom.homepage.flatMap(URL.init(string:))
       return FilterSource(

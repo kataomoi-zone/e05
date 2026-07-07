@@ -578,7 +578,10 @@ extension PaneContainerViewController {
         // column" UX policy: a browser link Cmd-click /
         // `target="_blank"` / `window.open()` / right-click "Open
         // in Pane" lands as a fresh column in the current workspace.
-        self?.addColumn(address: PaneAddress(url))
+        // `webLink` drops any non-web scheme so page content can't
+        // spawn a native `e05://terminal` / `e05://finder` pane.
+        guard let address = PaneAddress.webLink(url) else { return }
+        self?.addColumn(address: address)
       }
       bv.onOpenInNewWorkspace = { [weak self, weak pane] url in
         // Mirrors bookmark / history "open in new workspace": the new
@@ -593,9 +596,13 @@ extension PaneContainerViewController {
         // Brave: their Private Window's "Open Link in New Window"
         // also stays private.
         guard let self else { return }
+        // `webLink` drops any non-web scheme so a Shift-click on a
+        // page link can't spawn a native `e05://` pane in a new
+        // workspace.
+        guard let address = PaneAddress.webLink(url) else { return }
         let inheritsPrivate =
           pane.flatMap { self.workspaceContaining(pane: $0) }?.isPrivate ?? false
-        self.createWorkspace(isPrivate: inheritsPrivate, initialAddress: PaneAddress(url))
+        self.createWorkspace(isPrivate: inheritsPrivate, initialAddress: address)
       }
       bv.onChromeWebStoreAction = { [weak self] extensionID, uninstall in
         // The rebranded CWS listing button is the install entry point:
