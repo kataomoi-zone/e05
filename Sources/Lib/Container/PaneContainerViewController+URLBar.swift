@@ -905,7 +905,7 @@ extension PaneContainerViewController {
 
   /// Whether the focused browser pane has a load in flight.
   public var isFocusedBrowserLoading: Bool {
-    focusedPane?.browserView?.webView.isLoading ?? false
+    focusedPane?.browserView?.isCurrentlyLoading ?? false
   }
 
   /// Navigate back in the focused browser pane's session history.
@@ -920,12 +920,12 @@ extension PaneContainerViewController {
 
   /// Whether the focused browser pane has any back history.
   public var canFocusedBrowserGoBack: Bool {
-    focusedPane?.browserView?.webView.canGoBack ?? false
+    focusedPane?.browserView?.canNavigateBack ?? false
   }
 
   /// Whether the focused browser pane has any forward history.
   public var canFocusedBrowserGoForward: Bool {
-    focusedPane?.browserView?.webView.canGoForward ?? false
+    focusedPane?.browserView?.canNavigateForward ?? false
   }
 
   /// Forward a ⌘← / ⌘→ keypress notification to the focused browser

@@ -510,7 +510,7 @@ extension PaneContainerViewController {
       bv.onNavigationStateChange = { [weak pane] canGoBack, canGoForward in
         pane?.urlBar.setNavigationEnabled(back: canGoBack, forward: canGoForward)
       }
-      pane.urlBar.setNavigationEnabled(back: bv.webView.canGoBack, forward: bv.webView.canGoForward)
+      pane.urlBar.setNavigationEnabled(back: bv.canNavigateBack, forward: bv.canNavigateForward)
       bv.onLoadingStateChange = { [weak self, weak pane] isLoading in
         pane?.urlBar.setReloadButtonLoading(isLoading)
         if let pane {
@@ -2059,7 +2059,7 @@ extension PaneContainerViewController {
     guard let target = locatePane(id: paneId),
       let bv = target.pane.browserView,
       !bv.isExtensionHosted,
-      let host = bv.webView.url?.host(percentEncoded: false)?.lowercased()
+      let host = bv.currentHost?.lowercased()
     else { return }
     let store = MutedSitesStore.shared
     let next = !store.isMuted(host: host)
@@ -2074,7 +2074,7 @@ extension PaneContainerViewController {
   /// addresses).
   public func copyPaneURL(id paneId: ULID) {
     guard let target = locatePane(id: paneId),
-      let url = target.pane.browserView?.webView.url?.absoluteString,
+      let url = target.pane.browserView?.currentURLString,
       !url.isEmpty
     else { return }
     let pasteboard = NSPasteboard.general
@@ -2319,7 +2319,7 @@ extension PaneContainerViewController {
         for pane in col.panes {
           guard let bv = pane.browserView,
             !bv.isExtensionHosted,
-            let paneHost = bv.webView.url?.host(percentEncoded: false),
+            let paneHost = bv.currentHost,
             paneHost.lowercased() == target
           else { continue }
           bv.setMuted(muted)

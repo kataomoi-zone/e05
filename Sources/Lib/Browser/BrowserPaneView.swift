@@ -364,12 +364,23 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// ``noteNativeBackForwardPressed(isBack:)`` instead because WebKit
   /// drives the actual navigation in that path.
   public func goBack() {
+    // A suspended pane has no live web view (just the placeholder), so
+    // route through `goToHistory`, which resumes and loads the previous
+    // entry from the captured snapshot.
+    if suspendedSnapshot != nil {
+      goToHistory(offset: -1)
+      return
+    }
     recentBackForwardAt = Date()
     webView.goBack()
   }
 
   /// Forward counterpart to ``goBack()``.
   public func goForward() {
+    if suspendedSnapshot != nil {
+      goToHistory(offset: 1)
+      return
+    }
     recentBackForwardAt = Date()
     webView.goForward()
   }
@@ -1120,6 +1131,45 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     return webView.url ?? lastAttemptedURL
   }
 
+  // MARK: - Snapshot-aware state reads
+
+  // A suspended pane's live `webView` is a lightweight placeholder (the
+  // heavy one was released by `suspend()`), so any consumer that used to
+  // read `webView.url` / `canGoBack` / etc. on a possibly-suspended pane
+  // must go through these instead — they answer from the captured
+  // snapshot while suspended and fall through to the live web view
+  // otherwise. Matches how `backHistoryItems` already works.
+
+  /// Whether a back navigation is available.
+  public var canNavigateBack: Bool {
+    if let snap = suspendedSnapshot { return snap.historyCurrentIndex > 0 }
+    return webView.canGoBack
+  }
+
+  /// Whether a forward navigation is available.
+  public var canNavigateForward: Bool {
+    if let snap = suspendedSnapshot { return snap.historyCurrentIndex + 1 < snap.history.count }
+    return webView.canGoForward
+  }
+
+  /// Whether the pane is mid-load. A suspended pane never is.
+  public var isCurrentlyLoading: Bool {
+    if suspendedSnapshot != nil { return false }
+    return webView.isLoading
+  }
+
+  /// Host of the pane's current page, or `nil` when it hasn't resolved.
+  public var currentHost: String? {
+    if let snap = suspendedSnapshot { return snap.url.host(percentEncoded: false) }
+    return webView.url?.host(percentEncoded: false)
+  }
+
+  /// Absolute URL string of the current page, or `nil` when unresolved.
+  public var currentURLString: String? {
+    if let snap = suspendedSnapshot { return snap.url.absoluteString }
+    return webView.url?.absoluteString
+  }
+
   /// `interactionState` blob (full back/forward list + scroll + form)
   /// for seeding a duplicate of this pane, live or suspended.
   public var interactionStateForDuplication: Data? {
@@ -1343,6 +1393,17 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // The detached web view's find delegate won't fire again; release any
     // parked find completion so it can't dangle (and pin this pane alive).
     clearPendingFind()
+
+    // Release the heavy web view — and with it the web content process
+    // and the parked page's memory — by swapping in a never-loaded
+    // placeholder. The strong `webView` reference would otherwise pin
+    // the old instance alive until `restore()` replaces it. The
+    // placeholder is never loaded or shown (the pane displays its
+    // native placeholder view), and every suspended-pane state read
+    // routes through the snapshot / address (see `canNavigateBack`,
+    // `currentHost`, …), so the empty view is never queried for real
+    // state.
+    webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
 
     if wasLoading {
       onLoadingStateChange?(false)

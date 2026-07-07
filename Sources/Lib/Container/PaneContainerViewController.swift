@@ -528,7 +528,7 @@ public final class PaneContainerViewController: NSViewController {
       for col in ws.columns {
         for pane in col.panes {
           guard let bv = pane.browserView else { continue }
-          let host = bv.webView.url?.host
+          let host = bv.currentHost
           let decision = Self.sweepDecision(
             canSuspend: bv.canSuspend,
             isFocused: focusedPaneIds.contains(pane.id),

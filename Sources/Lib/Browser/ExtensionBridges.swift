@@ -178,7 +178,12 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     // we used to perform here didn't survive the reboot diagnosis —
     // it's a one-time invariant validated at load time, not a per-
     // call concern.
-    pane?.browserView?.webView
+    //
+    // A suspended pane's live view is a lightweight placeholder that
+    // isn't bound to this extension controller, so report "no live
+    // view" (nil) rather than handing WebKit an empty, unrelated view.
+    guard let bv = pane?.browserView, !bv.isSuspended else { return nil }
+    return bv.webView
   }
 
   func title(for _: WKWebExtensionContext) -> String? {
@@ -190,8 +195,8 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   }
 
   func isLoadingComplete(for _: WKWebExtensionContext) -> Bool {
-    guard let webView = pane?.browserView?.webView else { return true }
-    return !webView.isLoading
+    guard let bv = pane?.browserView else { return true }
+    return !bv.isCurrentlyLoading
   }
 
   func isPinned(for _: WKWebExtensionContext) -> Bool { false }
@@ -340,11 +345,14 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     for _: WKWebExtensionContext,
     completionHandler: @escaping (Error?) -> Void
   ) {
-    guard let webView = pane?.browserView?.webView else {
+    guard let bv = pane?.browserView else {
       completionHandler(nil)
       return
     }
-    webView.load(URLRequest(url: url))
+    // Route through `navigate`, which resumes a suspended pane before
+    // loading rather than loading into the detached placeholder (and
+    // silently losing the request when the snapshot restores).
+    bv.navigate(to: url.absoluteString)
     completionHandler(nil)
   }
 
