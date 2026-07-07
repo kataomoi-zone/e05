@@ -73,6 +73,39 @@ enum ChromeWebStoreOverlay {
   /// flickering after the post-`didFinish` push.
   static let stateHandlerName = "e05CWSState"
 
+  /// Chrome Web Store origins whose top frame is allowed to drive the
+  /// install / uninstall / enumeration handlers. The new layout lives
+  /// under `chromewebstore.google.com`; `chrome.google.com` serves the
+  /// legacy `/webstore/*` deep links.
+  static let trustedHosts: Set<String> = [
+    "chromewebstore.google.com", "chrome.google.com",
+  ]
+
+  /// Whether `frameInfo` is the top frame of a trusted Chrome Web
+  /// Store origin over https.
+  ///
+  /// Both handlers are registered in the page content world on every
+  /// non-extension pane, so without this gate any page's JavaScript
+  /// could post to `e05CWSInstall` / `e05CWSState` directly and drive
+  /// a silent install, uninstall, or enumeration — the user script's
+  /// `location.host` check only guards the *posting* side, not the
+  /// handler. `securityOrigin` is set by WebKit from the real frame,
+  /// so a page cannot forge it. Sub-frames are rejected because the
+  /// install affordance only ever lives in CWS's top document.
+  static func isTrustedFrame(_ frameInfo: WKFrameInfo) -> Bool {
+    let origin = frameInfo.securityOrigin
+    return isTrustedOrigin(
+      isMainFrame: frameInfo.isMainFrame,
+      scheme: origin.`protocol`,
+      host: origin.host)
+  }
+
+  /// Pure origin check behind ``isTrustedFrame(_:)``, split out so the
+  /// allowlist logic is testable without a WebKit-owned `WKFrameInfo`.
+  static func isTrustedOrigin(isMainFrame: Bool, scheme: String, host: String) -> Bool {
+    isMainFrame && scheme == "https" && trustedHosts.contains(host)
+  }
+
   /// Single shared `WKUserScript` instance — the source is immutable,
   /// so the same script can be attached to every pane's
   /// `WKUserContentController` without duplicating the string.
@@ -331,7 +364,11 @@ enum ChromeWebStoreOverlay {
     return WKUserScript(
       source: source,
       injectionTime: .atDocumentStart,
-      forMainFrameOnly: false
+      // Main frame only: the install affordance lives in CWS's top
+      // document, and the handlers now reject sub-frames anyway — so
+      // injecting into sub-frames would only render a dead "Add to
+      // E05" button whose clicks and state queries can't go through.
+      forMainFrameOnly: true
     )
   }()
 
@@ -378,6 +415,12 @@ final class ChromeWebStoreStateHandler: NSObject, WKScriptMessageHandlerWithRepl
       replyHandler(nil, "unexpected handler name: \(message.name)")
       return
     }
+    // Reply with an empty list to untrusted frames rather than an
+    // error so a probing page learns nothing about installed IDs.
+    guard ChromeWebStoreOverlay.isTrustedFrame(message.frameInfo) else {
+      replyHandler([], nil)
+      return
+    }
     let ids = idsProvider?() ?? []
     replyHandler(ids, nil)
   }
@@ -400,6 +443,7 @@ final class ChromeWebStoreInstallHandler: NSObject, WKScriptMessageHandler {
   ) {
     MainActor.assumeIsolated {
       guard message.name == ChromeWebStoreOverlay.handlerName else { return }
+      guard ChromeWebStoreOverlay.isTrustedFrame(message.frameInfo) else { return }
       guard let body = message.body as? [String: Any],
         let id = body["extensionID"] as? String,
         !id.isEmpty
