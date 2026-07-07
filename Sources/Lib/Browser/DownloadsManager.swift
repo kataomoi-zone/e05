@@ -108,6 +108,10 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
   /// isn't guaranteed on dispatch since listeners should be independent.
   private var listeners: [UUID: () -> Void] = [:]
 
+  /// Whether a throttled progress-driven `fireListeners` is already
+  /// pending — set by ``scheduleProgressListenerFire()``.
+  private var progressFireScheduled = false
+
   /// Resolves the host `NSWindow` the destination prompt sheet should
   /// attach to. Single-window invariant guarantees one valid target
   /// when the prompt fires; the closure is queried lazily because the
@@ -167,6 +171,23 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
     // Dictionary traps on. The snapshot cost is negligible for
     // the listener counts we expect (≤ single digits).
     for block in Array(listeners.values) { block() }
+  }
+
+  /// Rate-limit progress-driven listener fan-out to ~10Hz.
+  /// `fractionCompleted` KVO fires per byte-chunk, so a fast download —
+  /// or several at once — would otherwise flood the main actor with
+  /// fan-outs that each reload the downloads sidebar. The entry model
+  /// is updated immediately by the caller; only this UI fan-out is
+  /// coalesced. Completion and failure fire `fireListeners()` directly,
+  /// so the terminal state is never delayed by the throttle.
+  private func scheduleProgressListenerFire() {
+    guard !progressFireScheduled else { return }
+    progressFireScheduled = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+      guard let self else { return }
+      self.progressFireScheduled = false
+      self.fireListeners()
+    }
   }
 
   public init(store: DownloadsStore) {
@@ -333,7 +354,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
           if entry.totalBytes == 0 {
             entry.totalBytes = Int64(progress.totalUnitCount)
           }
-          self.fireListeners()
+          self.scheduleProgressListenerFire()
         }
       }
       progressObservations[id] = observation
@@ -405,7 +426,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
         guard let self, let entry else { return }
         entry.bytesWritten = Int64(progress.completedUnitCount)
         entry.totalBytes = Int64(progress.totalUnitCount)
-        self.fireListeners()
+        self.scheduleProgressListenerFire()
       }
     }
     progressObservations[id] = observation
