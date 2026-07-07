@@ -1008,18 +1008,26 @@ extension PaneContainerViewController {
 
   // MARK: - Bookmarks
 
+  /// Outcome of ``toggleBookmark()``, distinguishing a persisted change
+  /// from a write that failed (e.g. the bookmarks database could not be
+  /// opened) so the caller doesn't report a phantom success.
+  public enum BookmarkToggleResult {
+    case added
+    case removed
+    case failed
+  }
+
   /// Toggle bookmark for the focused browser pane's current URL.
-  /// Returns true if bookmarked, false if removed, nil if not a browser pane.
+  /// Returns the persisted outcome, or `nil` when the focused pane is
+  /// not a browser pane.
   @discardableResult
-  public func toggleBookmark() -> Bool? {
+  public func toggleBookmark() -> BookmarkToggleResult? {
     guard isFocusedPaneBrowser, let pane = focusedPane else { return nil }
     let url = pane.address.url.absoluteString
     if bookmarks.isBookmarked(url: url) {
-      bookmarks.remove(url: url)
-      return false
+      return bookmarks.remove(url: url) ? .removed : .failed
     } else {
-      bookmarks.add(url: url, title: pane.title)
-      return true
+      return bookmarks.add(url: url, title: pane.title) ? .added : .failed
     }
   }
 

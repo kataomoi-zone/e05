@@ -255,8 +255,11 @@ extension PaneContainerViewController {
         menuTitle: "Add to Bookmarks",
         keyEquivalent: "d",
         handler: { [weak self] in
-          if let added = self?.toggleBookmark() {
-            self?.showToast(added ? "Add Bookmark" : "Remove Bookmark")
+          switch self?.toggleBookmark() {
+          case .added: self?.showToast("Add Bookmark")
+          case .removed: self?.showToast("Remove Bookmark")
+          case .failed: self?.showToast("Bookmark Failed", style: .error)
+          case nil: break
           }
         },
         validate: { [weak self] in

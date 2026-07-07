@@ -591,18 +591,28 @@ public final class Bookmarks {
   }
 
   /// Remove a bookmark by URL. Only targets bookmarks (`is_folder = 0`);
-  /// folders carry no URL.
-  public func remove(url: String) {
-    guard let db else { return }
+  /// folders carry no URL. Returns whether the delete ran (`false` when
+  /// the database is unavailable or the statement fails) so callers can
+  /// surface a failure instead of reporting a phantom success.
+  @discardableResult
+  public func remove(url: String) -> Bool {
+    guard let db else { return false }
     let sql = "DELETE FROM bookmarks WHERE url = ? AND is_folder = 0"
     var stmt: OpaquePointer?
     guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
       let stmt
-    else { return }
+    else {
+      logger.error("Failed to prepare remove: \(String(cString: sqlite3_errmsg(db)))")
+      return false
+    }
     defer { sqlite3_finalize(stmt) }
     _ = url.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
-    sqlite3_step(stmt)
+    guard sqlite3_step(stmt) == SQLITE_DONE else {
+      logger.error("Failed to remove bookmark: \(String(cString: sqlite3_errmsg(db)))")
+      return false
+    }
     fireListeners()
+    return true
   }
 
   // MARK: - Read

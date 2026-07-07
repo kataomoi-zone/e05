@@ -45,11 +45,21 @@ struct BookmarksTests {
   func removeByURL() {
     let bm = Bookmarks(inMemory: true)
 
-    bm.add(url: "https://example.com", title: "Example")
-    bm.remove(url: "https://example.com")
+    #expect(bm.add(url: "https://example.com", title: "Example"))
+    #expect(bm.remove(url: "https://example.com"))
 
     #expect(!bm.isBookmarked(url: "https://example.com"))
     #expect(bm.all().isEmpty)
+  }
+
+  @Test("add and remove report failure when the database is unavailable")
+  func writesReportFailureWhenDatabaseUnavailable() {
+    // `sqlite3_open` fails outright under a missing directory, so the
+    // store degrades to a no-op. Writes must report that failure rather
+    // than a phantom success the URL bar would toast as "Add Bookmark".
+    let bm = Bookmarks(databasePath: "/nonexistent-\(UUID().uuidString)/bookmarks.db")
+    #expect(!bm.add(url: "https://example.com", title: "Example"))
+    #expect(!bm.remove(url: "https://example.com"))
   }
 
   @Test("remove by ID")
