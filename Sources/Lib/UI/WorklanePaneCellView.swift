@@ -364,6 +364,14 @@ final class WorklanePaneCellView: NSTableCellView {
     }
   }
 
+  /// Swap just the favicon image without reconfiguring the whole row.
+  /// Used by the targeted favicon refresh so a fetch-completion post
+  /// upgrades the `globe` placeholder in place instead of forcing a
+  /// full worklane reload.
+  func applyIcon(_ image: NSImage?) {
+    iconView.image = image
+  }
+
   /// Toggle the "suspended" affordance: dashed ring around the
   /// favicon plus reduced alpha on icon and title. Alpha is computed
   /// absolutely (`base * mul`) so repeated calls stay idempotent.

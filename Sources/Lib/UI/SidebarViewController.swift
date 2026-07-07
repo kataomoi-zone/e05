@@ -256,18 +256,30 @@ final class SidebarViewController: NSViewController {
     // to a 16pt square, truncating the digit label.
     refreshDownloadsBadge()
 
-    // Rebuild the worklane when any host's favicon becomes available
-    // so the generic `globe` placeholder gets upgraded in place. Uses
-    // the block-based form + a `nonisolated(unsafe)` token so the
-    // subscription style matches `BookmarksSidebarView` /
-    // `HistorySidebarView` (the other favicon-aware surfaces),
-    // giving us one shared cleanup path in `deinit`.
+    // Upgrade the generic `globe` placeholder in place when a host's
+    // favicon becomes available. A per-host fetch-completion post
+    // carries the host as its `object`, so only that host's rows
+    // repaint — a session-restore favicon storm no longer drives a full
+    // worklane rebuild per icon. A `nil` object is a batch invalidation
+    // (cache clear), which still needs the full reload. The block form
+    // + `nonisolated(unsafe)` token matches `BookmarksSidebarView` /
+    // `HistorySidebarView`, giving one shared cleanup path in `deinit`.
     faviconObserver = NotificationCenter.default.addObserver(
       forName: FaviconCache.didChangeNotification,
       object: nil,
       queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.reloadWorklane() }
+    ) { [weak self] note in
+      // Read the host off `note` here in the (nonisolated) callback so
+      // only the Sendable `String?` crosses into the main-actor block.
+      let host = note.object as? String
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        if let host {
+          self.updatePaneFavicon(host: host)
+        } else {
+          self.reloadWorklane()
+        }
+      }
     }
 
     // While an extension popup popover launched from the extensions
@@ -451,6 +463,11 @@ final class SidebarViewController: NSViewController {
   func updatePaneSuspendedState(paneId: ULID, isSuspended: Bool) {
     overlay.worklane.updatePaneSuspendedState(
       paneId: paneId, isSuspended: isSuspended)
+  }
+
+  /// Per-host favicon refresh without rebuilding the whole worklane.
+  func updatePaneFavicon(host: String) {
+    overlay.worklane.updatePaneFavicon(host: host)
   }
 
   /// Per-column fold / pin indicator repaint without a full reload.

@@ -720,6 +720,20 @@ final class WorklaneSectionView: NSView {
     visibleCell(forPaneId: paneId)?.applySuspendedState(isSuspended)
   }
 
+  /// Refresh the favicon on the visible rows whose pane is on `host`,
+  /// without a full reload. A fetch-completion post targets one host, so
+  /// only its rows repaint — a session-restore favicon storm no longer
+  /// drives a full worklane rebuild per icon. Off-screen rows pick up
+  /// the new icon from the next `viewFor:` vend.
+  func updatePaneFavicon(host: String) {
+    guard let input = lastInput else { return }
+    let normalized = host.lowercased()
+    for (paneId, node) in nodesByPaneId
+    where node.model.address.url.host()?.lowercased() == normalized {
+      visibleCell(forPaneId: paneId)?.applyIcon(input.paneIcon(node.model))
+    }
+  }
+
   /// Per-pane loading-state flip without a full reload. Off-screen
   /// rows pick up the latest state from the next `viewFor:` vend.
   func updatePaneLoadingState(paneId: ULID, isLoading: Bool, accent: NSColor) {
