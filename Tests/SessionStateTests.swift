@@ -216,6 +216,48 @@ struct SessionStateTests {
     }
   }
 
+  @Test("a freshly captured session carries the current schema version")
+  func versionDefaultsToCurrent() throws {
+    let session = SessionState(workspaces: [], focusedWorkspaceIndex: 0)
+    #expect(session.version == SessionState.currentSchemaVersion)
+    let decoded = try roundTrip(session)
+    #expect(decoded.version == SessionState.currentSchemaVersion)
+  }
+
+  @Test("load(from:) quarantines a session written by a newer schema")
+  func loadFromNewerVersionQuarantines() throws {
+    try withTempSessionDir { dir in
+      let file = dir.appendingPathComponent("session.json")
+      var session = SessionState(workspaces: [], focusedWorkspaceIndex: 0)
+      session.version = SessionState.currentSchemaVersion + 1
+      try JSONEncoder().encode(session).write(to: file)
+
+      #expect(SessionState.load(from: file) == nil)
+      #expect(!FileManager.default.fileExists(atPath: file.path))
+      let siblings = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+      #expect(siblings.contains { $0.hasPrefix("session.json.corrupt-") })
+    }
+  }
+
+  @Test("load(from:) accepts a session with no version key as current")
+  func loadFromMissingVersionKey() throws {
+    try withTempSessionDir { dir in
+      let file = dir.appendingPathComponent("session.json")
+      // Strip the version key to mimic a session.json written before
+      // the field existed; it must still load (treated as v1).
+      let encoded = try JSONEncoder().encode(
+        SessionState(workspaces: [], focusedWorkspaceIndex: 0))
+      var dict = try #require(
+        try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+      dict.removeValue(forKey: "version")
+      try JSONSerialization.data(withJSONObject: dict).write(to: file)
+
+      let loaded = SessionState.load(from: file)
+      #expect(loaded != nil)
+      #expect(loaded?.version == nil)
+    }
+  }
+
   private func withTempSessionDir(_ body: (URL) throws -> Void) throws {
     let dir = FileManager.default.temporaryDirectory
       .appendingPathComponent("session-load-\(UUID().uuidString)")

@@ -13,6 +13,17 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Session")
 /// session.json fail to decode and the user loses their layout on the
 /// next launch. Follow the `id` / `name` / `collapsedIds` fields below.
 public struct SessionState: Codable, Sendable {
+  /// Current on-disk schema version, written into every save. Bump only
+  /// on a breaking change; `load` quarantines a file whose version is
+  /// higher than this (a newer build's session an older build would
+  /// misread) rather than loading a partially-understood layout.
+  static let currentSchemaVersion = 1
+
+  /// On-disk schema version. `Optional` (per the schema-evolution rule
+  /// above) so a session.json written before this field existed decodes
+  /// to `nil` — treated as the original v1 — instead of dropping the
+  /// whole session on a missing key.
+  public var version: Int? = currentSchemaVersion
   public var workspaces: [WorkspaceState]
   public var focusedWorkspaceIndex: Int
   /// Window-global URL bar visibility. The toggle action flips this
@@ -177,31 +188,43 @@ public struct SessionState: Codable, Sendable {
       }
       return nil
     }
+    let session: SessionState
     do {
-      return try JSONDecoder().decode(SessionState.self, from: data)
+      session = try JSONDecoder().decode(SessionState.self, from: data)
     } catch {
-      // Quarantine the file rather than leave it in place: the next
-      // autosave (2.5s debounce) overwrites session.json, so a decode
-      // failure — e.g. a synthesized `Codable` rejecting a session
-      // written before a new non-optional field was added — would
-      // otherwise lose the layout with no way to recover it. Mirrors
-      // `PreferencesStore.load`.
-      let timestamp = ISO8601DateFormatter().string(from: Date())
-      let quarantine =
-        path
-        .deletingLastPathComponent()
-        .appendingPathComponent("\(path.lastPathComponent).corrupt-\(timestamp)")
-      do {
-        try FileManager.default.moveItem(at: path, to: quarantine)
-        logger.warning(
-          "[session/load] quarantined unreadable session.json to \(quarantine.lastPathComponent, privacy: .public): \(error.localizedDescription)"
-        )
-      } catch let moveError {
-        logger.warning(
-          "[session/load] dropping unreadable session.json (quarantine failed: \(moveError.localizedDescription)): \(error.localizedDescription)"
-        )
-      }
+      quarantine(path, reason: "unreadable: \(error.localizedDescription)")
       return nil
+    }
+    // A `nil` version is a file written before the field existed (= v1).
+    // A version higher than we understand means a newer build wrote it,
+    // and this build would misread the payload, so quarantine rather
+    // than restore a partially-understood, downgraded layout.
+    if let v = session.version, v > currentSchemaVersion {
+      quarantine(path, reason: "unknown schema version \(v)")
+      return nil
+    }
+    return session
+  }
+
+  /// Move an unusable session file aside to a timestamped `.corrupt-*`
+  /// sibling so the next autosave (2.5s debounce) can't overwrite the
+  /// only copy. Shared by the decode-failure and unknown-version paths.
+  /// Mirrors `PreferencesStore.load`.
+  private static func quarantine(_ path: URL, reason: String) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let dest =
+      path
+      .deletingLastPathComponent()
+      .appendingPathComponent("\(path.lastPathComponent).corrupt-\(timestamp)")
+    do {
+      try FileManager.default.moveItem(at: path, to: dest)
+      logger.warning(
+        "[session/load] quarantined session.json to \(dest.lastPathComponent, privacy: .public) (\(reason))"
+      )
+    } catch {
+      logger.warning(
+        "[session/load] dropping session.json (quarantine failed: \(error.localizedDescription)) (\(reason))"
+      )
     }
   }
 
