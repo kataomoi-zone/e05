@@ -35,4 +35,30 @@ struct GhosttyResourcesTests {
     let dir = Self.resourcesDir.appendingPathComponent("ghostty/shell-integration")
     #expect(FileManager.default.fileExists(atPath: dir.path))
   }
+
+  /// The vendored resources record the ghostty commit they were built
+  /// from in `Resources/ghostty/.source-commit`, written by
+  /// `scripts/bump_ghostty.sh` alongside `GHOSTTY_VERSION`. If someone
+  /// bumps `GHOSTTY_VERSION` by hand without re-vendoring, the two drift
+  /// and the resources ship out of sync with the pinned binary — this
+  /// catches that statically instead of at runtime.
+  @Test("vendored resources' source commit matches GHOSTTY_VERSION")
+  func sourceCommitMatchesPin() throws {
+    let repoRoot = Self.resourcesDir.deletingLastPathComponent()
+    let pinned = try Self.pinnedCommit(repoRoot.appendingPathComponent("GHOSTTY_VERSION"))
+    let stampURL = Self.resourcesDir.appendingPathComponent("ghostty/.source-commit")
+    let stamped = try String(contentsOf: stampURL, encoding: .utf8)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    #expect(stamped == pinned)
+  }
+
+  /// Extract the pinned SHA from `GHOSTTY_VERSION`: the last non-comment,
+  /// non-empty line (mirrors the release workflow's parse).
+  private static func pinnedCommit(_ url: URL) throws -> String {
+    let text = try String(contentsOf: url, encoding: .utf8)
+    let sha = text.split(separator: "\n")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .last { !$0.isEmpty && !$0.hasPrefix("#") }
+    return sha ?? ""
+  }
 }
