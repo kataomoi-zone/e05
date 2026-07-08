@@ -951,16 +951,22 @@ extension PaneContainerViewController {
   /// ceiling — past ~5x the viewport rarely fits meaningful content.
   private static let browserZoomMax: CGFloat = 5.0
 
-  /// Scale up the focused browser pane's page zoom by one step.
+  /// Scale up the focused browser pane's page zoom by one step. No-op
+  /// on a suspended pane: its `webView` is a hidden placeholder, so
+  /// zooming it would silently mutate nothing visible while a "Zoom
+  /// 110%" toast claimed otherwise. The pane is dormant until Reload.
   public func zoomInFocusedBrowser() {
-    guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+    guard let pane = focusedPane, let bv = pane.browserView, !bv.isSuspended else { return }
+    let webView = bv.webView
     webView.pageZoom = min(webView.pageZoom * Self.browserZoomStep, Self.browserZoomMax)
     pane.urlBar.setZoomPercent(webView.pageZoom)
   }
 
   /// Scale down the focused browser pane's page zoom by one step.
+  /// No-op on a suspended pane (see ``zoomInFocusedBrowser()``).
   public func zoomOutFocusedBrowser() {
-    guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+    guard let pane = focusedPane, let bv = pane.browserView, !bv.isSuspended else { return }
+    let webView = bv.webView
     webView.pageZoom = max(webView.pageZoom / Self.browserZoomStep, Self.browserZoomMin)
     pane.urlBar.setZoomPercent(webView.pageZoom)
   }
@@ -976,7 +982,8 @@ extension PaneContainerViewController {
   /// `allowsMagnification` is false there, so the call is safe to
   /// issue unconditionally.
   public func resetFocusedBrowserZoom() {
-    guard let pane = focusedPane, let webView = pane.browserView?.webView else { return }
+    guard let pane = focusedPane, let bv = pane.browserView, !bv.isSuspended else { return }
+    let webView = bv.webView
     webView.pageZoom = 1.0
     webView.setMagnification(1.0, centeredAt: .zero)
     pane.urlBar.setZoomPercent(1.0)
@@ -988,9 +995,9 @@ extension PaneContainerViewController {
   /// generic action label.
   func showZoomToast() {
     guard let pane = focusedPane,
-      let webView = pane.browserView?.webView
+      let bv = pane.browserView, !bv.isSuspended
     else { return }
-    let percent = Int((webView.pageZoom * 100).rounded())
+    let percent = Int((bv.webView.pageZoom * 100).rounded())
     showToast("Zoom \(percent)%")
   }
 

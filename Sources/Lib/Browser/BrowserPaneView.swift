@@ -1244,15 +1244,22 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   /// Navigate to a history entry `offset` away from the current one
   /// (negative = back, positive = forward). A live pane walks the
-  /// `WKBackForwardList` in place; a suspended pane resumes and loads
-  /// the target URL fresh — selection navigates, only menu *viewing*
-  /// avoids the resume.
+  /// `WKBackForwardList` in place; a suspended pane resumes with its
+  /// captured back/forward list intact and then performs the step —
+  /// only menu *viewing* avoids the resume.
   public func goToHistory(offset: Int) {
     guard offset != 0 else { return }
     if let snap = suspendedSnapshot {
       let idx = snap.historyCurrentIndex + offset
       guard snap.history.indices.contains(idx) else { return }
-      navigate(to: snap.history[idx].url.absoluteString)
+      // Resume the pane, reinstating the real back/forward list from the
+      // captured interactionState, then perform the step on the live web
+      // view once the restored current entry commits. Loading the target
+      // URL fresh here would drop the pane's history (leaving it unable
+      // to go back/forward any further); deferring past the restore
+      // avoids racing the interactionState load.
+      onceAfterNextCommit = { [weak self] in self?.goToHistory(offset: offset) }
+      _ = restore()
       return
     }
     let list = webView.backForwardList

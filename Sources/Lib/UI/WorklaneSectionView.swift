@@ -1788,20 +1788,25 @@ extension WorklaneSectionView: NSMenuDelegate {
     // open).
     let browser = pane.browserView
     let webView = browser?.webView
-    let url = webView?.url
+    // Read through the snapshot/address-aware accessors, not the live
+    // web view: a suspended pane's `webView` is a lightweight placeholder
+    // with a nil url and no back/forward list, which would otherwise grey
+    // out Copy URL / Mute Site / Back / Forward on every parked pane.
+    let urlString = browser?.currentURLString
+    let host = browser?.currentHost
     appendPaletteAction(to: menu, actionId: "browser_reload", paneId: paneId, input: input)
     appendPaletteAction(to: menu, actionId: "browser_hard_reload", paneId: paneId, input: input)
     appendPaletteAction(
       to: menu, actionId: "browser_back", paneId: paneId, input: input,
-      isEnabled: webView?.canGoBack ?? false)
+      isEnabled: browser?.canNavigateBack ?? false)
     appendPaletteAction(
       to: menu, actionId: "browser_forward", paneId: paneId, input: input,
-      isEnabled: webView?.canGoForward ?? false)
+      isEnabled: browser?.canNavigateForward ?? false)
     menu.addItem(.separator())
     appendPaletteAction(to: menu, actionId: "toggle_bookmark", paneId: paneId, input: input)
     appendSyntheticItem(
       to: menu, sentinel: "_copy_url", title: "Copy URL", paneId: paneId,
-      isEnabled: url != nil)
+      isEnabled: urlString != nil)
     appendPaletteAction(to: menu, actionId: "pane_find", paneId: paneId, input: input)
     menu.addItem(.separator())
     // State-dependent labels reflect the *clicked* pane (not the
@@ -1810,7 +1815,6 @@ extension WorklaneSectionView: NSMenuDelegate {
     appendSyntheticItem(
       to: menu, sentinel: "_mute_pane",
       title: paneIsMuted ? "Unmute Pane" : "Mute Pane", paneId: paneId)
-    let host = url?.host(percentEncoded: false)
     let siteIsMuted = host.map { MutedSitesStore.shared.isMuted(host: $0) } ?? false
     appendSyntheticItem(
       to: menu, sentinel: "_mute_site",
