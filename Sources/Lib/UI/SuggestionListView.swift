@@ -267,6 +267,10 @@ public final class SuggestionListView: NSView {
     needsLayout = true
     layoutSubtreeIfNeeded()
 
+    // A fresh batch always starts at the top — reloadData preserves
+    // the previous batch's scroll offset otherwise.
+    scrollRowToVisibleInstantly(0)
+
     // Auto-select the first row so Enter commits the top match — except
     // for path completions, where the typed path itself must stay the
     // Enter target (a highlighted child would hijack it). Non-empty is
@@ -284,7 +288,7 @@ public final class SuggestionListView: NSView {
     let current = tableView.selectedRow
     let next = current > 0 ? current - 1 : items.count - 1
     tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
-    tableView.scrollRowToVisible(next)
+    scrollRowToVisibleInstantly(next)
   }
 
   /// Move selection down.
@@ -293,7 +297,30 @@ public final class SuggestionListView: NSView {
     let current = tableView.selectedRow
     let next = current < items.count - 1 ? current + 1 : 0
     tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
-    tableView.scrollRowToVisible(next)
+    scrollRowToVisibleInstantly(next)
+  }
+
+  /// Scroll so `row` is fully visible, without animation. The stock
+  /// `scrollRowToVisible` routes through NSScrollView's animated
+  /// scrolling, which coalesces under key repeat — the viewport lags
+  /// several rows behind the selection and the selected row escapes
+  /// the visible range. Writing the clip origin directly keeps the
+  /// selection and the viewport in lockstep on every keystroke.
+  private func scrollRowToVisibleInstantly(_ row: Int) {
+    let rowRect = tableView.rect(ofRow: row)
+    let clip = scrollView.contentView
+    var origin = clip.bounds.origin
+    if rowRect.minY < clip.bounds.minY {
+      origin.y = rowRect.minY
+    } else if rowRect.maxY > clip.bounds.maxY {
+      origin.y = rowRect.maxY - clip.bounds.height
+    } else {
+      return
+    }
+    let target = clip.constrainBoundsRect(
+      NSRect(origin: origin, size: clip.bounds.size))
+    clip.setBoundsOrigin(target.origin)
+    scrollView.reflectScrolledClipView(clip)
   }
 
   /// Row index of the currently selected item, or `nil` when nothing is
