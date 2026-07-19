@@ -8,6 +8,20 @@ public final class SuggestionListView: NSView {
   private let scrollView = NSScrollView()
   private let tableView = NSTableView()
   private var items: [SuggestionCellModel] = []
+
+  /// Primary-label font for this instance. The URL bar keeps the
+  /// compact default; the command palette injects a larger size so the
+  /// palette reads at Spotlight/ghostty scale without inflating every
+  /// pane's dropdown.
+  private let primaryFont: NSFont
+  /// Extra vertical padding added above and below each row's fitted
+  /// content. 0 keeps the content-tight rows of the URL dropdown; the
+  /// palette uses a positive value for roomier, centered rows.
+  private let rowVerticalPadding: CGFloat
+  /// Leading/trailing inset of the row content (icon, labels,
+  /// accessory) from the row edges.
+  private let rowHorizontalPadding: CGFloat
+
   // Derived from the cell's Auto Layout fitting size so that rowHeight
   // equals (title intrinsic + 2pt gap + URL intrinsic) exactly. Using a
   // hard-coded constant left ~6pt of slack between the labels and the
@@ -15,12 +29,13 @@ public final class SuggestionListView: NSView {
   // metrics that vary slightly across system updates. A fitted value
   // guarantees zero top/bottom padding regardless of font.
   //
-  // Computed once per session via static let — font metrics never change
-  // during an app run, so recomputing on every SuggestionListView init
-  // (one per pane) just burns cycles.
+  // Computed once per instance via lazy var — font metrics never change
+  // during an app run, and the size depends on the injected
+  // `primaryFont`, so a shared static would be wrong for the palette.
   /// Two-line row: primary + 2pt gap + secondary.
-  private static let twoLineRowHeight: CGFloat = {
+  private lazy var twoLineRowHeight: CGFloat = {
     let cell = SuggestionCellView()
+    cell.primaryLabel.font = primaryFont
     cell.primaryLabel.stringValue = "X"
     cell.secondaryLabel.stringValue = "X"
     // accessoryLabel is centerY-pinned and never taller than the
@@ -33,9 +48,9 @@ public final class SuggestionListView: NSView {
   /// Layout constraints stay active for hidden views, so the hidden
   /// secondary label's intrinsic height is still counted, producing
   /// the same value as `twoLineRowHeight`.
-  private static let singleLineRowHeight: CGFloat = {
+  private lazy var singleLineRowHeight: CGFloat = {
     let label = NSTextField(labelWithString: "X")
-    label.font = SuggestionCellView.primaryFont
+    label.font = primaryFont
     return ceil(label.intrinsicContentSize.height) + 4
   }()
   private let maxVisibleRows = 8
@@ -58,28 +73,27 @@ public final class SuggestionListView: NSView {
     // the suggestion list runs inside the URL bar dropdown panel,
     // which doesn't follow `NSApp.appearance` automatically.
     window?.appearance = NSApp.appearance
-    // Glass-backed path lets `NSGlassEffectView` track the
-    // appearance itself; the non-glass path uses `NSColor.cgColor`
-    // which is snapshotted at assignment, so we re-apply.
-    guard glass == nil else { return }
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      applyNonGlassChromeColors()
-    }
   }
 
-  private func applyNonGlassChromeColors() {
-    layer?.backgroundColor = AppColors.paneSurfaceTranslucent.cgColor
-    layer?.borderColor = AppColors.popoverBorder.cgColor
-  }
-
-  public init(useGlass: Bool = false) {
+  public init(
+    useGlass: Bool = false,
+    primaryFontSize: CGFloat = 12,
+    rowVerticalPadding: CGFloat = 0,
+    rowHorizontalPadding: CGFloat = 8
+  ) {
     self.glass = useGlass ? NSGlassEffectView() : nil
+    self.primaryFont = .systemFont(ofSize: primaryFontSize)
+    self.rowVerticalPadding = rowVerticalPadding
+    self.rowHorizontalPadding = rowHorizontalPadding
     super.init(frame: .zero)
     setup()
   }
 
   public override init(frame: NSRect) {
     self.glass = nil
+    self.primaryFont = SuggestionCellView.primaryFont
+    self.rowVerticalPadding = 0
+    self.rowHorizontalPadding = 8
     super.init(frame: frame)
     setup()
   }
@@ -116,14 +130,10 @@ public final class SuggestionListView: NSView {
       surface = content
     } else {
       // Non-glass path: the host (command palette) already owns a
-      // preset-tracked glass surface around this view, so a second
-      // preset-tracked radius here would chase the outer one and
-      // double the rounded clip. Hold a fixed small inset radius
-      // instead — the suggestion list is the inner nested box.
-      wantsLayer = true
-      applyNonGlassChromeColors()
-      layer?.cornerRadius = 4
-      layer?.borderWidth = 1
+      // preset-tracked glass surface around this view, so the list
+      // stays chrome-free — a fill or border here would draw a second
+      // box inside the card (the old 1px/4pt-radius frame read as a
+      // stray rectangle over the Liquid Glass surface).
       surface = self
     }
 
@@ -132,7 +142,7 @@ public final class SuggestionListView: NSView {
     tableView.addTableColumn(column)
     tableView.headerView = nil
     tableView.backgroundColor = .clear
-    tableView.rowHeight = Self.twoLineRowHeight
+    tableView.rowHeight = effectiveRowHeight
     tableView.intercellSpacing = .zero
     tableView.selectionHighlightStyle = .regular
     // macOS 11+ defaults NSTableView.style to .automatic which resolves to
@@ -200,9 +210,10 @@ public final class SuggestionListView: NSView {
   /// jarring mixed-height rows.
   private var useSingleLineHeight = false
 
-  /// The row height for the current batch.
+  /// The row height for the current batch: fitted content height plus
+  /// the instance's vertical padding on both sides.
   private var effectiveRowHeight: CGFloat {
-    useSingleLineHeight ? Self.singleLineRowHeight : Self.twoLineRowHeight
+    (useSingleLineHeight ? singleLineRowHeight : twoLineRowHeight) + rowVerticalPadding * 2
   }
 
   /// Cached content height set in `update(items:)`. Used by the direct
@@ -349,9 +360,10 @@ public final class SuggestionListView: NSView {
   // bleeding through onto the suggestion rows and clicks reaching the
   // page DOM. Mirrors the same fix in `SidebarOverlayView`.
   //
-  // Unconditional: harmless when `glass` is nil because the layer-fill
-  // path already absorbs hits via the backing layer's opaque colour;
-  // these overrides just become a redundant second line of defence.
+  // Unconditional: harmless when `glass` is nil because the palette
+  // hosts this view in its own child panel, where clicks can't reach
+  // the underlying pane; these overrides just become a redundant
+  // second line of defence.
   public override func hitTest(_ point: NSPoint) -> NSView? {
     let local = convert(point, from: superview)
     guard !isHidden, window != nil, bounds.contains(local) else {
@@ -413,6 +425,26 @@ private final class SuggestionCellView: NSView {
   /// the text stack reclaims the horizontal space.
   private var iconWidth: NSLayoutConstraint!
 
+  private var iconLeading: NSLayoutConstraint!
+  private var accessoryTrailing: NSLayoutConstraint!
+  private var primaryTop: NSLayoutConstraint!
+
+  /// Top offset of the text stack. The host list sets this alongside
+  /// its extra row height so padded rows keep their content vertically
+  /// centered instead of hugging the row top.
+  var verticalPadding: CGFloat = 0 {
+    didSet { primaryTop.constant = verticalPadding }
+  }
+
+  /// Leading/trailing inset of the row content from the row edges.
+  var horizontalPadding: CGFloat = 8 {
+    didSet {
+      iconLeading.constant = horizontalPadding
+      textLeadingFlush.constant = horizontalPadding
+      accessoryTrailing.constant = -horizontalPadding
+    }
+  }
+
   static let iconSize: CGFloat = 16
 
   // Flipped (top-down) coordinates match the enclosing NSTableView/
@@ -471,11 +503,11 @@ private final class SuggestionCellView: NSView {
   @available(*, unavailable)
   required init?(coder _: NSCoder) { fatalError() }
 
-  func apply(_ model: SuggestionCellModel) {
+  func apply(_ model: SuggestionCellModel, primaryFont: NSFont = SuggestionCellView.primaryFont) {
     Self.applyText(
       to: primaryLabel,
       text: model.primary,
-      font: Self.primaryFont,
+      font: primaryFont,
       color: .labelColor,
       highlights: model.primaryHighlights
     )
@@ -546,24 +578,32 @@ private final class SuggestionCellView: NSView {
     textLeadingToIcon = primaryLabel.leadingAnchor.constraint(
       equalTo: iconView.trailingAnchor, constant: 6)
     textLeadingFlush = primaryLabel.leadingAnchor.constraint(
-      equalTo: leadingAnchor, constant: 8)
+      equalTo: leadingAnchor, constant: horizontalPadding)
     textLeadingToIcon.isActive = true
+    iconLeading = iconView.leadingAnchor.constraint(
+      equalTo: leadingAnchor, constant: horizontalPadding)
+    accessoryTrailing = accessoryLabel.trailingAnchor.constraint(
+      equalTo: trailingAnchor, constant: -horizontalPadding)
+    primaryTop = primaryLabel.topAnchor.constraint(
+      equalTo: topAnchor, constant: verticalPadding)
 
-    // Flush layout: title pinned to the cell top, secondary pinned 2pt
-    // below. No top/bottom padding — padding here would make the single-
-    // hit dropdown taller than its content and surface a bogus scrollbar.
+    // Flush layout: title pinned to the cell top (offset by the host's
+    // `verticalPadding`, 0 by default), secondary pinned 2pt below.
+    // Padding beyond what the host adds to rowHeight would make the
+    // single-hit dropdown taller than its content and surface a bogus
+    // scrollbar.
     // The bottom constraint is `lessThanOrEqual` so that font metric
     // variance can't force the cell to stretch past rowHeight. Accessory
     // is vertically centred and aligned to the trailing edge; primary/
     // secondary trailing constraints target the accessory's leading
     // anchor with an 8pt gap so long titles don't collide with shortcuts.
     NSLayoutConstraint.activate([
-      iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      iconLeading,
       iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
       iconWidth,
       iconView.heightAnchor.constraint(equalToConstant: Self.iconSize),
 
-      primaryLabel.topAnchor.constraint(equalTo: topAnchor),
+      primaryTop,
       primaryLabel.trailingAnchor.constraint(
         lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
@@ -573,7 +613,7 @@ private final class SuggestionCellView: NSView {
       secondaryLabel.trailingAnchor.constraint(
         lessThanOrEqualTo: accessoryLabel.leadingAnchor, constant: -8),
 
-      accessoryLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      accessoryTrailing,
       accessoryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }
@@ -641,7 +681,9 @@ extension SuggestionListView: NSTableViewDelegate {
       cell.identifier = cellID
     }
 
-    cell.apply(items[row])
+    cell.verticalPadding = rowVerticalPadding
+    cell.horizontalPadding = rowHorizontalPadding
+    cell.apply(items[row], primaryFont: primaryFont)
     return cell
   }
 }

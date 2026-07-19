@@ -19,21 +19,11 @@ enum AppColors {
     light: NSColor(white: 0.97, alpha: 1.0),
     dark: NSColor(white: 0.15, alpha: 1.0))
 
-  /// Translucent variant of `paneSurface` for floating suggestion lists.
-  static let paneSurfaceTranslucent = dynamic(
-    light: NSColor(white: 0.97, alpha: 0.95),
-    dark: NSColor(white: 0.15, alpha: 0.95))
-
   /// Floating-panel surface — URL bar (folded), folded-label background.
   /// Slightly darker than `paneSurface` so popovers read as elevated.
   static let popoverSurface = dynamic(
     light: NSColor(white: 0.98, alpha: 1.0),
     dark: NSColor(white: 0.12, alpha: 1.0))
-
-  /// Translucent variant of `popoverSurface` for command palette.
-  static let popoverSurfaceTranslucent = dynamic(
-    light: NSColor(white: 0.98, alpha: 0.95),
-    dark: NSColor(white: 0.12, alpha: 0.95))
 
   /// Find-bar overlay surface — sits on pane content, more translucent
   /// than other popovers so the underlying page stays partially visible.
@@ -69,12 +59,6 @@ enum AppColors {
     dark: NSColor(white: 0.05, alpha: 0.3))
 
   // MARK: - Borders
-
-  /// Popover / palette / suggestion-list border — slightly lit so the
-  /// rounded edge reads against the dark fill.
-  static let popoverBorder = dynamic(
-    light: NSColor(white: 0.7, alpha: 1.0),
-    dark: NSColor(white: 0.3, alpha: 1.0))
 
   /// Find-bar border — same value as `hoverOverlay` by coincidence, but
   /// the role differs (border vs. overlay), so they're separate tokens.

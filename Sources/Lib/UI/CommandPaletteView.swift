@@ -26,7 +26,11 @@ import AppKit
 public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private let inputField = NSTextField()
   private let divider = NSBox()
-  private let suggestionList = SuggestionListView()
+  /// Roomier rows than the URL dropdown default: larger primary font,
+  /// vertical padding that centers each row's text, and a horizontal
+  /// inset matching the input field so the query and the results align.
+  private let suggestionList = SuggestionListView(
+    primaryFontSize: 14, rowVerticalPadding: 9, rowHorizontalPadding: 16)
   private let glass = NSGlassEffectView()
   private var cornerObserver: SurfaceCornerObserver?
   /// `card.isFlipped = true` so the frame-based layout below can keep
@@ -34,10 +38,11 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   /// the glass effect view (an ordinary, non-flipped NSView).
   private let card = FlippedView()
 
-  private let containerWidth: CGFloat = 500
-  private let inputHeight: CGFloat = 24
-  private let topPadding: CGFloat = 8
-  private let dividerPadding: CGFloat = 4
+  private let containerWidth: CGFloat = 640
+  private let inputHeight: CGFloat = 28
+  private let inputSidePadding: CGFloat = 16
+  private let topPadding: CGFloat = 14
+  private let dividerPadding: CGFloat = 10
   private let dividerHeight: CGFloat = 1
   private let topMargin: CGFloat = 40
 
@@ -125,10 +130,15 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     ])
 
     inputField.placeholderString = "Execute a command\u{2026}"
-    inputField.font = .systemFont(ofSize: 16, weight: .light)
+    inputField.font = .systemFont(ofSize: 20, weight: .light)
     inputField.textColor = .labelColor
-    inputField.backgroundColor = .clear
-    inputField.isBordered = false
+    // `isBezeled = false`, not `isBordered = false`: a fresh NSTextField
+    // is bezeled, and clearing `isBordered` leaves the bezel in place —
+    // visible as a thin rounded outline (plus the system focus glow
+    // while the field is first responder) drawn over the glass card.
+    // Mirrors `FindBarView.searchField`.
+    inputField.isBezeled = false
+    inputField.drawsBackground = false
     inputField.focusRingType = .none
     inputField.cell?.isScrollable = true
     inputField.delegate = self
@@ -153,10 +163,13 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private func layoutSubviews() {
     let w = card.bounds.width
     inputField.frame = NSRect(
-      x: 12, y: topPadding, width: w - 24, height: inputHeight)
+      x: inputSidePadding, y: topPadding,
+      width: w - inputSidePadding * 2, height: inputHeight)
+    // Full-width divider so the input area and the result list read as
+    // two distinct regions of the card.
     divider.frame = NSRect(
-      x: 8, y: topPadding + inputHeight + dividerPadding,
-      width: w - 16, height: 1)
+      x: 0, y: topPadding + inputHeight + dividerPadding,
+      width: w, height: 1)
 
     let listTop = inputAreaHeight
     let listHeight = suggestionList.isHidden ? 0 : suggestionList.frame.height
