@@ -77,6 +77,14 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   /// Swift 6 strict concurrency.
   nonisolated(unsafe) private var parentResizeObserver: NSObjectProtocol?
 
+  /// Observer for the panel losing key status — the user clicked
+  /// outside the palette (a pane, the sidebar, the title bar), which
+  /// makes the parent window key again. The text-field blur path below
+  /// (`controlTextDidEndEditing`) doesn't cover this: the field editor
+  /// stays first responder of the panel across the key-window switch,
+  /// so no end-editing notification ever fires.
+  nonisolated(unsafe) private var panelResignKeyObserver: NSObjectProtocol?
+
   public override init(frame: NSRect) {
     super.init(frame: frame)
     setup()
@@ -87,6 +95,9 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
 
   deinit {
     if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = panelResignKeyObserver {
       NotificationCenter.default.removeObserver(token)
     }
     // The panel↔self retain pair is left intact: the host owns the
@@ -246,6 +257,19 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.layoutInPanel() }
     }
+
+    // Dismiss on click-outside: any click outside the palette panel
+    // makes another window key, so resigning key is the reliable
+    // "clicked elsewhere" signal. Re-entry from `dismiss()` (orderOut
+    // also resigns key) is absorbed by its `isVisible` guard.
+    if let token = panelResignKeyObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    panelResignKeyObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.dismiss() }
+    }
   }
 
   /// Hide the palette and notify the host. Idempotent — safe to call
@@ -257,6 +281,10 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     if let token = parentResizeObserver {
       NotificationCenter.default.removeObserver(token)
       parentResizeObserver = nil
+    }
+    if let token = panelResignKeyObserver {
+      NotificationCenter.default.removeObserver(token)
+      panelResignKeyObserver = nil
     }
     suggestionList.dismiss()
     panel.orderOut(nil)
