@@ -45,6 +45,13 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   private let dividerPadding: CGFloat = 10
   private let dividerHeight: CGFloat = 1
   private let topMargin: CGFloat = 40
+  /// How far the glass extends past the visible card on every side.
+  /// The Liquid Glass material draws a refractive rim hugging its own
+  /// edge (no API to disable it — only `cornerRadius` / `tintColor` /
+  /// `style` exist) which reads as a hairline arc at each rounded
+  /// corner over light content. Oversizing the glass pushes the rim
+  /// outside the rounded clip so only rim-free glass interior shows.
+  private let rimClipInset: CGFloat = 4
 
   /// Height of the input area: top padding + field + bottom padding + divider.
   private var inputAreaHeight: CGFloat {
@@ -126,18 +133,40 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
     // matches the sidebar / pane chrome (both reach the same
     // `SurfaceCornerObserver`) so the palette reads as the same
     // material tier when it overlaps them.
+    //
+    // The clip lives on `self`, two levels above the glass, and the
+    // glass is oversized by `rimClipInset`:
+    // - masking the glass's *direct* parent is bypassed by the Liquid
+    //   Glass compositor (lessons.md "per-corner masking は構造依存");
+    //   the intermediate `holder` restores the URL-dropdown structure
+    //   where the mask is proven to reach the glass.
+    // - clipping at the panel rect cuts off the glass edge together
+    //   with the material's built-in refractive rim, which otherwise
+    //   shows as a hairline arc at each rounded corner.
+    // `glass.cornerRadius` stays 0 — its (rounded) rim now lies fully
+    // in the clipped-off band, and the visible corners come from the
+    // layer clip below.
+    wantsLayer = true
+    layer?.cornerCurve = .continuous
+    layer?.masksToBounds = true
+    cornerObserver = SurfaceCornerObserver(applyingTo: self)
+
+    let holder = NSView()
+    holder.translatesAutoresizingMaskIntoConstraints = false
     glass.translatesAutoresizingMaskIntoConstraints = false
     card.translatesAutoresizingMaskIntoConstraints = false
     glass.contentView = card
-    glass.layer?.cornerCurve = .continuous
-    glass.layer?.masksToBounds = true
-    cornerObserver = SurfaceCornerObserver(applyingTo: glass)
-    addSubview(glass)
+    holder.addSubview(glass)
+    addSubview(holder)
     NSLayoutConstraint.activate([
-      glass.topAnchor.constraint(equalTo: topAnchor),
-      glass.leadingAnchor.constraint(equalTo: leadingAnchor),
-      glass.trailingAnchor.constraint(equalTo: trailingAnchor),
-      glass.bottomAnchor.constraint(equalTo: bottomAnchor),
+      holder.topAnchor.constraint(equalTo: topAnchor),
+      holder.leadingAnchor.constraint(equalTo: leadingAnchor),
+      holder.trailingAnchor.constraint(equalTo: trailingAnchor),
+      holder.bottomAnchor.constraint(equalTo: bottomAnchor),
+      glass.topAnchor.constraint(equalTo: holder.topAnchor, constant: -rimClipInset),
+      glass.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: -rimClipInset),
+      glass.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: rimClipInset),
+      glass.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: rimClipInset),
     ])
 
     inputField.placeholderString = "Execute a command\u{2026}"
@@ -172,20 +201,23 @@ public final class CommandPaletteView: NSView, NSTextFieldDelegate {
   /// width) and writes child frames in top-down coordinates because
   /// `card` is flipped.
   private func layoutSubviews() {
-    let w = card.bounds.width
+    // `card` tracks the oversized glass, so all visible-coordinate
+    // math shifts by `rimClipInset` back into the panel rect.
+    let inset = rimClipInset
+    let w = card.bounds.width - inset * 2
     inputField.frame = NSRect(
-      x: inputSidePadding, y: topPadding,
+      x: inset + inputSidePadding, y: inset + topPadding,
       width: w - inputSidePadding * 2, height: inputHeight)
     // Full-width divider so the input area and the result list read as
     // two distinct regions of the card.
     divider.frame = NSRect(
-      x: 0, y: topPadding + inputHeight + dividerPadding,
+      x: inset, y: inset + topPadding + inputHeight + dividerPadding,
       width: w, height: 1)
 
-    let listTop = inputAreaHeight
+    let listTop = inset + inputAreaHeight
     let listHeight = suggestionList.isHidden ? 0 : suggestionList.frame.height
     suggestionList.frame = NSRect(
-      x: 0, y: listTop, width: w, height: listHeight)
+      x: inset, y: listTop, width: w, height: listHeight)
   }
 
   /// Compute the panel's screen rect and apply it. Also re-runs the
