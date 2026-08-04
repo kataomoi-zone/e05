@@ -1,8 +1,9 @@
-# Build, sign, notarize, and publish an e05 release, then bump the
-# Homebrew cask. Manual-trigger only: a dispatch cuts a date-based
-# CalVer tag, builds everything from source in this public CI run
-# (GhosttyKit included, for supply-chain transparency), and attaches a
-# build-provenance attestation to the published zip.
+# Build, sign, notarize, and publish an e05 release. Manual-trigger
+# only: a dispatch cuts a date-based CalVer tag, builds everything from
+# source in this public CI run (GhosttyKit included, for supply-chain
+# transparency), and attaches a build-provenance attestation to the
+# published zip. Distribution is the release asset itself — see
+# z-ai/homebrew-tap-plan.md for the Homebrew cask this deliberately omits.
 #
 # Required repository secrets:
 #   MACOS_CERT_P12_BASE64    Developer ID Application cert (.p12), base64.
@@ -11,9 +12,6 @@
 #   MACOS_NOTARY_KEY_P8_BASE64  App Store Connect API key (.p8), base64.
 #   MACOS_NOTARY_KEY_ID      10-char API key id.
 #   MACOS_NOTARY_ISSUER      Issuer UUID.
-#   TAP_APP_ID               GitHub App id (installed on the org) for the
-#                            cross-repo cask push.
-#   TAP_APP_PRIVATE_KEY      That App's private key (PEM).
 name: release
 
 on:
@@ -38,8 +36,6 @@ concurrency:
 permissions: {}
 
 env:
-  TAP_OWNER: kataomoi-zone
-  TAP_REPO: homebrew-tap
   GHOSTTY_REPO: https://github.com/ghostty-org/ghostty
   ZIG_VERSION: 0.15.2
 
@@ -228,45 +224,11 @@ jobs:
             --title "$VERSION" \
             --notes "Automated release. $NOTE"
 
-      # --- Bump the cask in the org's tap (cross-repo via GitHub App) ---
-      - name: Mint tap token
-        id: tap_token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
-        with:
-          app-id: ${{ secrets.TAP_APP_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: ${{ env.TAP_OWNER }}
-          repositories: ${{ env.TAP_REPO }}
-          permission-contents: write
-
-      - name: Bump cask
-        env:
-          TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          ZIP: ${{ steps.build.outputs.zip }}
-        run: |
-          set -euo pipefail
-          SHA256="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_OWNER}/${TAP_REPO}.git" tap
-          CASK="tap/Casks/e05.rb"
-          test -f "$CASK"
-          # Replace the version and sha256 lines in place. Anchored to the
-          # leading keyword so only the cask's own fields are touched.
-          /usr/bin/perl -0pi -e "s/^(\s*version\s+)\"[^\"]*\"/\${1}\"$VERSION\"/m" "$CASK"
-          /usr/bin/perl -0pi -e "s/^(\s*sha256\s+)\"[0-9a-f]*\"/\${1}\"$SHA256\"/m" "$CASK"
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/e05.rb
-          git commit -m "e05 ${VERSION}"
-          git push
-
       # If anything between tagging and publishing failed (including a
       # cancel/timeout, which `failure()` alone misses), drop the tag so
       # it isn't orphaned and the per-day CalVer counter isn't burned.
       # Skip once the release is published: deleting the tag then would
-      # orphan a live release and collide on the next run's same version —
-      # a failed cask bump after publish is fixed forward, not rolled back.
+      # orphan a live release and collide on the next run's same version.
       - name: Delete tag on failure
         if: ${{ (failure() || cancelled()) && steps.create_release.outcome != 'success' }}
         env:
