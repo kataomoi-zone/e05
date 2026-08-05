@@ -37,7 +37,8 @@ permissions: {}
 
 env:
   GHOSTTY_REPO: https://github.com/ghostty-org/ghostty
-  ZIG_VERSION: 0.15.2
+  # ghostty's minimum_zig_version; the main `zig` formula is on 0.16+.
+  ZIG_FORMULA: zig@0.15
 
 jobs:
   release:
@@ -99,11 +100,18 @@ jobs:
           path: GhosttyKit.xcframework
           key: ghosttykit-${{ runner.os }}-${{ hashFiles('GHOSTTY_VERSION', 'patches/**') }}
 
-      - name: Set up zig (only on cache miss)
+      # Homebrew's zig, not an upstream tarball: ghostty's own flake picks
+      # `zig.packages.<system>.brew."0.15.2"` on Darwin and the plain build
+      # everywhere else, and upstream 0.15.2 indeed links no libSystem
+      # symbol at all here. CONTRIBUTING calls for the same keg locally.
+      - name: Install zig (only on cache miss)
         if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          brew install "$ZIG_FORMULA"
+          PREFIX="$(brew --prefix "$ZIG_FORMULA")"
+          "$PREFIX/bin/zig" version
+          echo "$PREFIX/bin" >> "$GITHUB_PATH"
 
       - name: Download Metal Toolchain (only on cache miss)
         if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
