@@ -60,29 +60,29 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           sudo xcodebuild -runFirstLaunch || true
 
-      # TEMPORARY: CI cannot link the zig build runner — every libSystem
-      # symbol comes back undefined, so zig is not finding a Darwin SDK.
-      # The runner's SDK matches a working local machine (Xcode 26.6,
-      # MacOSX.sdk 26.5, tbd-version 4), which points at zig's own SDK
-      # autodetection rather than the toolchain. Link a trivial -lc binary
-      # with --verbose-link to see what reaches the linker. Remove once the
-      # cause is settled.
-      - name: Diagnose zig's linker invocation
+      # zig passes the linker a *versioned* -syslibroot it composes from
+      # xcrun's SDK version — MacOSX26.5.sdk, not the MacOSX.sdk xcrun
+      # actually reports. A local Xcode carries MacOSX<ver>.sdk symlinks
+      # beside the real SDK, so that path resolves; the hosted runner
+      # image lacks them, ld silently gets a nonexistent syslibroot, and
+      # every libc symbol from _abort to _dispatch_queue_create comes back
+      # undefined. Recreate the symlink when it is missing.
+      - name: Link the versioned SDK path zig expects
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
-          set -x
-          printf 'pub fn main() void {}\n' > "$RUNNER_TEMP/probe.zig"
-          zig build-exe "$RUNNER_TEMP/probe.zig" -lc \
-            -femit-bin="$RUNNER_TEMP/probe" --verbose-link 2>&1 | tail -40 || true
+          set -euo pipefail
+          SDK_DIR="$(dirname "$(xcrun --show-sdk-path)")"
+          SDK_VER="$(xcrun --show-sdk-version)"
+          ls -l "$SDK_DIR"
+          if [ ! -e "$SDK_DIR/MacOSX$SDK_VER.sdk" ]; then
+            sudo ln -s MacOSX.sdk "$SDK_DIR/MacOSX$SDK_VER.sdk"
+            ls -l "$SDK_DIR"
+          fi
 
       - name: Build patched GhosttyKit from source (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
-          # zig's own Darwin SDK autodetection comes up empty on the hosted
-          # runner (every libSystem symbol undefined), so hand it the SDK
-          # xcrun reports. Harmless locally, where both resolve the same.
-          SDK="$(xcrun --show-sdk-path)"
           # Pinned ghostty commit (last non-comment line of GHOSTTY_VERSION).
           GHOSTTY_SHA="$(grep -vE '^[[:space:]]*#' GHOSTTY_VERSION | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
           echo "Building GhosttyKit from ghostty@${GHOSTTY_SHA}"
@@ -97,7 +97,6 @@ jobs:
           git -C ghostty apply "$GITHUB_WORKSPACE"/patches/*.patch
           # macOS-only minimal build that emits the apprt-enabled xcframework.
           ( cd ghostty && zig build \
-              --sysroot "$SDK" \
               -Doptimize=ReleaseFast \
               -Dapp-runtime=none \
               -Demit-xcframework=true \
