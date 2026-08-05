@@ -60,6 +60,23 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           sudo xcodebuild -runFirstLaunch || true
 
+      # TEMPORARY: the first CI run failed to link the zig build runner —
+      # every libSystem symbol came back undefined, so zig never got a
+      # usable Darwin SDK. Dump what the runner actually offers before the
+      # build so the cause is visible. Remove once the fix lands.
+      - name: Diagnose the Darwin SDK zig sees
+        if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -x
+          xcode-select -p
+          xcodebuild -version
+          xcrun --show-sdk-path
+          xcrun --show-sdk-version
+          ls -l "$(xcrun --show-sdk-path)/usr/lib/libSystem.tbd"
+          grep -m3 -E 'tbd-version|^--- |platforms' "$(xcrun --show-sdk-path)/usr/lib/libSystem.tbd"
+          zig version
+          zig env
+
       - name: Build patched GhosttyKit from source (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
