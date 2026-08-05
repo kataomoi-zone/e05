@@ -60,27 +60,29 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           sudo xcodebuild -runFirstLaunch || true
 
-      # TEMPORARY: the first CI run failed to link the zig build runner —
-      # every libSystem symbol came back undefined, so zig never got a
-      # usable Darwin SDK. Dump what the runner actually offers before the
-      # build so the cause is visible. Remove once the fix lands.
-      - name: Diagnose the Darwin SDK zig sees
+      # TEMPORARY: CI cannot link the zig build runner — every libSystem
+      # symbol comes back undefined, so zig is not finding a Darwin SDK.
+      # The runner's SDK matches a working local machine (Xcode 26.6,
+      # MacOSX.sdk 26.5, tbd-version 4), which points at zig's own SDK
+      # autodetection rather than the toolchain. Link a trivial -lc binary
+      # with --verbose-link to see what reaches the linker. Remove once the
+      # cause is settled.
+      - name: Diagnose zig's linker invocation
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
           set -x
-          xcode-select -p
-          xcodebuild -version
-          xcrun --show-sdk-path
-          xcrun --show-sdk-version
-          ls -l "$(xcrun --show-sdk-path)/usr/lib/libSystem.tbd"
-          grep -m3 -E 'tbd-version|^--- |platforms' "$(xcrun --show-sdk-path)/usr/lib/libSystem.tbd"
-          zig version
-          zig env
+          printf 'pub fn main() void {}\n' > "$RUNNER_TEMP/probe.zig"
+          zig build-exe "$RUNNER_TEMP/probe.zig" -lc \
+            -femit-bin="$RUNNER_TEMP/probe" --verbose-link 2>&1 | tail -40 || true
 
       - name: Build patched GhosttyKit from source (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
+          # zig's own Darwin SDK autodetection comes up empty on the hosted
+          # runner (every libSystem symbol undefined), so hand it the SDK
+          # xcrun reports. Harmless locally, where both resolve the same.
+          SDK="$(xcrun --show-sdk-path)"
           # Pinned ghostty commit (last non-comment line of GHOSTTY_VERSION).
           GHOSTTY_SHA="$(grep -vE '^[[:space:]]*#' GHOSTTY_VERSION | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
           echo "Building GhosttyKit from ghostty@${GHOSTTY_SHA}"
@@ -95,6 +97,7 @@ jobs:
           git -C ghostty apply "$GITHUB_WORKSPACE"/patches/*.patch
           # macOS-only minimal build that emits the apprt-enabled xcframework.
           ( cd ghostty && zig build \
+              --sysroot "$SDK" \
               -Doptimize=ReleaseFast \
               -Dapp-runtime=none \
               -Demit-xcframework=true \
