@@ -45,11 +45,21 @@ jobs:
           path: GhosttyKit.xcframework
           key: ghosttykit-${{ runner.os }}-${{ hashFiles('GHOSTTY_VERSION', 'patches/**') }}
 
-      - name: Set up zig (only on cache miss)
+      # Fetched straight from ziglang.org rather than through setup-zig:
+      # that action pulls from community mirrors, and the mirror-sourced
+      # 0.15.2 could not link libSystem here at all while the same version
+      # links fine locally. The checksum is printed so the artifact can be
+      # compared against a known-good local download.
+      - name: Install zig (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
+        run: |
+          set -euo pipefail
+          TARBALL="zig-aarch64-macos-${ZIG_VERSION}.tar.xz"
+          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/${TARBALL}" \
+            -o "$RUNNER_TEMP/$TARBALL"
+          shasum -a 256 "$RUNNER_TEMP/$TARBALL"
+          tar -xf "$RUNNER_TEMP/$TARBALL" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-aarch64-macos-${ZIG_VERSION}" >> "$GITHUB_PATH"
 
       - name: Download Metal Toolchain (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
@@ -59,25 +69,6 @@ jobs:
           # component (not preinstalled) and a CoreSimulator in sync.
           xcodebuild -downloadComponent MetalToolchain
           sudo xcodebuild -runFirstLaunch || true
-
-      # zig passes the linker a *versioned* -syslibroot it composes from
-      # xcrun's SDK version — MacOSX26.5.sdk, not the MacOSX.sdk xcrun
-      # actually reports. A local Xcode carries MacOSX<ver>.sdk symlinks
-      # beside the real SDK, so that path resolves; the hosted runner
-      # image lacks them, ld silently gets a nonexistent syslibroot, and
-      # every libc symbol from _abort to _dispatch_queue_create comes back
-      # undefined. Recreate the symlink when it is missing.
-      - name: Link the versioned SDK path zig expects
-        if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
-        run: |
-          set -euo pipefail
-          SDK_DIR="$(dirname "$(xcrun --show-sdk-path)")"
-          SDK_VER="$(xcrun --show-sdk-version)"
-          ls -l "$SDK_DIR"
-          if [ ! -e "$SDK_DIR/MacOSX$SDK_VER.sdk" ]; then
-            sudo ln -s MacOSX.sdk "$SDK_DIR/MacOSX$SDK_VER.sdk"
-            ls -l "$SDK_DIR"
-          fi
 
       - name: Build patched GhosttyKit from source (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
