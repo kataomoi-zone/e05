@@ -471,6 +471,19 @@ extension PaneContainerViewController {
         separatorBefore: true
       ),
       Action(
+        id: "check_for_updates",
+        title: "Check for Updates…",
+        handler: { UpdateController.shared.checkForUpdates() },
+        // A scheduled check that found something re-titles this entry
+        // rather than interrupting; the menu is where that news surfaces.
+        validate: {
+          guard let version = UpdateController.shared.pendingUpdateVersion else {
+            return (true, nil)
+          }
+          return (true, "Update Available — \(version)")
+        }
+      ),
+      Action(
         id: "pane_find",
         title: "Find in Page",
         keyEquivalent: "f",

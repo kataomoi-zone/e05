@@ -134,6 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var isApplyingTheme = false
 
   func applicationDidFinishLaunching(_: Notification) {
+    // Start the update scheduler. Only a bundled build can update itself
+    // — `swift run` and other loose launches have no Info.plist feed URL
+    // and Sparkle would log a configuration error on every start.
+    if Bundle.main.bundleIdentifier != nil {
+      UpdateController.shared.start()
+    }
+
     // Expose the bundled `Contents/Resources/bin` to ghostty surfaces
     // so the `open` shim (Resources/bin/open) shadows /usr/bin/open and
     // `open .` / `open https://...` lands as a pane on the host:
@@ -794,15 +801,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // `NSApplication.terminate` is not a pane op.
     let appMenuItem = NSMenuItem()
     let appMenu = NSMenu()
-    if let settingsIndex = actions.firstIndex(where: { $0.id == "open_settings" }) {
-      let action = actions[settingsIndex]
+    // `Check for Updates…` joins it here for the same reason: every
+    // native macOS app puts it in the Application menu, and a scheduled
+    // check that found something re-titles this item in place.
+    for id in ["check_for_updates", "open_settings"] {
+      guard let index = actions.firstIndex(where: { $0.id == id }) else { continue }
+      let action = actions[index]
       let item = NSMenuItem(
         title: action.title,
         action: #selector(PaneContainerViewController.performAction(_:)),
         keyEquivalent: action.keyEquivalent ?? ""
       )
       item.keyEquivalentModifierMask = action.modifierMask
-      item.tag = settingsIndex
+      item.tag = index
       appMenu.addItem(item)
       appMenu.addItem(.separator())
     }
@@ -815,14 +826,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     mainMenu.addItem(appMenuItem)
 
     // Pane menu — built from the Action registry. The `open_settings`
-    // entry is rendered in the App menu above; skipping it here keeps
-    // ⌘, off the Pane menu list while the underlying action stays
-    // discoverable through the palette and IPC.
+    // and `check_for_updates` entries are rendered in the App menu
+    // above; skipping them here keeps ⌘, off the Pane menu list while
+    // the underlying actions stay discoverable through the palette and
+    // IPC.
     let paneMenuItem = NSMenuItem()
     let paneMenu = NSMenu(title: "Pane")
 
     for (index, action) in actions.enumerated() {
-      if action.id == "open_settings" { continue }
+      if action.id == "open_settings" || action.id == "check_for_updates" { continue }
       if action.separatorBefore {
         paneMenu.addItem(.separator())
       }
