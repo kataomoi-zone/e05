@@ -17,8 +17,9 @@ DerivedData/
 # Swift Package Manager
 .build/
 .swiftpm/
-Package.resolved
 Packages/
+# Package.resolved is tracked: e05 ships as an app, so the resolved
+# dependency versions are what CI must reproduce.
 
 # libghostty pre-built binary
 GhosttyKit.xcframework/

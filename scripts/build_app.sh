@@ -118,6 +118,19 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.zsh" "$CONTENTS/Resources/bin/e05-integration.zsh"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.bash" "$CONTENTS/Resources/bin/e05-integration.bash"
 
+# Sparkle (in-app updates). SwiftPM stages the framework beside the
+# built binaries but does not embed it, so the bundle needs its own copy
+# under Contents/Frameworks — that is where the @rpath reference baked
+# into the executable resolves at launch. rsync --delete keeps it in
+# sync across rebuilds the same way the ghostty resources are handled.
+SPARKLE_SRC="${BIN_SRC%/*}/Sparkle.framework"
+if [[ ! -d "$SPARKLE_SRC" ]]; then
+    echo "build_app.sh: $SPARKLE_SRC not found — run \`swift build\` first" >&2
+    exit 1
+fi
+mkdir -p "$CONTENTS/Frameworks"
+rsync -a --delete "$SPARKLE_SRC/" "$CONTENTS/Frameworks/Sparkle.framework/"
+
 # License texts for bundled copyleft dependencies (the GPLv3 ghostty /
 # kitty shell-integration). GPLv3 requires the full license to ship
 # with the work, so the .app carries it under Resources/licenses.
@@ -240,6 +253,31 @@ trap - ERR
 # deliberate `flavor=dev` stays unsigned-by-author even when the
 # env happens to be exported.
 SIGN_IDENTITY="${E05_SIGN_IDENTITY:-}"
+
+# Sparkle ships four nested Mach-O payloads inside the framework — two
+# XPC services, the updater app, and the Autoupdate tool — and arrives
+# carrying the Sparkle project's own signature. Notarisation inspects
+# each one separately, so they are re-sealed inside-out with our
+# identity before the framework, and the framework before the app.
+# Skipping any of them surfaces later as a notarisation Invalid with
+# "binary is not signed with a valid Developer ID certificate".
+sign_sparkle_framework() {
+    local fw="$CONTENTS/Frameworks/Sparkle.framework"
+    local target
+    for target in \
+        "$fw/Versions/B/XPCServices/Downloader.xpc" \
+        "$fw/Versions/B/XPCServices/Installer.xpc" \
+        "$fw/Versions/B/Updater.app" \
+        "$fw/Versions/B/Autoupdate" \
+        "$fw"
+    do
+        codesign --force "$@" "$target" || {
+            echo "build_app.sh: codesign failed for $target" >&2
+            exit 1
+        }
+    done
+}
+
 case "$FLAVOR" in
     release)
         if [[ -n "$SIGN_IDENTITY" ]]; then
@@ -249,6 +287,7 @@ case "$FLAVOR" in
             # rejects them as ad-hoc and runtime-disabled. The `open`
             # shim alongside it is a bash script (not Mach-O) so
             # codesign would refuse it; we skip it deliberately.
+            sign_sparkle_framework --sign "$SIGN_IDENTITY" --options runtime --timestamp
             codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
                 "$CONTENTS/Resources/bin/e05" || {
                 echo "build_app.sh: codesign (release / Developer ID) failed for bundled CLI binary" >&2
@@ -261,6 +300,7 @@ case "$FLAVOR" in
                 exit 1
             }
         else
+            sign_sparkle_framework --sign - --options runtime
             codesign --force --sign - --options runtime \
                 --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
                 "$APP_DIR" || {
@@ -288,6 +328,7 @@ case "$FLAVOR" in
         spctl --assess --type execute --verbose=2 "$APP_DIR" 2>&1 | tail -5 || true
         ;;
     *)
+        sign_sparkle_framework --sign -
         codesign --force --sign - "$APP_DIR" || {
             echo "build_app.sh: codesign failed for $FLAVOR bundle at $APP_DIR" >&2
             exit 1

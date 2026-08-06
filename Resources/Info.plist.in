@@ -28,6 +28,18 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <!-- Sparkle in-app updates. The feed is served as a release asset:
+         `releases/latest/download/<name>` redirects to the newest
+         non-prerelease asset, so the URL stays fixed while the file it
+         resolves to advances with each release. SUPublicEDKey is the
+         EdDSA public half — the private half signs the appcast in CI and
+         never leaves the keychain / repo secret. App Sandbox is off (see
+         e05.entitlements), so SUEnableInstallerLauncherService is not
+         needed. -->
+    <key>SUFeedURL</key>
+    <string>https://github.com/kataomoi-zone/e05/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>nAusaWOAVyNu5Tp8AWaWlduaf9XZnxi58HWpw0D9r44=</string>
     <!-- Browser app: the user navigates to arbitrary URLs including
          intranet `http://` sites and custom-TLD developer setups like
          `*.localhost` subdomains (`http://dev.foo.localhost/`). Default
