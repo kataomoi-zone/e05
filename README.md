@@ -26,54 +26,27 @@ Alpha. macOS 26+ only.
 - Toast feedback overlay, command palette, per-pane find bar.
 - `e05` CLI for scripting and shell integration; bundled `open` shim that routes shell-typed `open <url>` / `open <dir>` inside terminal panes to new columns.
 
-## Requirements
+## Install
 
-- macOS 26 (Tahoe) or later
-- Swift 6 toolchain (Xcode 16 or Swift 6 CLI)
-- A locally-built `GhosttyKit.xcframework` at the repo root (see [CONTRIBUTING.md](./CONTRIBUTING.md#building-ghosttykit))
+Requires **macOS 26 (Tahoe) or later** on Apple Silicon.
 
-## Build & Run
+Download `e05-<version>.zip` from the [latest release](https://github.com/kataomoi-zone/e05/releases/latest), unzip it, and drag `e05.app` into `/Applications`.
 
-e05 requires a real `.app` bundle at runtime — bundle id drives data paths, permission prompts, and `UNUserNotificationCenter`. `swift run e05` does not work; build the binary first, then assemble the bundle with `scripts/build_app.sh`.
+Builds are Developer ID-signed and notarised by Apple, so the app opens normally — no right-click-Open, no `xattr` incantation.
 
-```bash
-# Dev iteration (build → assemble dev bundle → exec, stderr attached):
-./scripts/dev.sh
+Once installed, e05 keeps itself up to date: it checks for new versions in the background and tells you when one is available, and you can check on demand from the **e05 menu → Check for Updates**. The first launch asks whether automatic checks are welcome.
 
-# Release bundle (ad-hoc signed + Hardened Runtime):
-swift build -c release
-./scripts/build_app.sh release
-open build/release/e05.app
+To use the bundled `e05` command from your shell, see [CLI](#cli).
 
-# Tests:
-swift test --disable-sandbox    # see CONTRIBUTING.md for why --disable-sandbox is needed
-```
+### Verifying a download
 
-Dev and release use separate bundle ids (`com.kawarimidoll.e05.debug` vs `com.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
-
-An ad-hoc-signed release is not notarised, so macOS Gatekeeper blocks it on first launch; right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`.
-
-### Signed & notarised distribution
-
-`scripts/build_app.sh release` upgrades from ad-hoc to a real Developer ID identity when `E05_SIGN_IDENTITY` is set (adding the secure timestamp that notarisation requires), and `scripts/notarize.sh` then submits the bundle to Apple and staples the ticket. Copy `.envrc.sample` to `.envrc`, fill in your Developer ID identity and App Store Connect API key, and `direnv allow` (`.envrc` is gitignored) — or export the variables yourself:
+Every release zip carries a build-provenance attestation, signed evidence that this exact file came out of this repository's public CI at a specific commit rather than someone's laptop:
 
 ```bash
-swift build -c release
-./scripts/build_app.sh release    # Developer ID-signed + Hardened Runtime + secure timestamp
-./scripts/notarize.sh             # notarise, staple, emit a distributable zip
+gh attestation verify e05-<version>.zip --repo kataomoi-zone/e05
 ```
 
-A notarised + stapled bundle launches without being blocked by Gatekeeper. See `scripts/notarize.sh --help` for the required `E05_NOTARY_*` variables.
-
-### Install
-
-`open build/release/e05.app` runs the bundle in place. To install it for everyday use, copy it into `/Applications` with `ditto` (a faithful bundle copy; quit any running instance first):
-
-```bash
-ditto build/release/e05.app /Applications/e05.app
-```
-
-The bundled `e05` CLI then lives at `/Applications/e05.app/Contents/Resources/bin/e05` — see [CLI](#cli) to put it on your `PATH`.
+Nothing in the app requires this — it is there for anyone who would rather not take a binary on faith.
 
 ## Keybindings
 
@@ -167,6 +140,48 @@ e05 notify <message>            # Surface a toast in the running app
 ```
 
 Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-typed `open .` / `open https://...` becomes a new finder / browser column. `open -a App` / `open file.pdf` etc. fall through to the system `/usr/bin/open` and keep their stock Launch Services behaviour.
+
+## Building from source
+
+For contributors, or anyone who would rather build than download. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full setup.
+
+Requirements beyond a Swift 6 toolchain (Xcode 16 or the Swift 6 CLI):
+
+- `GhosttyKit.xcframework` at the repo root, built locally from a pinned ghostty commit — [CONTRIBUTING](./CONTRIBUTING.md#building-ghosttykit)
+- Sparkle under `.sparkle/`, fetched with `./scripts/fetch_sparkle.sh` — [CONTRIBUTING](./CONTRIBUTING.md#fetching-sparkle)
+
+e05 needs a real `.app` bundle at runtime: the bundle id drives data paths, permission prompts, and `UNUserNotificationCenter`. `swift run e05` does not work — build the binary, then assemble the bundle.
+
+```bash
+# Dev iteration (build → assemble dev bundle → exec, stderr attached):
+./scripts/dev.sh
+
+# Release bundle (ad-hoc signed + Hardened Runtime):
+swift build -c release
+./scripts/build_app.sh release
+open build/release/e05.app
+
+# Tests:
+swift test --disable-sandbox    # see CONTRIBUTING.md for why --disable-sandbox is needed
+```
+
+Dev and release use separate bundle ids (`com.kawarimidoll.e05.debug` vs `com.kawarimidoll.e05`), so their data directories stay isolated and you can run them side by side.
+
+A locally-built release is ad-hoc signed rather than notarised, so Gatekeeper blocks it on first launch: right-click the `.app` and choose Open, or run `xattr -d com.apple.quarantine build/release/e05.app`. To install it for everyday use, `ditto build/release/e05.app /Applications/e05.app` (quit any running instance first).
+
+### Producing a signed, notarised build
+
+Releases are cut by CI (`.github/workflows/release.yml`) — a manual dispatch tags a date-based CalVer version, builds everything from source including GhosttyKit, signs, notarises, and publishes the zip with its provenance attestation. The same path works locally with your own Apple credentials.
+
+`scripts/build_app.sh release` upgrades from ad-hoc to a real Developer ID identity when `E05_SIGN_IDENTITY` is set (adding the secure timestamp notarisation requires), and `scripts/notarize.sh` submits the bundle to Apple and staples the ticket. Copy `.envrc.sample` to `.envrc`, fill in your Developer ID identity and App Store Connect API key, and `direnv allow` (`.envrc` is gitignored) — or export the variables yourself:
+
+```bash
+swift build -c release
+./scripts/build_app.sh release    # Developer ID-signed + Hardened Runtime + secure timestamp
+./scripts/notarize.sh             # notarise, staple, emit a distributable zip
+```
+
+See `scripts/notarize.sh --help` for the required `E05_NOTARY_*` variables.
 
 ## Related projects
 
