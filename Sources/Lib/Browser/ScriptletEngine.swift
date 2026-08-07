@@ -200,9 +200,7 @@ public final class ScriptletEngine {
   /// contract as the cosmetic runtime.
   private static let librarySource: String = {
     guard
-      let url = Bundle.module.url(
-        forResource: "scriptlets", withExtension: "js"
-      )
+      let url = BundledScript.url(named: "scriptlets")
     else {
       logger.error("scriptlets.js missing from E05Lib bundle resources")
       preconditionFailure("scriptlets.js missing from E05Lib bundle resources")

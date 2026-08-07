@@ -566,9 +566,7 @@ public final class CosmeticFilterEngine {
   /// writing to the element's `style` attribute directly.
   private static let contentScriptSource: String = {
     guard
-      let url = Bundle.module.url(
-        forResource: "cosmetic-runtime", withExtension: "js"
-      )
+      let url = BundledScript.url(named: "cosmetic-runtime")
     else {
       // Log before trapping so `log stream` surfaces the cause
       // immediately, without waiting for the crash report to be

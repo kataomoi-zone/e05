@@ -118,6 +118,20 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.zsh" "$CONTENTS/Resources/bin/e05-integration.zsh"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.bash" "$CONTENTS/Resources/bin/e05-integration.bash"
 
+# E05Lib's SwiftPM resources (the adblock JS runtimes), flattened into
+# Contents/Resources rather than copied as the .bundle SwiftPM produces.
+# `Bundle.module` looks for that bundle beside Bundle.main.bundleURL —
+# the .app root — where codesign refuses to seal anything ("unsealed
+# contents present in the bundle root"), so it cannot live where the
+# generated accessor expects. BundledScript reads them from here
+# instead; see its docstring for the whole picture.
+RESOURCE_BUNDLE="${BIN_SRC%/*}/e05_E05Lib.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+    echo "build_app.sh: $RESOURCE_BUNDLE not found — run \`swift build\` first" >&2
+    exit 1
+fi
+cp -f "$RESOURCE_BUNDLE"/*.js "$CONTENTS/Resources/"
+
 # Sparkle (in-app updates). SwiftPM stages the framework beside the
 # built binaries but does not embed it, so the bundle needs its own copy
 # under Contents/Frameworks — that is where the @rpath reference baked
@@ -254,14 +268,14 @@ trap - ERR
 # env happens to be exported.
 SIGN_IDENTITY="${E05_SIGN_IDENTITY:-}"
 
-# Sparkle ships four nested Mach-O payloads inside the framework — two
-# XPC services, the updater app, and the Autoupdate tool — and arrives
-# carrying the Sparkle project's own signature. Notarisation inspects
-# each one separately, so they are re-sealed inside-out with our
-# identity before the framework, and the framework before the app.
-# Skipping any of them surfaces later as a notarisation Invalid with
-# "binary is not signed with a valid Developer ID certificate".
-sign_sparkle_framework() {
+# Every bundle nested in the app carries its own seal, applied
+# inside-out so the outer signature covers settled contents. Sparkle
+# accounts for most of them: four nested Mach-O payloads (two XPC
+# services, the updater app, the Autoupdate tool) that arrive under the
+# Sparkle project's own signature and are inspected individually during
+# notarisation. Skipping any surfaces later as a notarisation Invalid
+# with "binary is not signed with a valid Developer ID certificate".
+sign_nested_bundles() {
     local fw="$CONTENTS/Frameworks/Sparkle.framework"
     local target
     for target in \
@@ -287,7 +301,7 @@ case "$FLAVOR" in
             # rejects them as ad-hoc and runtime-disabled. The `open`
             # shim alongside it is a bash script (not Mach-O) so
             # codesign would refuse it; we skip it deliberately.
-            sign_sparkle_framework --sign "$SIGN_IDENTITY" --options runtime --timestamp
+            sign_nested_bundles --sign "$SIGN_IDENTITY" --options runtime --timestamp
             codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
                 "$CONTENTS/Resources/bin/e05" || {
                 echo "build_app.sh: codesign (release / Developer ID) failed for bundled CLI binary" >&2
@@ -300,7 +314,7 @@ case "$FLAVOR" in
                 exit 1
             }
         else
-            sign_sparkle_framework --sign - --options runtime
+            sign_nested_bundles --sign - --options runtime
             codesign --force --sign - --options runtime \
                 --entitlements "$REPO_ROOT/Resources/e05.entitlements" \
                 "$APP_DIR" || {
@@ -328,7 +342,7 @@ case "$FLAVOR" in
         spctl --assess --type execute --verbose=2 "$APP_DIR" 2>&1 | tail -5 || true
         ;;
     *)
-        sign_sparkle_framework --sign -
+        sign_nested_bundles --sign -
         codesign --force --sign - "$APP_DIR" || {
             echo "build_app.sh: codesign failed for $FLAVOR bundle at $APP_DIR" >&2
             exit 1
