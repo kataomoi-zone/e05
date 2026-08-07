@@ -155,9 +155,23 @@ jobs:
           rm -rf GhosttyKit.xcframework
           cp -R ghostty/macos/GhosttyKit.xcframework ./GhosttyKit.xcframework
 
+      # Sparkle ships as a binary artifact SwiftPM downloads from a
+      # GitHub release on every clean checkout. That download has hung
+      # for over half an hour while an identical one in the CI workflow
+      # finished in seconds, so cache the unpacked artifacts and keep the
+      # fetch off the critical path. The key matches ci.yml, so whichever
+      # workflow runs first warms it for the other.
+      - name: Restore SwiftPM artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .build/artifacts
+          key: swiftpm-artifacts-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+
       # --- Swift build + test ---
+      # Bounded so a wedged artifact download fails in minutes instead of
+      # burning the job's 90-minute budget; a healthy build takes ~2.
       - name: swift build -c release
-        run: swift build -c release
+        run: timeout 900 swift build -c release
 
       # Gate the release on the test suite so a red build never ships.
       - name: swift test
