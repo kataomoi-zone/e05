@@ -50,6 +50,31 @@ public final class UpdateController: NSObject {
     pendingUpdateVersion = nil
     updaterController.checkForUpdates(nil)
   }
+
+  // MARK: - Settings
+
+  // Sparkle keeps these in its own NSUserDefaults keys rather than in
+  // E05Preferences, and answering the first-launch permission prompt is
+  // otherwise the only chance to set them. Surfacing them through the
+  // updater (not by reading the defaults directly) keeps Sparkle's own
+  // bookkeeping — scheduling the next check, resetting timers — intact.
+
+  public var automaticallyChecksForUpdates: Bool {
+    get { updaterController.updater.automaticallyChecksForUpdates }
+    set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+  }
+
+  /// Only meaningful while ``automaticallyChecksForUpdates`` is on: with
+  /// it enabled Sparkle installs in the background, which bypasses the
+  /// quiet menu-entry reminder entirely.
+  public var automaticallyDownloadsUpdates: Bool {
+    get { updaterController.updater.automaticallyDownloadsUpdates }
+    set { updaterController.updater.automaticallyDownloadsUpdates = newValue }
+  }
+
+  public var lastUpdateCheckDate: Date? {
+    updaterController.updater.lastUpdateCheckDate
+  }
 }
 
 extension UpdateController: SPUStandardUserDriverDelegate {

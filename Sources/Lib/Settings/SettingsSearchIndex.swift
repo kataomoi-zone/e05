@@ -109,6 +109,12 @@ enum SettingsSearchIndex {
     SettingsSearchEntry(
       id: "general.downloads", title: "Downloads", tab: .general,
       keywords: ["download", "save location", "download folder", "ask where to save"]),
+    SettingsSearchEntry(
+      id: "general.updates", title: "Updates", tab: .general,
+      keywords: [
+        "update", "updates", "auto update", "automatic updates", "check for updates",
+        "sparkle", "new version", "upgrade",
+      ]),
   ]
 
   private static let terminalEntries: [SettingsSearchEntry] = [

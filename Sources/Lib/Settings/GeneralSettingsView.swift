@@ -52,6 +52,12 @@ struct GeneralSettingsView: View {
   /// the moment it loses focus (clicking another control, tabbing, or
   /// switching settings tabs), not only on Enter.
   @FocusState private var urlFieldFocused: Bool
+  /// Sparkle's own settings, mirrored here for binding. Seeded in
+  /// `.onAppear` rather than `init` because the permission prompt or a
+  /// menu-driven check can change them behind this view's back.
+  @State private var autoCheckUpdates = false
+  @State private var autoInstallUpdates = false
+  @State private var lastUpdateCheck: Date?
 
   init() {
     let current = PreferencesStore.shared.preferences
@@ -242,11 +248,57 @@ struct GeneralSettingsView: View {
           Button("Choose…") { pickDownloadDir() }
         }
       }
+
+      // Sparkle owns these settings in its own defaults, so they are
+      // read from and written to the updater rather than through
+      // PreferencesStore like everything else on this screen. Without
+      // this section the only chance to set them is the permission
+      // prompt on first launch.
+      Section("Updates") {
+        Toggle("Check for updates automatically", isOn: $autoCheckUpdates)
+          .onChange(of: autoCheckUpdates) { _, value in
+            UpdateController.shared.automaticallyChecksForUpdates = value
+          }
+
+        Toggle("Download and install automatically", isOn: $autoInstallUpdates)
+          .onChange(of: autoInstallUpdates) { _, value in
+            UpdateController.shared.automaticallyDownloadsUpdates = value
+          }
+          // Meaningless on its own — Sparkle has to find an update
+          // before it can install one.
+          .disabled(!autoCheckUpdates)
+
+        HStack(alignment: .firstTextBaseline) {
+          Text("Last checked")
+          Spacer()
+          Text(lastUpdateCheckLabel)
+            .foregroundStyle(.secondary)
+          Button("Check Now") {
+            UpdateController.shared.checkForUpdates()
+          }
+        }
+      }
     }
     .formStyle(.grouped)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .onAppear { subscribeToStore() }
+    .onAppear {
+      subscribeToStore()
+      // Re-read on every appearance: the permission prompt, a manual
+      // check, or the menu entry can all have moved these since the
+      // view was constructed.
+      autoCheckUpdates = UpdateController.shared.automaticallyChecksForUpdates
+      autoInstallUpdates = UpdateController.shared.automaticallyDownloadsUpdates
+      lastUpdateCheck = UpdateController.shared.lastUpdateCheckDate
+    }
     .onDisappear { unsubscribeFromStore() }
+  }
+
+  /// Absolute rather than relative ("2 hours ago"): the value only
+  /// refreshes when the view appears, so a relative string would drift
+  /// into being wrong while the window sits open.
+  private var lastUpdateCheckLabel: String {
+    guard let date = lastUpdateCheck else { return "Never" }
+    return date.formatted(date: .abbreviated, time: .shortened)
   }
 
   // MARK: - Store subscription
