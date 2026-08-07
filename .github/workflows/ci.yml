@@ -113,8 +113,18 @@ jobs:
       # Bounded so a wedged artifact download fails in minutes instead of
       # burning the job's 90-minute budget; a healthy build takes ~1.
       - name: swift build
+        id: swift_build
         timeout-minutes: 15
         run: swift build --disable-sandbox
+
+      # The wedge this guards against is silent — SwiftPM prints
+      # "Downloading binary artifact" and then nothing at all — so a
+      # timeout here reads as an unexplained cancellation unless the
+      # difference is spelled out at the point of failure.
+      - name: Explain a failed build
+        if: ${{ failure() && steps.swift_build.outcome == 'failure' }}
+        run: |
+          echo "::error::swift build failed. If its log ends at 'Downloading binary artifact' with no output after it, SwiftPM's Sparkle download wedged rather than the code breaking — re-run this workflow and it will normally clear. The cache that avoids that download is keyed on Package.resolved, so a dependency bump or a week without a build is when it can happen. Any other ending is a real build failure."
 
       - name: swift test
         run: swift test --disable-sandbox
