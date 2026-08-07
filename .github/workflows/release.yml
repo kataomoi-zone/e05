@@ -12,6 +12,9 @@
 #   MACOS_NOTARY_KEY_P8_BASE64  App Store Connect API key (.p8), base64.
 #   MACOS_NOTARY_KEY_ID      10-char API key id.
 #   MACOS_NOTARY_ISSUER      Issuer UUID.
+#   SPARKLE_EDDSA_PRIVATE_KEY  EdDSA private key signing the appcast
+#                            (generate_keys -x). Unrelated to the Apple
+#                            certificate — Sparkle has its own trust root.
 name: release
 
 on:
@@ -218,6 +221,31 @@ jobs:
         with:
           subject-path: ${{ steps.build.outputs.zip }}
 
+      # --- Sparkle feed. Signed over the stapled zip, so the bytes it
+      # attests are the ones the release serves. Published as an asset of
+      # this release: SUFeedURL points at
+      # `releases/latest/download/appcast.xml`, which redirects to the
+      # newest release's copy, so the feed URL never changes. ---
+      - name: Sign the Sparkle appcast
+        id: appcast
+        env:
+          EDDSA_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          ZIP: ${{ steps.build.outputs.zip }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed_key"
+          printf '%s' "$EDDSA_KEY" > "$KEY_FILE"
+          APPCAST="$RUNNER_TEMP/appcast.xml"
+          ./scripts/sign_appcast.sh \
+            "$ZIP" \
+            "$GITHUB_WORKSPACE/build/release/e05.app" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/e05-${VERSION}.zip" \
+            "$KEY_FILE" > "$APPCAST"
+          rm -f "$KEY_FILE"
+          cat "$APPCAST"
+          echo "path=${APPCAST}" >> "$GITHUB_OUTPUT"
+
       # --- Publish the GitHub release (no `on: release` trigger is set) ---
       - name: Create release
         id: create_release
@@ -225,10 +253,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.ver.outputs.version }}
           ZIP: ${{ steps.build.outputs.zip }}
+          APPCAST: ${{ steps.appcast.outputs.path }}
           NOTE: ${{ inputs.note }}
         run: |
           set -euo pipefail
-          gh release create "$VERSION" "$ZIP" \
+          gh release create "$VERSION" "$ZIP" "$APPCAST" \
             --title "$VERSION" \
             --notes "Automated release. $NOTE"
 
