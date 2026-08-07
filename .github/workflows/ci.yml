@@ -113,7 +113,8 @@ jobs:
       # Bounded so a wedged artifact download fails in minutes instead of
       # burning the job's 90-minute budget; a healthy build takes ~1.
       - name: swift build
-        run: timeout 900 swift build --disable-sandbox
+        timeout-minutes: 15
+        run: swift build --disable-sandbox
 
       - name: swift test
         run: swift test --disable-sandbox
