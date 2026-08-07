@@ -6,11 +6,6 @@ let package = Package(
   platforms: [
     .macOS(.v26)
   ],
-  dependencies: [
-    // In-app updates. Ships as a prebuilt XCFramework, so this pulls a
-    // binary rather than sources — pinned in Package.resolved.
-    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.5")
-  ],
   targets: [
     .executableTarget(
       name: "e05",
@@ -35,10 +30,7 @@ let package = Package(
     ),
     .target(
       name: "E05Lib",
-      dependencies: [
-        "GhosttyKit",
-        .product(name: "Sparkle", package: "Sparkle"),
-      ],
+      dependencies: ["GhosttyKit", "Sparkle"],
       path: "Sources/Lib",
       resources: [
         // `.copy` instead of `.process` because the JS runtime
@@ -63,6 +55,14 @@ let package = Package(
     .binaryTarget(
       name: "GhosttyKit",
       path: "GhosttyKit.xcframework"
+    ),
+    // Fetched by scripts/fetch_sparkle.sh at the version SPARKLE_VERSION
+    // pins, same shape as GhosttyKit above. A local path rather than a
+    // remote package because SwiftPM's own artifact download has wedged
+    // silently in CI with no retry or timeout available; curl has both.
+    .binaryTarget(
+      name: "Sparkle",
+      path: ".sparkle/Sparkle.xcframework"
     ),
   ]
 )

@@ -1,0 +1,15 @@
+# Sparkle release pinned for the in-app updater.
+#
+# Fetched by scripts/fetch_sparkle.sh into .sparkle/ (gitignored), which
+# supplies both the XCFramework Package.swift links against and the
+# signing tools scripts/sign_appcast.sh calls. Taking the archive
+# ourselves rather than letting SwiftPM resolve a remote package keeps
+# the download under our control: SwiftPM's fetch has wedged silently for
+# over half an hour in CI, whereas curl can retry and time out.
+#
+# The checksum is the one Sparkle's own Package.swift declares for this
+# tag, so pinning it here preserves the verification SwiftPM was doing.
+# When bumping, take the new value from that file rather than computing
+# it locally — matching upstream's published digest is the point.
+version=2.9.5
+sha256=34b9b2071f3de0012eca3faa3a9290bb94e62131e9a74f6dc91514a000097a6c

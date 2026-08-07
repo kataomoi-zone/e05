@@ -97,39 +97,19 @@ jobs:
           rm -rf GhosttyKit.xcframework
           cp -R ghostty/macos/GhosttyKit.xcframework ./GhosttyKit.xcframework
 
-      # Sparkle ships as a binary artifact SwiftPM downloads from a
-      # GitHub release, and that download has hung for over half an hour
-      # while an identical one elsewhere finished in seconds. The cache
-      # that prevents it is SwiftPM's *own* artifact cache, not the
-      # unpacked copy: `.build/artifacts` is only consulted when
-      # `.build/workspace-state.json` agrees the artifact is installed,
-      # and that file is not restored here — so a run with only the
-      # unpacked copy re-downloads anyway. With ~/.swiftpm/cache present
-      # the fetch resolves locally ("Fetched … from cache") and never
-      # touches the network. Keyed on Package.resolved: a dependency bump
-      # is exactly when the payload changes.
-      - name: Restore SwiftPM cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.swiftpm/cache
-          key: swiftpm-cache-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+      # Sparkle is a local binary target fetched here rather than a remote
+      # SwiftPM package, so the download is curl's — with retries and a
+      # timeout — instead of SwiftPM's, which wedged silently for over
+      # half an hour with neither.
+      - name: Fetch Sparkle
+        run: ./scripts/fetch_sparkle.sh
 
       # --- Swift build + test ---
-      # Bounded so a wedged artifact download fails in minutes instead of
-      # burning the job's 90-minute budget; a healthy build takes ~1.
+      # Bounded well above the ~1 minute a healthy build takes, so a stall
+      # surfaces early instead of consuming the job's 90-minute budget.
       - name: swift build
-        id: swift_build
         timeout-minutes: 15
         run: swift build --disable-sandbox
-
-      # The wedge this guards against is silent — SwiftPM prints
-      # "Downloading binary artifact" and then nothing at all — so a
-      # timeout here reads as an unexplained cancellation unless the
-      # difference is spelled out at the point of failure.
-      - name: Explain a failed build
-        if: ${{ failure() && steps.swift_build.outcome == 'failure' }}
-        run: |
-          echo "::error::swift build failed. If its log ends at 'Downloading binary artifact' with no output after it, SwiftPM's Sparkle download wedged rather than the code breaking — re-run this workflow and it will normally clear. The cache that avoids that download is keyed on Package.resolved, so a dependency bump or a week without a build is when it can happen. Any other ending is a real build failure."
 
       - name: swift test
         run: swift test --disable-sandbox

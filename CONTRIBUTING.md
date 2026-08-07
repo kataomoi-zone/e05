@@ -52,9 +52,22 @@ Notes:
 - **Local libghostty patches** live under `patches/`. Because `include/ghostty.h` is hand-written (not generated), each patch touches both `src/apprt/embedded.zig` (the export) and `include/ghostty.h` (the declaration). Re-verify on a ghostty bump: the internal APIs they call (`highlightSemanticContent`, `promptIterator`) are not C-stable. The `*.snippet.zig` files document the canonical insertion point
 - If the macOS app build fails at `CodeSign` with `resource fork, Finder information, or similar detritus not allowed`, strip extended attributes and rebuild: `xattr -cr macos zig-out` (or `xattr -cr .` for the whole checkout)
 
+## Fetching Sparkle
+
+e05 links against Sparkle for in-app updates. Like `GhosttyKit.xcframework` it is a local binary target rather than a vendored one, so fetch it once per clone:
+
+```bash
+./scripts/fetch_sparkle.sh        # unpacks .sparkle/ (gitignored)
+```
+
+The version and its checksum are pinned in `SPARKLE_VERSION`; the script verifies the archive against that digest and is a no-op when the pinned version is already present, so it is safe to re-run. It supplies both the XCFramework the build links against and the signing tools (`sign_update`, `generate_keys`, `generate_appcast`) under `.sparkle/bin`.
+
+Taking the archive with `curl` rather than declaring a remote SwiftPM package is deliberate: SwiftPM's artifact fetch has wedged silently in CI for over half an hour — "Downloading binary artifact" and then no further output — with no retry or timeout to configure. `curl` has both. To bump, update `SPARKLE_VERSION` with the version and the `checksum` that Sparkle's own `Package.swift` declares for that tag, then re-run the script.
+
 ## Build and test
 
 ```bash
+./scripts/fetch_sparkle.sh      # first time, or after a SPARKLE_VERSION bump
 swift build
 swift test --disable-sandbox    # unit tests
 ```

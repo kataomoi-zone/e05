@@ -18,11 +18,13 @@ DerivedData/
 .build/
 .swiftpm/
 Packages/
-# Package.resolved is tracked: e05 ships as an app, so the resolved
-# dependency versions are what CI must reproduce.
+Package.resolved
 
 # libghostty pre-built binary
 GhosttyKit.xcframework/
+
+# Sparkle release fetched by scripts/fetch_sparkle.sh (SPARKLE_VERSION)
+.sparkle/
 
 # Nix
 result

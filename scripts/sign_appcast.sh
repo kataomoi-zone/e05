@@ -7,9 +7,9 @@
 # publishes its own feed anyway. Version history would only matter for
 # showing the notes of versions a user skipped past.
 #
-# Signing uses Sparkle's own `sign_update`, which SwiftPM already
-# unpacked under .build/artifacts as part of resolving the dependency —
-# no separate download, and the checksum SwiftPM verified covers it.
+# Signing uses Sparkle's own `sign_update`, which arrives in .sparkle
+# alongside the XCFramework when scripts/fetch_sparkle.sh runs — the same
+# archive, checksum-verified against the digest SPARKLE_VERSION pins.
 #
 # Usage:
 #   scripts/sign_appcast.sh <zip> <app-bundle> <download-url> [ed-key-file]
@@ -29,12 +29,12 @@ URL="$3"
 KEY_FILE="${4:-}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SIGN_UPDATE="$REPO_ROOT/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+SIGN_UPDATE="$REPO_ROOT/.sparkle/bin/sign_update"
 
 for required in "$ZIP" "$APP" "$SIGN_UPDATE"; do
     if [[ ! -e "$required" ]]; then
         echo "sign_appcast.sh: $required not found" >&2
-        [[ "$required" == "$SIGN_UPDATE" ]] && echo "  (run \`swift build\` first)" >&2
+        [[ "$required" == "$SIGN_UPDATE" ]] && echo "  (run scripts/fetch_sparkle.sh first)" >&2
         exit 1
     fi
 done
