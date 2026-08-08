@@ -49,7 +49,7 @@ Notes:
 - `-Dxcframework-target=native` produces a host-arch binary only. Use `universal` for a fat xcframework
 - `-Dapp-runtime=none` selects the embedding runtime; on macOS `emit-xcframework` is implied
 - `libghostty-spm` is intentionally **not** used. Empirically it has key-handling problems and unstable API tracking
-- **Local libghostty patches** live under `patches/`. Because `include/ghostty.h` is hand-written (not generated), each patch touches both `src/apprt/embedded.zig` (the export) and `include/ghostty.h` (the declaration). Re-verify on a ghostty bump: the internal APIs they call (`highlightSemanticContent`, `promptIterator`) are not C-stable. The `*.snippet.zig` files document the canonical insertion point
+- **Local libghostty patches** live under `patches/`. Because `include/ghostty.h` is hand-written (not generated), each export needs an edit in both `src/apprt/embedded.zig` and `include/ghostty.h`. All of e05's exports ship as a single patch file — they share an insertion region, so separate patches would fight over line numbers. Re-verify on a ghostty bump: the internal APIs they call (`highlightSemanticContent`, `promptIterator`, `ScreenSet.get`, `Screen.selectionString`, `Selection.core`) are not C-stable. The `*.snippet.zig` files document the canonical insertion point, one per export
 - If the macOS app build fails at `CodeSign` with `resource fork, Finder information, or similar detritus not allowed`, strip extended attributes and rebuild: `xattr -cr macos zig-out` (or `xattr -cr .` for the whole checkout)
 
 ## Fetching Sparkle

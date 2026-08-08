@@ -48,6 +48,12 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// (inherited / home) directory.
   private let restoreWorkingDirectory: String?
 
+  /// Path of a saved scrollback capture to replay, supplied on restore.
+  /// Passed to the shell as `E05_RESTORE_SCROLLBACK_FILE`; the shell
+  /// integration cats and deletes it before the first prompt. `nil` for
+  /// fresh panes and for restores with nothing captured.
+  private let restoreScrollbackPath: String?
+
   /// When true, surface is preserved when the view is removed from window.
   /// Used by undo close to keep the terminal alive while detached.
   public var keepSurfaceAlive = false
@@ -87,10 +93,12 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   }
 
   public init(
-    frame: NSRect, ghosttyApp: GhosttyApp, restoreWorkingDirectory: String? = nil
+    frame: NSRect, ghosttyApp: GhosttyApp, restoreWorkingDirectory: String? = nil,
+    restoreScrollbackPath: String? = nil
   ) {
     self.ghosttyApp = ghosttyApp
     self.restoreWorkingDirectory = restoreWorkingDirectory
+    self.restoreScrollbackPath = restoreScrollbackPath
     super.init(frame: frame)
     // Deliberately do NOT set `wantsLayer` or override `makeBackingLayer`.
     // libghostty's Metal renderer makes the view layer-hosting by
@@ -180,13 +188,41 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     // restore dir leaves `working_directory` unset, which lets
     // libghostty's `*-inherit-working-directory` seed it from the
     // focused surface instead — the desired behaviour for fresh panes.
-    if let cwd = restoreWorkingDirectory {
-      surface = cwd.withCString { ptr in
-        cfg.working_directory = ptr
-        return ghostty_surface_new(app, &cfg)
+    // Scrollback replay is handed to the shell through the environment:
+    // e05-integration.{zsh,bash} reads E05_RESTORE_SCROLLBACK_FILE, cats
+    // the file before the first prompt, and deletes it. libghostty has
+    // no API to write into a surface's screen, so the child process is
+    // the only way text can reach it.
+    var env: [ghostty_env_var_s] = []
+    var envStrings: [UnsafeMutablePointer<CChar>] = []
+    defer {
+      for pointer in envStrings { free(pointer) }
+    }
+    if let path = restoreScrollbackPath,
+      let key = strdup("E05_RESTORE_SCROLLBACK_FILE"),
+      let value = strdup(path)
+    {
+      envStrings.append(key)
+      envStrings.append(value)
+      env.append(ghostty_env_var_s(key: key, value: value))
+    }
+
+    // The pointers only need to outlive `ghostty_surface_new`, which
+    // copies the config during init — same contract as the cwd string.
+    env.withUnsafeMutableBufferPointer { buf in
+      if !buf.isEmpty {
+        cfg.env_vars = buf.baseAddress
+        cfg.env_var_count = buf.count
       }
-    } else {
-      surface = ghostty_surface_new(app, &cfg)
+
+      if let cwd = restoreWorkingDirectory {
+        surface = cwd.withCString { ptr in
+          cfg.working_directory = ptr
+          return ghostty_surface_new(app, &cfg)
+        }
+      } else {
+        surface = ghostty_surface_new(app, &cfg)
+      }
     }
     guard surface != nil else {
       logger.error("ghostty_surface_new failed")

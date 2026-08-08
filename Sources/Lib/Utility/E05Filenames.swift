@@ -15,6 +15,10 @@ public enum E05Filenames {
   public static let session = "session.json"
   public static let preferences = "preferences.json"
   public static let adblockerWhitelist = "adblocker-whitelist.json"
+  /// Directory of per-pane terminal scrollback captures, replayed into
+  /// the shell on restore. One file per terminal pane, named by the id
+  /// recorded in its `SessionState.PaneState`.
+  public static let scrollbackDir = "scrollback"
   /// Unix-domain control socket the `e05` CLI connects to. The CLI
   /// target does not depend on `E05Lib`, so `Sources/CLI/main.swift`
   /// hardcodes this same literal — keep the two in sync.

@@ -77,18 +77,25 @@ public struct PaneDependencies {
   /// the shell start in its default (inherited) directory.
   public var terminalWorkingDirectory: String?
 
+  /// Path of a saved scrollback capture to replay into a restored
+  /// terminal pane, handed to the shell through the surface
+  /// environment. Only meaningful for terminal panes.
+  public var terminalScrollbackPath: String?
+
   public init(
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
     initialTitle: String? = nil,
     initialInteractionState: Data? = nil,
-    terminalWorkingDirectory: String? = nil
+    terminalWorkingDirectory: String? = nil,
+    terminalScrollbackPath: String? = nil
   ) {
     self.dataStore = dataStore
     self.startSuspended = startSuspended
     self.initialTitle = initialTitle
     self.initialInteractionState = initialInteractionState
     self.terminalWorkingDirectory = terminalWorkingDirectory
+    self.terminalScrollbackPath = terminalScrollbackPath
   }
 }
 
@@ -306,7 +313,8 @@ public final class PaneModel {
       guard let ghosttyApp else { fatalError("GhosttyApp required for terminal pane") }
       let tv = GhosttyTerminalView(
         frame: .zero, ghosttyApp: ghosttyApp,
-        restoreWorkingDirectory: dependencies.terminalWorkingDirectory)
+        restoreWorkingDirectory: dependencies.terminalWorkingDirectory,
+        restoreScrollbackPath: dependencies.terminalScrollbackPath)
       tv.translatesAutoresizingMaskIntoConstraints = false
       self.content = .terminal(tv)
     case .browser:

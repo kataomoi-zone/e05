@@ -23,3 +23,31 @@ _e05_fix_path() {
 # add-zsh-hook manages the precmd_functions array safely (dedup +
 # ordering), avoiding races with ghostty's own precmd manipulation.
 autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd _e05_fix_path
+
+# Replay the scrollback e05 captured for this pane at quit.
+#
+# libghostty has no API to write into a surface's screen, so the only
+# way text reaches it is the child process's stdout — the shell prints
+# the saved history itself. This runs at source time rather than from a
+# hook so the output lands before the first prompt, and the file is
+# removed immediately so a later shell in the same pane cannot replay it
+# a second time.
+_e05_restore_scrollback() {
+  # NOT named `path`: that is tied to `PATH` in zsh as its array form, so
+  # assigning to it splits the value on the colons and spaces of a real
+  # pathname — and corrupts PATH on the way past.
+  local restore_file="${E05_RESTORE_SCROLLBACK_FILE:-}"
+  [[ -n "$restore_file" ]] || return 0
+  # Unset before printing: a shell spawned from this one (tmux, a nested
+  # login shell) would otherwise inherit the variable and try again.
+  unset E05_RESTORE_SCROLLBACK_FILE
+  [[ -r "$restore_file" ]] || return 0
+  # The file already ends with the timestamped rule that separates
+  # restored history from this session — e05 appends it at capture time
+  # so the stamp reflects when the history was taken.
+  command cat -- "$restore_file" 2>/dev/null
+  command rm -f -- "$restore_file" 2>/dev/null
+}
+_e05_restore_scrollback
+# One-shot: nothing calls it again, so keep it out of the user's namespace.
+unset -f _e05_restore_scrollback

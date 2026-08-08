@@ -113,6 +113,14 @@ public struct SessionState: Codable, Sendable {
     /// terminals whose shell never reported a directory (no shell
     /// integration), and sessions written before this field existed.
     public var terminalWorkingDirectory: String?
+    /// Identifies this pane's scrollback capture under
+    /// `dataDir/scrollback/<id>.txt`, replayed into the shell on
+    /// restore. Stored as an id rather than the text itself because the
+    /// capture can run to hundreds of kilobytes, and only the pane it
+    /// belongs to ever reads it. `nil` for non-terminal panes, captures
+    /// that came back empty, and sessions written before this field
+    /// existed.
+    public var terminalScrollbackID: String?
   }
 
   // MARK: - File Path

@@ -8,7 +8,16 @@ extension PaneContainerViewController {
   // MARK: - Session Save/Restore
 
   /// Capture the current layout as a serializable session state.
-  public func captureSession() -> SessionState {
+  ///
+  /// `captureScrollback` reads every terminal pane's full screen and
+  /// writes it to disk, which is why the autosave path leaves it off:
+  /// at a 2.5s debounce the cost would land on every layout tweak. The
+  /// clean-quit path turns it on, so a restart replays the history a
+  /// crash would have dropped.
+  public func captureSession(captureScrollback: Bool = false) -> SessionState {
+    // Ids written this pass, so `ScrollbackStore.prune` can drop the
+    // files of panes that have since closed.
+    var capturedScrollbackIDs = Set<String>()
     // Snapshot the live scroll offset onto the current workspace so
     // it's included in the save. Other workspaces already have their
     // scrollX recorded when they were last switched away from.
@@ -79,8 +88,21 @@ extension PaneContainerViewController {
           }
           // Terminal panes carry their shell's last-reported cwd so the
           // restore can relaunch the surface in the same directory.
-          if let cwd = pane.terminalView?.currentWorkingDirectory {
-            state.terminalWorkingDirectory = cwd
+          if let terminalView = pane.terminalView {
+            if let cwd = terminalView.currentWorkingDirectory {
+              state.terminalWorkingDirectory = cwd
+            }
+            // Scrollback goes to its own file, keyed by an id in the
+            // pane state. Only captured when the caller asks: reading
+            // the whole screen for every pane is too much work for the
+            // 2.5s autosave, so it runs on quit, where losing the last
+            // few seconds of history to a crash is the accepted trade.
+            if captureScrollback, let text = terminalView.readScreenText(),
+              let id = ScrollbackStore.save(text)
+            {
+              state.terminalScrollbackID = id
+              capturedScrollbackIDs.insert(id)
+            }
           }
           paneStates.append(state)
           keptPaneOriginalIndexes.append(paneIdx)
@@ -149,6 +171,13 @@ extension PaneContainerViewController {
       .map(\.string)
       .sorted()
 
+    // Only meaningful on a capturing pass: skipping it during autosave
+    // leaves the previous quit's files alone, which is what the next
+    // restore wants to find.
+    if captureScrollback {
+      ScrollbackStore.prune(keeping: capturedScrollbackIDs)
+    }
+
     return SessionState(
       workspaces: workspaceStates,
       focusedWorkspaceIndex: rebasedFocusedIndex,
@@ -185,7 +214,7 @@ extension PaneContainerViewController {
   /// behind any autosave still draining on the write queue, so the
   /// final layout is what ends up on disk.
   public func saveSessionAndWait() {
-    let session = captureSession()
+    let session = captureSession(captureScrollback: true)
     Self.sessionWriteQueue.sync { session.save() }
   }
 
@@ -212,6 +241,14 @@ extension PaneContainerViewController {
     sessionAutosaveWorkItem = work
     DispatchQueue.main.asyncAfter(
       deadline: .now() + Self.autosaveDebounce, execute: work)
+  }
+
+  /// Path of a pane's saved scrollback, if it recorded one. Existence is
+  /// not checked here — the shell tests the file before reading it, so a
+  /// path pointing at a consumed or pruned capture is already a no-op.
+  private static func scrollbackPath(for state: SessionState.PaneState) -> String? {
+    guard let id = state.terminalScrollbackID else { return nil }
+    return ScrollbackStore.fileURL(id: id)?.path
   }
 
   /// Restore session from a saved state.
@@ -294,7 +331,8 @@ extension PaneContainerViewController {
             startSuspended: !firstIsLive,
             initialTitle: firstPaneState.title,
             initialInteractionState: firstPaneState.interactionState,
-            terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory
+            terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory,
+            terminalScrollbackPath: Self.scrollbackPath(for: firstPaneState)
           ),
           focusOnInsert: false,
           id: columnId
@@ -321,7 +359,8 @@ extension PaneContainerViewController {
               startSuspended: !isLive,
               initialTitle: paneState.title,
               initialInteractionState: paneState.interactionState,
-              terminalWorkingDirectory: paneState.terminalWorkingDirectory
+              terminalWorkingDirectory: paneState.terminalWorkingDirectory,
+              terminalScrollbackPath: Self.scrollbackPath(for: paneState)
             )
           )
           if let title = paneState.title { pane.title = title }

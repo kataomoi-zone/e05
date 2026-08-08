@@ -49,6 +49,42 @@ extension GhosttyTerminalView {
     readText(topRow: 0, topColumn: 0, bottomRow: rows - 1, bottomColumn: columns - 1)
   }
 
+  /// The primary screen in full, scrollback included, as plain text.
+  ///
+  /// `GHOSTTY_POINT_SCREEN` addresses the whole history where
+  /// ``readViewportText(rows:columns:)``'s `VIEWPORT` covers only what
+  /// is on screen; `TOP_LEFT` / `BOTTOM_RIGHT` resolve to its corners.
+  /// Measured on a 44-row grid holding 200 lines of output: the viewport
+  /// read returned 44 lines, this one 211.
+  ///
+  /// Reads through e05's `ghostty_surface_read_primary_text` patch
+  /// rather than the stock `ghostty_surface_read_text`, which resolves
+  /// against whichever screen is active. A full-screen TUI switches that
+  /// to the alternate screen, which holds no scrollback — capturing
+  /// there returns a screenful of vim and discards the real history, and
+  /// quit is exactly when an editor tends to be open.
+  ///
+  /// Plain text by choice. Ghostty can export styled output through the
+  /// `write_screen_file` binding action, but it bakes the capture-time
+  /// theme into OSC 10/11, which then overrides the live theme when
+  /// replayed. Colour is not worth that.
+  func readScreenText() -> String? {
+    guard let surface else { return nil }
+    let selection = ghostty_selection_s(
+      top_left: ghostty_point_s(
+        tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+      bottom_right: ghostty_point_s(
+        tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+      rectangle: false)
+    var out = ghostty_text_s()
+    guard ghostty_surface_read_primary_text(surface, selection, &out) else { return nil }
+    defer { ghostty_surface_free_text(surface, &out) }
+    guard let ptr = out.text, out.text_len > 0 else { return "" }
+    return ptr.withMemoryRebound(to: UInt8.self, capacity: Int(out.text_len)) {
+      String(decoding: UnsafeBufferPointer(start: $0, count: Int(out.text_len)), as: UTF8.self)
+    }
+  }
+
   /// Read a point range through libghostty's selection-text API. Returns
   /// "" for an empty range and nil on failure.
   func readText(topRow: Int, topColumn: Int, bottomRow: Int, bottomColumn: Int) -> String? {

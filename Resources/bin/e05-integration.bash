@@ -31,3 +31,32 @@ case ";${PROMPT_COMMAND};" in
   *";_e05_fix_path;"*) ;;
   *) PROMPT_COMMAND="_e05_fix_path${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
 esac
+
+# Replay the scrollback e05 captured for this pane at quit.
+#
+# libghostty has no API to write into a surface's screen, so the only
+# way text reaches it is the child process's stdout — the shell prints
+# the saved history itself. This runs at source time rather than from
+# PROMPT_COMMAND so the output lands before the first prompt, and the
+# file is removed immediately so a later shell in the same pane cannot
+# replay it a second time.
+_e05_restore_scrollback() {
+  # Matches the zsh snippet's name deliberately: `path` is tied to `PATH`
+  # there as its array form, so assigning to it splits a real pathname on
+  # its colons and spaces. Harmless in bash, but keeping the two the same
+  # means the trap only has to be remembered once.
+  local restore_file="${E05_RESTORE_SCROLLBACK_FILE:-}"
+  [ -n "$restore_file" ] || return 0
+  # Unset before printing: a shell spawned from this one (tmux, a nested
+  # login shell) would otherwise inherit the variable and try again.
+  unset E05_RESTORE_SCROLLBACK_FILE
+  [ -r "$restore_file" ] || return 0
+  # The file already ends with the timestamped rule that separates
+  # restored history from this session — e05 appends it at capture time
+  # so the stamp reflects when the history was taken.
+  command cat -- "$restore_file" 2>/dev/null
+  command rm -f -- "$restore_file" 2>/dev/null
+}
+_e05_restore_scrollback
+# One-shot: nothing calls it again, so keep it out of the user's namespace.
+unset -f _e05_restore_scrollback

@@ -1,20 +1,21 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 72bbb57a8..30accff0d 100644
+index 72bbb57a8..b449a5e1c 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -1127,6 +1127,7 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
+@@ -1127,6 +1127,8 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                                     ghostty_input_key_s,
                                                     ghostty_binding_flags_e*);
  GHOSTTY_API void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
 +GHOSTTY_API bool ghostty_surface_command_text(ghostty_surface_t, ghostty_point_s, bool, uint8_t, ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_read_primary_text(ghostty_surface_t, ghostty_selection_s, ghostty_text_s*);
  GHOSTTY_API void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
  GHOSTTY_API bool ghostty_surface_mouse_captured(ghostty_surface_t);
  GHOSTTY_API bool ghostty_surface_mouse_button(ghostty_surface_t,
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 7310159cc..aa2937cdc 100644
+index 7310159cc..b0f0932b2 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1681,6 +1681,123 @@ pub const CAPI = struct {
+@@ -1681,6 +1681,178 @@ pub const CAPI = struct {
          ptr.deinit();
      }
  
@@ -133,6 +134,61 @@ index 7310159cc..aa2937cdc 100644
 +        };
 +
 +        return readTextLocked(surface, core_sel, result);
++    }
++
++    /// Read the primary screen in full, scrollback included, whichever
++    /// screen is currently active.
++    ///
++    /// `ghostty_surface_read_text` resolves against `screens.active`,
++    /// and a full-screen TUI (vim, less, htop) makes that the alternate
++    /// screen. The alternate screen holds no scrollback, so a capture
++    /// taken while one is running returns a screenful of TUI and drops
++    /// the session's actual history. e05 captures scrollback at quit,
++    /// which is exactly when an editor is likely to be open.
++    ///
++    /// The selection is resolved against the primary screen, so pass
++    /// SCREEN/TOP_LEFT .. SCREEN/BOTTOM_RIGHT to mean "all of it". The
++    /// viewport fields of the result are left unset (-1 / 0): they
++    /// describe where text sits on the *active* screen, which is not
++    /// what was read. Free with ghostty_surface_free_text.
++    /// e05 patch (not upstream).
++    export fn ghostty_surface_read_primary_text(
++        surface: *Surface,
++        sel: Selection,
++        result: *Text,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.get(
++            .primary,
++        ) orelse return false;
++
++        const core_sel = sel.core(screen) orelse return false;
++
++        // selectionString rather than dumpTextLocked: that helper reads
++        // screens.active for both the text and the viewport metadata —
++        // the very thing being avoided here — and the pixel/offset
++        // fields it computes go unused by a capture.
++        const text = screen.selectionString(global.alloc, .{
++            .sel = core_sel,
++            .trim = false,
++        }) catch |err| {
++            log.warn("error reading primary text err={}", .{err});
++            return false;
++        };
++
++        result.* = .{
++            .tl_px_x = -1,
++            .tl_px_y = -1,
++            .offset_start = 0,
++            .offset_len = 0,
++            .text = text.ptr,
++            .text_len = text.len,
++        };
++
++        return true;
 +    }
 +
      /// Tell the surface that it needs to schedule a render
