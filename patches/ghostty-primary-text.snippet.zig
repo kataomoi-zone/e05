@@ -23,7 +23,8 @@
 //   git diff src/apprt/embedded.zig include/ghostty.h > <e05>/patches/ghostty-command-text.patch
 //   /opt/homebrew/opt/zig@0.15/bin/zig build -Doptimize=ReleaseFast \
 //     -Dapp-runtime=none -Demit-xcframework=true \
-//     -Dxcframework-target=native -Demit-exe=false -Dsentry=false
+//     -Dxcframework-target=native -Demit-exe=false -Demit-macos-app=false \
+//     -Dsentry=false
 //   cp -R macos/GhosttyKit.xcframework <e05>/
 //
 // Re-verify on a ghostty bump: ScreenSet.get / Screen.selectionString /

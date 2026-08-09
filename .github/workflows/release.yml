@@ -142,13 +142,18 @@ jobs:
           # e05's local libghostty patches (add ghostty_* C symbols e05
           # links against). Touches src/apprt/embedded.zig + include/ghostty.h.
           git -C ghostty apply "$GITHUB_WORKSPACE"/patches/*.patch
-          # macOS-only minimal build that emits the apprt-enabled xcframework.
+          # macOS-only minimal build that emits the apprt-enabled
+          # xcframework. `-Demit-macos-app=false` because the xcframework
+          # flag turns the app bundle on by default and e05 does not use
+          # Ghostty.app; building it only adds time and a CodeSign step
+          # that can fail for reasons unrelated to this build.
           ( cd ghostty && zig build \
               -Doptimize=ReleaseFast \
               -Dapp-runtime=none \
               -Demit-xcframework=true \
               -Dxcframework-target=native \
               -Demit-exe=false \
+              -Demit-macos-app=false \
               -Dsentry=false )
           # Strip xattrs that can fail the CodeSign step, then vendor in.
           xattr -cr ghostty/macos/GhosttyKit.xcframework || true
