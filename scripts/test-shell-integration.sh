@@ -22,6 +22,15 @@ trap 'rm -rf "$TMP"' EXIT
 HIST_DIR="$TMP/scroll back"
 mkdir -p "$HIST_DIR"
 
+# Eleven lines, so a replay that truncates is distinguishable from one
+# that does not — `head` defaults to ten, and a one-line fixture cannot
+# tell the two apart. No trailing newline: a real capture ends on the old
+# prompt line. Written with `%b` so the cases and the expected string
+# come from this one definition.
+REPLAY_FIXTURE='l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9\nl10\nl11'
+REPLAY_LINES=$(printf '%b' "$REPLAY_FIXTURE")
+export REPLAY_FIXTURE
+
 pass=0
 fail=0
 
@@ -153,11 +162,11 @@ EOF
 # PATH for the rest of the function and the `command cat` doing the
 # replay could no longer be found. Silent, and it looked like an empty
 # capture. Asserted in both shells so the two snippets cannot drift.
-run_bash 'replays a spaced path, deletes it, leaves PATH intact' 'scrollback-content|gone|/usr/bin:/bin' <<'EOF'
+run_bash 'replays a spaced path in full, deletes it, leaves PATH intact' "$REPLAY_LINES|gone|/usr/bin:/bin" <<'EOF'
 set -u
 export E05_BIN_DIR=/opt/e05
 export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/hist.txt"
-printf 'scrollback-content' > "$E05_RESTORE_SCROLLBACK_FILE"
+printf '%b' "$REPLAY_FIXTURE" > "$E05_RESTORE_SCROLLBACK_FILE"
 file="$E05_RESTORE_SCROLLBACK_FILE"
 PATH=/usr/bin:/bin
 . "$INTEG/e05-integration.bash"
@@ -175,12 +184,31 @@ export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/hist.txt"
 printf %s "${E05_RESTORE_SCROLLBACK_FILE:-<unset>}"
 EOF
 
-run_bash 'stays quiet when the capture is missing' 'quiet' <<'EOF'
+# The unset has to happen before the readability test, not after it: a
+# missing capture must still clear the variable, or a nested shell
+# inherits a path to a file that is never going to appear. `-` rather
+# than `:-` so an empty value is not reported as unset.
+run_bash 'clears the variable even when the capture is missing' 'quiet|<unset>' <<'EOF'
 set -u
 export E05_BIN_DIR=/opt/e05
 export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/absent.txt"
 . "$INTEG/e05-integration.bash"
-printf quiet
+printf 'quiet|%s' "${E05_RESTORE_SCROLLBACK_FILE-<unset>}"
+EOF
+
+# `command` in front of cat and rm: a user with their own `cat` — a
+# pager wrapper, a colouriser — must not get to see the capture, and one
+# with their own `rm` must not keep it on disk.
+run_bash 'a user cat function cannot intercept the replay' 'l1|gone' <<'EOF'
+set -u
+export E05_BIN_DIR=/opt/e05
+export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/hijack.txt"
+printf l1 > "$E05_RESTORE_SCROLLBACK_FILE"
+file="$E05_RESTORE_SCROLLBACK_FILE"
+cat() { printf intercepted; }
+rm() { :; }
+. "$INTEG/e05-integration.bash"
+printf '|%s' "$([ -e "$file" ] && echo still-there || echo gone)"
 EOF
 
 run_bash 'stays quiet with no capture configured' 'quiet' <<'EOF'
@@ -283,11 +311,11 @@ _e05_fix_path && rc=0 || rc=$?
 printf '%s|%s' "$rc" "$PATH"
 EOF
 
-run_zsh 'replays a spaced path, deletes it, leaves PATH intact' 'scrollback-content|gone|/usr/bin:/bin' <<'EOF'
+run_zsh 'replays a spaced path in full, deletes it, leaves PATH intact' "$REPLAY_LINES|gone|/usr/bin:/bin" <<'EOF'
 setopt nounset
 export E05_BIN_DIR=/opt/e05
 export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/hist.txt"
-printf 'scrollback-content' > "$E05_RESTORE_SCROLLBACK_FILE"
+printf '%b' "$REPLAY_FIXTURE" > "$E05_RESTORE_SCROLLBACK_FILE"
 file="$E05_RESTORE_SCROLLBACK_FILE"
 PATH=/usr/bin:/bin
 source "$INTEG/e05-integration.zsh"
@@ -303,12 +331,24 @@ source "$INTEG/e05-integration.zsh"
 print -n "${E05_RESTORE_SCROLLBACK_FILE:-<unset>}"
 EOF
 
-run_zsh 'stays quiet when the capture is missing' 'quiet' <<'EOF'
+run_zsh 'clears the variable even when the capture is missing' 'quiet|<unset>' <<'EOF'
 setopt nounset
 export E05_BIN_DIR=/opt/e05
 export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/absent.txt"
 source "$INTEG/e05-integration.zsh"
-print -n quiet
+printf 'quiet|%s' "${E05_RESTORE_SCROLLBACK_FILE-<unset>}"
+EOF
+
+run_zsh 'a user cat function cannot intercept the replay' 'l1|gone' <<'EOF'
+setopt nounset
+export E05_BIN_DIR=/opt/e05
+export E05_RESTORE_SCROLLBACK_FILE="$HIST_DIR/hijack.txt"
+printf l1 > "$E05_RESTORE_SCROLLBACK_FILE"
+file="$E05_RESTORE_SCROLLBACK_FILE"
+cat() { printf intercepted; }
+rm() { :; }
+source "$INTEG/e05-integration.zsh"
+printf '|%s' "$([[ -e "$file" ]] && print still-there || print gone)"
 EOF
 
 run_zsh 'stays quiet with no capture configured' 'quiet' <<'EOF'

@@ -19,6 +19,21 @@ private func mode(of url: URL) throws -> Int16 {
   return (attrs[.posixPermissions] as? NSNumber)?.int16Value ?? -1
 }
 
+/// 2026-08-09 00:12:34, built on the Gregorian calendar explicitly. The
+/// store stamps with a fixed `en_US_POSIX` formatter, so a test that
+/// built its date on `Calendar.current` would disagree with it on a
+/// machine set to a Japanese or Buddhist calendar.
+private func gregorianDate() -> Date {
+  var components = DateComponents()
+  components.year = 2026
+  components.month = 8
+  components.day = 9
+  components.hour = 0
+  components.minute = 12
+  components.second = 34
+  return Calendar(identifier: .gregorian).date(from: components)!
+}
+
 @Suite("ScrollbackStore paths")
 struct ScrollbackStorePathTests {
   @Test("resolves a uuid id")
@@ -42,7 +57,7 @@ struct ScrollbackStorePathTests {
     }
   }
 
-  @Test("the shared store points at the data directory")
+  @Test("the default store points at the data directory")
   func defaultStoreLocation() {
     // The seam exists for tests; production must still land in the real
     // per-bundle-id data directory rather than wherever a test left it.
@@ -176,6 +191,24 @@ struct ScrollbackStoreSaveTests {
       #expect(!FileManager.default.fileExists(atPath: dir.path))
     }
   }
+
+  @Test("stamps a capture saved without a time with the current one")
+  func defaultCaptureTimeIsNow() throws {
+    // The production call site passes neither id nor time. A default
+    // frozen at some fixed instant would label every restored pane with
+    // it, and no other test exercises the defaulted argument.
+    try withTempStore { store, _ in
+      let id = try #require(store.save("history"))
+      let written = try String(contentsOf: try #require(store.fileURL(id: id)), encoding: .utf8)
+      let formatter = DateFormatter()
+      formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+      let afterPrefix = try #require(written.range(of: "restored from "))
+      let stamp = String(written[afterPrefix.upperBound...].prefix(19))
+      let parsed = try #require(formatter.date(from: stamp), "unparsable stamp: \(stamp)")
+      #expect(abs(parsed.timeIntervalSinceNow) < 120)
+    }
+  }
 }
 
 @Suite("ScrollbackStore.prune")
@@ -215,7 +248,7 @@ struct ScrollbackStorePruneTests {
     }
   }
 
-  @Test("leaves anything it did not write alone")
+  @Test("leaves entries that are not UUID-named captures alone")
   func ignoresForeignEntries() throws {
     try withTempStore { store, dir in
       let ids = seed(store, count: 1)
@@ -289,6 +322,15 @@ struct ScrollbackStoreTests {
     #expect(ScrollbackStore.truncate(captured) == "real output")
   }
 
+  @Test("drops a banner sitting under the screen read's padding")
+  func dropsBannerBelowPadding() {
+    // The shape a real capture takes: the screen read pads the top with
+    // blank rows, so the banner is not the first line and the blanks
+    // have to come off before the banner filter can see it.
+    let captured = "\n\nLast login: Sat Aug  8 23:44:20 on ttys027\n\nreal output"
+    #expect(ScrollbackStore.truncate(captured) == "real output")
+  }
+
   @Test("keeps a login-like line that is not the banner")
   func keepsInteriorLoginMention() {
     // Only the leading banner goes; the same text further down is
@@ -329,31 +371,37 @@ struct ScrollbackStoreTests {
     #expect(result.hasSuffix("500-\(line)"))
   }
 
+  @Test("keeps the cap's worth of a capture that has no line to cut on")
+  func characterCapWithoutALineBoundary() {
+    // The branch taken when the tail holds no newline at all — a single
+    // enormous line, which `cat`ting a binary into the pane produces.
+    // Asserted as an equality: a cap that keeps a tenth of its budget
+    // also satisfies "no more than the cap".
+    let text = String(repeating: "x", count: ScrollbackStore.maxCharacters + 5000)
+    #expect(ScrollbackStore.truncate(text).count == ScrollbackStore.maxCharacters)
+  }
+
+  @Test("the caps are the values the doc comment justifies")
+  func capsArePinned() {
+    // Pinned literally. Every other cap test states its expectation in
+    // terms of these constants, so a typo here would move the tests with
+    // it and ship unnoticed.
+    #expect(ScrollbackStore.maxLines == 4000)
+    #expect(ScrollbackStore.maxCharacters == 400_000)
+  }
+
   @Test("stamps the rule with the capture time, not the replay time")
   func replayRuleCarriesCaptureTimestamp() {
     // A restored pane should say when its history is from; reading the
     // clock at replay would instead label everything "just now".
-    var components = DateComponents()
-    components.year = 2026
-    components.month = 8
-    components.day = 9
-    components.hour = 0
-    components.minute = 12
-    components.second = 34
-    let captured = Calendar.current.date(from: components)!
+    //
+    // The whole payload is compared rather than probed: the layout is a
+    // contract with the shell that replays it, and prefix/suffix checks
+    // leave the middle — the blank line before the rule — unpinned.
+    let result = ScrollbackStore.replayText("real output", capturedAt: gregorianDate())
 
-    let result = ScrollbackStore.replayText("real output", capturedAt: captured)
-
-    // Leading blank line keeps the history off the `Last login:` banner
-    // that `login` prints immediately above it.
-    #expect(result.hasPrefix("\nreal output"))
-    #expect(result.contains("2026-08-09 00:12:34"))
-    // Dim, not a background colour: a theme change since the capture
-    // could otherwise leave the rule invisible.
-    #expect(result.contains("\u{1B}[2m"))
-    // Trailing newline, or zsh marks the replay with its `%` glyph for
-    // output that does not end on a line boundary.
-    #expect(result.hasSuffix("\u{1B}[0m\n"))
+    #expect(
+      result == "\nreal output\n\n\u{1B}[2m──── restored from 2026-08-09 00:12:34 ────\u{1B}[0m\n")
   }
 
   @Test("drops the previous replay's rule so rules cannot stack")
@@ -374,6 +422,17 @@ struct ScrollbackStoreTests {
     // Only a line that is entirely a rule goes.
     let captured = "grep '──── restored from ' log.txt"
     #expect(ScrollbackStore.truncate(captured) == captured)
+  }
+
+  @Test("keeps a line matching only one end of the rule")
+  func keepsHalfRuleMatches() {
+    // The filter is an AND of prefix and suffix. A line that opens like
+    // a rule but does not close like one — or the reverse — is output,
+    // and dropping either half of the test would take it with the rules.
+    let opensLikeARule = "──── restored from a log I was reading"
+    let closesLikeARule = "make: done ────"
+    #expect(ScrollbackStore.truncate(opensLikeARule) == opensLikeARule)
+    #expect(ScrollbackStore.truncate(closesLikeARule) == closesLikeARule)
   }
 
   @Test("adds no rule when there is no history")
