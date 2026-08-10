@@ -3,12 +3,25 @@ import Testing
 
 @testable import E05Lib
 
+/// A store pointed at a directory of its own, removed afterwards. `save`
+/// and `prune` touch the filesystem, and `prune` deletes — neither may
+/// run against the developer's real captures.
+private func withTempStore(_ body: (ScrollbackStore, URL) throws -> Void) rethrows {
+  let dir = FileManager.default.temporaryDirectory
+    .appendingPathComponent("e05-scrollback-\(UUID().uuidString)")
+  defer { try? FileManager.default.removeItem(at: dir) }
+  try body(ScrollbackStore(directory: dir), dir)
+}
+
 @Suite("ScrollbackStore paths")
 struct ScrollbackStorePathTests {
   @Test("resolves a uuid id")
   func resolvesUUID() {
     let id = UUID().uuidString
-    #expect(ScrollbackStore.fileURL(id: id)?.lastPathComponent == "\(id).txt")
+    withTempStore { store, dir in
+      #expect(store.fileURL(id: id)?.lastPathComponent == "\(id).txt")
+      #expect(store.fileURL(id: id)?.deletingLastPathComponent().path == dir.path)
+    }
   }
 
   @Test("refuses an id that is not a uuid")
@@ -16,9 +29,131 @@ struct ScrollbackStorePathTests {
     // The id round-trips through session.json, so a hand-edited or
     // corrupted one must not steer the shell's `cat` — and its `rm -f` —
     // outside the scrollback directory.
-    #expect(ScrollbackStore.fileURL(id: "../../../../etc/passwd") == nil)
-    #expect(ScrollbackStore.fileURL(id: "not-a-uuid") == nil)
-    #expect(ScrollbackStore.fileURL(id: "") == nil)
+    withTempStore { store, _ in
+      #expect(store.fileURL(id: "../../../../etc/passwd") == nil)
+      #expect(store.fileURL(id: "not-a-uuid") == nil)
+      #expect(store.fileURL(id: "") == nil)
+    }
+  }
+
+  @Test("the shared store points at the data directory")
+  func defaultStoreLocation() {
+    // The seam exists for tests; production must still land in the real
+    // per-bundle-id data directory rather than wherever a test left it.
+    #expect(ScrollbackStore.default.directory.lastPathComponent == E05Filenames.scrollbackDir)
+    #expect(
+      ScrollbackStore.default.directory.deletingLastPathComponent().path
+        == E05Paths.default.dataDir.path)
+  }
+}
+
+@Suite("ScrollbackStore.save")
+struct ScrollbackStoreSaveTests {
+  @Test("writes a capture the recorded id resolves to")
+  func writesCapture() throws {
+    try withTempStore { store, _ in
+      let id = try #require(store.save("hello world"))
+      let url = try #require(store.fileURL(id: id))
+      let written = try String(contentsOf: url, encoding: .utf8)
+      #expect(written.contains("hello world"))
+      // The rule the shell replays is part of the file, not something
+      // the integration prints, so it must survive the round trip.
+      #expect(written.contains("restored from"))
+    }
+  }
+
+  @Test("keeps the capture private on disk")
+  func restrictivePermissions() throws {
+    // A capture is the pane's screen verbatim — an echoed token, the
+    // output of `env`. A backup would otherwise carry it out
+    // world-readable.
+    try withTempStore { store, dir in
+      let id = try #require(store.save("secret"))
+      let url = try #require(store.fileURL(id: id))
+      let fm = FileManager.default
+      let filePerms = try fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+      let dirPerms = try fm.attributesOfItem(atPath: dir.path)[.posixPermissions] as? NSNumber
+      #expect(filePerms?.int16Value == 0o600)
+      #expect(dirPerms?.int16Value == 0o700)
+    }
+  }
+
+  @Test("writes nothing when there is no history worth restoring")
+  func refusesEmptyCapture() {
+    withTempStore { store, dir in
+      #expect(store.save("") == nil)
+      #expect(store.save("\n\n   \n") == nil)
+      // Not even the directory: an empty capture should leave no trace.
+      #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
+  }
+
+  @Test("refuses an id that is not a uuid")
+  func refusesNonUUIDID() {
+    withTempStore { store, dir in
+      #expect(store.save("history", id: "../escape") == nil)
+      // Rejected before anything reaches the filesystem.
+      #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
+  }
+}
+
+@Suite("ScrollbackStore.prune")
+struct ScrollbackStorePruneTests {
+  /// `save` is the only writer, so seed through it: a hand-written file
+  /// could disagree with the naming `prune` parses.
+  private func seed(_ store: ScrollbackStore, count: Int) -> [String] {
+    (1...count).compactMap { store.save("capture \($0)") }
+  }
+
+  @Test("keeps the ids just written and drops the rest")
+  func dropsStaleCaptures() throws {
+    try withTempStore { store, _ in
+      let ids = seed(store, count: 3)
+      #expect(ids.count == 3)
+      let urls = try ids.map { try #require(store.fileURL(id: $0)) }
+      store.prune(keeping: [ids[0], ids[2]])
+      let fm = FileManager.default
+      #expect(fm.fileExists(atPath: urls[0].path))
+      #expect(!fm.fileExists(atPath: urls[1].path))
+      #expect(fm.fileExists(atPath: urls[2].path))
+    }
+  }
+
+  @Test("an empty keep set clears the directory")
+  func emptyKeepSetClearsAll() throws {
+    // The contract a quit with no terminal panes relies on. Stated as a
+    // test because it is also the shape a bug would take.
+    try withTempStore { store, dir in
+      // Asserted, not discarded: a `save` that returned nil for every
+      // capture would leave the directory empty too, and this test would
+      // pass without prune having done anything.
+      #expect(seed(store, count: 2).count == 2)
+      store.prune(keeping: [])
+      let left = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+      #expect(left.isEmpty)
+    }
+  }
+
+  @Test("leaves files without the .txt suffix alone")
+  func ignoresNonTextFiles() throws {
+    try withTempStore { store, dir in
+      let ids = seed(store, count: 1)
+      let capture = try #require(store.fileURL(id: ids[0]))
+      let stray = dir.appendingPathComponent("notes.md")
+      try "keep me".write(to: stray, atomically: true, encoding: .utf8)
+      store.prune(keeping: [])
+      #expect(FileManager.default.fileExists(atPath: stray.path))
+      #expect(!FileManager.default.fileExists(atPath: capture.path))
+    }
+  }
+
+  @Test("does nothing when no capture has ever been written")
+  func toleratesMissingDirectory() {
+    withTempStore { store, dir in
+      store.prune(keeping: [])
+      #expect(!FileManager.default.fileExists(atPath: dir.path))
+    }
   }
 }
 

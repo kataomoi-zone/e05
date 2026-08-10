@@ -16,22 +16,32 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Scrollback")
 ///
 /// Files live in their own directory rather than inside `session.json`
 /// because they are large and only one of them is ever wanted at a time.
-public enum ScrollbackStore {
+struct ScrollbackStore: Sendable {
   /// Matches cmux, which arrived at these by shipping the feature. Far
   /// more than a screenful is rarely read back, and an unbounded capture
   /// would put megabytes through the shell on every restore.
   static let maxLines = 4000
   static let maxCharacters = 400_000
 
-  static var directory: URL {
-    E05Paths.default.dataFile(E05Filenames.scrollbackDir)
+  /// Process-wide store, reading the real data directory. Every caller
+  /// in the app goes through this.
+  static let `default` = ScrollbackStore()
+
+  /// A parameter rather than a computed property so a test can point the
+  /// store at a temp directory, per the seam convention ``E05Paths``
+  /// documents: `save` and `prune` touch the filesystem, and `prune`
+  /// deletes, so neither may run against the user's own captures.
+  let directory: URL
+
+  init(directory: URL = E05Paths.default.dataFile(E05Filenames.scrollbackDir)) {
+    self.directory = directory
   }
 
   /// Resolve a capture's path from the id recorded in a `PaneState`.
   /// `nil` unless the id is a UUID: the value round-trips through
   /// session.json, and an id carrying `../` would send the shell's `cat`
   /// — and its `rm -f` — anywhere it can reach.
-  static func fileURL(id: String) -> URL? {
+  func fileURL(id: String) -> URL? {
     guard UUID(uuidString: id) != nil else { return nil }
     return directory.appendingPathComponent("\(id).txt")
   }
@@ -40,10 +50,10 @@ public enum ScrollbackStore {
   /// `PaneState`. `nil` when there is nothing worth restoring or the
   /// write fails — the caller then simply omits the field and the pane
   /// restores without history.
-  public static func save(
+  func save(
     _ text: String, id: String = UUID().uuidString, capturedAt: Date = Date()
   ) -> String? {
-    let trimmed = replayText(truncate(text), capturedAt: capturedAt)
+    let trimmed = Self.replayText(Self.truncate(text), capturedAt: capturedAt)
     guard !trimmed.isEmpty, let url = fileURL(id: id) else { return nil }
     do {
       // 0700 / 0600: a capture is the pane's screen verbatim, which can
@@ -66,7 +76,7 @@ public enum ScrollbackStore {
   /// Drop every capture except the ones just written. Panes closed since
   /// the last save would otherwise leave their files behind forever, and
   /// a restored pane's file is consumed by the shell rather than by us.
-  public static func prune(keeping ids: Set<String>) {
+  func prune(keeping ids: Set<String>) {
     let fm = FileManager.default
     guard let entries = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
     for entry in entries where entry.hasSuffix(".txt") {

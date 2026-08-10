@@ -98,7 +98,7 @@ extension PaneContainerViewController {
             // 2.5s autosave, so it runs on quit, where losing the last
             // few seconds of history to a crash is the accepted trade.
             if captureScrollback, let text = terminalView.readScreenText(),
-              let id = ScrollbackStore.save(text)
+              let id = ScrollbackStore.default.save(text)
             {
               state.terminalScrollbackID = id
               capturedScrollbackIDs.insert(id)
@@ -175,7 +175,7 @@ extension PaneContainerViewController {
     // leaves the previous quit's files alone, which is what the next
     // restore wants to find.
     if captureScrollback {
-      ScrollbackStore.prune(keeping: capturedScrollbackIDs)
+      ScrollbackStore.default.prune(keeping: capturedScrollbackIDs)
     }
 
     return SessionState(
@@ -248,7 +248,7 @@ extension PaneContainerViewController {
   /// path pointing at a consumed or pruned capture is already a no-op.
   private static func scrollbackPath(for state: SessionState.PaneState) -> String? {
     guard let id = state.terminalScrollbackID else { return nil }
-    return ScrollbackStore.fileURL(id: id)?.path
+    return ScrollbackStore.default.fileURL(id: id)?.path
   }
 
   /// Restore session from a saved state.
