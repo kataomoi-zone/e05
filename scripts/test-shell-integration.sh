@@ -5,7 +5,8 @@
 # They are the one part of e05 no Swift test can reach, and every bug
 # they have shipped was a shell behaviour that only appears when the code
 # runs: a local named `path`, which zsh ties to PATH; an unset
-# PROMPT_COMMAND under `set -u`. Both are asserted below.
+# PROMPT_COMMAND under `set -u`; an unquoted substitution pattern read as
+# a glob. All are asserted below.
 #
 # Each case runs in a pristine shell (`--noprofile --norc` / `zsh -f`) so
 # the developer's own dotfiles cannot mask a failure, and prints exactly
@@ -112,6 +113,28 @@ _e05_fix_path
 printf %s "$PATH"
 EOF
 
+# bash reads the right-hand side of ${var//pat/} as a glob. A bundle path
+# holding `[`, `*` or `?` — an app renamed to "e05 [beta]", a checkout
+# under a bracketed directory — then matches nothing, so the strip is a
+# no-op and PATH gains an entry every single prompt.
+run_bash 'a bin dir with glob metacharacters still dedups' '/opt/e05 [beta]/bin:/usr/bin:/bin' <<'EOF'
+export E05_BIN_DIR='/opt/e05 [beta]/bin'
+. "$INTEG/e05-integration.bash"
+PATH=/usr/bin:/bin
+_e05_fix_path; _e05_fix_path; _e05_fix_path
+printf %s "$PATH"
+EOF
+
+# The same unquoted pattern is destructive in the other direction: it
+# matches entries that merely fit it, and they are silently dropped.
+run_bash 'a bin dir with a wildcard leaves other entries alone' '/opt/*/bin:/usr/bin:/opt/a/bin:/bin' <<'EOF'
+export E05_BIN_DIR='/opt/*/bin'
+. "$INTEG/e05-integration.bash"
+PATH=/usr/bin:/opt/a/bin:/bin
+_e05_fix_path
+printf %s "$PATH"
+EOF
+
 # Without the guard an empty value prepends an empty PATH entry, which
 # bash reads as the current directory.
 run_bash 'guards an unset bin dir under set -u' '1|/usr/bin:/bin' <<'EOF'
@@ -185,6 +208,17 @@ source "$INTEG/e05-integration.zsh"
 print -n ${(M)#precmd_functions:#_e05_fix_path}
 EOF
 
+# `autoload` defers, so it reports success even when the function cannot
+# be found; only the call fails. A user whose fpath is broken must not
+# silently lose the PATH fix.
+run_zsh 'registers by hand when add-zsh-hook is unavailable' '_e05_fix_path' <<'EOF'
+setopt nounset
+fpath=()
+export E05_BIN_DIR=/opt/e05
+source "$INTEG/e05-integration.zsh"
+print -n "${precmd_functions[*]}"
+EOF
+
 run_zsh 'prepends the bin dir' '/opt/e05:/usr/bin:/bin' <<'EOF'
 export E05_BIN_DIR=/opt/e05
 source "$INTEG/e05-integration.zsh"
@@ -205,6 +239,36 @@ run_zsh 'moves an existing entry to the front' '/opt/e05:/usr/bin:/bin' <<'EOF'
 export E05_BIN_DIR=/opt/e05
 source "$INTEG/e05-integration.zsh"
 PATH=/usr/bin:/opt/e05:/bin
+_e05_fix_path
+print -rn -- "$PATH"
+EOF
+
+run_zsh 'a bin dir with glob metacharacters still dedups' '/opt/e05 [beta]/bin:/usr/bin:/bin' <<'EOF'
+export E05_BIN_DIR='/opt/e05 [beta]/bin'
+source "$INTEG/e05-integration.zsh"
+PATH=/usr/bin:/bin
+_e05_fix_path; _e05_fix_path; _e05_fix_path
+print -rn -- "$PATH"
+EOF
+
+# Both options are things a user can set in their own zshrc, and the
+# snippet is sourced afterwards. Unquoted, sh_word_split splits a PATH
+# entry containing a space and globsubst turns the bundle path into a
+# pattern that eats unrelated entries.
+run_zsh 'sh_word_split keeps a spaced PATH entry whole' '/opt/e05:/usr/bin:/my dir/bin:/bin' <<'EOF'
+setopt sh_word_split
+export E05_BIN_DIR=/opt/e05
+source "$INTEG/e05-integration.zsh"
+PATH="/usr/bin:/my dir/bin:/bin"
+_e05_fix_path
+print -rn -- "$PATH"
+EOF
+
+run_zsh 'globsubst leaves other entries alone' '/opt/e*05:/usr/bin:/opt/eXX05:/bin' <<'EOF'
+setopt globsubst
+export E05_BIN_DIR='/opt/e*05'
+source "$INTEG/e05-integration.zsh"
+PATH="/usr/bin:/opt/eXX05:/bin"
 _e05_fix_path
 print -rn -- "$PATH"
 EOF

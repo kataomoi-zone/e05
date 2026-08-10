@@ -20,9 +20,13 @@ _e05_fix_path() {
   # survives `set -u` instead of tripping over the state it guards.
   [ -n "${E05_BIN_DIR:-}" ] || return
   # Strip any existing occurrence (mid / leading / trailing) so the
-  # per-prompt run doesn't grow PATH, then prepend.
+  # per-prompt run doesn't grow PATH, then prepend. The pattern is
+  # quoted: bash treats the expansion as a glob otherwise, so a bundle
+  # path holding `[`, `*` or `?` would match nothing (PATH then grows by
+  # one entry every prompt) while matching unrelated entries that happen
+  # to fit the pattern (those get dropped).
   local p=":$PATH:"
-  p="${p//:$E05_BIN_DIR:/:}"
+  p="${p//":$E05_BIN_DIR:"/:}"
   p="${p#:}"
   p="${p%:}"
   PATH="$E05_BIN_DIR${p:+:$p}"

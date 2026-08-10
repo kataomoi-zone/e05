@@ -21,12 +21,23 @@ _e05_fix_path() {
   [[ -n "${E05_BIN_DIR:-}" ]] || return
   # Drop any existing entry first so repeated prompts don't grow PATH,
   # then prepend. The `path` array stays synced to the exported PATH.
-  path=("$E05_BIN_DIR" ${path:#$E05_BIN_DIR})
+  # Both halves are quoted and `(@)` keeps the array an array: without
+  # them `sh_word_split` splits an entry containing a space, and
+  # `globsubst` turns the bundle path into a pattern that eats unrelated
+  # entries. Either option can come from the user's own zshrc.
+  path=("$E05_BIN_DIR" "${(@)path:#"$E05_BIN_DIR"}")
 }
 
 # add-zsh-hook manages the precmd_functions array safely (dedup +
-# ordering), avoiding races with ghostty's own precmd manipulation.
-autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd _e05_fix_path
+# ordering), avoiding races with ghostty's own precmd manipulation. Its
+# autoload cannot be tested for success — autoload defers, so it returns
+# 0 even against an empty fpath and only the call below fails. Register
+# by hand there instead of leaving the PATH fix silently unarmed.
+autoload -Uz add-zsh-hook 2>/dev/null
+if ! add-zsh-hook precmd _e05_fix_path 2>/dev/null; then
+  typeset -ga precmd_functions
+  [[ " ${precmd_functions[*]} " == *" _e05_fix_path "* ]] || precmd_functions+=(_e05_fix_path)
+fi
 
 # Replay the scrollback e05 captured for this pane at quit.
 #
