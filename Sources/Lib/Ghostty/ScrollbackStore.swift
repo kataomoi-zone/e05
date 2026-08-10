@@ -81,6 +81,12 @@ struct ScrollbackStore: Sendable {
     guard let entries = try? fm.contentsOfDirectory(atPath: directory.path) else { return }
     for entry in entries where entry.hasSuffix(".txt") {
       let id = String(entry.dropLast(4))
+      // Same check ``fileURL(id:)`` makes on the way in: the only things
+      // this ever wrote are UUID-named. The suffix alone would put a
+      // hand-placed `README.txt` — or, since removeItem recurses, a
+      // directory that happens to end in `.txt` — inside the blast
+      // radius of an operation whose whole job is deleting.
+      guard UUID(uuidString: id) != nil else { continue }
       if ids.contains(id) { continue }
       try? fm.removeItem(at: directory.appendingPathComponent(entry))
     }

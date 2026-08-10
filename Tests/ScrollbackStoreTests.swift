@@ -135,16 +135,29 @@ struct ScrollbackStorePruneTests {
     }
   }
 
-  @Test("leaves files without the .txt suffix alone")
-  func ignoresNonTextFiles() throws {
+  @Test("leaves anything it did not write alone")
+  func ignoresForeignEntries() throws {
     try withTempStore { store, dir in
       let ids = seed(store, count: 1)
       let capture = try #require(store.fileURL(id: ids[0]))
-      let stray = dir.appendingPathComponent("notes.md")
-      try "keep me".write(to: stray, atomically: true, encoding: .utf8)
+      let fm = FileManager.default
+      let notes = dir.appendingPathComponent("notes.md")
+      try "keep me".write(to: notes, atomically: true, encoding: .utf8)
+      // A `.txt` that is not a capture: the suffix is not proof of
+      // authorship, the UUID name is.
+      let readme = dir.appendingPathComponent("README.txt")
+      try "keep me".write(to: readme, atomically: true, encoding: .utf8)
+      // And a directory wearing the suffix — removeItem recurses, so
+      // this one takes its contents with it.
+      let dirNamedTxt = dir.appendingPathComponent("notes.txt")
+      try fm.createDirectory(at: dirNamedTxt, withIntermediateDirectories: true)
+
       store.prune(keeping: [])
-      #expect(FileManager.default.fileExists(atPath: stray.path))
-      #expect(!FileManager.default.fileExists(atPath: capture.path))
+
+      #expect(fm.fileExists(atPath: notes.path))
+      #expect(fm.fileExists(atPath: readme.path))
+      #expect(fm.fileExists(atPath: dirNamedTxt.path))
+      #expect(!fm.fileExists(atPath: capture.path))
     }
   }
 
