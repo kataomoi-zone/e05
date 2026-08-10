@@ -189,7 +189,8 @@ if [[ -f "$ZSH_INTEG" ]] && ! grep -q 'e05-integration.zsh' "$ZSH_INTEG"; then
 
 # e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
 # Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
-[[ -n "$E05_BIN_DIR" ]] && builtin source "$E05_BIN_DIR/e05-integration.zsh"
+# `:-` so the gate skips under `nounset` instead of erroring out.
+[[ -n "${E05_BIN_DIR:-}" ]] && builtin source "$E05_BIN_DIR/e05-integration.zsh"
 EOF
 fi
 BASH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/bash/ghostty.bash"
@@ -198,7 +199,8 @@ if [[ -f "$BASH_INTEG" ]] && ! grep -q 'e05-integration.bash' "$BASH_INTEG"; the
 
 # e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
 # Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
-[ -n "$E05_BIN_DIR" ] && . "$E05_BIN_DIR/e05-integration.bash"
+# `:-` so the gate skips under `set -u` instead of erroring out.
+[ -n "${E05_BIN_DIR:-}" ] && . "$E05_BIN_DIR/e05-integration.bash"
 EOF
 fi
 

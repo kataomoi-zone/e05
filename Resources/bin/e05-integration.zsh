@@ -14,7 +14,11 @@
 # `source` appended into the GPLv3 integration stays under GPL.
 
 _e05_fix_path() {
-  [[ -n "$E05_BIN_DIR" ]] || return
+  # The caller gates on E05_BIN_DIR too, but only once at source time;
+  # this runs before every prompt, and an empty value would prepend an
+  # empty `path` entry — which is the current directory. `:-` so the
+  # check survives `nounset` instead of tripping over the state it guards.
+  [[ -n "${E05_BIN_DIR:-}" ]] || return
   # Drop any existing entry first so repeated prompts don't grow PATH,
   # then prepend. The `path` array stays synced to the exported PATH.
   path=("$E05_BIN_DIR" ${path:#$E05_BIN_DIR})

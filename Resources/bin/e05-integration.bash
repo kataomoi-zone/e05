@@ -14,7 +14,11 @@
 # `source` appended into the GPLv3 integration stays under GPL.
 
 _e05_fix_path() {
-  [ -n "$E05_BIN_DIR" ] || return
+  # The caller gates on E05_BIN_DIR too, but only once at source time;
+  # this runs before every prompt, and an empty value would prepend an
+  # empty PATH entry — which is the current directory. `:-` so the check
+  # survives `set -u` instead of tripping over the state it guards.
+  [ -n "${E05_BIN_DIR:-}" ] || return
   # Strip any existing occurrence (mid / leading / trailing) so the
   # per-prompt run doesn't grow PATH, then prepend.
   local p=":$PATH:"
@@ -26,8 +30,11 @@ _e05_fix_path() {
 }
 
 # Prepend to PROMPT_COMMAND, guarding against a double-add when the
-# integration is sourced more than once in a session.
-case ";${PROMPT_COMMAND};" in
+# integration is sourced more than once in a session. `:-` because an
+# unset PROMPT_COMMAND is the normal state, and this file is sourced
+# after the user's bashrc — so a `set -u` there would abort the case and
+# leave the hook unregistered, silently disabling the PATH fix.
+case ";${PROMPT_COMMAND:-};" in
   *";_e05_fix_path;"*) ;;
   *) PROMPT_COMMAND="_e05_fix_path${PROMPT_COMMAND:+;${PROMPT_COMMAND}}" ;;
 esac
