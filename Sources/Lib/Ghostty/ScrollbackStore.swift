@@ -23,7 +23,7 @@ struct ScrollbackStore: Sendable {
   static let maxLines = 4000
   static let maxCharacters = 400_000
 
-  /// Process-wide store, reading the real data directory. Every caller
+  /// Process-wide store, backed by the real data directory. Every caller
   /// in the app goes through this.
   static let `default` = ScrollbackStore()
 
@@ -56,16 +56,38 @@ struct ScrollbackStore: Sendable {
     let trimmed = Self.replayText(Self.truncate(text), capturedAt: capturedAt)
     guard !trimmed.isEmpty, let url = fileURL(id: id) else { return nil }
     do {
+      let fm = FileManager.default
       // 0700 / 0600: a capture is the pane's screen verbatim, which can
       // hold an echoed token or the output of `env`. The home directory
       // already restricts it, but a backup would otherwise carry it out
       // world-readable.
-      try FileManager.default.createDirectory(
-        at: directory, withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700])
+      //
+      // The mode goes on afterwards rather than through `createDirectory`'s
+      // `attributes:`, which applies them to every directory it creates —
+      // including the shared data directory above this one, whose mode is
+      // no business of this store's — and not at all when the directory
+      // already exists. Set here it is what it reads as: an invariant of
+      // this directory, re-established on every save.
+      //
+      // Two limits on that, both because the file's 0600 below is the
+      // guarantee and the directory is defence in depth. `try?`: a volume
+      // that cannot chmod should still get its capture, rather than the
+      // feature dying silently everywhere. And not through a symlink,
+      // which `setAttributes` would follow — a directory the user pointed
+      // somewhere else is not ours to narrow.
+      try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+      let isLink = (try? directory.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink
+      if isLink != true {
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+      }
+      // An atomic write lands at the umask default and is narrowed a
+      // moment later, so a capture is 0644 in between — and stays that
+      // way if the process dies there, until the next quit's `prune`
+      // drops it as an id nothing recorded. Behind a 0700 directory
+      // either way. `createFile` would set the mode up front but give up
+      // the atomic replace, and a torn capture is the worse failure.
       try trimmed.write(to: url, atomically: true, encoding: .utf8)
-      try FileManager.default.setAttributes(
-        [.posixPermissions: 0o600], ofItemAtPath: url.path)
+      try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
       return id
     } catch {
       logger.error("[scrollback] write failed: \(error.localizedDescription, privacy: .public)")

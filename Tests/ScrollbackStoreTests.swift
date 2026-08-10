@@ -13,6 +13,12 @@ private func withTempStore(_ body: (ScrollbackStore, URL) throws -> Void) rethro
   try body(ScrollbackStore(directory: dir), dir)
 }
 
+/// POSIX mode of a file or directory, for the permission assertions.
+private func mode(of url: URL) throws -> Int16 {
+  let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+  return (attrs[.posixPermissions] as? NSNumber)?.int16Value ?? -1
+}
+
 @Suite("ScrollbackStore paths")
 struct ScrollbackStorePathTests {
   @Test("resolves a uuid id")
@@ -70,11 +76,85 @@ struct ScrollbackStoreSaveTests {
     try withTempStore { store, dir in
       let id = try #require(store.save("secret"))
       let url = try #require(store.fileURL(id: id))
+      #expect(try mode(of: url) == 0o600)
+      #expect(try mode(of: dir) == 0o700)
+    }
+  }
+
+  @Test("narrows a directory that already exists")
+  func tightensExistingDirectory() throws {
+    // `createDirectory`'s `attributes:` only apply to what it creates, so
+    // a directory left behind by an earlier version — or widened by hand
+    // — would keep its mode forever. 0700 is an invariant of the
+    // directory, not a fact about the moment it was created.
+    try withTempStore { store, dir in
+      try FileManager.default.createDirectory(
+        at: dir, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o755])
+      _ = store.save("secret")
+      #expect(try mode(of: dir) == 0o700)
+    }
+  }
+
+  @Test("leaves the mode of the directory above it alone")
+  func doesNotTouchTheParent() throws {
+    // The store owns `scrollback/`, not the data directory holding it,
+    // which every other store shares and creates at the umask default.
+    // Passing the mode to `createDirectory` would apply it to both.
+    try withTempStore { _, dir in
       let fm = FileManager.default
-      let filePerms = try fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
-      let dirPerms = try fm.attributesOfItem(atPath: dir.path)[.posixPermissions] as? NSNumber
-      #expect(filePerms?.int16Value == 0o600)
-      #expect(dirPerms?.int16Value == 0o700)
+      // An existing parent must come out untouched. Deterministic: the
+      // mode is set here rather than inherited from the umask.
+      let existing = dir.appendingPathComponent("existing")
+      try fm.createDirectory(
+        at: existing, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o755])
+      let intoExisting = ScrollbackStore(directory: existing.appendingPathComponent("scrollback"))
+      _ = intoExisting.save("secret")
+      #expect(try mode(of: existing) == 0o755)
+      #expect(try mode(of: intoExisting.directory) == 0o700)
+
+      // A parent `save` creates itself must come out like any other
+      // directory would — that is the path on which `createDirectory`'s
+      // `attributes:` would have reached it. What "like any other" means
+      // is the umask's call, so measure it rather than assume it.
+      let control = dir.appendingPathComponent("control/leaf")
+      try fm.createDirectory(at: control, withIntermediateDirectories: true)
+      let expected = try mode(of: control.deletingLastPathComponent())
+      // Under `umask 077` a plain directory is 0700 too, so the two
+      // implementations are indistinguishable and this half proves
+      // nothing. Bail rather than report a pass it did not earn.
+      guard expected != 0o700 else { return }
+
+      let fresh = dir.appendingPathComponent("fresh")
+      let intoFresh = ScrollbackStore(directory: fresh.appendingPathComponent("scrollback"))
+      _ = intoFresh.save("secret")
+      #expect(try mode(of: fresh) == expected)
+      #expect(try mode(of: intoFresh.directory) == 0o700)
+    }
+  }
+
+  @Test("leaves the target of a symlinked directory alone")
+  func doesNotChmodThroughASymlink() throws {
+    // `setAttributes` follows links. A user who points `scrollback/` at
+    // another volume has a directory of their own on the far end, and
+    // narrowing it every save is not this store's call.
+    try withTempStore { _, dir in
+      let fm = FileManager.default
+      let target = dir.appendingPathComponent("elsewhere")
+      try fm.createDirectory(
+        at: target, withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o755])
+      let link = dir.appendingPathComponent("link")
+      try fm.createSymbolicLink(at: link, withDestinationURL: target)
+
+      let store = ScrollbackStore(directory: link)
+      let id = try #require(store.save("secret"))
+
+      #expect(try mode(of: target) == 0o755)
+      // The capture still lands, and is still 0600 — the file's mode is
+      // the guarantee, and it is set on the file itself.
+      #expect(try mode(of: #require(store.fileURL(id: id))) == 0o600)
     }
   }
 

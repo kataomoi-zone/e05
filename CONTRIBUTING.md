@@ -163,6 +163,28 @@ Review feedback is applied via `git commit --fixup=<sha>` or `--amend` to the or
 - Shell-integration snippets are covered by `./scripts/test-shell-integration.sh` (bash + zsh)
 - New features should ideally ship with unit tests written first
 
+## Conventions
+
+### Process-wide instances
+
+The name tells you which kind of type it is and nothing else — in particular nothing about mutability, since `ScrollbackStore` is a value type that writes and deletes files:
+
+- **`shared`** — reference types (`AdBlocker.shared`, `MutedSitesStore.shared`)
+- **`default`** — value types (`E05Paths.default`, `ScrollbackStore.default`)
+
+`E05Preferences.default` is the odd one out and does not mean this: it is the baseline value used when no preferences file exists, not a process-wide instance.
+
+### Store locations
+
+A store's location should be injectable so tests never touch the developer's real `~/.config` or `~/Library`. Reach for whichever of the first two fits:
+
+- **Single file or SQLite** — `init(inMemory: Bool = false)` delegating to an internal `init(storeURL: URL?)` or `init(databasePath: String)`, where `nil` / `":memory:"` keeps the store ephemeral (`PreferencesStore`, `MutedSitesStore`, `Bookmarks`)
+- **A directory of files** — the directory as an initialiser parameter, so a test can point it at a temp directory (`ScrollbackStore` defaults the parameter to the `E05Paths.default` location; `FaviconCache` resolves it in an `init(inMemory:)` convenience instead)
+- **An injected collaborator** — the store itself is a parameter, and the test passes an in-memory one (`DownloadsManager(store:)`)
+- **A test-only entry point** — `GhosttyConfigFileStore.init(testURL:)`, `SessionState.load(from:)`. Works, but leaves the production path (`SessionState.save()`) unreachable from a test
+
+Some locations are still read from `E05Paths.default` inline with no seam at all — `SessionState.save()`, `DownloadsManager.resumeDir`, `AdBlocker.cacheRoot`, `ExtensionController`. That is not a pattern to copy. `E05Paths` documents the reasoning behind the seam it exposes for itself.
+
 ## Source layout
 
 ```
