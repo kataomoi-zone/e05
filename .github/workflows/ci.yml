@@ -35,6 +35,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # The shell-integration snippets are the one part of e05 no Swift
+      # test reaches. Pure shell with no build inputs, so it runs ahead of
+      # the GhosttyKit step and fails in seconds rather than minutes.
+      - name: Test shell integration
+        run: ./scripts/test-shell-integration.sh
+
       # --- GhosttyKit: restore the patched xcframework, or build it from
       # source. Keyed on the pinned ghostty commit + the local patches so a
       # patch edit (without a ghostty bump) rebuilds and a stale binary is

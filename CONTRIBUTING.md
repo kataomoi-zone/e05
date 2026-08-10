@@ -72,12 +72,15 @@ Taking the archive with `curl` rather than declaring a remote SwiftPM package is
 ## Build and test
 
 ```bash
-./scripts/fetch_sparkle.sh      # first time, or after a SPARKLE_VERSION bump
+./scripts/fetch_sparkle.sh              # first time, or after a SPARKLE_VERSION bump
 swift build
-swift test --disable-sandbox    # unit tests
+swift test --disable-sandbox            # unit tests
+./scripts/test-shell-integration.sh     # shell-integration snippets (bash + zsh)
 ```
 
 The `--disable-sandbox` flag is required because tests access `~/.config/e05/` paths, which SwiftPM's default sandbox denies.
+
+`test-shell-integration.sh` covers `Resources/bin/e05-integration.{zsh,bash}` — the one part of e05 no Swift test can reach. Each case runs in a pristine shell (`bash --noprofile --norc` / `zsh -f`), so the developer's own dotfiles cannot mask a failure. Both workflows run it ahead of the GhosttyKit build, since it needs no build inputs and fails in seconds.
 
 For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script assembles a `.app` bundle under `build/dev/` and execs the binary out of it, so `Bundle.main.bundleIdentifier` resolves and APIs that gate on bundle identity work — camera/microphone/location permission prompts, unified-log Logger subsystem, and the upcoming `UNUserNotificationCenter` wiring. The binary is exec'd directly (not via `open`), so stderr stays attached to the terminal.
 

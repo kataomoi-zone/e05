@@ -60,6 +60,12 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # Repeated from ci here rather than assumed: a release can be
+      # dispatched without waiting for ci on the same commit, and this
+      # runs before the tag is created, so a failure costs nothing.
+      - name: Test shell integration
+        run: ./scripts/test-shell-integration.sh
+
       # --- Version: date-based CalVer YYYY.MMDD.N, N = same-day counter ---
       - name: Compute CalVer version
         id: ver
