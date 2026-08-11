@@ -189,7 +189,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     // libghostty's `*-inherit-working-directory` seed it from the
     // focused surface instead — the desired behaviour for fresh panes.
     // Scrollback replay is handed to the shell through the environment:
-    // e05-integration.{zsh,bash} reads E05_RESTORE_SCROLLBACK_FILE, cats
+    // e05-integration.{zsh,bash,fish} reads E05_RESTORE_SCROLLBACK_FILE, cats
     // the file before the first prompt, and deletes it. libghostty has
     // no API to write into a surface's screen, so the child process is
     // the only way text can reach it.

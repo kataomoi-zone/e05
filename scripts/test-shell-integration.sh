@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavioural tests for the shell-integration snippets under
-# Resources/bin/e05-integration.{zsh,bash}.
+# Resources/bin/e05-integration.{zsh,bash,fish}.
 #
 # No Swift test can reach them, and every bug they have shipped was a
 # shell behaviour that only appears when the code runs: a local named
@@ -33,6 +33,7 @@ export REPLAY_FIXTURE
 
 pass=0
 fail=0
+skipped_shells=""
 
 # check <label> <expected> <actual>
 check() {
@@ -58,6 +59,10 @@ run_bash() {
 run_zsh() {
   cat > "$TMP/case.zsh"
   check "zsh:  $1" "$2" "$(zsh -f "$TMP/case.zsh" 2>&1)"
+}
+run_fish() {
+  cat > "$TMP/case.fish"
+  check "fish: $1" "$2" "$(fish --no-config "$TMP/case.fish" 2>&1)"
 }
 
 # Cases run under $BASH — the interpreter running this script — not the
@@ -359,5 +364,216 @@ source "$INTEG/e05-integration.zsh"
 print -n quiet
 EOF
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
+# fish is not on a stock macOS, so a developer without it gets a skip
+# rather than a failure — reported in the summary, never as a pass. CI
+# installs it, so CI never takes this branch.
+if ! command -v fish > /dev/null; then
+  echo "== fish == SKIPPED, not installed (\`brew install fish\`, or \`nix shell nixpkgs#fish -c\`)"
+  skipped_shells="fish"
+else
+  # shellcheck disable=SC2016  # $version is fish's, and fish expands it
+  echo "== fish $(fish --no-config -c 'echo $version') =="
+
+  # Emitting the event rather than looking the function up by name: what
+  # matters is that it is wired to fish_prompt, not that it exists.
+  run_fish 'runs on the prompt event' '/opt/e05:/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /bin
+emit fish_prompt
+sh -c 'printf %s "$PATH"'
+EOF
+
+  run_fish 'prepends the bin dir' '/opt/e05:/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /bin
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+EOF
+
+  run_fish 'repeated calls do not grow PATH' '/opt/e05:/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /bin
+_e05_fix_path
+_e05_fix_path
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+EOF
+
+  run_fish 'moves an existing entry to the front' '/opt/e05:/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /opt/e05 /bin
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+EOF
+
+  # Not a glob case, unlike its bash and zsh namesakes: `[` is literal to
+  # fish, so `string match` would dedup this correctly too. What it does
+  # cover is a bundle path with a space in it. The glob hazard in fish is
+  # `*` alone, and the next case is the one that pins it.
+  run_fish 'a bin dir with brackets and a space still dedups' '/opt/e05 [beta]/bin:/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR '/opt/e05 [beta]/bin'
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /bin
+_e05_fix_path
+_e05_fix_path
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+EOF
+
+  run_fish 'a bin dir with a wildcard leaves other entries alone' '/opt/*/bin:/usr/bin:/opt/a/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR '/opt/*/bin'
+source "$INTEG/e05-integration.fish"
+set -gx PATH /usr/bin /opt/a/bin /bin
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+EOF
+
+  # An empty value is the one that bites in fish: it survives into the
+  # exported PATH as a literal `.`. An unset one expands to nothing at
+  # all and is harmless — both are asserted so the difference is on the
+  # record rather than assumed.
+  run_fish 'guards an empty or unset bin dir' '/usr/bin:/bin|/usr/bin:/bin' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+
+set -gx PATH /usr/bin /bin
+set -gx E05_BIN_DIR ''
+_e05_fix_path
+sh -c 'printf %s "$PATH"'
+
+set -gx PATH /usr/bin /bin
+set -e E05_BIN_DIR
+_e05_fix_path
+sh -c 'printf "|%s" "$PATH"'
+EOF
+
+  run_fish 'replays a spaced path in full, deletes it, leaves PATH intact' \
+    "$REPLAY_LINES|gone|/usr/bin:/bin" <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+set -gx E05_RESTORE_SCROLLBACK_FILE "$HIST_DIR/hist.txt"
+printf '%b' "$REPLAY_FIXTURE" > "$E05_RESTORE_SCROLLBACK_FILE"
+set -l file $E05_RESTORE_SCROLLBACK_FILE
+set -gx PATH /usr/bin /bin
+source "$INTEG/e05-integration.fish"
+if test -e "$file"
+    printf '|still-there'
+else
+    printf '|gone'
+end
+sh -c 'printf "|%s" "$PATH"'
+EOF
+
+  run_fish 'unsets the variable so a nested shell cannot replay' '<unset>' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+set -gx E05_RESTORE_SCROLLBACK_FILE "$HIST_DIR/hist.txt"
+printf '' > "$E05_RESTORE_SCROLLBACK_FILE"
+source "$INTEG/e05-integration.fish"
+sh -c 'printf %s "${E05_RESTORE_SCROLLBACK_FILE-<unset>}"'
+EOF
+
+  run_fish 'clears the variable even when the capture is missing' 'quiet|<unset>' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+set -gx E05_RESTORE_SCROLLBACK_FILE "$HIST_DIR/absent.txt"
+source "$INTEG/e05-integration.fish"
+printf quiet
+sh -c 'printf "|%s" "${E05_RESTORE_SCROLLBACK_FILE-<unset>}"'
+EOF
+
+  run_fish 'a user cat function cannot intercept the replay' 'l1|gone' <<'EOF'
+set -gx E05_BIN_DIR /opt/e05
+set -gx E05_RESTORE_SCROLLBACK_FILE "$HIST_DIR/hijack.txt"
+printf l1 > "$E05_RESTORE_SCROLLBACK_FILE"
+set -l file $E05_RESTORE_SCROLLBACK_FILE
+function cat
+    printf intercepted
+end
+function rm
+end
+source "$INTEG/e05-integration.fish"
+if test -e "$file"
+    printf '|still-there'
+else
+    printf '|gone'
+end
+EOF
+
+  run_fish 'stays quiet with no capture configured' 'quiet' <<'EOF'
+set -e E05_RESTORE_SCROLLBACK_FILE
+set -gx E05_BIN_DIR /opt/e05
+source "$INTEG/e05-integration.fish"
+printf quiet
+EOF
+fi
+
+# --- the injection step ---
+#
+# Every case above sources a snippet directly, which is not how a shell
+# ever gets it: `scripts/inject_shell_integration.sh` puts a line into
+# ghostty's own integration file, and the shell reaches the snippet
+# through that. Nothing checked the line was reachable until this
+# section existed, and in fish it was not — the file ends in a call that
+# runs `exit 0`, and `exit` in a sourced fish file stops the rest of it.
+# The snippet tests were all green throughout.
+echo "== injection =="
+
+INJECTED="$TMP/Contents"
+mkdir -p "$INJECTED/Resources/ghostty" "$INJECTED/Resources/bin"
+cp -R "$REPO/Resources/ghostty/shell-integration" "$INJECTED/Resources/ghostty/"
+cp "$INTEG"/e05-integration.* "$INJECTED/Resources/bin/"
+GHOSTTY_INTEG="$INJECTED/Resources/ghostty/shell-integration"
+INJECTED_BIN="$INJECTED/Resources/bin"
+export INJECTED_BIN
+
+if inject_out=$("$REPO/scripts/inject_shell_integration.sh" "$INJECTED" 2>&1); then
+  check "inject: runs clean against the vendored files" "" "$inject_out"
+else
+  check "inject: runs clean against the vendored files" "" "FAILED: $inject_out"
+fi
+
+# Interactive shells here: both ghostty snippets return early when the
+# shell is not interactive, which is the whole point of the line's
+# placement. stdout only, because an interactive shell on a pipe warns
+# about job control on stderr and that is not a failure.
+check "inject: zsh reaches the e05 line" "_e05_fix_path" \
+  "$(E05_BIN_DIR="$INJECTED_BIN" zsh -f -i -c \
+    "source '$GHOSTTY_INTEG/zsh/ghostty-integration'; (( \$+functions[_e05_fix_path] )) && print -n _e05_fix_path" \
+    2> /dev/null)"
+
+check "inject: bash reaches the e05 line" "_e05_fix_path" \
+  "$(E05_BIN_DIR="$INJECTED_BIN" "$BASH" --noprofile --norc -i -c \
+    "source '$GHOSTTY_INTEG/bash/ghostty.bash'; declare -F _e05_fix_path > /dev/null && printf _e05_fix_path" \
+    2> /dev/null)"
+
+if [ -z "$skipped_shells" ]; then
+  check "inject: fish reaches the e05 line" "_e05_fix_path" \
+    "$(E05_BIN_DIR="$INJECTED_BIN" fish --no-config -i -c \
+      "source '$GHOSTTY_INTEG/fish/vendor_conf.d/ghostty-shell-integration.fish'; functions -q _e05_fix_path; and printf _e05_fix_path" \
+      2> /dev/null)"
+
+  # The line sits above ghostty's own early-out for non-interactive
+  # shells, so `fish -c` must neither print the capture nor eat it.
+  printf 'HISTORY' > "$INJECTED/hist.txt"
+  check "inject: a non-interactive fish replays nothing" "marker|still-there" \
+    "$(E05_BIN_DIR="$INJECTED_BIN" E05_RESTORE_SCROLLBACK_FILE="$INJECTED/hist.txt" fish --no-config -c \
+      "source '$GHOSTTY_INTEG/fish/vendor_conf.d/ghostty-shell-integration.fish'; printf marker" \
+      2> /dev/null)|$([ -e "$INJECTED/hist.txt" ] && echo still-there || echo gone)"
+fi
+
+# Running it twice must not add a second line: build_app.sh re-runs it
+# on every build.
+"$REPO/scripts/inject_shell_integration.sh" "$INJECTED" > /dev/null 2>&1
+check "inject: a second run adds nothing" "1 1 1" \
+  "$(grep -c 'e05-integration.zsh' "$GHOSTTY_INTEG/zsh/ghostty-integration") \
+$(grep -c 'e05-integration.bash' "$GHOSTTY_INTEG/bash/ghostty.bash") \
+$(grep -c 'e05-integration.fish' "$GHOSTTY_INTEG/fish/vendor_conf.d/ghostty-shell-integration.fish")"
+
+if [ -n "$skipped_shells" ]; then
+  printf '\n%d passed, %d failed, SKIPPED: %s\n' "$pass" "$fail" "$skipped_shells"
+else
+  printf '\n%d passed, %d failed\n' "$pass" "$fail"
+fi
 [ "$fail" -eq 0 ]

@@ -117,6 +117,7 @@ cp -f "$REPO_ROOT/Resources/bin/open" "$CONTENTS/Resources/bin/open"
 # so the `open` shim shadows /usr/bin/open in e05 panes.
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.zsh" "$CONTENTS/Resources/bin/e05-integration.zsh"
 cp -f "$REPO_ROOT/Resources/bin/e05-integration.bash" "$CONTENTS/Resources/bin/e05-integration.bash"
+cp -f "$REPO_ROOT/Resources/bin/e05-integration.fish" "$CONTENTS/Resources/bin/e05-integration.fish"
 
 # E05Lib's SwiftPM resources (the adblock JS runtimes), flattened into
 # Contents/Resources rather than copied as the .bundle SwiftPM produces.
@@ -183,26 +184,11 @@ rsync -a --delete "$REPO_ROOT/Resources/terminfo/" "$CONTENTS/Resources/terminfo
 # it. The integration is Kitty-derived GPLv3; only this appended `source`
 # line stays under GPL — the sourced e05-integration.* snippets are
 # standalone e05 scripts (MIT). The grep guard prevents a double-inject.
-ZSH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/zsh/ghostty-integration"
-if [[ -f "$ZSH_INTEG" ]] && ! grep -q 'e05-integration.zsh' "$ZSH_INTEG"; then
-    cat >> "$ZSH_INTEG" <<'EOF'
-
-# e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
-# Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
-# `:-` so the gate skips under `nounset` instead of erroring out.
-[[ -n "${E05_BIN_DIR:-}" ]] && builtin source "$E05_BIN_DIR/e05-integration.zsh"
-EOF
-fi
-BASH_INTEG="$CONTENTS/Resources/ghostty/shell-integration/bash/ghostty.bash"
-if [[ -f "$BASH_INTEG" ]] && ! grep -q 'e05-integration.bash' "$BASH_INTEG"; then
-    cat >> "$BASH_INTEG" <<'EOF'
-
-# e05: keep the bundled bin dir ahead on PATH so the `open` shim wins.
-# Injected at bundle time; active only inside e05 (E05_BIN_DIR gate).
-# `:-` so the gate skips under `set -u` instead of erroring out.
-[ -n "${E05_BIN_DIR:-}" ] && . "$E05_BIN_DIR/e05-integration.bash"
-EOF
-fi
+# A missing target is a hard error, not a skip: these files are vendored
+# in this repository, so their absence means a ghostty bump moved or
+# renamed them — and a silent skip there takes the whole integration out
+# without failing a build.
+"$REPO_ROOT/scripts/inject_shell_integration.sh" "$CONTENTS"
 
 # App icon: actool compiles the layered Icon Composer package
 # (Resources/AppIcon.icon — icon.json + Assets/) into Assets.car (the

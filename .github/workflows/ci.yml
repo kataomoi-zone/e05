@@ -35,6 +35,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # bash and zsh ship with macOS; fish does not, and a shell e05
+      # claims to support has to be one CI actually runs. Homebrew
+      # rather than nix: the nix closure for fish on darwin is 1.4 GB
+      # against a bottle whose only dependency is pcre2.
+      - name: Install fish
+        run: brew install fish
+
       # The shell-integration snippets are not reachable from a Swift
       # test. Pure shell with no build inputs, so this runs ahead of the
       # GhosttyKit step and fails in seconds rather than minutes.

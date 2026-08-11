@@ -145,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // so the `open` shim (Resources/bin/open) shadows /usr/bin/open and
     // `open .` / `open https://...` lands as a pane on the host:
     //   - E05_BIN_DIR, read by the shell-integration PATH fix
-    //     (Resources/bin/e05-integration.{zsh,bash}). It re-prepends
+    //     (Resources/bin/e05-integration.{zsh,bash,fish}). It re-prepends
     //     this dir from a prompt hook, which runs after a login shell's
     //     path_helper has reordered PATH — the only reliable way to
     //     keep the shim ahead of /usr/bin. The exported PATH is

@@ -9,7 +9,7 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "Scrollback")
 /// libghostty has no way to write into a surface's screen — the only
 /// output path is the child process's stdout — so a restored pane gets
 /// its history back by having the shell `cat` a file before its first
-/// prompt. `e05-integration.{zsh,bash}` does that and deletes the file,
+/// prompt. `e05-integration.{zsh,bash,fish}` does that and deletes the file,
 /// reading its path from `E05_RESTORE_SCROLLBACK_FILE` in the surface
 /// environment. (Terminal.app can restore directly because it owns its
 /// emulator; an embedder cannot.)

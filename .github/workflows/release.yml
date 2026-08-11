@@ -60,6 +60,13 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # bash and zsh ship with macOS; fish does not, and the suite skips
+      # a shell it cannot find. A release should not ship a shell it did
+      # not exercise, so this is a hard step here as it is in ci — a brew
+      # failure stops the release, which happens before the tag is cut.
+      - name: Install fish
+        run: brew install fish
+
       # Repeated from ci here rather than assumed: a release can be
       # dispatched without waiting for ci on the same commit, and this
       # runs before the tag is created, so a failure costs nothing.
