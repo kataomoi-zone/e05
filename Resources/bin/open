@@ -12,8 +12,14 @@ set -e
 script_dir="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 e05_cli="$script_dir/e05"
 
+# Addressed absolutely so the shim cannot re-enter itself: this file is
+# ahead of /usr/bin on PATH, so an unqualified `open` here would recurse.
+# `E05_SYSTEM_OPEN` exists for the test suite, which has to observe the
+# hand-off without actually launching anything.
+system_open="${E05_SYSTEM_OPEN:-/usr/bin/open}"
+
 fallback() {
-    exec /usr/bin/open "$@"
+    exec "$system_open" "$@"
 }
 
 # Bundled CLI absent (only realistic for a corrupted bundle): keep

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Behavioural tests for the shell-integration snippets under
-# Resources/bin/e05-integration.{zsh,bash,fish}.
+# Behavioural tests for the shell that ships in the bundle: the
+# integration snippets under Resources/bin/e05-integration.{zsh,bash,fish},
+# the step that wires them into ghostty's own integration, and the
+# Resources/bin/open shim.
 #
-# No Swift test can reach them, and every bug they have shipped was a
-# shell behaviour that only appears when the code runs: a local named
+# No Swift test can reach any of it, and every bug they have shipped was
+# a shell behaviour that only appears when the code runs: a local named
 # `path`, which zsh ties to PATH; an unset PROMPT_COMMAND under `set -u`;
-# an unquoted substitution pattern read as a glob. All are asserted
-# below. (`Resources/bin/open` is shell too, and still uncovered.)
+# an unquoted substitution pattern read as a glob; a `source` line
+# appended below an `exit`. All are asserted below.
 #
 # Each case runs in a pristine shell (`--noprofile --norc` / `zsh -f`) so
 # the developer's own dotfiles cannot mask a failure, and prints exactly
@@ -570,6 +572,75 @@ check "inject: a second run adds nothing" "1 1 1" \
   "$(grep -c 'e05-integration.zsh' "$GHOSTTY_INTEG/zsh/ghostty-integration") \
 $(grep -c 'e05-integration.bash' "$GHOSTTY_INTEG/bash/ghostty.bash") \
 $(grep -c 'e05-integration.fish' "$GHOSTTY_INTEG/fish/vendor_conf.d/ghostty-shell-integration.fish")"
+
+# --- the `open` shim ---
+#
+# It sits ahead of /usr/bin on every pane's PATH, shadowing a system
+# command for every shell, and decides between handing off to the
+# bundled `e05` CLI and falling through to the real `open`. Getting a
+# branch wrong misroutes something the user typed.
+#
+# The shim resolves the CLI as its own sibling, so it runs from a temp
+# directory holding a copy of it and a stub CLI. The copy is asserted
+# byte-identical rather than trusted: a test of an edited shim would
+# prove nothing about the one that ships.
+echo "== open shim =="
+
+SHIM_DIR="$TMP/shim"
+mkdir -p "$SHIM_DIR"
+cp "$INTEG/open" "$SHIM_DIR/open"
+check "shim: the copy under test is the shipped file" "same" \
+  "$(cmp -s "$INTEG/open" "$SHIM_DIR/open" && echo same || echo DIFFERENT)"
+
+# Both stubs record how they were called and exit. Nothing is launched.
+cat > "$SHIM_DIR/e05" <<'STUB'
+#!/usr/bin/env bash
+printf 'cli:%s' "$*"
+STUB
+cat > "$SHIM_DIR/sysopen" <<'STUB'
+#!/usr/bin/env bash
+printf 'sys:%s' "$*"
+STUB
+chmod +x "$SHIM_DIR/open" "$SHIM_DIR/e05" "$SHIM_DIR/sysopen"
+
+mkdir -p "$SHIM_DIR/adir" "$SHIM_DIR/a dir"
+: > "$SHIM_DIR/afile.pdf"
+
+# run_shim <label> <expected> <args...>
+run_shim() {
+  local label="$1" want="$2"
+  shift 2
+  check "shim: $label" "$want" \
+    "$(cd "$SHIM_DIR" && E05_SYSTEM_OPEN="$SHIM_DIR/sysopen" ./open "$@" 2>&1)"
+}
+
+run_shim 'no argument opens the current directory' 'cli:open .'
+run_shim 'an https URL goes to the CLI' 'cli:open https://example.com' 'https://example.com'
+run_shim 'an http URL goes to the CLI' 'cli:open http://example.com' 'http://example.com'
+# Absolute, because the CLI is talking to an app whose idea of "here" is
+# not the shell's.
+run_shim 'a relative directory is resolved first' "cli:open $SHIM_DIR/adir" adir
+run_shim 'a directory with a space survives' "cli:open $SHIM_DIR/a dir" 'a dir'
+# Everything below keeps stock Launch Services behaviour: a document
+# belongs to its default app, not to a browser pane.
+run_shim 'a file falls through' 'sys:afile.pdf' afile.pdf
+run_shim 'a path that does not exist falls through' 'sys:nope.txt' nope.txt
+run_shim 'an unknown scheme falls through' 'sys:ftp://example.com' 'ftp://example.com'
+run_shim 'a flag falls through with its argument' 'sys:-a Safari' -a Safari
+run_shim 'two paths fall through' "sys:adir afile.pdf" adir afile.pdf
+run_shim 'a lone flag falls through' 'sys:-W' -W
+# A lone flag reaches the fallback either way — it is neither a URL nor a
+# directory. The guard only shows itself when the flag-shaped argument
+# would otherwise match: `open -x` with a directory of that name belongs
+# to Launch Services' error message, not to a new pane.
+mkdir -p "$SHIM_DIR/-x"
+run_shim 'a flag-shaped directory name is still a flag' 'sys:-x' -x
+
+# A corrupted bundle should degrade to the system command rather than
+# error out inside the user's shell.
+chmod -x "$SHIM_DIR/e05"
+run_shim 'a CLI that cannot run falls through' 'sys:https://example.com' 'https://example.com'
+chmod +x "$SHIM_DIR/e05"
 
 if [ -n "$skipped_shells" ]; then
   printf '\n%d passed, %d failed, SKIPPED: %s\n' "$pass" "$fail" "$skipped_shells"
