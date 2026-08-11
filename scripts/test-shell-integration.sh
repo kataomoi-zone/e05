@@ -2,11 +2,11 @@
 # Behavioural tests for the shell-integration snippets under
 # Resources/bin/e05-integration.{zsh,bash}.
 #
-# They are the one part of e05 no Swift test can reach, and every bug
-# they have shipped was a shell behaviour that only appears when the code
-# runs: a local named `path`, which zsh ties to PATH; an unset
-# PROMPT_COMMAND under `set -u`; an unquoted substitution pattern read as
-# a glob. All are asserted below.
+# No Swift test can reach them, and every bug they have shipped was a
+# shell behaviour that only appears when the code runs: a local named
+# `path`, which zsh ties to PATH; an unset PROMPT_COMMAND under `set -u`;
+# an unquoted substitution pattern read as a glob. All are asserted
+# below. (`Resources/bin/open` is shell too, and still uncovered.)
 #
 # Each case runs in a pristine shell (`--noprofile --norc` / `zsh -f`) so
 # the developer's own dotfiles cannot mask a failure, and prints exactly
@@ -113,10 +113,10 @@ _e05_fix_path
 printf %s "$PATH"
 EOF
 
-# bash reads the right-hand side of ${var//pat/} as a glob. A bundle path
-# holding `[`, `*` or `?` — an app renamed to "e05 [beta]", a checkout
-# under a bracketed directory — then matches nothing, so the strip is a
-# no-op and PATH gains an entry every single prompt.
+# bash reads the right-hand side of ${var//pat/} as a glob. A `[` opens
+# a bracket expression, which matches nothing here — an app renamed to
+# "e05 [beta]", a checkout under a bracketed directory — so the strip is
+# a no-op and PATH gains an entry every single prompt.
 run_bash 'a bin dir with glob metacharacters still dedups' '/opt/e05 [beta]/bin:/usr/bin:/bin' <<'EOF'
 export E05_BIN_DIR='/opt/e05 [beta]/bin'
 . "$INTEG/e05-integration.bash"

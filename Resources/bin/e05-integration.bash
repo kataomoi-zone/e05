@@ -21,10 +21,12 @@ _e05_fix_path() {
   [ -n "${E05_BIN_DIR:-}" ] || return
   # Strip any existing occurrence (mid / leading / trailing) so the
   # per-prompt run doesn't grow PATH, then prepend. The pattern is
-  # quoted: bash treats the expansion as a glob otherwise, so a bundle
-  # path holding `[`, `*` or `?` would match nothing (PATH then grows by
-  # one entry every prompt) while matching unrelated entries that happen
-  # to fit the pattern (those get dropped).
+  # quoted because bash reads it as a glob otherwise, which breaks in
+  # two different ways depending on the metacharacter. A `[` opens a
+  # bracket expression that matches nothing, so the strip does nothing
+  # and PATH gains an entry every prompt. A `*` or `?` matches itself
+  # and then some, so the strip works but takes unrelated entries that
+  # happen to fit the pattern with it.
   local p=":$PATH:"
   p="${p//":$E05_BIN_DIR:"/:}"
   p="${p#:}"

@@ -35,9 +35,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # The shell-integration snippets are the one part of e05 no Swift
-      # test reaches. Pure shell with no build inputs, so it runs ahead of
-      # the GhosttyKit step and fails in seconds rather than minutes.
+      # The shell-integration snippets are not reachable from a Swift
+      # test. Pure shell with no build inputs, so this runs ahead of the
+      # GhosttyKit step and fails in seconds rather than minutes.
       - name: Test shell integration
         run: ./scripts/test-shell-integration.sh
 
