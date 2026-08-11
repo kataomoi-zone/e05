@@ -155,6 +155,19 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// path (`~` expanded at use) roots there instead.
   public var newFinderDirectory: String?
 
+  /// Whether a terminal pane's screen is written to disk at quit so the
+  /// next launch can replay it. `nil` means on, the behaviour that
+  /// shipped before the setting existed. Off is worth having because a
+  /// capture is the pane's screen verbatim: whatever was displayed —
+  /// an echoed token, the output of `env` — is in the file.
+  ///
+  /// Read through ``restoresTerminalScrollback`` rather than directly:
+  /// the default lives there, in one place, where a test can reach it.
+  public var restoreTerminalScrollback: Bool?
+
+  /// ``restoreTerminalScrollback`` with its default applied.
+  public var restoresTerminalScrollback: Bool { restoreTerminalScrollback ?? true }
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -178,7 +191,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     paletteFocusCurrentWorkspaceOnly: Bool? = nil,
     splitPaneKind: String? = nil,
     newTerminalDirectory: String? = nil,
-    newFinderDirectory: String? = nil
+    newFinderDirectory: String? = nil,
+    restoreTerminalScrollback: Bool? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -203,6 +217,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.splitPaneKind = splitPaneKind
     self.newTerminalDirectory = newTerminalDirectory
     self.newFinderDirectory = newFinderDirectory
+    self.restoreTerminalScrollback = restoreTerminalScrollback
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

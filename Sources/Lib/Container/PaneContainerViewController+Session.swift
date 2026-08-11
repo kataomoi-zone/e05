@@ -214,7 +214,9 @@ extension PaneContainerViewController {
   /// behind any autosave still draining on the write queue, so the
   /// final layout is what ends up on disk.
   public func saveSessionAndWait() {
-    let session = captureSession(captureScrollback: true)
+    let capture = ScrollbackStore.default.capturesThisQuit(
+      per: PreferencesStore.shared.preferences)
+    let session = captureSession(captureScrollback: capture)
     Self.sessionWriteQueue.sync { session.save() }
   }
 

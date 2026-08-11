@@ -141,6 +141,18 @@ e05 notify <message>            # Surface a toast in the running app
 
 Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-typed `open .` / `open https://...` becomes a new finder / browser column. `open -a App` / `open file.pdf` etc. fall through to the system `/usr/bin/open` and keep their stock Launch Services behaviour.
 
+### Shell support
+
+**Scrollback replay after a restart needs zsh, bash or fish** — the shells e05 ships a snippet for. nushell and elvish do not have one, even though Ghostty supports them. A snippet is needed per shell because libghostty cannot write into a pane's screen: a restored pane's history has to be printed by the shell itself.
+
+The `open` shim is prepended to `PATH` for every pane regardless of shell. The same three snippets re-prepend it before each prompt, which is what keeps it ahead of `/usr/bin` in a login shell, where macOS's `path_helper` reorders `PATH` after e05 has set it. In a shell that does not run `path_helper` the launch-time order simply survives.
+
+A pane running any other shell still works as a terminal. It opens without its previous history, and reopens where it left off only if its shell reports the directory over OSC 7 — elvish does, nushell does not.
+
+**zsh is the only one the author uses daily.** bash and fish are covered by the same suite in CI (`scripts/test-shell-integration.sh`, run on every push to `main` and every pull request), but see no day-to-day use here, so they are the likelier ones to have rough edges. Reports welcome.
+
+Scrollback restore can be turned off in **Settings → General → Terminal**, and the saved screens deleted in **Settings → About → Reset**. Worth knowing before leaving it on: a saved screen is the pane verbatim, so anything that was displayed — a token you echoed, the output of `env` — is in the file. They live in `~/Library/Application Support/<bundle-id>/scrollback/`, in a `0700` directory, each file `0600` once written.
+
 ## Building from source
 
 For contributors, or anyone who would rather build than download. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full setup.

@@ -274,6 +274,30 @@ struct ScrollbackStorePruneTests {
     }
   }
 
+  @Test("the preference decides whether this quit captures")
+  func quitPolicyFollowsThePreference() throws {
+    // On, and the captures already on disk are left for the shells that
+    // are about to replay them. Off, and they go with the setting —
+    // keeping screens the user just asked not to keep would answer the
+    // wrong half of the question.
+    try withTempStore { store, dir in
+      let fm = FileManager.default
+      #expect(seed(store, count: 2).count == 2)
+
+      #expect(store.capturesThisQuit(per: E05Preferences(restoreTerminalScrollback: true)))
+      var left = try fm.contentsOfDirectory(atPath: dir.path)
+      #expect(left.count == 2)
+
+      #expect(store.capturesThisQuit(per: E05Preferences(restoreTerminalScrollback: nil)))
+      left = try fm.contentsOfDirectory(atPath: dir.path)
+      #expect(left.count == 2)
+
+      #expect(!store.capturesThisQuit(per: E05Preferences(restoreTerminalScrollback: false)))
+      left = try fm.contentsOfDirectory(atPath: dir.path)
+      #expect(left.isEmpty)
+    }
+  }
+
   @Test("does nothing when no capture has ever been written")
   func toleratesMissingDirectory() {
     withTempStore { store, dir in

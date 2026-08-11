@@ -68,6 +68,16 @@ struct AboutSettingsView: View {
         }
 
         resetRow(
+          label: "Saved terminal scrollback",
+          buttonTitle: "Delete",
+          confirmTitle: "Delete saved terminal scrollback?",
+          confirmMessage:
+            "Every saved pane screen is deleted now. New ones are written again at the next quit unless you turn the setting off in General."
+        ) {
+          ScrollbackStore.default.prune(keeping: [])
+        }
+
+        resetRow(
           label: "Cache",
           buttonTitle: "Clear",
           confirmTitle: "Clear cached data?",

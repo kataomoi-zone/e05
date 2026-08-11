@@ -101,6 +101,18 @@ struct ScrollbackStore: Sendable {
     }
   }
 
+  /// Whether this quit should capture, and the side effect of it saying
+  /// no: turning the setting off has to remove what is already stored,
+  /// or the screens the user just asked not to keep stay on disk.
+  ///
+  /// Here rather than at the call site so it can be tested — the caller
+  /// is a view controller a unit test cannot build.
+  func capturesThisQuit(per preferences: E05Preferences) -> Bool {
+    let enabled = preferences.restoresTerminalScrollback
+    if !enabled { prune(keeping: []) }
+    return enabled
+  }
+
   /// Drop every capture except the ones just written. Panes closed since
   /// the last save would otherwise leave their files behind forever, and
   /// a restored pane's file is consumed by the shell rather than by us.

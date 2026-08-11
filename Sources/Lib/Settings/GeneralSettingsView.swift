@@ -249,6 +249,37 @@ struct GeneralSettingsView: View {
         }
       }
 
+      Section {
+        Toggle(
+          "Restore terminal scrollback after a restart",
+          isOn: Binding(
+            get: { preferences.restoresTerminalScrollback },
+            set: {
+              preferences.restoreTerminalScrollback = $0
+              persist()
+            }))
+        // Facts the user needs to decide, and nothing else: what lands
+        // in the file, how to get rid of it, and which shells replay it.
+        // How much the shells are exercised belongs in the README, not
+        // in the app.
+        Text(
+          """
+          Each terminal pane's screen is written to a file at quit and printed back by the \
+          shell on the next launch. The file holds whatever was on screen, which can include \
+          a token you echoed or the output of `env`. Turning this off stops new ones being \
+          written and deletes the ones already saved at the next quit; Settings → About → \
+          Reset deletes them now.
+
+          Replaying needs zsh, bash or fish. A pane running another shell opens without its \
+          history.
+          """
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      } header: {
+        Text("Terminal")
+      }
+
       // Sparkle owns these settings in its own defaults, so they are
       // read from and written to the updater rather than through
       // PreferencesStore like everything else on this screen. Without

@@ -87,6 +87,32 @@ struct PreferencesStoreTests {
     }
   }
 
+  @Test("the scrollback preference starts unset and round-trips")
+  func scrollbackPreferencePersists() throws {
+    // The field is Bool? so a preferences file written before the
+    // setting existed decodes to nil. What nil then *means* is
+    // `restoresTerminalScrollback`, asserted separately — this covers
+    // only the storage.
+    try withTempDir { dir in
+      let storeURL = dir.appendingPathComponent("preferences.json")
+      #expect(PreferencesStore(storeURL: storeURL).preferences.restoreTerminalScrollback == nil)
+
+      let writer = PreferencesStore(storeURL: storeURL)
+      writer.update { $0.restoreTerminalScrollback = false }
+      #expect(PreferencesStore(storeURL: storeURL).preferences.restoreTerminalScrollback == false)
+    }
+  }
+
+  @Test("an unset scrollback preference reads as on")
+  func scrollbackDefaultsOn() {
+    // The default that a preferences file predating the setting relies
+    // on, and the one the toggle shows on first open.
+    #expect(E05Preferences.default.restoresTerminalScrollback)
+    #expect(E05Preferences(restoreTerminalScrollback: nil).restoresTerminalScrollback)
+    #expect(E05Preferences(restoreTerminalScrollback: true).restoresTerminalScrollback)
+    #expect(!E05Preferences(restoreTerminalScrollback: false).restoresTerminalScrollback)
+  }
+
   @Test("missing file yields defaults, never throws")
   func missingFileYieldsDefault() throws {
     try withTempDir { dir in
