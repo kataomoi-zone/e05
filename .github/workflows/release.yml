@@ -230,6 +230,10 @@ jobs:
           export E05_NOTARY_KEY_PATH="$RUNNER_TEMP/notary.p8"
           echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$E05_NOTARY_KEY_PATH"
           ./scripts/build_app.sh release
+          # Before spending 5-15 minutes at Apple's notary on a bundle
+          # that is missing something. ci checks the same invariants on
+          # the dev flavour every push; this is the one that ships.
+          ./scripts/verify_bundle.sh build/release/e05.app
           # tee so the 5-15 min notarization streams live; pipefail (set
           # above) still propagates a notarize.sh failure through the tee.
           ./scripts/notarize.sh | tee "$RUNNER_TEMP/notarize.log"

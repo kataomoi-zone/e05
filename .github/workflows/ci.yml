@@ -131,3 +131,16 @@ jobs:
 
       - name: swift test
         run: swift test --disable-sandbox
+
+      # build_app.sh is a run of copies, rsyncs and file edits whose
+      # failure mode is silence — a step that finds nothing to do leaves
+      # the bundle emptier and exits 0. Three bugs shipped that way, and
+      # none of them were reachable from a test, because nothing looked
+      # at an assembled bundle. The dev flavour assembles from the debug
+      # build that just ran, so this costs a second or two rather than
+      # another compile, and it puts every build-time step under the same
+      # check on every push instead of only at a release.
+      - name: Assemble and verify the app bundle
+        run: |
+          ./scripts/build_app.sh dev
+          ./scripts/verify_bundle.sh build/dev/e05.app
