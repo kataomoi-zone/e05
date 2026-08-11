@@ -20,8 +20,14 @@ struct ScrollbackStore: Sendable {
   /// Matches cmux, which arrived at these by shipping the feature. Far
   /// more than a screenful is rarely read back, and an unbounded capture
   /// would put megabytes through the shell on every restore.
+  ///
+  /// The size cap is in bytes because bytes are what the shell reads. A
+  /// character count is not the same bound: 400,000 characters of CJK is
+  /// 1.2 MB, and a character built from a thousand combining marks is a
+  /// few KB on its own — a capture of 4,000 such lines passed both of
+  /// the old caps at 7.6 MB.
   static let maxLines = 4000
-  static let maxCharacters = 400_000
+  static let maxBytes = 400_000
 
   /// Process-wide store, backed by the real data directory. Every caller
   /// in the app goes through this.
@@ -162,7 +168,13 @@ struct ScrollbackStore: Sendable {
   /// precede it — carrying the old one along would stack a new banner
   /// on top of every previous session's, one line deeper each restart.
   static func truncate(_ text: String) -> String {
-    var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+    // Bound the input before anything walks it. Everything below works
+    // in Characters, and Swift has to decode grapheme clusters to do
+    // that — 565 ms on the capture above, on the main thread, at quit.
+    // Cutting to the last `maxBytes` first costs one pass over that much
+    // and leaves the rest to operate on a bounded string. Only lines are
+    // removed after this, so the result stays inside the cap.
+    var lines = Self.lastBytes(of: text).split(separator: "\n", omittingEmptySubsequences: false)
     // A previous replay's rule is now ordinary scrollback, and keeping it
     // would leave one more rule per restart. Unlike the banner these sit
     // mid-history, so the whole capture is filtered rather than just its
@@ -182,16 +194,23 @@ struct ScrollbackStore: Sendable {
     if lines.count > maxLines {
       lines.removeFirst(lines.count - maxLines)
     }
-    var joined = lines.joined(separator: "\n")
-    if joined.count > maxCharacters {
-      // Cut on a line boundary so the replay never opens mid-line.
-      let tail = joined.suffix(maxCharacters)
-      if let newline = tail.firstIndex(of: "\n") {
-        joined = String(tail[tail.index(after: newline)...])
-      } else {
-        joined = String(tail)
-      }
+    return lines.joined(separator: "\n")
+  }
+
+  /// The last ``maxBytes`` UTF-8 bytes of `text`, opening on a line
+  /// boundary. Byte-indexed throughout: `String.suffix` counts grapheme
+  /// clusters, which is both the wrong unit for "how much does the shell
+  /// have to read" and a full decode of the capture to compute.
+  private static func lastBytes(of text: String) -> String {
+    guard text.utf8.count > maxBytes else { return text }
+    var bytes = Array(text.utf8.suffix(maxBytes))
+    if let newline = bytes.firstIndex(of: UInt8(ascii: "\n")) {
+      // Drop the partial first line rather than open the replay midway
+      // through one. This also discards any scalar the cut landed
+      // inside; without a newline there is none to drop, and decoding
+      // substitutes U+FFFD for the fragment.
+      bytes.removeFirst(newline + 1)
     }
-    return joined
+    return String(decoding: bytes, as: UTF8.self)
   }
 }

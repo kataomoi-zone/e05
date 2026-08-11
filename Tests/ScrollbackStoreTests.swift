@@ -358,27 +358,47 @@ struct ScrollbackStoreTests {
     #expect(resultLines.first == "line 501")
   }
 
-  @Test("cuts on a line boundary when over the character cap")
-  func characterCapCutsAtLineBoundary() {
-    // Long enough that the character cap bites before the line cap: a
+  @Test("cuts on a line boundary when over the byte cap")
+  func byteCapCutsAtLineBoundary() {
+    // Long enough that the byte cap bites before the line cap: a
     // mid-line cut would open the replay with a fragment.
     let line = String(repeating: "x", count: 1000)
     let text = (1...500).map { "\($0)-\(line)" }.joined(separator: "\n")
     let result = ScrollbackStore.truncate(text)
 
-    #expect(result.count <= ScrollbackStore.maxCharacters)
+    #expect(result.utf8.count <= ScrollbackStore.maxBytes)
     #expect(!result.hasPrefix("x"))
     #expect(result.hasSuffix("500-\(line)"))
   }
 
   @Test("keeps the cap's worth of a capture that has no line to cut on")
-  func characterCapWithoutALineBoundary() {
+  func byteCapWithoutALineBoundary() {
     // The branch taken when the tail holds no newline at all — a single
     // enormous line, which `cat`ting a binary into the pane produces.
     // Asserted as an equality: a cap that keeps a tenth of its budget
     // also satisfies "no more than the cap".
-    let text = String(repeating: "x", count: ScrollbackStore.maxCharacters + 5000)
-    #expect(ScrollbackStore.truncate(text).count == ScrollbackStore.maxCharacters)
+    let text = String(repeating: "x", count: ScrollbackStore.maxBytes + 5000)
+    #expect(ScrollbackStore.truncate(text).utf8.count == ScrollbackStore.maxBytes)
+  }
+
+  @Test("bounds a capture whose characters are far larger than a byte")
+  func byteCapBoundsWideCharacters() {
+    // What a character count does not bound. Each line here is one
+    // grapheme cluster carrying a thousand combining marks, so 4,000
+    // lines are 4,000 characters — inside a 400,000-character cap — and
+    // 7.6 MB on disk, all of which the shell would have to read back.
+    let line = "a" + String(repeating: "\u{0301}", count: 1000)
+    let text = (1...4000).map { _ in line }.joined(separator: "\n")
+    #expect(text.utf8.count > 7_000_000)
+
+    let result = ScrollbackStore.truncate(text)
+    #expect(result.utf8.count <= ScrollbackStore.maxBytes)
+    // And the same for text that is merely not ASCII, which is the case
+    // that turns up without anyone trying: 400,000 characters of CJK is
+    // 1.2 MB.
+    let cjk = (1...20_000).map { _ in String(repeating: "日本語のテキスト", count: 15) }
+      .joined(separator: "\n")
+    #expect(ScrollbackStore.truncate(cjk).utf8.count <= ScrollbackStore.maxBytes)
   }
 
   @Test("the caps are the values the doc comment justifies")
@@ -387,7 +407,7 @@ struct ScrollbackStoreTests {
     // terms of these constants, so a typo here would move the tests with
     // it and ship unnoticed.
     #expect(ScrollbackStore.maxLines == 4000)
-    #expect(ScrollbackStore.maxCharacters == 400_000)
+    #expect(ScrollbackStore.maxBytes == 400_000)
   }
 
   @Test("stamps the rule with the capture time, not the replay time")
