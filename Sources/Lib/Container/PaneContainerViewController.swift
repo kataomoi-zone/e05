@@ -312,7 +312,12 @@ public final class PaneContainerViewController: NSViewController {
 
     var initiallyPinned = false
     var initiallyCollapsedIds: [String] = []
-    if let session = SessionState.load() {
+    let restored = SessionState.load()
+    // Before the restore hands any path out, and only against a session
+    // that actually loaded — see ``ScrollbackStore/pruneOrphans(against:)``
+    // for why nil deletes nothing.
+    ScrollbackStore.default.pruneOrphans(against: restored)
+    if let session = restored {
       initiallyPinned = session.sidebarPinned
       initiallyCollapsedIds = session.collapsedIds ?? []
       restoreSession(session)

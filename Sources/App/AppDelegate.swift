@@ -134,6 +134,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var isApplyingTheme = false
 
   func applicationDidFinishLaunching(_: Notification) {
+    // First, so a second instance aborts before it can touch anything the
+    // running one owns. It used to sit at the end of this method, which
+    // was fine while an aborted start persisted nothing — but the launch
+    // path now *deletes*: it drops the scrollback captures the restored
+    // session does not name, and a second instance reading the live one's
+    // autosaved session would take captures its shells had not replayed
+    // yet. Nothing here needs the window or the pane container, and
+    // `handleControlRequest` already answers "host not ready" until the
+    // container exists.
+    installControlSocket()
+
     // Start the update scheduler. Only a bundled build can update itself
     // — `swift run` and other loose launches have no Info.plist feed URL
     // and Sparkle would log a configuration error on every start.
@@ -360,7 +371,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     installTabKeyMonitor()
     installExtensionCommandMonitor()
     installNativeBackForwardMonitor()
-    installControlSocket()
   }
 
   /// Bring up the `~/Library/Application Support/<bid>/control.sock`

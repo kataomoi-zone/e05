@@ -44,6 +44,19 @@ public struct SessionState: Codable, Sendable {
   /// collapsed; the in-code reader treats nil and empty as identical.
   public var collapsedIds: [String]?
 
+  /// Every scrollback capture this session still points at. Anything
+  /// else in the store is unreachable: a capture's path becomes an
+  /// environment variable when the pane's surface is created — the first
+  /// time its view enters a window — so a file no `PaneState` names will
+  /// never be handed to a shell again.
+  var scrollbackIDs: Set<String> {
+    Set(
+      workspaces
+        .flatMap(\.columns)
+        .flatMap(\.panes)
+        .compactMap(\.terminalScrollbackID))
+  }
+
   public struct WorkspaceState: Codable, Sendable {
     /// Workspace ULID at save time. `Optional` so a session.json
     /// written before id round-trip existed decodes cleanly — the

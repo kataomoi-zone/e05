@@ -113,6 +113,31 @@ struct ScrollbackStore: Sendable {
     return enabled
   }
 
+  /// Drop the captures `session` does not point at, at launch. A
+  /// capture's path reaches a shell once, when its pane's surface is
+  /// created, so anything the session about to be restored does not name
+  /// is already unreachable. The shell that replays a capture deletes it
+  /// itself, so in an ordinary run there is little here to find; what
+  /// this collects is what a crash left behind, and captures no shell
+  /// ever read.
+  ///
+  /// `nil` deletes nothing. A session that could not be read is not a
+  /// session that named no captures: ``SessionState/load()`` returns nil
+  /// for a file it quarantined as unreadable or too new as well as for
+  /// one that is absent, and in every one of those cases the captures
+  /// are still unconsumed — nothing has been restored, so no shell has
+  /// been handed a path. Quarantine exists so a session can be recovered
+  /// by hand; taking the history out from under it while keeping the
+  /// layout would be the wrong half to save. They cost one session and
+  /// go at the next clean quit.
+  ///
+  /// Here rather than at the call site for the same reason as
+  /// ``capturesThisQuit(per:)``: the caller is a view controller.
+  func pruneOrphans(against session: SessionState?) {
+    guard let session else { return }
+    prune(keeping: session.scrollbackIDs)
+  }
+
   /// Drop every capture except the ones just written. Panes closed since
   /// the last save would otherwise leave their files behind forever, and
   /// a restored pane's file is consumed by the shell rather than by us.

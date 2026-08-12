@@ -298,6 +298,50 @@ struct ScrollbackStorePruneTests {
     }
   }
 
+  // Named for what it calls, not for launch: nothing here goes through
+  // `viewDidLoad`, and no unit test can — the view controller needs a
+  // `GhosttyApp`. Deleting the call site leaves this green.
+  @Test("pruneOrphans drops the captures a session cannot reach")
+  func pruneOrphansDropsUnreachable() throws {
+    // The other two callers of `prune` are the quit handler and the
+    // Delete button in Settings, so a run that ends in a crash cleans up
+    // nothing: the path reaches a shell once, at surface creation.
+    try withTempStore { store, dir in
+      let ids = seed(store, count: 3)
+      #expect(ids.count == 3)
+      let urls = try ids.map { try #require(store.fileURL(id: $0)) }
+
+      var pane = SessionState.PaneState(address: "e05://terminal")
+      pane.terminalScrollbackID = ids[1]
+      let session = SessionState(
+        workspaces: [
+          SessionState.WorkspaceState(
+            name: "one",
+            columns: [
+              SessionState.ColumnState(
+                panes: [pane], focusedPaneIndex: 0, width: 500, heightRatios: [])
+            ],
+            focusedColumnIndex: 0, scrollX: 0)
+        ],
+        focusedWorkspaceIndex: 0)
+
+      store.pruneOrphans(against: session)
+      let fm = FileManager.default
+      #expect(!fm.fileExists(atPath: urls[0].path))
+      #expect(fm.fileExists(atPath: urls[1].path))
+      #expect(!fm.fileExists(atPath: urls[2].path))
+
+      // No session in hand deletes nothing. `load` returns nil for a
+      // file it quarantined as unreadable or too new as well as for one
+      // that is absent, and in all of those cases nothing has been
+      // restored — so no shell has been handed a path and every capture
+      // is still unconsumed. Deleting them would take the history out
+      // from under a session the quarantine deliberately kept.
+      store.pruneOrphans(against: nil)
+      #expect(try fm.contentsOfDirectory(atPath: dir.path).count == 1)
+    }
+  }
+
   @Test("does nothing when no capture has ever been written")
   func toleratesMissingDirectory() {
     withTempStore { store, dir in

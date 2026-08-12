@@ -5,6 +5,43 @@ import Testing
 
 @Suite("SessionState")
 struct SessionStateTests {
+  @Test("collects every scrollback id the session still points at")
+  func scrollbackIDsWalksEveryPane() {
+    func pane(_ id: String?) -> SessionState.PaneState {
+      var state = SessionState.PaneState(address: "e05://terminal")
+      state.terminalScrollbackID = id
+      return state
+    }
+    func column(_ ids: [String?]) -> SessionState.ColumnState {
+      SessionState.ColumnState(
+        panes: ids.map(pane), focusedPaneIndex: 0, width: 500, heightRatios: [])
+    }
+    func workspace(_ name: String, _ columns: [[String?]]) -> SessionState.WorkspaceState {
+      SessionState.WorkspaceState(
+        name: name, columns: columns.map(column), focusedColumnIndex: 0, scrollX: 0)
+    }
+
+    // What launch hands `ScrollbackStore.pruneOrphans`. Missing an id
+    // would delete a capture a pane is about to replay; keeping a stale
+    // one would leave a screen on disk that nothing can read.
+    //
+    // The three ids are placed so that a walk stopping at the first
+    // workspace, the first column, or the first pane each loses at least
+    // one of them.
+    let session = SessionState(
+      workspaces: [
+        workspace("one", [[nil, "a"], [nil, nil]]),
+        workspace("two", [[nil, nil], ["b", "c"]]),
+      ],
+      focusedWorkspaceIndex: 0)
+    #expect(session.scrollbackIDs == ["a", "b", "c"])
+
+    let none = SessionState(
+      workspaces: [workspace("one", [[nil, nil]])], focusedWorkspaceIndex: 0)
+    #expect(none.scrollbackIDs.isEmpty)
+    #expect(SessionState(workspaces: [], focusedWorkspaceIndex: 0).scrollbackIDs.isEmpty)
+  }
+
   @Test("workspace name round-trips through encode/decode")
   func nameRoundTrip() throws {
     let session = SessionState(
