@@ -75,12 +75,14 @@ Taking the archive with `curl` rather than declaring a remote SwiftPM package is
 ./scripts/fetch_sparkle.sh              # first time, or after a SPARKLE_VERSION bump
 swift build
 swift test --disable-sandbox            # unit tests
-./scripts/test-shell-integration.sh     # shell-integration snippets (bash + zsh)
+./scripts/test-shell-integration.sh     # the shell that ships in the bundle
 ```
 
 The `--disable-sandbox` flag is required because tests access `~/.config/e05/` paths, which SwiftPM's default sandbox denies.
 
-`test-shell-integration.sh` covers `Resources/bin/e05-integration.{zsh,bash,fish}`, which no Swift test can reach. (`Resources/bin/open`, the shim that keeps `open` inside e05, is shell too and is still uncovered.) Each case runs in a pristine shell (`bash --noprofile --norc` / `zsh -f`), so the developer's own dotfiles cannot mask a failure. Both workflows run it ahead of the GhosttyKit build, since it needs no build inputs and fails in seconds.
+`test-shell-integration.sh` covers the three things a Swift test cannot reach: the snippets `Resources/bin/e05-integration.{zsh,bash,fish}`, the step that injects them into ghostty's own integration files, and `Resources/bin/open`, the shim that keeps `open` inside e05. Each case runs in a pristine shell (`bash --noprofile --norc` / `zsh -f` / `fish --no-config`), so the developer's own dotfiles cannot mask a failure. fish is not on a stock macOS: without it those cases are reported as skipped rather than passed, and CI installs it. Both workflows run the script ahead of the GhosttyKit build, since it needs no build inputs and fails in seconds.
+
+The `e05` CLI is covered by `Tests/CLITests.swift`, which runs the built binary as a process and answers it with a real `ControlSocket`. SwiftPM would happily link the executable target into the test target instead, but the CLI ends every path with `exit()`, reads `CommandLine.arguments`, and derives its socket from `_NSGetExecutablePath` — none of which mean anything inside the test runner. That runs as part of `swift test`.
 
 For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script assembles a `.app` bundle under `build/dev/` and execs the binary out of it, so `Bundle.main.bundleIdentifier` resolves and APIs that gate on bundle identity work — camera/microphone/location permission prompts, unified-log Logger subsystem, and the upcoming `UNUserNotificationCenter` wiring. The binary is exec'd directly (not via `open`), so stderr stays attached to the terminal.
 
