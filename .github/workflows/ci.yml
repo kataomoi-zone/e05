@@ -129,7 +129,10 @@ jobs:
         timeout-minutes: 15
         run: swift build --disable-sandbox
 
+      # The CLI cases run a subprocess and wait on a socket round trip;
+      # a wedge there would otherwise sit silently to the job's ceiling.
       - name: swift test
+        timeout-minutes: 15
         run: swift test --disable-sandbox
 
       # build_app.sh is a run of copies, rsyncs and file edits whose

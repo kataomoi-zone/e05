@@ -190,7 +190,10 @@ jobs:
         run: swift build -c release
 
       # Gate the release on the test suite so a red build never ships.
+      # Bounded for the same reason as the build above: the CLI cases run
+      # a subprocess and wait on a socket round trip.
       - name: swift test
+        timeout-minutes: 15
         run: swift test --disable-sandbox
 
       # --- Signing identity into a temporary keychain ---
