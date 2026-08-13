@@ -1,5 +1,5 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 72bbb57a8..b449a5e1c 100644
+index 72bbb57a8..e1eeff25f 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
 @@ -1127,6 +1127,8 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
@@ -7,15 +7,15 @@ index 72bbb57a8..b449a5e1c 100644
                                                     ghostty_binding_flags_e*);
  GHOSTTY_API void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
 +GHOSTTY_API bool ghostty_surface_command_text(ghostty_surface_t, ghostty_point_s, bool, uint8_t, ghostty_text_s*);
-+GHOSTTY_API bool ghostty_surface_read_primary_text(ghostty_surface_t, ghostty_selection_s, ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_read_primary_text(ghostty_surface_t, ghostty_selection_s, bool, ghostty_text_s*);
  GHOSTTY_API void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
  GHOSTTY_API bool ghostty_surface_mouse_captured(ghostty_surface_t);
  GHOSTTY_API bool ghostty_surface_mouse_button(ghostty_surface_t,
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 7310159cc..b0f0932b2 100644
+index 7310159cc..376f0e401 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1681,6 +1681,178 @@ pub const CAPI = struct {
+@@ -1681,6 +1681,201 @@ pub const CAPI = struct {
          ptr.deinit();
      }
  
@@ -146,6 +146,9 @@ index 7310159cc..b0f0932b2 100644
 +    /// the session's actual history. e05 captures scrollback at quit,
 +    /// which is exactly when an editor is likely to be open.
 +    ///
++    /// With `styled`, the text carries SGR sequences and rows end with
++    /// CRLF; without it, the result matches `screen.selectionString`.
++    ///
 +    /// The selection is resolved against the primary screen, so pass
 +    /// SCREEN/TOP_LEFT .. SCREEN/BOTTOM_RIGHT to mean "all of it". The
 +    /// viewport fields of the result are left unset (-1 / 0): they
@@ -155,6 +158,7 @@ index 7310159cc..b0f0932b2 100644
 +    export fn ghostty_surface_read_primary_text(
 +        surface: *Surface,
 +        sel: Selection,
++        styled: bool,
 +        result: *Text,
 +    ) bool {
 +        const core_surface = &surface.core_surface;
@@ -167,15 +171,34 @@ index 7310159cc..b0f0932b2 100644
 +
 +        const core_sel = sel.core(screen) orelse return false;
 +
-+        // selectionString rather than dumpTextLocked: that helper reads
-+        // screens.active for both the text and the viewport metadata —
-+        // the very thing being avoided here — and the pixel/offset
-+        // fields it computes go unused by a capture.
-+        const text = screen.selectionString(global.alloc, .{
-+            .sel = core_sel,
++        // The formatter directly rather than screen.selectionString:
++        // that helper is the same call with `.emit` pinned to `.plain`.
++        //
++        // palette, background and foreground stay null, which is what
++        // makes a styled read safe to replay. A null palette emits
++        // colors as palette *indexes* rather than resolved RGB, so a
++        // restored capture follows whatever theme is live when it is
++        // replayed; null background/foreground suppress the OSC 10/11
++        // pair that would otherwise carry the capture-time theme along
++        // and override the live one. (write_screen_file passes all
++        // three, which is why that route bakes the old theme in.)
++        var aw: std.Io.Writer.Allocating = .init(global.alloc);
++        defer aw.deinit();
++
++        var formatter: terminal.formatter.ScreenFormatter = .init(screen, .{
++            .emit = if (styled) .vt else .plain,
++            .unwrap = true,
 +            .trim = false,
-+        }) catch |err| {
-+            log.warn("error reading primary text err={}", .{err});
++        });
++        formatter.content = .{ .selection = core_sel };
++        formatter.format(&aw.writer) catch |err| {
++            log.warn("error formatting primary text err={}", .{err});
++            return false;
++        };
++
++        // Sentinel-terminated because Text.deinit frees it as [:0].
++        const text = aw.toOwnedSliceSentinel(0) catch |err| {
++            log.warn("error allocating primary text err={}", .{err});
 +            return false;
 +        };
 +

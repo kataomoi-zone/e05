@@ -97,7 +97,7 @@ extension PaneContainerViewController {
             // the whole screen for every pane is too much work for the
             // 2.5s autosave, so it runs on quit, where losing the last
             // few seconds of history to a crash is the accepted trade.
-            if captureScrollback, let text = terminalView.readScreenText(),
+            if captureScrollback, let text = terminalView.readScreenText(styled: true),
               let id = ScrollbackStore.default.save(text)
             {
               state.terminalScrollbackID = id

@@ -49,7 +49,7 @@ extension GhosttyTerminalView {
     readText(topRow: 0, topColumn: 0, bottomRow: rows - 1, bottomColumn: columns - 1)
   }
 
-  /// The primary screen in full, scrollback included, as plain text.
+  /// The primary screen in full, scrollback included.
   ///
   /// `GHOSTTY_POINT_SCREEN` addresses the whole history where
   /// ``readViewportText(rows:columns:)``'s `VIEWPORT` covers only what
@@ -64,11 +64,16 @@ extension GhosttyTerminalView {
   /// there returns a screenful of vim and discards the real history, and
   /// quit is exactly when an editor tends to be open.
   ///
-  /// Plain text by choice. Ghostty can export styled output through the
-  /// `write_screen_file` binding action, but it bakes the capture-time
-  /// theme into OSC 10/11, which then overrides the live theme when
-  /// replayed. Colour is not worth that.
-  func readScreenText() -> String? {
+  /// With `styled`, cells keep their colour: the read comes back as VT
+  /// with SGR sequences and CRLF row endings. Colours are emitted as
+  /// palette *indexes* rather than resolved RGB, and no OSC 10/11 pair
+  /// is written, so a capture replayed after a theme change follows the
+  /// new theme instead of repainting the old one. That is a property of
+  /// this path, not of styled export generally — ghostty's own
+  /// `write_screen_file` action hands the formatter the palette and the
+  /// background and foreground colours, which is exactly what bakes the
+  /// capture-time theme in.
+  func readScreenText(styled: Bool) -> String? {
     guard let surface else { return nil }
     let selection = ghostty_selection_s(
       top_left: ghostty_point_s(
@@ -77,7 +82,7 @@ extension GhosttyTerminalView {
         tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
       rectangle: false)
     var out = ghostty_text_s()
-    guard ghostty_surface_read_primary_text(surface, selection, &out) else { return nil }
+    guard ghostty_surface_read_primary_text(surface, selection, styled, &out) else { return nil }
     defer { ghostty_surface_free_text(surface, &out) }
     guard let ptr = out.text, out.text_len > 0 else { return "" }
     return ptr.withMemoryRebound(to: UInt8.self, capacity: Int(out.text_len)) {

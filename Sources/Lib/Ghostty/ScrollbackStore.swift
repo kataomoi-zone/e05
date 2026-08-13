@@ -26,6 +26,14 @@ struct ScrollbackStore: Sendable {
   /// 1.2 MB, and a character built from a thousand combining marks is a
   /// few KB on its own — a capture of 4,000 such lines passed both of
   /// the old caps at 7.6 MB.
+  ///
+  /// Colour costs about 2.2x: a measured capture carried 45 bytes of SGR
+  /// per line on top of 39 of text. Neither cap moved for it, because
+  /// the byte cap bounds what the shell reads back and that is the same
+  /// 400 KB whatever is in it. The two caps meet at 100 bytes a line, so
+  /// that measured session still runs into the line cap first; a denser
+  /// one — long lines, colour on every token — hits the byte cap
+  /// instead and restores fewer lines than it would have in plain.
   static let maxLines = 4000
   static let maxBytes = 400_000
 
@@ -168,8 +176,7 @@ struct ScrollbackStore: Sendable {
   ///
   /// Dim (SGR 2) rather than a background colour: the terminal's theme
   /// may have changed since the capture, and any colour chosen here
-  /// could land invisible against it — the failure mode that makes
-  /// replaying a styled capture unattractive in the first place.
+  /// could land invisible against it.
   static func replayText(_ history: String, capturedAt: Date) -> String {
     guard !history.isEmpty else { return history }
     let stamp = stampFormatter.string(from: capturedAt)
