@@ -537,3 +537,116 @@ struct ScrollbackStoreTests {
     #expect(ScrollbackStore.truncate("\n\n   \n\n").isEmpty)
   }
 }
+
+/// A styled capture differs from a plain one in two ways, and each
+/// breaks something that reads it as plain text. Rows are separated by
+/// CRLF, which Swift reads as a single Character — so a split on "\n"
+/// finds no separator at all and the whole capture arrives as one line.
+/// And a run of styled cells is wrapped in SGR, so a line's text is not
+/// where a prefix or a blank test looks for it.
+///
+/// What the formatter does *not* do is wrap indiscriminately: cells in
+/// the default style are emitted bare, and style never crosses a
+/// newline — it is closed just before one. The rows below are built to
+/// that shape rather than to a uniform wrapper, or they would be
+/// testing something the capture cannot contain.
+@Suite("ScrollbackStore styled captures")
+struct ScrollbackStoreStyledTests {
+  /// A row carrying a style: opened where the styled cells start,
+  /// closed before the row ends.
+  private func styled(_ text: String, sgr: String = "\u{1B}[1m") -> String {
+    "\(sgr)\(text)\u{1B}[0m"
+  }
+
+  /// Rows as they reach a capture file: CRLF between them, none after
+  /// the last.
+  private func styledCapture(_ rows: [String]) -> String {
+    rows.joined(separator: "\r\n")
+  }
+
+  @Test("plain text is returned as it stands")
+  func visibleTextLeavesPlainAlone() {
+    #expect(ScrollbackStore.visibleText(of: "just text") == "just text")
+  }
+
+  @Test("SGR comes off")
+  func visibleTextStripsStyle() {
+    #expect(ScrollbackStore.visibleText(of: Substring(styled("hello"))) == "hello")
+  }
+
+  @Test("CRLF rows are separate lines")
+  func splitsOnCRLF() {
+    // Swift reads "\r\n" as one Character, so a split on "\n" alone finds
+    // nothing to split on. Everything downstream then sees a single line:
+    // no blank trimming, no banner filter, and a line cap that counts to
+    // one. Pinned on the line cap, which is the one that would let a
+    // whole session through.
+    let rows = (1...(ScrollbackStore.maxLines + 10)).map { styled("line \($0)") }
+    let result = ScrollbackStore.truncate(styledCapture(rows))
+
+    #expect(result.split(separator: "\n").count == ScrollbackStore.maxLines)
+  }
+
+  @Test("a sequence with no final byte does not leak its bytes")
+  func visibleTextHandlesUnterminatedSequence() {
+    // The formatter cannot emit one, so this pins the parser's bound
+    // rather than a shape a capture takes: running to the end of the
+    // line is fine, `[38;5` sitting in front of a prefix test is not.
+    #expect(ScrollbackStore.visibleText(of: "text\u{1B}[38;5") == "text")
+  }
+
+  @Test("drops the previous replay's rule when it comes back styled")
+  func dropsStyledRule() {
+    // The regression this all exists for. e05 writes the rule dim, so a
+    // styled capture reads it back wrapped in SGR — and a filter looking
+    // at the raw line would keep it, leaving one more rule per restart.
+    let captured = styledCapture([
+      styled("first session"),
+      styled(""),
+      styled("──── restored from 2026-08-09 23:34:07 ────", sgr: "\u{1B}[2m"),
+      styled("second session"),
+    ])
+
+    let result = ScrollbackStore.truncate(captured)
+    #expect(!result.contains("restored from"))
+    #expect(result.contains("first session"))
+    #expect(result.contains("second session"))
+  }
+
+  @Test("treats a row of styled spaces as blank")
+  func stripsStyledPadding() {
+    // A row of written spaces carrying a background — the tail of a TUI
+    // status bar, a padded prompt — is text as far as the formatter is
+    // concerned, so it arrives wrapped in SGR rather than folded into a
+    // bare newline. Read raw, it is not blank, and it would be replayed
+    // as a stripe of colour above the restored history.
+    let bar = styled("   ", sgr: "\u{1B}[48;5;4m")
+    let captured = styledCapture(["", bar, styled("real output"), bar, ""])
+
+    let result = ScrollbackStore.truncate(captured)
+    #expect(ScrollbackStore.visibleText(of: Substring(result)) == "real output")
+  }
+
+  @Test("drops the login banner in a styled capture")
+  func dropsStyledLoginBanner() {
+    // The banner itself is unstyled — `login` prints it in the default
+    // style, and default cells are emitted bare — so this is really the
+    // CRLF split carrying the plain-text filters through.
+    let captured = styledCapture([
+      "Last login: Sat Aug  8 23:44:20 on ttys027",
+      "",
+      styled("real output"),
+    ])
+
+    #expect(!ScrollbackStore.truncate(captured).contains("Last login:"))
+  }
+
+  @Test("keeps the styling of the lines it does keep")
+  func keepsStyleOnSurvivingLines() {
+    // Stripping is for the predicates only. What reaches the file has to
+    // still carry its colour, or the whole exercise is a plain capture
+    // that took a longer road.
+    let captured = styled("coloured output", sgr: "\u{1B}[31m")
+    #expect(ScrollbackStore.truncate(captured).contains("\u{1B}[31m"))
+  }
+}

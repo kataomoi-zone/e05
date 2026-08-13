@@ -211,27 +211,87 @@ struct ScrollbackStore: Sendable {
     // Cutting to the last `maxBytes` first costs one pass over that much
     // and leaves the rest to operate on a bounded string. Only lines are
     // removed after this, so the result stays inside the cap.
-    var lines = Self.lastBytes(of: text).split(separator: "\n", omittingEmptySubsequences: false)
+    // CRLF as well as LF: a styled capture ends its rows with `\r\n`, and
+    // Swift reads that pair as one Character, so splitting on "\n" alone
+    // finds no separator at all and hands everything below a single line.
+    // Every filter here then matches nothing and the line cap counts one.
+    // The CR goes with the separator, leaving LF-terminated rows — which
+    // is what the replay wants anyway, since `cat` to a terminal turns
+    // each one back into CRLF.
+    var lines = Self.lastBytes(of: text)
+      .split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
     // A previous replay's rule is now ordinary scrollback, and keeping it
     // would leave one more rule per restart. Unlike the banner these sit
     // mid-history, so the whole capture is filtered rather than just its
     // head. Only the newest rule — appended after this — is wanted.
-    lines.removeAll { $0.hasPrefix(rulePrefix) && $0.hasSuffix(ruleSuffix) }
+    lines.removeAll {
+      let visible = visibleText(of: $0)
+      return visible.hasPrefix(rulePrefix) && visible.hasSuffix(ruleSuffix)
+    }
     func dropLeading(while matches: (Substring) -> Bool) {
       while let first = lines.first, matches(first) {
         lines.removeFirst()
       }
     }
-    dropLeading { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-    dropLeading { $0.hasPrefix("Last login:") }
-    dropLeading { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-    while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+    func isBlank(_ line: Substring) -> Bool {
+      visibleText(of: line).trimmingCharacters(in: .whitespaces).isEmpty
+    }
+    dropLeading(while: isBlank)
+    dropLeading { visibleText(of: $0).hasPrefix("Last login:") }
+    dropLeading(while: isBlank)
+    while let last = lines.last, isBlank(last) {
       lines.removeLast()
     }
     if lines.count > maxLines {
       lines.removeFirst(lines.count - maxLines)
     }
     return lines.joined(separator: "\n")
+  }
+
+  /// What a line puts on screen, with the escapes that carry no glyphs
+  /// removed.
+  ///
+  /// The rows this exists for are the styled ones made of written
+  /// spaces: a TUI's status bar, a selection highlight, a prompt padded
+  /// out to the width of the pane. Those cells hold a space and a
+  /// background colour, so a styled capture brings them back as SGR
+  /// wrapped around blanks, where the raw line is neither empty nor the
+  /// text it looks like. Rows the screen was never written to are a
+  /// different thing and need no help: they carry no cell text at all,
+  /// and the formatter folds them into bare newlines whether the read
+  /// is styled or plain. Text in the default style — the `Last login:`
+  /// banner, most shell output — comes back unwrapped for the same
+  /// reason, so it is only passed through here for uniformity.
+  ///
+  /// CSI is the whole vocabulary, because it is all a capture can hold.
+  /// The formatter runs with no extras, which is what keeps OSC 8,
+  /// cursor moves and charset designations out of it, and with a null
+  /// palette and no colours, which is what keeps OSC 10/11 out. Those
+  /// are ghostty's defaults rather than e05's choices, so the patch in
+  /// `patches/ghostty-primary-text.snippet.zig` lists them among the
+  /// things to recheck when ghostty is bumped.
+  static func visibleText(of line: Substring) -> String {
+    guard line.utf8.contains(0x1B) else { return String(line) }
+    let bytes = Array(line.utf8)
+    var visible: [UInt8] = []
+    visible.reserveCapacity(bytes.count)
+    var i = 0
+    while i < bytes.count {
+      guard bytes[i] == 0x1B, i + 1 < bytes.count, bytes[i + 1] == UInt8(ascii: "[") else {
+        visible.append(bytes[i])
+        i += 1
+        continue
+      }
+      // Parameter and intermediate bytes, then a final byte in
+      // 0x40-0x7E. The formatter cannot emit a sequence without one;
+      // the loop is bounded so that if anything ever did, it would run
+      // to the end of the line rather than leave `[38;5` sitting in
+      // front of a prefix test.
+      i += 2
+      while i < bytes.count, !(0x40...0x7E).contains(bytes[i]) { i += 1 }
+      if i < bytes.count { i += 1 }
+    }
+    return String(decoding: visible, as: UTF8.self)
   }
 
   /// The last ``maxBytes`` UTF-8 bytes of `text`, opening on a line
