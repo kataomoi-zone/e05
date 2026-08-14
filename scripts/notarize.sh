@@ -52,7 +52,8 @@ Required environment:
   E05_NOTARY_KEY_ID    10-character API key id.
   E05_NOTARY_ISSUER    Issuer UUID.
 
-See z-ai/developer-program.md for the full distribution flow.
+Run it on a bundle that build_app.sh release signed with a Developer ID
+identity (E05_SIGN_IDENTITY); an ad-hoc signed one is rejected upstream.
 EOF
 }
 

@@ -2,8 +2,8 @@
 # only: a dispatch cuts a date-based CalVer tag, builds everything from
 # source in this public CI run (GhosttyKit included, for supply-chain
 # transparency), and attaches a build-provenance attestation to the
-# published zip. Distribution is the release asset itself — see
-# z-ai/homebrew-tap-plan.md for the Homebrew cask this deliberately omits.
+# published zip. Distribution is the release asset itself: no Homebrew
+# cask bump runs from here, deliberately.
 #
 # Required repository secrets:
 #   MACOS_CERT_P12_BASE64    Developer ID Application cert (.p12), base64.

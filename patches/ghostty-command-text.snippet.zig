@@ -15,15 +15,13 @@
 //
 //       GHOSTTY_API bool ghostty_surface_command_text(ghostty_surface_t, ghostty_point_s, bool, uint8_t, ghostty_text_s*);
 //
-// Then capture the canonical patch (both files) and rebuild GhosttyKit:
+// Then capture the canonical patch (both files), from the ghostty
+// checkout:
 //
-//   cd ~/ghq/github.com/ghostty-org/ghostty
 //   git diff src/apprt/embedded.zig include/ghostty.h > <e05>/patches/ghostty-command-text.patch
-//   /opt/homebrew/opt/zig@0.15/bin/zig build -Doptimize=ReleaseFast \
-//     -Dapp-runtime=none -Demit-xcframework=true \
-//     -Dxcframework-target=native -Demit-exe=false -Demit-macos-app=false \
-//     -Dsentry=false
-//   cp -R macos/GhosttyKit.xcframework <e05>/
+//
+// and rebuild GhosttyKit with `scripts/bump_ghostty.sh`, which applies
+// patches/, builds, and vendors the xcframework in.
 //
 // (codesign "resource fork ... not allowed" → run `xattr -cr macos zig-out`
 // first.) Re-verify on a ghostty bump: highlightSemanticContent /
