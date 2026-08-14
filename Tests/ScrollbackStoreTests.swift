@@ -492,35 +492,23 @@ struct ScrollbackStoreTests {
       result == "\nreal output\n\n\u{1B}[2m──── restored from 2026-08-09 00:12:34 ────\u{1B}[0m\n")
   }
 
-  @Test("drops the previous replay's rule so rules cannot stack")
-  func dropsPreviousReplayRule() {
-    // The rule from the last restore is ordinary scrollback by the time
-    // the next capture runs; keeping it would add one per restart.
+  @Test("keeps earlier replays' rules so restarts stay legible")
+  func keepsPreviousReplayRules() {
+    // Each rule marks a restart, and two of them down the history say
+    // when the app came back twice. They are ordinary scrollback by the
+    // time the next capture runs, and nothing here treats them
+    // otherwise — a filter that removed them would leave only the
+    // newest and lose the timeline.
     let captured = """
       first session
 
       ──── restored from 2026-08-09 23:34:07 ────
       second session
+
+      ──── restored from 2026-08-10 08:02:11 ────
+      third session
       """
-    #expect(ScrollbackStore.truncate(captured) == "first session\n\nsecond session")
-  }
-
-  @Test("keeps a line that merely mentions the rule text")
-  func keepsRuleMention() {
-    // Only a line that is entirely a rule goes.
-    let captured = "grep '──── restored from ' log.txt"
     #expect(ScrollbackStore.truncate(captured) == captured)
-  }
-
-  @Test("keeps a line matching only one end of the rule")
-  func keepsHalfRuleMatches() {
-    // The filter is an AND of prefix and suffix. A line that opens like
-    // a rule but does not close like one — or the reverse — is output,
-    // and dropping either half of the test would take it with the rules.
-    let opensLikeARule = "──── restored from a log I was reading"
-    let closesLikeARule = "make: done ────"
-    #expect(ScrollbackStore.truncate(opensLikeARule) == opensLikeARule)
-    #expect(ScrollbackStore.truncate(closesLikeARule) == closesLikeARule)
   }
 
   @Test("adds no rule when there is no history")
@@ -595,11 +583,13 @@ struct ScrollbackStoreStyledTests {
     #expect(ScrollbackStore.visibleText(of: "text\u{1B}[38;5") == "text")
   }
 
-  @Test("drops the previous replay's rule when it comes back styled")
-  func dropsStyledRule() {
-    // The regression this all exists for. e05 writes the rule dim, so a
-    // styled capture reads it back wrapped in SGR — and a filter looking
-    // at the raw line would keep it, leaving one more rule per restart.
+  @Test("carries an earlier rule through with its dimming intact")
+  func keepsStyledRule() {
+    // e05 writes the rule dim, and a styled capture reads it back that
+    // way — SGR and all — where a plain one lost the dimming to the
+    // emulator. The next replay puts it back on screen looking as it
+    // did, which is what makes a stack of them read as a timeline
+    // rather than as output.
     let captured = styledCapture([
       styled("first session"),
       styled(""),
@@ -608,9 +598,8 @@ struct ScrollbackStoreStyledTests {
     ])
 
     let result = ScrollbackStore.truncate(captured)
-    #expect(!result.contains("restored from"))
-    #expect(result.contains("first session"))
-    #expect(result.contains("second session"))
+    #expect(result.contains("restored from 2026-08-09 23:34:07"))
+    #expect(result.contains("\u{1B}[2m"))
   }
 
   @Test("treats a row of styled spaces as blank")

@@ -186,13 +186,8 @@ struct ScrollbackStore: Sendable {
     // before the rule is there because a capture ends on the old prompt
     // line, which carries no newline of its own. The trailing newline
     // keeps zsh from marking the replay with its `%` partial-line glyph.
-    return "\n\(history)\n\n\u{1B}[2m\(rulePrefix)\(stamp) \(ruleSuffix)\u{1B}[0m\n"
+    return "\n\(history)\n\n\u{1B}[2m──── restored from \(stamp) ────\u{1B}[0m\n"
   }
-
-  /// Bracketing text of the restored-from rule, shared by the writer and
-  /// by ``truncate(_:)``'s filter so the two cannot drift.
-  private static let rulePrefix = "──── restored from "
-  private static let ruleSuffix = "────"
 
   private static let stampFormatter: DateFormatter = {
     let formatter = DateFormatter()
@@ -227,14 +222,12 @@ struct ScrollbackStore: Sendable {
     // each one back into CRLF.
     var lines = Self.lastBytes(of: text)
       .split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
-    // A previous replay's rule is now ordinary scrollback, and keeping it
-    // would leave one more rule per restart. Unlike the banner these sit
-    // mid-history, so the whole capture is filtered rather than just its
-    // head. Only the newest rule — appended after this — is wanted.
-    lines.removeAll {
-      let visible = visibleText(of: $0)
-      return visible.hasPrefix(rulePrefix) && visible.hasSuffix(ruleSuffix)
-    }
+    // Earlier replays' rules stay. Each one marks a restart the user
+    // lived through, and reading three of them down the history is
+    // reading when the app came back — which is worth more than the
+    // tidiness of a single rule. Restarting repeatedly without doing
+    // anything does stack them; that is the accepted cost, and the
+    // line and byte caps bound it like anything else.
     func dropLeading(while matches: (Substring) -> Bool) {
       while let first = lines.first, matches(first) {
         lines.removeFirst()
