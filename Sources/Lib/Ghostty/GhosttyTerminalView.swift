@@ -426,11 +426,42 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     // IME composing: tell ghostty not to encode this key
     let composing = hasMarkedText() || markedTextBefore
 
-    // If text was collected (IME confirmed or normal input), send with text
+    // An input method that was composing has committed, and the key that
+    // made it commit was its own instruction: ctrl+k to convert to
+    // katakana, Return to accept. Only the text belongs to the terminal.
+    // Sending the event as well would have libghostty encode that key
+    // from its keycode — a ^K, killing the line under the word that was
+    // just committed — because a key event carries its identity whatever
+    // text rides along with it.
+    if markedTextBefore, !accumulated.isEmpty {
+      for text in accumulated
+      where !GhosttyInput.suppressesComposingControlInput(text, composing: composing) {
+        sendCommittedPreeditText(text, action: action)
+      }
+      if GhosttyInput.replaysKeyAfterCommittedPreedit(
+        keyCode: event.keyCode, modifierFlags: event.modifierFlags)
+      {
+        sendKeyEvent(event, action: action, text: nil, composing: false)
+      }
+      return
+    }
+
+    // If text was collected (IME confirmed or normal input), send with text.
+    // A bare control character among it is one the input method was using
+    // for itself while composing, not something to put in the terminal.
     if !accumulated.isEmpty {
-      for text in accumulated {
+      for text in accumulated
+      where !GhosttyInput.suppressesComposingControlInput(text, composing: composing) {
         sendKeyEvent(event, action: action, text: text, composing: false)
       }
+      return
+    }
+
+    // The input method took a control key for a command of its own —
+    // katakana on ctrl+k, hiragana on ctrl+j — and left nothing behind.
+    // Encoding it anyway would run the shell's binding for that key
+    // underneath the composition the user is still editing.
+    if GhosttyInput.suppressesComposingControlInput(event.characters, composing: composing) {
       return
     }
 
@@ -451,6 +482,35 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
       isPress
       ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
     sendKeyEvent(event, action: action, text: nil)
+  }
+
+  /// Send text an input method committed, detached from the key that
+  /// made it commit.
+  ///
+  /// libghostty builds a key's encoding from its keycode and modifiers,
+  /// so passing the event along would put that key in the terminal
+  /// beside the text — ^K for ctrl+k. This sends the shape ghostty's own
+  /// apprt sends: the text, and no modifiers to derive a control
+  /// sequence from. The zero keycode is not "no key" — zero is the `a`
+  /// key on macOS and libghostty resolves it as one — but with the
+  /// modifiers gone there is nothing to encode from it, and the text is
+  /// what reaches the terminal.
+  private func sendCommittedPreeditText(
+    _ text: String, action: ghostty_input_action_e
+  ) {
+    guard let surface else { return }
+    var key = ghostty_input_key_s()
+    key.action = action
+    key.keycode = 0
+    key.mods = GHOSTTY_MODS_NONE
+    key.consumed_mods = GHOSTTY_MODS_NONE
+    key.unshifted_codepoint = 0
+    key.composing = false
+    logger.debug("[key] committed preedit text=\"\(text, privacy: .public)\"")
+    text.withCString { ptr in
+      key.text = ptr
+      _ = ghostty_surface_key(surface, key)
+    }
   }
 
   @discardableResult

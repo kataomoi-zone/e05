@@ -68,6 +68,62 @@ public enum GhosttyInput {
       mods: ghostty_input_scroll_mods_t(mods))
   }
 
+  /// Whether a key's text belongs to the input method rather than to the
+  /// terminal, because a composition is open and the text is a bare
+  /// control character.
+  ///
+  /// macOS input methods take control keys for themselves while
+  /// composing — ctrl+h to cancel, Esc to abandon — and some of them
+  /// return nothing at all, leaving only a key event carrying `\u{08}`
+  /// or `\u{1B}`.
+  ///
+  /// What that costs is not an encoded keystroke: the terminal is told
+  /// the key is part of a composition, and libghostty's encoder honours
+  /// that. It is that a key is matched against libghostty's *bindings*
+  /// before the composing flag is ever consulted — `Surface.zig` never
+  /// reads it — so a control key the input method was using could
+  /// trigger an e05 action mid-composition. The other place this earns
+  /// its keep is committed text, which goes out on a path with no
+  /// printable filter of its own.
+  ///
+  /// Only while composing, and only for text that is one control
+  /// character on its own: outside a composition ctrl+k is the shell's
+  /// kill-line and has to reach it, and a longer string that happens to
+  /// begin with a control character is the input method committing
+  /// something real.
+  public static func suppressesComposingControlInput(
+    _ text: String?, composing: Bool
+  ) -> Bool {
+    guard composing, let text else { return false }
+    let scalars = text.unicodeScalars
+    guard let scalar = scalars.first,
+      scalars.index(after: scalars.startIndex) == scalars.endIndex
+    else { return false }
+    return scalar.value < 0x20
+  }
+
+  /// Whether the key that made an input method commit its preedit
+  /// should also reach the terminal.
+  ///
+  /// Usually not: the key was the input method's instruction — ctrl+k to
+  /// convert, Return to accept — and the committed text is the whole of
+  /// what the user meant by it. Arrows are the exception, because moving
+  /// off the end of a composition is also a request to move the cursor.
+  /// Plain left-arrow is left out on purpose, matching ghostty: AppKit
+  /// has already left the caret where it belongs after a commit.
+  public static func replaysKeyAfterCommittedPreedit(
+    keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags
+  ) -> Bool {
+    switch keyCode {
+    case 0x7D, 0x7C, 0x7E:  // down, right, up
+      return true
+    case 0x7B:  // left
+      return !modifierFlags.isDisjoint(with: [.shift, .control, .option, .command])
+    default:
+      return false
+    }
+  }
+
   /// Momentum phase of a scroll event, in libghostty's terms. A phase
   /// this does not name — including the compound values an OptionSet can
   /// hold — reports as none, which is what ghostty's own apprt does.

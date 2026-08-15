@@ -135,6 +135,75 @@ struct GhosttyInputTests {
       coastingInput.mods == 1 | Int32(GHOSTTY_MOUSE_MOMENTUM_CHANGED.rawValue) << 1)
   }
 
+  // MARK: - Composing
+
+  /// An input method that takes a control key for itself and returns
+  /// nothing leaves a key event behind carrying the control character.
+  /// The terminal is told a composition is open and does not encode it,
+  /// but bindings are matched before that flag is looked at, so the key
+  /// has to stop here.
+  @Test("a bare control character during composition belongs to the input method")
+  func composingControlInputIsSuppressed() {
+    // ctrl+h to cancel a composition, Esc to abandon one.
+    #expect(GhosttyInput.suppressesComposingControlInput("\u{08}", composing: true))
+    #expect(GhosttyInput.suppressesComposingControlInput("\u{1B}", composing: true))
+  }
+
+  /// The half that must not over-reach: with no composition open, ctrl+k
+  /// is the shell's kill-line and has to arrive.
+  @Test("control characters outside a composition still reach the terminal")
+  func controlInputPassesWhenNotComposing() {
+    #expect(!GhosttyInput.suppressesComposingControlInput("\u{0B}", composing: false))
+    #expect(!GhosttyInput.suppressesComposingControlInput("\u{08}", composing: false))
+  }
+
+  @Test("real text during composition is not mistaken for a command")
+  func composingTextIsNotSuppressed() {
+    // What the input method commits, which is the point of composing.
+    #expect(!GhosttyInput.suppressesComposingControlInput("カタカナ", composing: true))
+    #expect(!GhosttyInput.suppressesComposingControlInput("a", composing: true))
+    // Only a lone control character is the input method's. A longer
+    // string that merely starts with one is text.
+    #expect(!GhosttyInput.suppressesComposingControlInput("\u{0B}あ", composing: true))
+    #expect(!GhosttyInput.suppressesComposingControlInput("", composing: true))
+    #expect(!GhosttyInput.suppressesComposingControlInput(nil, composing: true))
+    // Space is the boundary and sits outside: it is how a Japanese input
+    // method asks for the next conversion candidate, and it is text.
+    #expect(!GhosttyInput.suppressesComposingControlInput(" ", composing: true))
+  }
+
+  /// After an input method commits, the key that triggered the commit is
+  /// the input method's instruction and stays out of the terminal —
+  /// except for arrows, where moving off the composition is also a
+  /// request to move the cursor.
+  @Test("only arrows replay after a committed composition")
+  func replayAfterCommittedPreedit() {
+    // ctrl+k, Return, Space: the instruction, not a cursor move.
+    #expect(!GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x28, modifierFlags: .control))
+    #expect(!GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x24, modifierFlags: []))
+    #expect(!GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x31, modifierFlags: []))
+
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7D, modifierFlags: []))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7C, modifierFlags: []))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7E, modifierFlags: []))
+
+    // Plain left-arrow is the exception's exception: AppKit has already
+    // put the caret where it belongs, so replaying it would move twice.
+    // Any of the four modifiers makes it a movement again, so all four
+    // are pinned — one of them standing in for the set would pass a
+    // check that only looked at shift.
+    #expect(!GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7B, modifierFlags: []))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7B, modifierFlags: .shift))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7B, modifierFlags: .control))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7B, modifierFlags: .option))
+    #expect(GhosttyInput.replaysKeyAfterCommittedPreedit(keyCode: 0x7B, modifierFlags: .command))
+  }
+
+  // The branching in `keyDown` that consults these two rules is not
+  // reachable from a test: it runs `interpretKeyEvents`, which needs a
+  // live input context and a surface to send to. The rules are covered
+  // here; which branch calls them was verified against a running pane.
+
   // MARK: - Helper
 
   /// A scroll event, built the only way AppKit allows one to be built:
