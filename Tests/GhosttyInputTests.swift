@@ -51,7 +51,118 @@ struct GhosttyInputTests {
     #expect(chars == "a")
   }
 
+  // MARK: - Scroll
+
+  /// The scroll mods field is not the keyboard mods field, and the two
+  /// overlap where it hurts: a lone Shift is 1 as a keyboard mod, and 1
+  /// here means "these deltas are precise". Sending keyboard state on
+  /// this call made every unmodified scroll claim to be a wheel tick,
+  /// which libghostty scales by the cell height — a screenful per flick
+  /// on a trackpad — while Shift made a wheel's ticks claim to be
+  /// pixels, which took dozens of notches to move a row.
+  @Test("scroll mods carry precision and momentum, not keyboard state")
+  func scrollModsAreNotKeyboardMods() {
+    #expect(GhosttyInput.scrollInput(deltaX: 0, deltaY: 1, precise: false).mods == 0)
+    // Bit 0, which a keyboard Shift would also set.
+    #expect(GhosttyInput.scrollInput(deltaX: 0, deltaY: 1, precise: true).mods == 1)
+    // Bits 1-3, which the other keyboard modifiers would also set.
+    #expect(
+      GhosttyInput.scrollInput(
+        deltaX: 0, deltaY: 1, precise: false, momentum: GHOSTTY_MOUSE_MOMENTUM_CHANGED
+      ).mods == Int32(GHOSTTY_MOUSE_MOMENTUM_CHANGED.rawValue) << 1)
+    #expect(
+      GhosttyInput.scrollInput(
+        deltaX: 0, deltaY: 1, precise: true, momentum: GHOSTTY_MOUSE_MOMENTUM_ENDED
+      ).mods == 1 | Int32(GHOSTTY_MOUSE_MOMENTUM_ENDED.rawValue) << 1)
+  }
+
+  /// Doubling precise deltas is ghostty's own feel adjustment; a wheel's
+  /// ticks are counts and must not be touched, or every notch would move
+  /// two rows.
+  @Test("precise deltas are doubled and tick deltas are not")
+  func scrollScalesPreciseDeltasOnly() {
+    let precise = GhosttyInput.scrollInput(deltaX: -3, deltaY: 12.5, precise: true)
+    #expect(precise.deltaX == -6)
+    #expect(precise.deltaY == 25)
+
+    let ticks = GhosttyInput.scrollInput(deltaX: -1, deltaY: 3, precise: false)
+    #expect(ticks.deltaX == -1)
+    #expect(ticks.deltaY == 3)
+  }
+
+  @Test("momentum phases map to libghostty's own values")
+  func scrollMomentumMapping() {
+    #expect(GhosttyInput.scrollMomentum(.began) == GHOSTTY_MOUSE_MOMENTUM_BEGAN)
+    #expect(GhosttyInput.scrollMomentum(.stationary) == GHOSTTY_MOUSE_MOMENTUM_STATIONARY)
+    #expect(GhosttyInput.scrollMomentum(.changed) == GHOSTTY_MOUSE_MOMENTUM_CHANGED)
+    #expect(GhosttyInput.scrollMomentum(.ended) == GHOSTTY_MOUSE_MOMENTUM_ENDED)
+    #expect(GhosttyInput.scrollMomentum(.cancelled) == GHOSTTY_MOUSE_MOMENTUM_CANCELLED)
+    #expect(GhosttyInput.scrollMomentum(.mayBegin) == GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN)
+    // No phase, and — since this is an OptionSet and the cases match by
+    // equality — any combination of phases, report as none. That is what
+    // ghostty's apprt does with the same switch. Nothing reads momentum
+    // at the pinned libghostty, so a wrong value here would sit quiet
+    // until the day something does.
+    #expect(GhosttyInput.scrollMomentum([]) == GHOSTTY_MOUSE_MOMENTUM_NONE)
+    #expect(GhosttyInput.scrollMomentum([.began, .ended]) == GHOSTTY_MOUSE_MOMENTUM_NONE)
+  }
+
+  /// The bug this all came from was in none of the above: the call site
+  /// handed libghostty the keyboard modifiers instead, and every case
+  /// that stops at the pure function would have passed right through it.
+  /// So one case starts where the defect was, at an AppKit event.
+  @Test("an AppKit scroll event is read for precision, deltas and momentum")
+  func scrollInputReadsTheEvent() throws {
+    // Continuous units are what a trackpad or a Magic Mouse sends.
+    let precise = try #require(makeScrollEvent(deltaY: 30, deltaX: -10, continuous: true))
+    let preciseInput = GhosttyInput.scrollInput(from: precise)
+    #expect(preciseInput.mods & 1 == 1)
+    #expect(preciseInput.deltaY == 60)
+    #expect(preciseInput.deltaX == -20)
+
+    // A notched wheel reports lines, and must not claim precision — the
+    // scale libghostty puts on a tick is a different one entirely.
+    let wheel = try #require(makeScrollEvent(deltaY: 1, deltaX: 0, continuous: false))
+    let wheelInput = GhosttyInput.scrollInput(from: wheel)
+    #expect(wheelInput.mods & 1 == 0)
+    #expect(wheelInput.deltaY == 1)
+
+    // Momentum rides in the same field, above the precision bit.
+    let coasting = try #require(
+      makeScrollEvent(deltaY: 4, deltaX: 0, continuous: true, momentumPhase: 2))
+    let coastingInput = GhosttyInput.scrollInput(from: coasting)
+    #expect(
+      coastingInput.mods == 1 | Int32(GHOSTTY_MOUSE_MOMENTUM_CHANGED.rawValue) << 1)
+  }
+
   // MARK: - Helper
+
+  /// A scroll event, built the only way AppKit allows one to be built:
+  /// through CGEvent. `continuous` is what `hasPreciseScrollingDeltas`
+  /// reads, and `momentumPhase` takes CGEvent's own numbering, where 2
+  /// is a coasting scroll.
+  private func makeScrollEvent(
+    deltaY: Int32,
+    deltaX: Int32,
+    continuous: Bool,
+    momentumPhase: Int64 = 0
+  ) -> NSEvent? {
+    guard
+      let cgEvent = CGEvent(
+        scrollWheelEvent2Source: nil,
+        units: continuous ? .pixel : .line,
+        wheelCount: 2,
+        wheel1: deltaY,
+        wheel2: deltaX,
+        wheel3: 0)
+    else { return nil }
+    cgEvent.setIntegerValueField(
+      .scrollWheelEventIsContinuous, value: continuous ? 1 : 0)
+    if momentumPhase != 0 {
+      cgEvent.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentumPhase)
+    }
+    return NSEvent(cgEvent: cgEvent)
+  }
 
   private func makeKeyEvent(
     keyCode: UInt16,

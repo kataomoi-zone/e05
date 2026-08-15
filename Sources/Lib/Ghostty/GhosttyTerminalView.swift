@@ -548,11 +548,8 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
       dismissLinkHints()
       return
     }
-    ghostty_surface_mouse_scroll(
-      surface,
-      event.scrollingDeltaX,
-      event.scrollingDeltaY,
-      ghostty_input_scroll_mods_t(GhosttyInput.ghosttyMods(event.modifierFlags).rawValue))
+    let scroll = GhosttyInput.scrollInput(from: event)
+    ghostty_surface_mouse_scroll(surface, scroll.deltaX, scroll.deltaY, scroll.mods)
   }
 
   public override func updateTrackingAreas() {

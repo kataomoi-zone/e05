@@ -14,6 +14,75 @@ public enum GhosttyInput {
     return ghostty_input_mods_e(rawValue: mods)
   }
 
+  /// What a scroll event carries into libghostty: the deltas, and the
+  /// scroll mods that say how to read them.
+  public struct ScrollInput {
+    public let deltaX: Double
+    public let deltaY: Double
+    public let mods: ghostty_input_scroll_mods_t
+  }
+
+  /// Translate an AppKit scroll event for `ghostty_surface_mouse_scroll`.
+  public static func scrollInput(from event: NSEvent) -> ScrollInput {
+    scrollInput(
+      deltaX: event.scrollingDeltaX,
+      deltaY: event.scrollingDeltaY,
+      precise: event.hasPreciseScrollingDeltas,
+      momentum: scrollMomentum(event.momentumPhase))
+  }
+
+  /// Translate one scroll event for `ghostty_surface_mouse_scroll`.
+  ///
+  /// `mods` here is `ghostty_input_scroll_mods_t`, which is **not** the
+  /// keyboard `ghostty_input_mods_e`: bit 0 says the deltas are precise,
+  /// bits 1-3 carry the momentum phase. The two enums overlap — a lone
+  /// Shift is `1` as a keyboard mod, which reads as "precise" here — so
+  /// putting one where the other belongs silently changes how libghostty
+  /// reads every scroll. Keyboard state is not wanted on this call at
+  /// all: libghostty tracks the modifiers it needs for scrolling from
+  /// key and mouse events, which the view already sends.
+  ///
+  /// The flag decides which of two unrelated scales libghostty applies.
+  /// Precise deltas are pixels, and it divides them by the cell height
+  /// after `mouse-scroll-multiplier.precision`, 1 by default.
+  /// Imprecise ones are wheel ticks, and it multiplies them by the cell
+  /// height and by `mouse-scroll-multiplier.discrete`, 3 by default —
+  /// then, on macOS only, rounds any tick smaller than one up to a whole
+  /// one. Pixels sent unflagged therefore land as three rows apiece at
+  /// the very least, however gently the surface was touched.
+  ///
+  /// The doubling of precise deltas matches ghostty's own apprt, where
+  /// it is a deliberate feel adjustment.
+  public static func scrollInput(
+    deltaX: Double,
+    deltaY: Double,
+    precise: Bool,
+    momentum: ghostty_input_mouse_momentum_e = GHOSTTY_MOUSE_MOMENTUM_NONE
+  ) -> ScrollInput {
+    let scale: Double = precise ? 2 : 1
+    var mods: Int32 = precise ? 1 : 0
+    mods |= Int32(momentum.rawValue) << 1
+    return ScrollInput(
+      deltaX: deltaX * scale,
+      deltaY: deltaY * scale,
+      mods: ghostty_input_scroll_mods_t(mods))
+  }
+
+  /// Momentum phase of a scroll event, in libghostty's terms. A phase
+  /// this does not name — including the compound values an OptionSet can
+  /// hold — reports as none, which is what ghostty's own apprt does.
+  public static func scrollMomentum(_ phase: NSEvent.Phase) -> ghostty_input_mouse_momentum_e {
+    switch phase {
+    case .began: GHOSTTY_MOUSE_MOMENTUM_BEGAN
+    case .stationary: GHOSTTY_MOUSE_MOMENTUM_STATIONARY
+    case .changed: GHOSTTY_MOUSE_MOMENTUM_CHANGED
+    case .ended: GHOSTTY_MOUSE_MOMENTUM_ENDED
+    case .cancelled: GHOSTTY_MOUSE_MOMENTUM_CANCELLED
+    case .mayBegin: GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN
+    default: GHOSTTY_MOUSE_MOMENTUM_NONE
+    }
+  }
+
   /// Build ghostty_input_key_s from an NSEvent.
   public static func keyEvent(
     from event: NSEvent,
