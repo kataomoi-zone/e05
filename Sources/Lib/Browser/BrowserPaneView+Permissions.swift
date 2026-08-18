@@ -15,15 +15,24 @@ private let logger = Logger(
 final class PermissionPromptRequest {
   let host: String
   let kinds: [PermissionKind]
+  /// Window of the web view that asked. A pane's own web view answers
+  /// with the main window; a popup the page opened answers with its
+  /// panel, and the sheet has to land there — a sheet about a popup's
+  /// host, hung on the main window, names a site the user cannot see
+  /// and blocks the pane behind it. Weak because the asking window can
+  /// close while its prompt is still queued.
+  weak var sourceWindow: NSWindow?
   private var completion: ((WKPermissionDecision) -> Void)?
 
   init(
     host: String,
     kinds: [PermissionKind],
+    sourceWindow: NSWindow?,
     completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     self.host = host
     self.kinds = kinds
+    self.sourceWindow = sourceWindow
     self.completion = completion
   }
 
@@ -49,6 +58,7 @@ extension BrowserPaneView {
   func promptForPermission(
     host: String,
     kinds: [PermissionKind],
+    sourceWindow: NSWindow? = nil,
     completion: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     let normalizedHost = host.lowercased()
@@ -60,7 +70,8 @@ extension BrowserPaneView {
       return
     }
     let request = PermissionPromptRequest(
-      host: normalizedHost, kinds: kinds, completion: completion)
+      host: normalizedHost, kinds: kinds, sourceWindow: sourceWindow,
+      completion: completion)
     pendingPermissionPrompts.append(request)
     if pendingPermissionPrompts.count == 1 {
       presentNextPermissionPrompt()
@@ -122,7 +133,7 @@ extension BrowserPaneView {
   /// later request.
   private func presentNextPermissionPrompt() {
     guard let request = pendingPermissionPrompts.first,
-      let window = self.window
+      let window = request.sourceWindow ?? self.window
     else {
       // Pane lost its window between enqueue and present; drain.
       drainPermissionPromptsOnDetach()

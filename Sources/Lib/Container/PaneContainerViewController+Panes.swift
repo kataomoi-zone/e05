@@ -590,6 +590,43 @@ extension PaneContainerViewController {
         guard let address = PaneAddress.webLink(url) else { return }
         self?.addColumn(address: address)
       }
+      bv.onOpenPaneForScript = { [weak self, weak pane] configuration, url in
+        // Same "new column in the current workspace" placement as
+        // `onOpenInNewPane`, and the same `webLink` allowlist so a
+        // script can't reach a native `e05://` pane through
+        // `window.open`. The difference is that the pane's web view
+        // is built from WebKit's configuration and handed back, which
+        // is what keeps the opening page and the new pane connected.
+        guard let self, let address = PaneAddress.webLink(url) else { return nil }
+        // Inheriting the configuration means inheriting the opener's
+        // website data store, while the pane lands in the workspace on
+        // screen and is judged private or not by *that* workspace. A
+        // popup outlives a workspace switch, so the two can differ —
+        // and then a pane the user reads as private would be writing
+        // cookies to the persistent store, or an ephemeral session
+        // would be writing its hosts into permanent history. Opening
+        // across that line is refused everywhere else in the app; here
+        // the opener relationship is what gets dropped, not the store.
+        let openerWorkspace = pane.flatMap { self.workspaceContaining(pane: $0) }
+        guard openerWorkspace?.dataStore === self.currentWorkspace.dataStore else {
+          self.addColumn(address: address)
+          return nil
+        }
+        let column = self.addColumn(
+          address: address,
+          dependencies: PaneDependencies(openerConfiguration: configuration))
+        return column.panes.first?.browserView?.webView
+      }
+      bv.onScriptClose = { [weak self, weak pane] in
+        // Off the WebKit call-out before the pane goes: closing one in
+        // a workspace that is not on screen releases its web view on
+        // the spot rather than stashing it for undo, which would be
+        // this very web view, mid-delegate-call.
+        DispatchQueue.main.async {
+          guard let self, let pane else { return }
+          self.closePane(id: pane.id)
+        }
+      }
       bv.onOpenInNewWorkspace = { [weak self, weak pane] url in
         // Mirrors bookmark / history "open in new workspace": the new
         // workspace opens with the link's browser pane as its only
@@ -997,6 +1034,7 @@ extension PaneContainerViewController {
     // active-tab re-query but a private window does not, leaving granted
     // extensions blind to the private tab. `notifyTabClosed` is a no-op
     // when the outgoing pane never was a browser tab (e.g. start page).
+    pane.browserView?.closeAllPopups()
     ExtensionController.shared.notifyTabClosed(pane)
     ExtensionController.shared.notifyTabOpened(newPane)
     rebuildColumnView(column: column)
@@ -1435,6 +1473,13 @@ extension PaneContainerViewController {
     // a sync-call into `tabs(for:)` from inside `didCloseTab` no
     // longer reports the closed tab. Cached bridge is dropped here;
     // an undo / restore later will mint a fresh one.
+    //
+    // The windows a page opened go at the same moment and for the same
+    // reason the find bar does above: a popup that outlives its opener
+    // is a window whose `window.opener` answers nobody. Every path that
+    // ends a pane passes through a `notifyTabClosed`, so pairing the
+    // two keeps the next one from forgetting.
+    pane.browserView?.closeAllPopups()
     ExtensionController.shared.notifyTabClosed(pane)
     clearFocusBorder(pane)
     // The closed-pane stash keeps the WKWebView alive for the undo
@@ -2384,6 +2429,7 @@ extension PaneContainerViewController {
 
     let column = ws.columns[columnIndex]
     let pane = column.panes.remove(at: paneIndex)
+    pane.browserView?.closeAllPopups()
     ExtensionController.shared.notifyTabClosed(pane)
     clearFocusBorder(pane)
     // Cross-WS close skips the undo stash, so release the surface

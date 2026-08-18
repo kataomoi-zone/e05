@@ -38,6 +38,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// and the new one carries the restored `interactionState`.
   public private(set) var webView: WKWebView
 
+  /// Popups this pane's page has open. Owned here because a popup
+  /// belongs to the page that opened it: the two talk to each other,
+  /// and a popup outliving its opener would be a window with nothing
+  /// on the other end of `window.opener`.
+  private var popupWindows: [BrowserPopupWindowController] = []
+
   /// Parks the in-flight find's completion until the asynchronous
   /// `_WKFindDelegate` callback drains it. `_findString:` reports its
   /// `(total, current)` through `didFindMatches:` / `didFailToFindString:`
@@ -128,6 +134,17 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `window.open()`, plain Cmd-clicks on links, and the
   /// "Open in Pane" context-menu item.
   public var onOpenInNewPane: ((URL) -> Void)?
+  /// Called when a `window.open` should open in a new pane that the
+  /// opening page can still talk to. The container builds the pane
+  /// from the supplied configuration and hands back its web view;
+  /// WebKit loads the request into it and connects `window.opener`.
+  /// Returning nil cancels the open, which is what the container
+  /// answers for a URL a page isn't allowed to open as a pane.
+  public var onOpenPaneForScript: ((WKWebViewConfiguration, URL) -> WKWebView?)?
+  /// Called when the page closes itself with `window.close()` and
+  /// WebKit allowed the close. The container removes the pane, the
+  /// way a browser closes the tab.
+  public var onScriptClose: (() -> Void)?
   /// Called when a link should open in a fresh workspace. Triggered
   /// by Shift-clicks on links and the "Open in Workspace" context-
   /// menu item.
@@ -450,13 +467,20 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// private-workspace-scoped ephemeral store when non-nil; ignored
   /// when `extensionContext` provides its own configuration so the
   /// extension's storage scope (controller-owned) is preserved.
+  ///
+  /// `openerConfiguration` is the configuration WebKit hands to
+  /// `createWebViewWith` for a `window.open`. Building the pane's web
+  /// view from it is what keeps `window.opener` connected; see
+  /// ``makeWebView(extensionContext:dataStore:openerConfiguration:)``.
   public init(
     frame: NSRect,
     extensionContext: WKWebExtensionContext?,
-    dataStore: WKWebsiteDataStore?
+    dataStore: WKWebsiteDataStore?,
+    openerConfiguration: WKWebViewConfiguration? = nil
   ) {
     let built = Self.makeWebView(
-      extensionContext: extensionContext, dataStore: dataStore)
+      extensionContext: extensionContext, dataStore: dataStore,
+      openerConfiguration: openerConfiguration)
     webView = built.webView
     hoverLinkMessageHandler = built.hoverHandler
     chromeWebStoreInstallHandler = built.cwsInstallHandler
@@ -545,9 +569,28 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// after a `suspend()` — `WKWebView` snapshots its configuration
   /// at init time, so a suspend/restore cycle requires building the
   /// whole configuration tree again rather than mutating the old one.
+  ///
+  /// `openerConfiguration` is the configuration WebKit hands to
+  /// `createWebViewWith`. WebKit only connects `window.opener` to a
+  /// web view built from that exact object, so a pane answering a
+  /// `window.open` has to start from it rather than from a fresh
+  /// configuration. Its `userContentController` is replaced first:
+  /// the object arrives shared with the opening pane, and the
+  /// handlers registered on it are per-pane (hover-link overlay,
+  /// horizontal scroll edge, the mute channel keyed by the pane's
+  /// UUID), so leaving it in place would route this pane's messages
+  /// to its opener. Everything else — process pool, website data
+  /// store, preferences — is inherited on purpose: a popup from a
+  /// private workspace has to stay in that workspace's ephemeral
+  /// store, and same-origin script access needs the shared process.
+  ///
+  /// A suspend/restore cycle rebuilds without it, so a restored pane
+  /// no longer has an opener. That matches what the page sees after
+  /// any tab discard and needs no separate handling.
   private static func makeWebView(
     extensionContext: WKWebExtensionContext?,
-    dataStore: WKWebsiteDataStore?
+    dataStore: WKWebsiteDataStore?,
+    openerConfiguration: WKWebViewConfiguration? = nil
   ) -> (
     webView: FocusReportingWebView,
     hoverHandler: HoverLinkMessageHandler,
@@ -571,14 +614,27 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       // that the extension configuration is otherwise used as-is.
       config.preferences.setValue(true, forKey: "developerExtrasEnabled")
     } else {
-      config = WKWebViewConfiguration()
+      config = openerConfiguration ?? WKWebViewConfiguration()
+      // The controller arrives shared with the opening pane, already
+      // carrying that pane's handlers. Registering this pane's under
+      // the same names raises `NSInvalidArgumentException` and takes
+      // the app down on the first `window.open`; surviving that, the
+      // hover-link, scroll-edge and mute messages would arrive at the
+      // opener. Swap in an empty one before the per-pane script and
+      // handler registrations below run against it.
+      if openerConfiguration != nil {
+        config.userContentController = WKUserContentController()
+      }
       // Enable Web Inspector — required for _inspector to work.
       config.preferences.setValue(true, forKey: "developerExtrasEnabled")
       // Private workspaces share a workspace-scoped ephemeral data
       // store (cookies, local storage, IndexedDB live in memory and
       // die with the workspace). Default-store panes leave the field
-      // alone so WebKit picks up `.default()`.
-      if let dataStore {
+      // alone so WebKit picks up `.default()`. An adopted
+      // configuration already carries the opening pane's store, and
+      // reassigning it would drop the popup out of the private
+      // workspace it was opened from.
+      if let dataStore, openerConfiguration == nil {
         config.websiteDataStore = dataStore
       }
       // Attach the shared WKWebExtensionController before the web view is
@@ -671,6 +727,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       cwsStateHandler = nil
       scrollEdgeHandler = nil
     }
+    // WebKit's default here is to let a script open a window whenever
+    // it likes; Safari and Chrome both require a user gesture instead,
+    // and so does this. A `window.open` asking for a size now gets a
+    // panel, so the unguarded default would let any page stack panels
+    // over the app. The cost is that an unattended `window.open` no
+    // longer opens a pane either, which it used to; sign-in flows run
+    // from a click and are unaffected.
+    config.preferences.javaScriptCanOpenWindowsAutomatically = false
     let webView = FocusReportingWebView(frame: .zero, configuration: config)
     // WKWebView's default UA on macOS 26 omits both `Version/<n>` and
     // `Safari/<rev>`, leaving sites that key off those tokens unable
@@ -1363,6 +1427,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         "[browser/suspend] interactionState type mismatch: \(type(of: raw))")
     }
 
+    // The popups were talking to the web view about to be dropped, and
+    // an opener that stops answering leaves a sign-in that can never
+    // finish — along with the web content process the popup holds,
+    // which is what suspending is trying to reclaim.
+    closeAllPopups()
+
     // Capture the back/forward list as an enumerable list now, while
     // the web view is live, so the URL-bar history menu can list it
     // without resuming the pane (interactionState carries the same
@@ -1971,9 +2041,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// - Cmd-click → cancel and forward to the new-pane path. Since
   ///   Cmd-clicks on plain links also trigger
   ///   `webView(_:createWebViewWith:for:windowFeatures:)` below, the
-  ///   guard here is the canonical interception (returning `nil`
-  ///   from `createWebView` is a fallback for `target="_blank"` /
-  ///   `window.open()` only).
+  ///   guard here is the canonical interception (that delegate's
+  ///   `nil` return is a fallback for `target="_blank"`; a
+  ///   `window.open` is answered with a web view instead, so that the
+  ///   page keeps talking to what it opened).
   /// - Anything else → allow the navigation, fall through to the
   ///   download / response-policy delegate below if needed.
   ///
@@ -2068,30 +2139,148 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   // MARK: - WKUIDelegate
 
-  /// Handle `target="_blank"` / `window.open()` / Cmd-click on links
-  /// where WebKit asks for a new web view. Always return `nil` —
-  /// e05 doesn't host secondary `WKWebView` instances inside the
-  /// same pane. Instead, forward the URL to the new-pane path so
-  /// the host creates a fresh browser column for it. Returning
-  /// `nil` here cancels the popup; the original `decidePolicyFor`
-  /// path has already cancelled the parent navigation when
-  /// applicable, so there's no double-load risk.
+  /// Where WebKit asks for a new web view: `target="_blank"`,
+  /// Cmd-click, `window.open()`. What the user opened becomes a pane;
+  /// what a script opened becomes a popup window it can talk to.
   public func webView(
     _: WKWebView,
-    createWebViewWith _: WKWebViewConfiguration,
+    createWebViewWith configuration: WKWebViewConfiguration,
     for navigationAction: WKNavigationAction,
-    windowFeatures _: WKWindowFeatures
+    windowFeatures: WKWindowFeatures
   ) -> WKWebView? {
-    if let url = navigationAction.request.url {
-      // Shift-click on a `target="_blank"` link still opens in a new
-      // workspace; the modifierFlags survive the WebKit hop.
-      if navigationAction.modifierFlags.contains(.shift) {
-        onOpenInNewWorkspace?(url)
-      } else {
-        onOpenInNewPane?(url)
+    // A script's `window.open` — navigation type `.other` — always
+    // gets a web view built from the configuration WebKit passed in.
+    // That object is the opener relationship: the page keeps the
+    // reference `window.open` returns, and what opens answers through
+    // `window.opener`. Loading the URL somewhere of our own choosing
+    // instead breaks both halves, which is why signing in to a site
+    // through Google used to leave a blank pane and a login page that
+    // never advanced.
+    //
+    // Where it opens is a separate question, and the only thing the
+    // features string decides. A size or a position means the page
+    // wants a small window of its own — the shape every sign-in flow
+    // takes — and gets a panel. No features means "new tab", and
+    // lands in a pane with a URL bar and a history, still connected
+    // to its opener. That split is what Chrome and Safari do; the
+    // opener survives both.
+    //
+    // A user-driven open — a `target="_blank"` link, a form posting
+    // into a new target, a Cmd-click — takes the pane path below
+    // without the configuration. Those already reach their new
+    // document with a null `window.opener` in every current browser:
+    // the HTML spec makes `target="_blank"` imply `noopener` for
+    // links and forms. `window.open` has no such rule.
+    //
+    // Known gap: `rel="opener"` opts a link back into keeping its
+    // opener, and `WKNavigationAction` does not carry `rel`, so such
+    // a link is indistinguishable here and loses the opener it asked
+    // to keep.
+    if navigationAction.navigationType == .other {
+      let wantsWindow = BrowserPopupWindowController.requestsWindow(
+        width: windowFeatures.width?.doubleValue,
+        height: windowFeatures.height?.doubleValue,
+        x: windowFeatures.x?.doubleValue,
+        y: windowFeatures.y?.doubleValue,
+        menuBar: windowFeatures.menuBarVisibility?.boolValue,
+        statusBar: windowFeatures.statusBarVisibility?.boolValue,
+        toolbars: windowFeatures.toolbarsVisibility?.boolValue)
+      if !wantsWindow {
+        // A `window.open()` with no argument requests `about:blank`,
+        // which WebKit still reports as the request URL.
+        guard let url = navigationAction.request.url else { return nil }
+        return onOpenPaneForScript?(configuration, url)
       }
+    } else {
+      if let url = navigationAction.request.url {
+        // Shift-click on a `target="_blank"` link still opens in a new
+        // workspace; the modifierFlags survive the WebKit hop.
+        if navigationAction.modifierFlags.contains(.shift) {
+          onOpenInNewWorkspace?(url)
+        } else {
+          onOpenInNewPane?(url)
+        }
+      }
+      return nil
     }
-    return nil
+
+    // The web view has to be built from the configuration WebKit
+    // passed in: that is what carries the opener relationship. It also
+    // must not be loaded here — WebKit runs the navigation itself once
+    // this returns.
+    //
+    // No scheme allowlist here, unlike the pane path: WebKit performs
+    // this navigation itself and has no handler for `e05://`, so a
+    // page cannot reach a native pane through it, while the pane
+    // path's `webLink` set would turn away the `blob:` and `data:`
+    // URLs a viewer legitimately opens in a window of its own. `customUserAgent` is a property of the view rather
+    // than of the configuration, so it has to be set again here or the
+    // popup would introduce itself as an unknown browser to the very
+    // sign-in pages this exists for.
+    //
+    // Same content-controller swap the pane path makes, for the same
+    // reason: the one that arrives belongs to this pane, so a popup
+    // hovering a link would raise the overlay down here instead, and
+    // its scroll-edge reports would overwrite this pane's. Content
+    // blocking is re-attached because the swap takes the rule lists
+    // with it; the per-pane handlers are deliberately not, a panel
+    // having no hover overlay, mute channel or scroll router of its
+    // own.
+    configuration.userContentController = WKUserContentController()
+    AdBlocker.shared.attach(to: configuration)
+    CosmeticFilterEngine.shared.attach(to: configuration)
+    ScriptletEngine.shared.attach(to: configuration)
+    let popupWebView = WKWebView(frame: .zero, configuration: configuration)
+    popupWebView.customUserAgent = Self.safariUserAgent
+    popupWebView.allowsMagnification = true
+    popupWebView.uiDelegate = self
+    let controller = BrowserPopupWindowController(
+      webView: popupWebView, features: windowFeatures, masksTitle: isPrivateBrowsing)
+    controller.onClose = { [weak self] closed in
+      self?.popupWindows.removeAll { $0 === closed }
+    }
+    popupWindows.append(controller)
+    controller.showWindow(nil)
+    return popupWebView
+  }
+
+  /// `window.close()`, which is how a sign-in popup ends. Also covers
+  /// a popup WebKit decides to close on the page's behalf.
+  public func webViewDidClose(_ webView: WKWebView) {
+    // The pane's own view closing means the page called
+    // `window.close()` on itself, and WebKit already applied the rule
+    // for whether it is allowed to: a document a script opened, or one
+    // that has nowhere to go back to. Both are cases a browser closes
+    // the tab for — the sign-in popup finishing its handoff, and a
+    // page a user opened that has no history behind it.
+    if webView === self.webView {
+      onScriptClose?()
+      return
+    }
+    // A strong reference for the duration of the call: closing runs the
+    // callback that drops this pane's own reference to the controller.
+    guard let controller = popupWindows.first(where: { $0.webView === webView })
+    else { return }
+    controller.close()
+  }
+
+  /// Whether this pane's page has a window open. Read by the idle
+  /// sweep, which would otherwise reclaim a pane whose user is busy
+  /// typing into the popup it opened.
+  public var hasOpenPopups: Bool { !popupWindows.isEmpty }
+
+  /// Close every popup this pane's page has open.
+  ///
+  /// A popup outliving its opener is a window with nothing on the
+  /// other end of `window.opener` — the sign-in it exists for can
+  /// never complete, and it holds a web content process open. Both
+  /// ends of a pane's life call this: suspending drops the web view
+  /// the popups were talking to, and removal takes the pane itself.
+  public func closeAllPopups() {
+    // `close()` runs the callback that mutates `popupWindows`, so walk
+    // a copy and let the callbacks drain the real one.
+    for controller in popupWindows { controller.close() }
+    popupWindows.removeAll()
   }
 
   /// Camera / microphone permission requests originate here. WebKit
@@ -2103,7 +2292,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// user can record the choice (session-only or persistent) for
   /// every kind in the request at once.
   public func webView(
-    _: WKWebView,
+    _ webView: WKWebView,
     requestMediaCapturePermissionFor origin: WKSecurityOrigin,
     initiatedByFrame _: WKFrameInfo,
     type: WKMediaCaptureType,
@@ -2124,7 +2313,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       decisionHandler(resolved)
       return
     }
-    promptForPermission(host: origin.host, kinds: kinds, completion: decisionHandler)
+    promptForPermission(
+      host: origin.host, kinds: kinds, sourceWindow: webView.window,
+      completion: decisionHandler)
   }
 
   /// Geolocation permission requests reach the delegate through the
@@ -2140,7 +2331,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `WKPermissionDecision` is folded down via `== .grant`.
   @objc(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
   public func _webView(
-    _: WKWebView,
+    _ webView: WKWebView,
     requestGeolocationPermissionForOrigin origin: WKSecurityOrigin,
     initiatedByFrame _: WKFrameInfo,
     decisionHandler: @escaping @MainActor @Sendable (Bool) -> Void
@@ -2150,7 +2341,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       decisionHandler(resolved == .grant)
       return
     }
-    promptForPermission(host: host, kinds: [.geolocation]) { decision in
+    promptForPermission(host: host, kinds: [.geolocation], sourceWindow: webView.window) {
+      decision in
       decisionHandler(decision == .grant)
     }
   }
@@ -2181,7 +2373,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// work and display delegate ship.
   @objc(_webView:requestNotificationPermissionForSecurityOrigin:decisionHandler:)
   public func _webView(
-    _: WKWebView,
+    _ webView: WKWebView,
     requestNotificationPermissionForSecurityOrigin origin: WKSecurityOrigin,
     decisionHandler: @escaping @MainActor @Sendable (Bool) -> Void
   ) {
@@ -2190,7 +2382,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       decisionHandler(resolved == .grant)
       return
     }
-    promptForPermission(host: host, kinds: [.notification]) { decision in
+    promptForPermission(host: host, kinds: [.notification], sourceWindow: webView.window) {
+      decision in
       decisionHandler(decision == .grant)
     }
   }

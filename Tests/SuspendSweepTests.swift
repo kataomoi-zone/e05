@@ -93,6 +93,7 @@ struct SuspendSweepDecisionTests {
     isFocused: Bool = false,
     isSuspendExempt: Bool = false,
     isPlayingMedia: Bool = false,
+    hasOpenPopups: Bool = false,
     host: String? = nil,
     isHostExempt: Bool = false,
     lastActiveAt: Date,
@@ -100,8 +101,20 @@ struct SuspendSweepDecisionTests {
   ) -> PaneContainerViewController.SweepDecision {
     PaneContainerViewController.sweepDecision(
       canSuspend: canSuspend, isFocused: isFocused, isSuspendExempt: isSuspendExempt,
-      isPlayingMedia: isPlayingMedia, host: host, isHostExempt: isHostExempt,
-      lastActiveAt: lastActiveAt, cutoff: cutoff)
+      isPlayingMedia: isPlayingMedia, hasOpenPopups: hasOpenPopups, host: host,
+      isHostExempt: isHostExempt, lastActiveAt: lastActiveAt, cutoff: cutoff)
+  }
+
+  /// A pane whose page has a window open is where the user is: the
+  /// pane lost focus *to* that window, so its idle clock runs while a
+  /// password is being typed. Reclaiming it would drop the web view
+  /// the popup talks to and close the popup with it.
+  @Test("a pane with a popup open is kept however stale it looks")
+  func popupKeepsPaneAlive() {
+    #expect(decide(hasOpenPopups: true, lastActiveAt: stale, cutoff: hourGate) == .keep)
+    // The ungated sweep does not override it either — the same sign-in
+    // is in progress whichever reason the sweep ran for.
+    #expect(decide(hasOpenPopups: true, lastActiveAt: stale, cutoff: .all) == .keep)
   }
 
   @Test("a stale, unprotected pane suspends")

@@ -70,6 +70,12 @@ public struct PaneDependencies {
   /// list + scroll/form via `setInteractionState`. Only meaningful
   /// for browser panes.
   public var initialInteractionState: Data?
+  /// Configuration WebKit handed to `createWebViewWith` for a
+  /// `window.open`. Building the pane's web view from it is what
+  /// keeps `window.opener` connected, and it also means WebKit — not
+  /// the pane — performs the initial navigation. Only meaningful for
+  /// browser panes.
+  public var openerConfiguration: WKWebViewConfiguration?
 
   /// Working directory to launch a restored terminal pane in, passed
   /// to ``GhosttyTerminalView`` as its surface launch dir. Only
@@ -87,6 +93,7 @@ public struct PaneDependencies {
     startSuspended: Bool = false,
     initialTitle: String? = nil,
     initialInteractionState: Data? = nil,
+    openerConfiguration: WKWebViewConfiguration? = nil,
     terminalWorkingDirectory: String? = nil,
     terminalScrollbackPath: String? = nil
   ) {
@@ -94,6 +101,7 @@ public struct PaneDependencies {
     self.startSuspended = startSuspended
     self.initialTitle = initialTitle
     self.initialInteractionState = initialInteractionState
+    self.openerConfiguration = openerConfiguration
     self.terminalWorkingDirectory = terminalWorkingDirectory
     self.terminalScrollbackPath = terminalScrollbackPath
   }
@@ -334,7 +342,8 @@ public final class PaneModel {
         ? ExtensionController.shared.extensionContext(forExtensionURL: address.url)
         : nil
       let bv = Self.makeBrowserView(
-        extensionContext: extensionContext, dataStore: dataStore
+        extensionContext: extensionContext, dataStore: dataStore,
+        openerConfiguration: dependencies.openerConfiguration
       )
       self.content = .browser(bv)
       // Track the resolution failure so the post-`setupContainerView`
@@ -402,6 +411,12 @@ public final class PaneModel {
     {
       if isUnresolvedExtensionURL {
         bv.loadExtensionUnavailableError(for: address.url)
+      } else if dependencies.openerConfiguration != nil {
+        // WebKit runs the navigation for a `window.open` itself, once
+        // `createWebViewWith` returns this pane's web view. Loading
+        // the address here as well would replace that navigation with
+        // a second one and lose the POST body a form-driven sign-in
+        // hands over.
       } else if let initialInteractionState {
         // Direction X: restore the full native back/forward list +
         // scroll/form from the captured interaction state. Build the
@@ -439,10 +454,12 @@ public final class PaneModel {
 
   private static func makeBrowserView(
     extensionContext: WKWebExtensionContext? = nil,
-    dataStore: WKWebsiteDataStore? = nil
+    dataStore: WKWebsiteDataStore? = nil,
+    openerConfiguration: WKWebViewConfiguration? = nil
   ) -> BrowserPaneView {
     let bv = BrowserPaneView(
-      frame: .zero, extensionContext: extensionContext, dataStore: dataStore
+      frame: .zero, extensionContext: extensionContext, dataStore: dataStore,
+      openerConfiguration: openerConfiguration
     )
     bv.translatesAutoresizingMaskIntoConstraints = false
     return bv

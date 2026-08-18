@@ -1,11 +1,60 @@
 import AppKit
 import Testing
+import WebKit
 
 @testable import E05Lib
 
 @Suite("PaneModel")
 @MainActor
 struct PaneModelTests {
+  /// A pane answering a `window.open` is handed back to WebKit, which
+  /// then runs the navigation itself. Loading the address here as well
+  /// would replace that navigation with a second one and drop the POST
+  /// body a form-driven sign-in hands over — a failure that only shows
+  /// up on the sign-in flows this path exists for, so the two cases are
+  /// pinned side by side.
+  @Test("a pane built for a window.open leaves the navigation to WebKit")
+  func adoptedPaneLeavesTheLoadToWebKit() {
+    let address = PaneAddress(URL(string: "https://example.com/oauth")!)
+
+    let ownLoad = PaneModel(address: address, ghosttyApp: nil)
+    #expect(ownLoad.browserView?.webView.isLoading == true)
+
+    let adopted = PaneModel(
+      address: address, ghosttyApp: nil,
+      dependencies: .init(openerConfiguration: WKWebViewConfiguration()))
+    #expect(adopted.browserView?.webView.isLoading == false)
+  }
+
+  /// The configuration WebKit hands over arrives sharing the opening
+  /// pane's user content controller, and the handlers registered on it
+  /// are per-pane: the hover-link overlay, the horizontal scroll edge,
+  /// and the mute channel keyed by the pane's own UUID. Left shared,
+  /// this pane's messages would arrive at its opener.
+  @Test("a pane built for a window.open gets its own script handlers")
+  func adoptedPaneDoesNotShareTheOpenersHandlers() {
+    let address = PaneAddress(URL(string: "https://example.com/oauth")!)
+    let opener = WKWebViewConfiguration()
+    // Held before the first pane is built: the swap happens on the
+    // configuration object the caller passed, so reading the field
+    // afterwards returns whichever controller was installed last, not
+    // the one the opener arrived with.
+    let openerController = opener.userContentController
+
+    let first = PaneModel(
+      address: address, ghosttyApp: nil,
+      dependencies: .init(openerConfiguration: opener))
+    let second = PaneModel(
+      address: address, ghosttyApp: nil,
+      dependencies: .init(openerConfiguration: opener))
+
+    let firstController = first.browserView?.webView.configuration.userContentController
+    let secondController = second.browserView?.webView.configuration.userContentController
+    #expect(firstController !== openerController)
+    // Two panes opened from the same page must not share one either.
+    #expect(firstController !== secondController)
+  }
+
   @Test("unknown e05 addresses fall back to a blank browser pane")
   func unknownFallsBackToBlankBrowser() {
     // Retired addresses previously carried dedicated panes but now

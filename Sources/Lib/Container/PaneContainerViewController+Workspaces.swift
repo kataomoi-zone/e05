@@ -426,6 +426,7 @@ extension PaneContainerViewController {
         // for every browser pane that goes down with the workspace —
         // bridges left in `tabBridgesByPaneID` would otherwise leak
         // identity until the next launch.
+        pane.browserView?.closeAllPopups()
         ExtensionController.shared.notifyTabClosed(pane)
       }
     }
@@ -507,6 +508,7 @@ extension PaneContainerViewController {
         pane.terminalView?.keepSurfaceAlive = false
         clearFocusBorder(pane)
         pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
+        pane.browserView?.closeAllPopups()
         ExtensionController.shared.notifyTabClosed(pane)
       }
     }

@@ -539,6 +539,7 @@ public final class PaneContainerViewController: NSViewController {
             isFocused: focusedPaneIds.contains(pane.id),
             isSuspendExempt: pane.isSuspendExempt,
             isPlayingMedia: bv.hasActiveMedia || bv.isPlayingAudio,
+            hasOpenPopups: bv.hasOpenPopups,
             host: host,
             isHostExempt: host.map { SuspendHostExemptStore.shared.isExempt(host: $0) } ?? false,
             lastActiveAt: pane.lastActiveAt,
@@ -600,6 +601,7 @@ public final class PaneContainerViewController: NSViewController {
     isFocused: Bool,
     isSuspendExempt: Bool,
     isPlayingMedia: Bool,
+    hasOpenPopups: Bool,
     host: String?,
     isHostExempt: Bool,
     lastActiveAt: Date,
@@ -616,6 +618,12 @@ public final class PaneContainerViewController: NSViewController {
     // (`hasActiveMedia`) and audible playback (`isPlayingAudio`) into
     // this one flag.
     if isPlayingMedia { return .keep }
+    // A window the page opened is where the user is, and the pane it
+    // belongs to has lost focus precisely because of it — a sign-in
+    // being typed into a popup reads as an idle pane. Suspending would
+    // drop the web view the popup is talking to and take the popup
+    // with it, mid-password.
+    if hasOpenPopups { return .keep }
     if let host {
       if isHostExempt { return .keep }
       // Loopback dev servers (localhost:3000, 127.0.0.1, …) are spared
