@@ -1012,6 +1012,14 @@ public final class PaneContainerViewController: NSViewController {
   }
 
   private func routeScrollEvent(_ event: NSEvent) -> NSEvent? {
+    // A local monitor sees events for every window the app has, and
+    // `locationInWindow` is relative to whichever one that is. Without
+    // this, a scroll inside an auxiliary panel — Settings, a popup a
+    // page opened — is measured against the main window's geometry,
+    // where it usually does land inside the pane area, and gets routed
+    // to the workspace instead of to the panel under the pointer.
+    guard event.window === view.window else { return event }
+
     let locationInView = scrollView.convert(event.locationInWindow, from: nil)
     guard scrollView.bounds.contains(locationInView) else { return event }
 
