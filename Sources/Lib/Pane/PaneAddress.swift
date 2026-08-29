@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// Represents a pane's address (URL). Determines content type via scheme routing.
 ///
@@ -12,7 +13,10 @@ import Foundation
 /// - `e05://settings` — not a pane: Settings opens as a window
 ///   (open_settings / ⌘,), so this address falls back to a blank browser
 /// - `https://...`, `http://...` — browser pane
-/// - `file://...` — a local file, rendered in a browser pane
+/// - `file://...` — a local file the browser pane can render. Which
+///   local paths reach a pane at all is decided by ``fileRoute(_:)``,
+///   not by the scheme alone: directories become finder panes and
+///   files WebKit can't display go to the system-default app.
 ///
 /// The former `e05://history`, `e05://bookmarks`, and `e05://downloads`
 /// addresses have been retired in favour of the sidebar's dedicated
@@ -152,6 +156,56 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   public var currentPath: String {
     guard kind == .finder else { return "" }
     return url.path(percentEncoded: false)
+  }
+
+  // MARK: - Local files
+
+  /// Where a `file://` URL should be sent. Only the filesystem can say —
+  /// the scheme is the same for a folder, a page, and a disk image.
+  public enum FileRoute: Equatable {
+    /// Open as a pane: a directory becomes `e05://finder<path>`, a file
+    /// WebKit renders stays a `file://` browser address.
+    case pane(PaneAddress)
+    /// Anything WebKit can't display (archives, binaries, `.docx`, …).
+    /// Handed to the system-default app, matching what
+    /// `Resources/bin/open` already does for document files.
+    case externalOpen(URL)
+    /// Nothing on disk at that path. Kept separate from the two above
+    /// because each routing site reports it differently.
+    case missing(URL)
+  }
+
+  /// Types a browser pane can display. Conformances rather than an
+  /// extension list, so the OS's type graph does the work: `.svg` arrives
+  /// through `.image`, and HTML / `.json` / `.md` / source files through
+  /// `.text`.
+  private static let webRenderableTypes: [UTType] = [.pdf, .image, .text]
+
+  /// Classify a `file://` URL. Symlinks resolve first so the route and
+  /// the read grant that follows it name the same location (`/tmp/x` →
+  /// `/private/tmp/x`), matching `FinderPaneView.navigate(to:)`.
+  ///
+  /// Touches the filesystem, so it belongs at the routing sites rather
+  /// than in the pure parsing path.
+  public static func fileRoute(_ url: URL) -> FileRoute {
+    let resolved = url.resolvingSymlinksInPath()
+    let path = resolved.path(percentEncoded: false)
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+      return .missing(resolved)
+    }
+    if isDirectory.boolValue {
+      return .pane(.finder(path: path))
+    }
+    // `contentTypeKey` consults the file itself, so extension-less and
+    // mis-named files are classified by what they are rather than by
+    // what they're called.
+    guard let type = try? resolved.resourceValues(forKeys: [.contentTypeKey]).contentType,
+      webRenderableTypes.contains(where: { type.conforms(to: $0) })
+    else {
+      return .externalOpen(resolved)
+    }
+    return .pane(PaneAddress(resolved))
   }
 
   /// Human-readable rendering of the address for the URL bar.

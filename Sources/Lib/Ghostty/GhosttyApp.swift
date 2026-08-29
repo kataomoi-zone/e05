@@ -319,7 +319,23 @@ public final class GhosttyApp {
       let urlString = urlPtr.withMemoryRebound(to: UInt8.self, capacity: len) {
         String(decoding: UnsafeBufferPointer(start: $0, count: len), as: UTF8.self)
       }
-      guard let url = URL(string: urlString) else {
+      // What libghostty matched, before e05 interprets it. The payload
+      // is the only place the raw match is visible, and how far a match
+      // runs (a wrapped row, a space in a path) is the first question
+      // whenever a click opens the wrong thing.
+      logger.debug("[ghostty/open-url] payload=\(urlString, privacy: .public)")
+      // A detected filesystem path arrives as written, with no scheme,
+      // and `URL(string:)` hands back something whose `isFileURL` is
+      // false — the pane router would read it as an unknown address and
+      // open a blank browser. Build a file URL the way the hint overlay
+      // does for the same text. A relative path is left alone: it would
+      // resolve against e05's own working directory, not the shell's.
+      let url: URL
+      if urlString.hasPrefix("/") || urlString.hasPrefix("~") {
+        url = URL(fileURLWithPath: (urlString as NSString).expandingTildeInPath)
+      } else if let parsed = URL(string: urlString) {
+        url = parsed
+      } else {
         logger.error(
           "[ghostty/open-url] URL(string:) rejected \(urlString, privacy: .public)")
         return false

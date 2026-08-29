@@ -443,13 +443,26 @@ extension PaneContainerViewController {
         self.performBackgroundOrCurrentClose(at: loc)
       }
 
-      // file:// URLs land in a finder pane; everything else routes
-      // through `PaneAddress`, which keeps the browser / unknown-
-      // fallback decision in one place.
+      // Clicking a path in the terminal gets the same resolution as
+      // typing one into the URL bar (`handleURLBarNavigate`): a
+      // directory opens a finder pane, a page or image opens in a
+      // browser pane, and anything else goes to the app that owns it.
+      // Everything non-local routes through `PaneAddress`, which keeps
+      // the browser / unknown-fallback decision in one place.
       tv.onOpenURL = { [weak self] url in
         let address: PaneAddress
         if url.isFileURL {
-          address = PaneAddress.finder(path: url.path(percentEncoded: false))
+          switch PaneAddress.fileRoute(url) {
+          case .pane(let addr):
+            address = addr
+          case .externalOpen(let target):
+            NSWorkspace.shared.open(target)
+            return
+          case .missing(let target):
+            self?.showToast(
+              "No such path: \(target.path(percentEncoded: false))", style: .error)
+            return
+          }
         } else {
           address = PaneAddress(url)
         }

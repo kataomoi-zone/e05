@@ -528,4 +528,83 @@ struct PaneAddressTests {
     #expect(PaneAddress.webLink(URL(fileURLWithPath: "/etc/passwd")) == nil)
     #expect(PaneAddress.extensionTab(URL(fileURLWithPath: "/etc/passwd")) == nil)
   }
+
+  @Test("fileRoute sends a directory to a finder pane")
+  func fileRouteDirectory() throws {
+    let dir = try TemporaryDirectory()
+    #expect(PaneAddress.fileRoute(dir.url) == .pane(.finder(path: dir.resolvedPath)))
+  }
+
+  @Test("fileRoute sends pages, documents and images to a browser pane")
+  func fileRouteRenderable() throws {
+    let dir = try TemporaryDirectory()
+    // `.text` conformance is what carries json / md / source files, and
+    // `.image` carries svg — pinned here so a narrower conformance set
+    // can't silently start bouncing them to another app.
+    for name in [
+      "page.html", "notes.txt", "data.json", "readme.md", "logo.svg", "shot.png", "manual.pdf",
+    ] {
+      let file = try dir.write(name, "x")
+      #expect(
+        PaneAddress.fileRoute(file) == .pane(PaneAddress(file)),
+        "\(name) should render in a pane")
+    }
+  }
+
+  @Test("fileRoute hands anything WebKit can't render to the default app")
+  func fileRouteExternal() throws {
+    let dir = try TemporaryDirectory()
+    for name in ["bundle.zip", "installer.dmg", "notes.docx"] {
+      let file = try dir.write(name, "x")
+      #expect(PaneAddress.fileRoute(file) == .externalOpen(file), "\(name) should not open a pane")
+    }
+  }
+
+  @Test("fileRoute reports a path that isn't there")
+  func fileRouteMissing() throws {
+    let dir = try TemporaryDirectory()
+    let ghost = dir.url.appendingPathComponent("nope.html")
+    #expect(PaneAddress.fileRoute(ghost) == .missing(ghost))
+  }
+
+  /// The route and the read-access grant that follows it have to name
+  /// the same location, so symlinks resolve before classification —
+  /// `/tmp` is itself a symlink to `/private/tmp` on macOS.
+  @Test("fileRoute resolves symlinks before classifying")
+  func fileRouteResolvesSymlinks() throws {
+    let dir = try TemporaryDirectory()
+    let real = try dir.write("page.html", "x")
+    let link = dir.url.appendingPathComponent("alias.html")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+    #expect(PaneAddress.fileRoute(link) == .pane(PaneAddress(real)))
+  }
+}
+
+/// Scratch directory that removes itself when the test's reference to it
+/// goes away. Paths are resolved up front because `fileRoute` resolves
+/// too, and macOS hands out `/var/folders/…` temp URLs behind a `/private`
+/// symlink.
+private final class TemporaryDirectory {
+  let url: URL
+
+  var resolvedPath: String { url.path(percentEncoded: false) }
+
+  init() throws {
+    url = URL(
+      fileURLWithPath: NSTemporaryDirectory(), isDirectory: true
+    )
+    .appendingPathComponent("PaneAddressTests-\(UUID().uuidString)", isDirectory: true)
+    .resolvingSymlinksInPath()
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  func write(_ name: String, _ contents: String) throws -> URL {
+    let file = url.appendingPathComponent(name)
+    try contents.write(to: file, atomically: true, encoding: .utf8)
+    return file
+  }
+
+  deinit {
+    try? FileManager.default.removeItem(at: url)
+  }
 }

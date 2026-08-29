@@ -524,7 +524,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       }
       let address: PaneAddress
       if url.isFileURL {
-        address = PaneAddress.finder(path: url.path(percentEncoded: false))
+        // Same routing as a path typed into the URL bar
+        // (`handleURLBarNavigate`): directories open as finder panes,
+        // renderable files as browser panes, everything else goes to the
+        // app that owns it.
+        switch PaneAddress.fileRoute(url) {
+        case .pane(let addr):
+          address = addr
+        case .externalOpen(let target):
+          // No `activate()` here — raising e05 would immediately steal
+          // focus back from the app being launched.
+          NSWorkspace.shared.open(target)
+          return ControlSocket.Response(ok: true)
+        case .missing(let target):
+          return ControlSocket.Response(
+            ok: false, error: "no such path: \(target.path(percentEncoded: false))")
+        }
       } else {
         address = PaneAddress(url)
       }
@@ -574,15 +589,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       logger.error("[app/url] dropped \(urls.count) URL(s): paneContainer not yet attached")
       return
     }
+    var openedPane = false
     for url in urls {
-      let address = PaneAddress(url)
+      var address = PaneAddress(url)
+      // `open -a e05 <path>` delivers file URLs here even though the
+      // bundle registers no document types.
+      if url.isFileURL {
+        switch PaneAddress.fileRoute(url) {
+        case .pane(let addr):
+          address = addr
+        case .externalOpen(let target):
+          NSWorkspace.shared.open(target)
+          continue
+        case .missing(let target):
+          logger.warning(
+            "[app/url] dropped missing path: \(target.path(percentEncoded: false), privacy: .public)"
+          )
+          continue
+        }
+      }
       if address.kind == .unknown {
         logger.warning(
           "[app/url] opening unknown address as blank browser: \(url.absoluteString, privacy: .public)"
         )
       }
       container.addColumn(address: address)
+      openedPane = true
     }
+    // Only raise e05 for something it actually opened: a path handed to
+    // another app must keep the focus it was just given.
+    guard openedPane else { return }
     window?.makeKeyAndOrderFront(nil)
     application.activate()
   }

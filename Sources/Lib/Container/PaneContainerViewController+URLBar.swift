@@ -488,7 +488,7 @@ extension PaneContainerViewController {
 
   /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.
   func handleURLBarNavigate(pane: PaneModel, input: String) {
-    let newAddress: PaneAddress
+    var newAddress: PaneAddress
     if let parsed = PaneAddress.fromUserInput(input) {
       // Accept any parsed URL, including `.unknown`-kind e05 hosts.
       // `PaneModel.init(.unknown)` lands the pane on a blank-browser
@@ -507,6 +507,27 @@ extension PaneContainerViewController {
       // search template) — tell the user instead of swallowing it.
       showToast("Couldn't open \"\(input)\"", style: .error)
       return
+    }
+
+    // A local path names one of four destinations and only the
+    // filesystem knows which; resolve it before anything downstream
+    // treats the address as a pane. Shares `PaneAddress.fileRoute` with
+    // the `e05 open` CLI so typing a path and passing it on the command
+    // line land in the same place.
+    if newAddress.url.isFileURL {
+      switch PaneAddress.fileRoute(newAddress.url) {
+      case .pane(let addr):
+        newAddress = addr
+      case .externalOpen(let url):
+        NSWorkspace.shared.open(url)
+        return
+      case .missing(let url):
+        // Same wording as the finder pane's own dead-path toast below:
+        // typing a path that isn't there is one mistake and deserves one
+        // message, whichever pane the URL bar happens to be attached to.
+        showToast("No such path: \(url.path(percentEncoded: false))", style: .error)
+        return
+      }
     }
 
     if pane.address.requiresContentSwitch(to: newAddress) {
