@@ -12,6 +12,7 @@ import Foundation
 /// - `e05://settings` — not a pane: Settings opens as a window
 ///   (open_settings / ⌘,), so this address falls back to a blank browser
 /// - `https://...`, `http://...` — browser pane
+/// - `file://...` — a local file, rendered in a browser pane
 ///
 /// The former `e05://history`, `e05://bookmarks`, and `e05://downloads`
 /// addresses have been retired in favour of the sidebar's dedicated
@@ -34,7 +35,7 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
       case "start": return .start
       default: return .unknown
       }
-    case "https", "http", "about", Self.extensionScheme:
+    case "https", "http", "about", Self.fileScheme, Self.extensionScheme:
       return .browser
     default:
       return .unknown
@@ -85,6 +86,8 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   /// from the matching `WKWebExtensionContext.webViewConfiguration`,
   /// which `PaneModel.init` resolves through `ExtensionController`.
   public static let extensionScheme = "webkit-extension"
+
+  public static let fileScheme = "file"
 
   public static let terminal = PaneAddress(URL(string: "\(internalScheme)://terminal")!)
   public static let settings = PaneAddress(URL(string: "\(internalScheme)://settings")!)
@@ -167,8 +170,13 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     return url.absoluteString
   }
 
+  /// Schemes the user may *type*. Deliberately wider than what a page
+  /// or an extension may open (``webLinkSchemes`` /
+  /// ``extensionTabSchemes``): typing `file://` is a first-party act on
+  /// the user's own machine, while letting web content name a local
+  /// path is not.
   private static let allowedSchemes: Set<String> = [
-    internalScheme, "https", "http", "about", extensionScheme,
+    internalScheme, "https", "http", "about", fileScheme, extensionScheme,
   ]
 
   /// Schemes a browser pane may open in a *new* pane in response to a
@@ -212,8 +220,10 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     return PaneAddress(url)
   }
 
-  /// Parse user input from the URL bar. Adds `https://` if no scheme is present.
-  /// Only allows known schemes (e05, https, http). Unknown schemes return nil.
+  /// Parse user input from the URL bar. Adds `https://` if no scheme is
+  /// present. Only allows the schemes in ``allowedSchemes`` (e05, https,
+  /// http, about, file, webkit-extension); anything else returns nil so
+  /// the caller can fall through to a search.
   public static func fromUserInput(_ input: String) -> PaneAddress? {
     let trimmed = input.trimmingCharacters(in: .whitespaces)
     guard !trimmed.isEmpty else { return nil }
@@ -301,9 +311,19 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
   /// user can still pick search explicitly.
   public static func asDirectNavigation(_ input: String) -> PaneAddress? {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty,
-      !trimmed.contains(where: { $0.isWhitespace })
-    else { return nil }
+    guard !trimmed.isEmpty else { return nil }
+
+    // `file://` paths routinely contain spaces (`~/My Documents/…`), and
+    // the whitespace guard below exists to keep prose out of the Open URL
+    // row — a concern that doesn't apply to an explicit local-file
+    // scheme. Without this exemption a spaced path produces no Open URL
+    // row, the search row takes the auto-selected top slot, and Enter
+    // sends the user's filesystem path to the search engine.
+    if trimmed.lowercased().hasPrefix("\(fileScheme)://") {
+      return fromUserInput(trimmed)
+    }
+
+    guard !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
 
     // Explicit-scheme path. `fromUserInput` has already filtered
     // out disallowed schemes (ftp://, javascript://, …), so a nil

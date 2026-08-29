@@ -388,9 +388,10 @@ public final class PaneModel {
       //
       // `privacy: .public` is intentional: the inputs reaching this
       // branch are filtered by `PaneAddress.fromUserInput`'s allowlist
-      // (https / http / e05 / about), so nothing more sensitive than
-      // URLs a developer could have typed into the URL bar or that
-      // already live in the on-disk session file flows through. Being
+      // (https / http / e05 / about / file / webkit-extension), so
+      // nothing more sensitive than URLs a developer could have typed
+      // into the URL bar or that already live in the on-disk session
+      // file flows through. Being
       // able to read them in Console.app during development is the
       // whole point of the warning.
       logger.warning(
@@ -417,7 +418,11 @@ public final class PaneModel {
         // the address here as well would replace that navigation with
         // a second one and lose the POST body a form-driven sign-in
         // hands over.
-      } else if let initialInteractionState {
+      } else if let initialInteractionState, !address.url.isFileURL {
+        // A local page skips the blob and reloads instead — see
+        // `BrowserPaneView.loadPossiblyLocal`. It still suspends below,
+        // so deferred boot is unaffected.
+        //
         // Direction X: restore the full native back/forward list +
         // scroll/form from the captured interaction state. Build the
         // pane suspended (placeholder) and let `restore()` apply the

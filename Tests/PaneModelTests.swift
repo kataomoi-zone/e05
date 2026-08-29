@@ -174,4 +174,41 @@ struct PaneModelTests {
     pane.isSuspendExempt = false
     #expect(!pane.isSuspendExempt)
   }
+
+  /// A local page can only be loaded through `loadFileURL`, which is
+  /// what issues the web process its read grant — so a captured
+  /// interaction state is skipped for one. Skipping it must not cost
+  /// the pane its deferred boot: session restore builds every
+  /// unfocused pane with `startSuspended`, and a local page eagerly
+  /// loading here would put every restored one back on the CPU.
+  @Test("a restored local page still boots deferred, without its interaction state")
+  func localPageKeepsDeferredBoot() {
+    let address = PaneAddress(URL(fileURLWithPath: "/tmp/report.html"))
+    let pane = PaneModel(
+      address: address, ghosttyApp: nil,
+      dependencies: .init(startSuspended: true, initialInteractionState: Data()))
+    #expect(pane.browserView?.isSuspended == true)
+    #expect(pane.browserView?.webView.isLoading == false)
+    // The blob is dropped rather than parked in the snapshot, which is
+    // what separates this from the remote case below — both suspend.
+    #expect(pane.browserView?.interactionStateForDuplication == nil)
+
+    let remote = PaneModel(
+      address: PaneAddress(URL(string: "https://example.com")!), ghosttyApp: nil,
+      dependencies: .init(startSuspended: true, initialInteractionState: Data()))
+    #expect(remote.browserView?.isSuspended == true)
+    #expect(remote.browserView?.interactionStateForDuplication == Data())
+  }
+
+  /// Nothing else in the pane graph reaches the local-file load, so a
+  /// live local address has to start one here. What this cannot pin is
+  /// *which* load — see the second LIMITATION on
+  /// `BrowserPaneView.loadPossiblyLocal`.
+  @Test("a live local page starts loading on construction")
+  func livePaneLoadsLocalFile() {
+    let pane = PaneModel(
+      address: PaneAddress(URL(fileURLWithPath: "/tmp/report.html")), ghosttyApp: nil)
+    #expect(pane.browserView?.isSuspended == false)
+    #expect(pane.browserView?.webView.isLoading == true)
+  }
 }

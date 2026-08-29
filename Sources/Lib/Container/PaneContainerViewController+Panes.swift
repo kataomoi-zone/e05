@@ -136,7 +136,12 @@ extension PaneContainerViewController {
       pane = addColumn(address: PaneAddress(url), focusOnInsert: focus).panes.first
     }
     guard let pane, let bv = pane.browserView else { return nil }
-    if let interactionState {
+    // A local page's duplicate reloads instead of adopting the source's
+    // history — see `BrowserPaneView.loadPossiblyLocal`.
+    // LIMITATION: `repositionOffset` goes with it, so duplicating a
+    // local page from the back/forward history menu opens the page
+    // currently shown rather than the entry that was picked.
+    if let interactionState, !url.isFileURL {
       bv.adoptDuplicatedHistory(interactionState)
       // Reposition onto the chosen entry only after the duplicate's
       // current-entry load commits; jumping immediately would race the

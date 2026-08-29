@@ -495,4 +495,37 @@ struct PaneAddressTests {
     #expect(PaneAddress.extensionTab(URL(string: "e05://finder/Users/me")!) == nil)
     #expect(PaneAddress.extensionTab(URL(string: "file:///etc/passwd")!) == nil)
   }
+
+  // MARK: - Local files
+
+  @Test("fromUserInput accepts a typed file:// URL")
+  func fromUserInputFileScheme() {
+    let addr = PaneAddress.fromUserInput("file:///Users/me/report.html")
+    #expect(addr?.kind == .browser)
+    #expect(addr?.url.isFileURL == true)
+  }
+
+  /// The bug this whole path exists to close: without an Open URL row
+  /// the search row takes the auto-selected top slot and Enter sends a
+  /// local path to the search engine. Spaces are ordinary in paths, so
+  /// the whitespace guard that keeps prose out of the row has to yield
+  /// to an explicit `file://`.
+  @Test("asDirectNavigation offers a file:// path even when it contains spaces")
+  func directNavigationFileWithSpaces() {
+    let addr = PaneAddress.asDirectNavigation("file:///Users/me/My Docs/report.html")
+    #expect(addr?.url.isFileURL == true)
+    #expect(addr?.url.path(percentEncoded: false) == "/Users/me/My Docs/report.html")
+    // A bare sentence still falls through to search.
+    #expect(PaneAddress.asDirectNavigation("my docs report") == nil)
+  }
+
+  /// Typing a path is first-party; a page naming one is not. `kind`
+  /// routing `file://` to `.browser` must not leak into the web-content
+  /// and extension entry points.
+  @Test("webLink still refuses file:// after it became a browser kind")
+  func webLinkRefusesFileScheme() {
+    #expect(PaneAddress("file:///etc/passwd")!.kind == .browser)
+    #expect(PaneAddress.webLink(URL(fileURLWithPath: "/etc/passwd")) == nil)
+    #expect(PaneAddress.extensionTab(URL(fileURLWithPath: "/etc/passwd")) == nil)
+  }
 }

@@ -1513,12 +1513,15 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   public func restore() -> Bool {
     guard let snapshot = rebuildWebViewFromSnapshot() else { return false }
 
-    if let data = snapshot.interactionState {
+    if let data = snapshot.interactionState, !snapshot.url.isFileURL {
       // Reinstates the back/forward list, scroll position, and form
       // values, and kicks off a load of the current entry.
       applyInteractionState(data)
     } else {
-      webView.load(URLRequest(url: snapshot.url))
+      // Local pages land here by the `isFileURL` guard above and give up
+      // their scroll position, reloading instead — see
+      // ``loadPossiblyLocal``.
+      loadPossiblyLocal(snapshot.url)
       restoredEntryURLs = []
     }
     return true
@@ -1713,7 +1716,8 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
     guard let url = URL(string: normalized),
       let scheme = url.scheme,
-      ["https", "http", "about", PaneAddress.extensionScheme].contains(scheme)
+      ["https", "http", "about", PaneAddress.fileScheme, PaneAddress.extensionScheme]
+        .contains(scheme)
     else { return }
     // A URL typed against a suspended pane must navigate, not no-op
     // against the detached web view (which left "reload to recover" as
@@ -1733,7 +1737,37 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // caller's intent (URL bar entry = `.typed`) so the `\.url` KVO
     // observer attributes the visit correctly.
     pendingTransition = transition
-    webView.load(URLRequest(url: url))
+    loadPossiblyLocal(url)
+  }
+
+  /// Load `url`, through the API that states a local file's read scope.
+  ///
+  /// `loadFileURL(_:allowingReadAccessTo:)` is what asks the web process
+  /// for a sandbox extension over a named directory, and naming the
+  /// file's *parent* is what lets a generated page reach its own
+  /// CSS/JS (a coverage report, `cargo doc` output). A grant does not
+  /// survive into a rebuilt web process, which is why local pages stay
+  /// off the interaction-state paths — a replayed blob loads through
+  /// WebKit's session machinery, which never asks for one
+  /// (`PaneModel.init`, ``restore()``, `openDuplicatedBrowser`).
+  ///
+  /// LIMITATION: a local page linking *out* of its own directory
+  /// (`../other/page.html`) is outside the grant. Widening it to the
+  /// enclosing volume would let any local page the user opens read
+  /// their whole home directory.
+  ///
+  /// LIMITATION: no test here separates this from a plain
+  /// `load(URLRequest:)`. WebKit enforces none of the above in an
+  /// unbundled test process — a sibling stylesheet loads even with the
+  /// grant narrowed to the file itself — so the scope only shows up in
+  /// the real app, and the check for it is a local page in a running
+  /// pane.
+  private func loadPossiblyLocal(_ url: URL) {
+    if url.isFileURL {
+      webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    } else {
+      webView.load(URLRequest(url: url))
+    }
   }
 
   /// Render an in-pane error page for a `webkit-extension://` URL
@@ -2492,7 +2526,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     if webView.backForwardList.currentItem != nil {
       webView.reload()
     } else if let target = lastAttemptedURL ?? webView.url {
-      webView.load(URLRequest(url: target))
+      loadPossiblyLocal(target)
     }
   }
 
