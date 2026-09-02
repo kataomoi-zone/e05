@@ -95,6 +95,14 @@ struct ContentBlockerSettingsView: View {
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
+    // A refresh is exactly when this tab is being watched, so follow
+    // the rebuild rather than showing whatever was true on open.
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: AdBlocker.ruleListDidChangeNotification)
+    ) { _ in
+      revision &+= 1
+    }
   }
 
   private var defaultListsSection: some View {
@@ -463,12 +471,48 @@ struct ContentBlockerSettingsView: View {
 
   private var lastUpdatedSummary: String {
     _ = revision
-    guard let date = PreferencesStore.shared.preferences.adblockerLastRefreshedAt
-    else {
-      return "Last updated: never (filterlists download on first launch)."
+    let updated: String
+    if let date = PreferencesStore.shared.preferences.adblockerLastRefreshedAt {
+      updated =
+        "Last updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))."
+    } else {
+      updated = "Last updated: never (filterlists download on first launch)."
+    }
+    return "\(updated) \(carryingSummary)"
+  }
+
+  /// What the blocker is carrying right now. The timestamp above says
+  /// when a download last ran, which is not the same question — a
+  /// source can fetch and still produce no rule list.
+  ///
+  /// The count comes from ``AdBlocker/ruleLists`` and not from the
+  /// summary: a rebuild that failed outright leaves the previous set
+  /// installed, so its own tally of zero is not what the panes are
+  /// using.
+  private var carryingSummary: String {
+    _ = revision
+    guard let summary = AdBlocker.shared.lastRebuild else {
+      return "Lists are still being prepared."
+    }
+    if summary.enabled.isEmpty {
+      return "No lists enabled."
+    }
+    let carrying =
+      "Carrying \(AdBlocker.shared.ruleLists.count) of \(summary.enabled.count) lists"
+    if summary.failed.isEmpty {
+      return "\(carrying)."
     }
     return
-      "Last updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))."
+      "\(carrying) — the last refresh got no rules from \(displayNames(of: summary.failed))."
+  }
+
+  /// ``AdBlocker/RebuildSummary`` carries store keys, which are opaque
+  /// for a custom list, so map them back to the labels shown above.
+  private func displayNames(of ids: [String]) -> String {
+    let names = Dictionary(
+      AdBlocker.allSources.map { ($0.id, $0.name) },
+      uniquingKeysWith: { first, _ in first })
+    return ids.map { names[$0] ?? $0 }.joined(separator: ", ")
   }
 
   private func isEnabled(_ source: AdBlocker.FilterSource) -> Bool {

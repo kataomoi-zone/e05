@@ -342,6 +342,22 @@ public final class AdBlocker {
   /// superseded hashes).
   private static let ruleListIdentifierPrefix = "e05-adblocker-v1-"
 
+  /// What the last rebuild produced. An empty ``ruleLists`` cannot say
+  /// on its own whether the first rebuild is still running or whether
+  /// one finished and left nothing, and those two want opposite
+  /// reactions — wait, or investigate. Kept so a pane can tell them
+  /// apart and the Content Blocker tab can show which lists the
+  /// blocker is actually carrying.
+  public struct RebuildSummary: Sendable {
+    /// Source ids this rebuild was asked to install.
+    public let enabled: [String]
+    /// Enabled source ids that produced no usable rule list.
+    public let failed: [String]
+    public var installed: Int { enabled.count - failed.count }
+  }
+
+  public private(set) var lastRebuild: RebuildSummary?
+
   public private(set) var ruleLists: [WKContentRuleList] = []
 
   /// Not `private`: the tests build their own instance so a rebuild
@@ -382,31 +398,43 @@ public final class AdBlocker {
     }
   }
 
-  /// Ensure a compiled ``WKContentRuleList`` is available. Fast path
-  /// (all sources cached and fresh) hits the precompiled binary that
-  /// ``WKContentRuleListStore`` keeps around; slow path downloads,
-  /// converts, merges, and compiles a new list keyed by a content
-  /// hash so filterlist updates invalidate stale binaries.
-  ///
-  /// The new set is accumulated in a local and assigned to
-  /// ``ruleLists`` in one step at the end. A rebuild therefore never
-  /// leaves the property empty while it runs, and a rebuild that
-  /// produces nothing leaves the previous set in place rather than
-  /// stripping every live pane of its blocker.
+  /// Install a compiled ``WKContentRuleList`` for every source the
+  /// preferences have switched on.
   public func start() async {
-    await rebuild(store: WKContentRuleListStore.default()) { [self] source in
-      await loadFilterText(source: source, forceDownload: false)
+    await rebuild(
+      store: WKContentRuleListStore.default(),
+      sources: Self.enabledSources()
+    ) { source in
+      await self.loadFilterText(source: source, forceDownload: false)
     }
   }
 
-  /// The compile path behind ``start()`` and ``reload(forceDownload:)``.
+  /// The catalog entries the preferences have switched on. Read here
+  /// rather than inside ``rebuild(store:sources:loadText:)`` so the
+  /// compile path holds no opinion about preferences, and so a test
+  /// can hand it the empty set — which is what "the user turned every
+  /// list off" looks like.
+  static func enabledSources() -> [FilterSource] {
+    allSources.filter { isSourceEnabled($0) }
+  }
+
+  /// Compile `sources` into one ``WKContentRuleList`` each and install
+  /// the result. Fast path (a source's text unchanged since last time)
+  /// hits the precompiled binary that ``WKContentRuleListStore`` keeps
+  /// around; slow path converts and compiles a new one keyed by a
+  /// content hash, so a filterlist update invalidates the stale binary.
   ///
-  /// `store` and `loadText` exist so the tests can drive a rebuild:
-  /// the branch that keeps the previous set otherwise needs every
-  /// upstream to go down mid-run, and compiling against the default
-  /// store would leave test output in the app's own WebKit directory.
+  /// The new set is accumulated in a local and assigned to
+  /// ``ruleLists`` in one step at the end, so a rebuild never leaves
+  /// the property empty while it runs.
+  ///
+  /// `store`, `sources` and `loadText` are what the tests drive: the
+  /// branches that matter need every upstream down, or no source at
+  /// all, and compiling against the default store would leave test
+  /// output in the app's own WebKit directory.
   func rebuild(
     store: WKContentRuleListStore?,
+    sources: [FilterSource],
     loadText: (FilterSource) async -> String?
   ) async {
     // `WKContentRuleListStore.default()` is bridged as Optional even
@@ -414,7 +442,7 @@ public final class AdBlocker {
     // guard so a nil store (unlikely but possible under unusual
     // sandbox configurations) fails gracefully.
     guard let store else {
-      logger.error("WKContentRuleListStore.default() returned nil")
+      logger.error("No content rule list store — nothing can be installed")
       return
     }
 
@@ -426,14 +454,12 @@ public final class AdBlocker {
     // per web view, so the natural fix is one list per source.
     var compiledIdentifiers: [String] = []
     var rebuilt: [WKContentRuleList] = []
-    for source in Self.allSources {
-      if !Self.isSourceEnabled(source) {
-        logger.info(
-          "Skipping disabled source '\(source.id, privacy: .public)'"
-        )
+    var failedIds: [String] = []
+    for source in sources {
+      guard let text = await loadText(source) else {
+        failedIds.append(source.id)
         continue
       }
-      guard let text = await loadText(source) else { continue }
       let hash = Self.shortHash(
         for: ["converter-v\(ABPtoSafariConverter.outputVersion)", text])
       let identifier = "\(Self.ruleListIdentifierPrefix)\(source.id)-\(hash)"
@@ -465,7 +491,10 @@ public final class AdBlocker {
         \(rules.count) rules, \(skipped) skipped
         """
       )
-      guard !rules.isEmpty else { continue }
+      guard !rules.isEmpty else {
+        failedIds.append(source.id)
+        continue
+      }
 
       if let compiled = await compile(
         rules: rules,
@@ -491,10 +520,20 @@ public final class AdBlocker {
         sourceName: source.name
       ) {
         rebuilt.append(salvaged)
+      } else {
+        failedIds.append(source.id)
       }
     }
 
-    if rebuilt.isEmpty {
+    lastRebuild = RebuildSummary(
+      enabled: sources.map(\.id), failed: failedIds)
+
+    // An empty result means one of two opposite things. No source
+    // asked for is the user switching every list off, which has to
+    // reach the panes; sources asked for that all failed is a fault,
+    // and installing that would strip every live pane of a blocker
+    // that was working a moment ago.
+    if rebuilt.isEmpty, !sources.isEmpty {
       logger.error(
         "No sources produced a usable rule list — keeping the previous set"
       )
@@ -504,16 +543,23 @@ public final class AdBlocker {
     logger.info(
       """
       Installed \(self.ruleLists.count) rule lists \
-      (\(compiledIdentifiers.count) enabled / \
+      (\(sources.count) enabled / \
       \(Self.allSources.count) catalog)
       """
     )
     broadcastRuleListChange()
-    Task {
-      await self.cleanupStaleStoreEntries(
-        current: compiledIdentifiers,
-        store: store
-      )
+    // Only sweep after a complete run. A partial one leaves the
+    // failed sources out of `current`, so the sweep would delete
+    // their still-valid binaries from a previous launch and turn the
+    // next outage into a full recompile. (The empty case is already
+    // refused inside the sweep.)
+    if failedIds.isEmpty {
+      Task {
+        await self.cleanupStaleStoreEntries(
+          current: compiledIdentifiers,
+          store: store
+        )
+      }
     }
   }
 
@@ -530,22 +576,31 @@ public final class AdBlocker {
   }
 
   /// Re-run the compile path so the live web views pick up a
-  /// per-source enable change. ``start()`` swaps the rebuilt set in
-  /// only once every source has been handled, so `ruleLists` never
-  /// goes empty mid-rebuild — a pane that navigates while a refresh
-  /// is running keeps the previous set instead of committing its
-  /// page unblocked. The per-pane observer rebuilds the user
-  /// content controller's rule list set from the new array on the
-  /// `ruleListDidChange` notification that `start()` posts at
-  /// the end. The procedural cosmetic engine is rebuilt against
-  /// the same per-source enable state in lock-step — a disabled
-  /// source has to drop its declarative, cosmetic, and scriptlet
-  /// contributions for the user to see a change. (The scriptlet index
-  /// is baked per web view, so reload reaches new panes; live panes
-  /// pick it up on their next suspend → restore.)
+  /// per-source enable change. ``rebuild(store:sources:loadText:)``
+  /// swaps the new set in only once every source has been handled, so
+  /// `ruleLists` never goes empty mid-rebuild — a pane that navigates
+  /// while a refresh is running keeps the previous set instead of
+  /// committing its page unblocked. The per-pane observer rebuilds the
+  /// user content controller's rule list set from the new array on the
+  /// `ruleListDidChange` notification posted at the end of a rebuild
+  /// that installed something. The two engines are rebuilt against the
+  /// same per-source enable state in lock-step — a disabled source has
+  /// to drop its declarative, cosmetic, and scriptlet contributions for
+  /// the user to see a change. (The scriptlet index is baked per web
+  /// view, so reload reaches new panes; live panes pick it up on their
+  /// next suspend → restore.)
+  ///
+  /// Lock-step holds for an enable change, not for a failure: a
+  /// rebuild that reached no source keeps the declarative set it had,
+  /// while the two engines re-read the on-disk cache and end up with
+  /// whatever is there. Partial coverage beats none, but the layers
+  /// can disagree until the next successful rebuild.
   public func reload(forceDownload: Bool = false) async {
-    await rebuild(store: WKContentRuleListStore.default()) { [self] source in
-      await loadFilterText(source: source, forceDownload: forceDownload)
+    await rebuild(
+      store: WKContentRuleListStore.default(),
+      sources: Self.enabledSources()
+    ) { source in
+      await self.loadFilterText(source: source, forceDownload: forceDownload)
     }
     await CosmeticFilterEngine.shared.start()
     await ScriptletEngine.shared.start()

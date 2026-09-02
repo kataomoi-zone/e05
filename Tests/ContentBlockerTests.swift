@@ -452,6 +452,13 @@ struct ContentBlockerPreferencesTests {
 @Suite("AdBlocker.rebuild")
 @MainActor
 struct AdBlockerRebuildTests {
+  /// Two catalog entries, so the counts below are the rebuild's own
+  /// and not whatever the shared preferences happen to have switched
+  /// on when the suite runs.
+  private var sources: [AdBlocker.FilterSource] {
+    Array(AdBlocker.builtInSources.prefix(2))
+  }
+
   private func withTempStore(
     _ body: (WKContentRuleListStore) async throws -> Void
   ) async throws {
@@ -459,7 +466,10 @@ struct AdBlockerRebuildTests {
       .appendingPathComponent("AdBlockerRebuildTests-\(UUID().uuidString)")
     try FileManager.default.createDirectory(
       at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    // Left behind on purpose: a rebuild finishes before the sweep it
+    // spawns, so removing the directory here races WebKit reading it.
+    // The contents are a few tiny compiled lists under the system
+    // temporary directory.
     let store = try #require(WKContentRuleListStore(url: dir))
     try await body(store)
   }
@@ -468,13 +478,18 @@ struct AdBlockerRebuildTests {
   func emptyRebuildKeepsInstalledLists() async throws {
     try await withTempStore { store in
       let blocker = AdBlocker()
-      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      await blocker.rebuild(store: store, sources: sources) { _ in "||ads.example.com^" }
       let installed = blocker.ruleLists
       #expect(!installed.isEmpty)
 
-      await blocker.rebuild(store: store) { _ in nil }
+      await blocker.rebuild(store: store, sources: sources) { _ in nil }
       #expect(blocker.ruleLists.count == installed.count)
       #expect(blocker.ruleLists.first === installed.first)
+
+      // The summary reports the failure the rule lists no longer show.
+      let summary = try #require(blocker.lastRebuild)
+      #expect(summary.installed == 0)
+      #expect(summary.failed == summary.enabled)
     }
   }
 
@@ -482,11 +497,11 @@ struct AdBlockerRebuildTests {
   func rebuildSwapsInTheNewSet() async throws {
     try await withTempStore { store in
       let blocker = AdBlocker()
-      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      await blocker.rebuild(store: store, sources: sources) { _ in "||ads.example.com^" }
       let first = blocker.ruleLists
       #expect(!first.isEmpty)
 
-      await blocker.rebuild(store: store) { _ in "||tracker.example.com^" }
+      await blocker.rebuild(store: store, sources: sources) { _ in "||tracker.example.com^" }
       #expect(blocker.ruleLists.count == first.count)
       #expect(blocker.ruleLists.first !== first.first)
     }
@@ -496,12 +511,54 @@ struct AdBlockerRebuildTests {
   func nilStoreKeepsInstalledLists() async throws {
     try await withTempStore { store in
       let blocker = AdBlocker()
-      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      await blocker.rebuild(store: store, sources: sources) { _ in "||ads.example.com^" }
       let installed = blocker.ruleLists
       #expect(!installed.isEmpty)
 
-      await blocker.rebuild(store: nil) { _ in "||ads.example.com^" }
+      await blocker.rebuild(store: nil, sources: sources) { _ in "||ads.example.com^" }
       #expect(blocker.ruleLists.first === installed.first)
+    }
+  }
+}
+
+extension AdBlockerRebuildTests {
+  /// The count the Content Blocker tab prints and the count a pane
+  /// logs both come from this accounting, so tie it to the lists that
+  /// actually got installed.
+  @Test("the summary names the sources that produced nothing")
+  func summaryNamesFailedSources() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      let failingId = sources[0].id
+
+      await blocker.rebuild(store: store, sources: sources) { source in
+        source.id == failingId ? nil : "||ads.example.com^"
+      }
+
+      let summary = try #require(blocker.lastRebuild)
+      #expect(summary.failed == [failingId])
+      #expect(summary.installed == summary.enabled.count - 1)
+      #expect(blocker.ruleLists.count == summary.installed)
+    }
+  }
+}
+
+extension AdBlockerRebuildTests {
+  /// Switching every list off leaves the same empty result as a
+  /// rebuild whose sources all failed, and the two have to end
+  /// differently: this one has to reach the panes.
+  @Test("a rebuild with no sources installs the empty set")
+  func noSourcesInstallsTheEmptySet() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      await blocker.rebuild(store: store, sources: sources) { _ in
+        "||ads.example.com^"
+      }
+      #expect(!blocker.ruleLists.isEmpty)
+
+      await blocker.rebuild(store: store, sources: []) { _ in nil }
+      #expect(blocker.ruleLists.isEmpty)
+      #expect(blocker.lastRebuild?.enabled.isEmpty == true)
     }
   }
 }

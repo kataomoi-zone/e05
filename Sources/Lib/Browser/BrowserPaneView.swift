@@ -847,8 +847,37 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     {
       return
     }
-    for list in AdBlocker.shared.ruleLists {
+    let lists = AdBlocker.shared.ruleLists
+    for list in lists {
       ucc.add(list)
+    }
+    // Every silent adblocker failure takes this shape: a pane ends up
+    // with nothing attached and the page looks normal apart from the
+    // ads. Say so where it happens. The fault case goes out at error
+    // level because that is what survives in the log archive for a
+    // later `log show`; the cold-start case is expected and only worth
+    // a notice. This runs on navigation and on both notification
+    // streams, so the wording stays about the pane's state, not about
+    // a commit.
+    if lists.isEmpty {
+      guard let summary = AdBlocker.shared.lastRebuild else {
+        logger.notice(
+          "[adblock] pane has no rule lists — first rebuild is still running"
+        )
+        return
+      }
+      // Every list switched off is the user's own choice and leaves
+      // the same empty set behind, so only a rebuild that was asked
+      // for sources and produced none is worth an error.
+      if !summary.enabled.isEmpty {
+        logger.error(
+          """
+          [adblock] pane has no rule lists although a rebuild finished \
+          (\(summary.installed) of \(summary.enabled.count) sources \
+          installed)
+          """
+        )
+      }
     }
   }
 
