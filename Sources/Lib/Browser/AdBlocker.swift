@@ -377,6 +377,12 @@ public final class AdBlocker {
   /// ``WKContentRuleListStore`` keeps around; slow path downloads,
   /// converts, merges, and compiles a new list keyed by a content
   /// hash so filterlist updates invalidate stale binaries.
+  ///
+  /// The new set is accumulated in a local and assigned to
+  /// ``ruleLists`` in one step at the end. A rebuild therefore never
+  /// leaves the property empty while it runs, and a rebuild that
+  /// produces nothing leaves the previous set in place rather than
+  /// stripping every live pane of its blocker.
   public func start() async {
     // `WKContentRuleListStore.default()` is bridged as Optional even
     // though the ObjC signature returns `instancetype`. Keep the
@@ -409,6 +415,7 @@ public final class AdBlocker {
     // `WKUserContentController.add(_:)` accepts multiple rule lists
     // per web view, so the natural fix is one list per source.
     var compiledIdentifiers: [String] = []
+    var rebuilt: [WKContentRuleList] = []
     for source in Self.allSources {
       if !Self.isSourceEnabled(source) {
         logger.info(
@@ -423,7 +430,7 @@ public final class AdBlocker {
       compiledIdentifiers.append(identifier)
 
       if let cached = try? await store.contentRuleList(forIdentifier: identifier) {
-        self.ruleLists.append(cached)
+        rebuilt.append(cached)
         logger.info(
           """
           Loaded compiled '\(source.name, privacy: .public)' \
@@ -455,7 +462,7 @@ public final class AdBlocker {
         store: store,
         identifier: identifier
       ) {
-        self.ruleLists.append(compiled)
+        rebuilt.append(compiled)
         logger.info(
           """
           Compiled '\(source.name, privacy: .public)' \
@@ -473,14 +480,17 @@ public final class AdBlocker {
         identifier: identifier,
         sourceName: source.name
       ) {
-        self.ruleLists.append(salvaged)
+        rebuilt.append(salvaged)
       }
     }
 
-    if ruleLists.isEmpty {
-      logger.error("No sources produced a usable rule list")
+    if rebuilt.isEmpty {
+      logger.error(
+        "No sources produced a usable rule list — keeping the previous set"
+      )
       return
     }
+    self.ruleLists = rebuilt
     logger.info(
       """
       Installed \(self.ruleLists.count) rule lists \
@@ -510,11 +520,13 @@ public final class AdBlocker {
   }
 
   /// Re-run the compile path so the live web views pick up a
-  /// per-source enable change. The previously installed
-  /// ``WKContentRuleList`` objects are dropped from this store's
-  /// `ruleLists` array; the per-pane observer rebuilds the user
+  /// per-source enable change. ``start()`` swaps the rebuilt set in
+  /// only once every source has been handled, so `ruleLists` never
+  /// goes empty mid-rebuild — a pane that navigates while a refresh
+  /// is running keeps the previous set instead of committing its
+  /// page unblocked. The per-pane observer rebuilds the user
   /// content controller's rule list set from the new array on the
-  /// `ruleListDidChange` notification that `start()` re-posts at
+  /// `ruleListDidChange` notification that `start()` posts at
   /// the end. The procedural cosmetic engine is rebuilt against
   /// the same per-source enable state in lock-step — a disabled
   /// source has to drop its declarative, cosmetic, and scriptlet
@@ -522,7 +534,6 @@ public final class AdBlocker {
   /// is baked per web view, so reload reaches new panes; live panes
   /// pick it up on their next suspend → restore.)
   public func reload() async {
-    ruleLists = []
     await start()
     await CosmeticFilterEngine.shared.start()
     await ScriptletEngine.shared.start()
@@ -533,10 +544,10 @@ public final class AdBlocker {
   /// path. The disk wipe means ``loadFilterText`` cannot fall back
   /// to a stale cached copy, so the refresh genuinely fetches from
   /// upstream regardless of the 7-day staleness window. Failure to
-  /// reach the upstream still leaves the user covered: the previous
-  /// compiled binary lives in ``WKContentRuleListStore`` keyed by
-  /// content hash, and ``start()`` re-attaches it when the converter
-  /// produces no rules.
+  /// reach the upstream still leaves the session covered: ``start()``
+  /// swaps `ruleLists` only when the rebuild produced at least one
+  /// list, so the objects already attached to every live pane stay
+  /// attached. The wiped cache is re-fetched on the next launch.
   public func refreshFilterlists() async {
     clearCache()
     await reload()
