@@ -326,6 +326,13 @@ public final class AdBlocker {
   /// survive short outages while keeping rule rot bounded.
   private static let cacheMaxAge: TimeInterval = 7 * 24 * 60 * 60
 
+  /// Set whenever a download failed, whether a cached copy stood in
+  /// for it or the source was dropped. ``refreshFilterlists()`` reads
+  /// it: the auto-update schedule sleeps a whole interval measured
+  /// from the last-updated stamp, so recording a success for a run
+  /// that reached nothing suspends updates until the next launch.
+  private var refreshMissedASource = false
+
   /// Prefix for identifiers stored in ``WKContentRuleListStore``. Each
   /// compiled list's full identifier is
   /// `e05-adblocker-v1-<sourceName>-<contentHash>`; the hash covers
@@ -337,13 +344,16 @@ public final class AdBlocker {
 
   public private(set) var ruleLists: [WKContentRuleList] = []
 
-  private init() {}
+  /// Not `private`: the tests build their own instance so a rebuild
+  /// can be driven against a temporary store without touching the
+  /// singleton every live pane is attached to.
+  init() {}
 
   /// Root directory for cached filterlist sources. Resolved via
   /// `E05Paths.default.cacheDir` — `Caches/<bundle-id>/` is not
-  /// guaranteed to exist on first launch, so callers writing to
-  /// this dir must ensure it exists (`download(...)` does so via
-  /// `createDirectory(withIntermediateDirectories: true)`).
+  /// guaranteed to exist on first launch, so it is created by
+  /// ``downloadFilterText(source:cacheURL:)``, the one place that
+  /// writes into it.
   public static var cacheRoot: URL {
     E05Paths.default.cacheDir.appendingPathComponent(
       "adblocker", isDirectory: true)
@@ -384,27 +394,27 @@ public final class AdBlocker {
   /// produces nothing leaves the previous set in place rather than
   /// stripping every live pane of its blocker.
   public func start() async {
+    await rebuild(store: WKContentRuleListStore.default()) { [self] source in
+      await loadFilterText(source: source, forceDownload: false)
+    }
+  }
+
+  /// The compile path behind ``start()`` and ``reload(forceDownload:)``.
+  ///
+  /// `store` and `loadText` exist so the tests can drive a rebuild:
+  /// the branch that keeps the previous set otherwise needs every
+  /// upstream to go down mid-run, and compiling against the default
+  /// store would leave test output in the app's own WebKit directory.
+  func rebuild(
+    store: WKContentRuleListStore?,
+    loadText: (FilterSource) async -> String?
+  ) async {
     // `WKContentRuleListStore.default()` is bridged as Optional even
     // though the ObjC signature returns `instancetype`. Keep the
     // guard so a nil store (unlikely but possible under unusual
     // sandbox configurations) fails gracefully.
-    guard let store = WKContentRuleListStore.default() else {
+    guard let store else {
       logger.error("WKContentRuleListStore.default() returned nil")
-      return
-    }
-
-    do {
-      try FileManager.default.createDirectory(
-        at: Self.cacheRoot,
-        withIntermediateDirectories: true
-      )
-    } catch {
-      logger.error(
-        """
-        Failed to create adblocker cache dir: \
-        \(String(describing: error), privacy: .public)
-        """
-      )
       return
     }
 
@@ -423,7 +433,7 @@ public final class AdBlocker {
         )
         continue
       }
-      guard let text = await loadFilterText(source: source) else { continue }
+      guard let text = await loadText(source) else { continue }
       let hash = Self.shortHash(
         for: ["converter-v\(ABPtoSafariConverter.outputVersion)", text])
       let identifier = "\(Self.ruleListIdentifierPrefix)\(source.id)-\(hash)"
@@ -533,24 +543,35 @@ public final class AdBlocker {
   /// contributions for the user to see a change. (The scriptlet index
   /// is baked per web view, so reload reaches new panes; live panes
   /// pick it up on their next suspend → restore.)
-  public func reload() async {
-    await start()
+  public func reload(forceDownload: Bool = false) async {
+    await rebuild(store: WKContentRuleListStore.default()) { [self] source in
+      await loadFilterText(source: source, forceDownload: forceDownload)
+    }
     await CosmeticFilterEngine.shared.start()
     await ScriptletEngine.shared.start()
   }
 
-  /// Force a fresh download of every enabled filterlist source by
-  /// dropping the on-disk cache first, then re-running the compile
-  /// path. The disk wipe means ``loadFilterText`` cannot fall back
-  /// to a stale cached copy, so the refresh genuinely fetches from
-  /// upstream regardless of the 7-day staleness window. Failure to
-  /// reach the upstream still leaves the session covered: ``start()``
-  /// swaps `ruleLists` only when the rebuild produced at least one
-  /// list, so the objects already attached to every live pane stay
-  /// attached. The wiped cache is re-fetched on the next launch.
+  /// Force a fresh download of every enabled filterlist source,
+  /// bypassing the 7-day staleness window, then re-run the compile
+  /// path. Each cached copy stays on disk until a download replaces
+  /// it, so a source that cannot be reached keeps serving its previous
+  /// text and a run where none can be reached leaves both the cache
+  /// and the installed rule lists as they were. Wiping first and
+  /// downloading after would trade the whole session's coverage for
+  /// one failed fetch.
   public func refreshFilterlists() async {
-    clearCache()
-    await reload()
+    refreshMissedASource = false
+    await reload(forceDownload: true)
+    // Only a run that reached every source is a successful refresh.
+    // The auto-update schedule sleeps a full interval measured from
+    // this stamp, so recording one for a run that fell back to cached
+    // text would suspend updates until the next launch.
+    guard !refreshMissedASource else {
+      logger.warning(
+        "Refresh did not reach every source — leaving the last-updated stamp alone"
+      )
+      return
+    }
     PreferencesStore.shared.update {
       $0.adblockerLastRefreshedAt = Date()
     }
@@ -792,7 +813,13 @@ public final class AdBlocker {
     }.value
   }
 
-  private func loadFilterText(source: FilterSource) async -> String? {
+  /// `forceDownload` skips the freshness shortcut but not the
+  /// fallback: a forced refresh that cannot reach upstream still
+  /// returns the cached text rather than dropping the source.
+  private func loadFilterText(
+    source: FilterSource,
+    forceDownload: Bool
+  ) async -> String? {
     let cacheURL = Self.cacheRoot.appendingPathComponent(source.cacheFilename)
     let fm = FileManager.default
 
@@ -800,7 +827,7 @@ public final class AdBlocker {
       let attrs = try? fm.attributesOfItem(atPath: cacheURL.path)
       let mtime = attrs?[.modificationDate] as? Date ?? .distantPast
       let age = Date().timeIntervalSince(mtime)
-      if age < Self.cacheMaxAge {
+      if !forceDownload, age < Self.cacheMaxAge {
         logger.info(
           """
           Loaded '\(source.name, privacy: .public)' from cache \
@@ -811,8 +838,8 @@ public final class AdBlocker {
       }
       logger.info(
         """
-        '\(source.name, privacy: .public)' cache is \(Int(age))s old \
-        — refreshing
+        Refreshing '\(source.name, privacy: .public)' \
+        (cache age \(Int(age))s, forced \(forceDownload))
         """
       )
       if let fresh = await downloadFilterText(source: source, cacheURL: cacheURL) {
@@ -826,10 +853,15 @@ public final class AdBlocker {
         — using stale cache
         """
       )
+      refreshMissedASource = true
       return cached
     }
 
-    return await downloadFilterText(source: source, cacheURL: cacheURL)
+    let downloaded = await downloadFilterText(source: source, cacheURL: cacheURL)
+    if downloaded == nil {
+      refreshMissedASource = true
+    }
+    return downloaded
   }
 
   private func downloadFilterText(
@@ -861,7 +893,21 @@ public final class AdBlocker {
         )
         return nil
       }
-      try? text.write(to: cacheURL, atomically: true, encoding: .utf8)
+      do {
+        try FileManager.default.createDirectory(
+          at: Self.cacheRoot,
+          withIntermediateDirectories: true
+        )
+        try text.write(to: cacheURL, atomically: true, encoding: .utf8)
+      } catch {
+        // The text is still usable this session; only the cache is lost.
+        logger.error(
+          """
+          Failed to cache '\(source.name, privacy: .public)': \
+          \(String(describing: error), privacy: .public)
+          """
+        )
+      }
       logger.info(
         """
         Downloaded '\(source.name, privacy: .public)' \

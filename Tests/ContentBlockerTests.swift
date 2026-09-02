@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 
 @testable import E05Lib
 
@@ -440,6 +441,67 @@ struct ContentBlockerPreferencesTests {
 
       let reader = PreferencesStore(storeURL: storeURL)
       #expect(reader.preferences.adblockerCustomSources == entries)
+    }
+  }
+}
+
+/// The rebuild path decides, on every filterlist refresh, whether the
+/// panes keep blocking. Driving it needs a store of our own: the
+/// default one is the app's, and the interesting branch is the one
+/// where every upstream is unreachable.
+@Suite("AdBlocker.rebuild")
+@MainActor
+struct AdBlockerRebuildTests {
+  private func withTempStore(
+    _ body: (WKContentRuleListStore) async throws -> Void
+  ) async throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AdBlockerRebuildTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = try #require(WKContentRuleListStore(url: dir))
+    try await body(store)
+  }
+
+  @Test("a rebuild that loads no source keeps the installed rule lists")
+  func emptyRebuildKeepsInstalledLists() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      let installed = blocker.ruleLists
+      #expect(!installed.isEmpty)
+
+      await blocker.rebuild(store: store) { _ in nil }
+      #expect(blocker.ruleLists.count == installed.count)
+      #expect(blocker.ruleLists.first === installed.first)
+    }
+  }
+
+  @Test("a rebuild that produces a set swaps it in")
+  func rebuildSwapsInTheNewSet() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      let first = blocker.ruleLists
+      #expect(!first.isEmpty)
+
+      await blocker.rebuild(store: store) { _ in "||tracker.example.com^" }
+      #expect(blocker.ruleLists.count == first.count)
+      #expect(blocker.ruleLists.first !== first.first)
+    }
+  }
+
+  @Test("a store WebKit will not hand over keeps the installed rule lists")
+  func nilStoreKeepsInstalledLists() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      await blocker.rebuild(store: store) { _ in "||ads.example.com^" }
+      let installed = blocker.ruleLists
+      #expect(!installed.isEmpty)
+
+      await blocker.rebuild(store: nil) { _ in "||ads.example.com^" }
+      #expect(blocker.ruleLists.first === installed.first)
     }
   }
 }

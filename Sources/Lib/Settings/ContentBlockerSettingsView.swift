@@ -676,7 +676,7 @@ struct ContentBlockerSettingsView: View {
         }
       } footer: {
         Text(
-          "A manual refresh resets the cache and re-downloads every enabled list."
+          "A manual refresh re-downloads every enabled list, keeping the cached copy of any list it cannot reach."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
