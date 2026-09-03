@@ -544,6 +544,27 @@ extension AdBlockerRebuildTests {
 }
 
 extension AdBlockerRebuildTests {
+  /// The refresh button reads this to say it is busy, and a rebuild
+  /// takes minutes, so the flag has to be true for the whole run and
+  /// false once it is over.
+  @Test("a rebuild reports itself as running until it finishes")
+  func rebuildReportsItselfRunning() async throws {
+    try await withTempStore { store in
+      let blocker = AdBlocker()
+      #expect(!blocker.isRebuilding)
+
+      var seenWhileLoading: [Bool] = []
+      await blocker.rebuild(store: store, sources: sources) { _ in
+        seenWhileLoading.append(blocker.isRebuilding)
+        return "||ads.example.com^"
+      }
+
+      #expect(seenWhileLoading.count == sources.count)
+      #expect(seenWhileLoading.allSatisfy { $0 })
+      #expect(!blocker.isRebuilding)
+    }
+  }
+
   /// Switching every list off leaves the same empty result as a
   /// rebuild whose sources all failed, and the two have to end
   /// differently: this one has to reach the panes.

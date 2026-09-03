@@ -49,6 +49,15 @@ public final class AdBlocker {
     "e05.AdBlocker.ruleListDidChange"
   )
 
+  /// Posted when a rebuild starts and again when it ends, including
+  /// the ends that install nothing and so never reach
+  /// ``ruleListDidChangeNotification``. A rebuild downloads several
+  /// megabytes and compiles far more, which is minutes with nothing
+  /// on screen unless the UI can follow it.
+  public static let rebuildStateDidChangeNotification = Notification.Name(
+    "e05.AdBlocker.rebuildStateDidChange"
+  )
+
   /// Coarse grouping a ``FilterSource`` falls into. Drives both the
   /// Settings UI sectioning (Default vs Optional) and the
   /// initial-enable computation when the user has not made an explicit
@@ -358,6 +367,25 @@ public final class AdBlocker {
 
   public private(set) var lastRebuild: RebuildSummary?
 
+  /// Nesting depth of the running rebuild. ``reload(forceDownload:)``
+  /// brackets the whole operation while ``rebuild(store:sources:loadText:)``
+  /// brackets only its own part, so this is a counter rather than a
+  /// flag: a flag would clear while the cosmetic and scriptlet engines
+  /// are still rebuilding and bring the refresh button back early.
+  private var rebuildDepth = 0
+
+  /// Whether a rebuild is running right now. Read by the Content
+  /// Blocker tab so its refresh button can say so; a refresh the
+  /// auto-update schedule started reads the same.
+  public var isRebuilding: Bool { rebuildDepth > 0 }
+
+  /// Whether the running rebuild is a filterlist refresh — one that
+  /// goes to the network — rather than a recompile of text already on
+  /// disk. Toggling a source rebuilds without fetching anything, and
+  /// calling that "refreshing" explains neither the wait nor the
+  /// last-updated stamp staying where it was.
+  public private(set) var isRefreshing = false
+
   public private(set) var ruleLists: [WKContentRuleList] = []
 
   /// Not `private`: the tests build their own instance so a rebuild
@@ -445,6 +473,9 @@ public final class AdBlocker {
       logger.error("No content rule list store — nothing can be installed")
       return
     }
+
+    enterRebuild()
+    defer { exitRebuild() }
 
     // Compile each source into its own ``WKContentRuleList``. WebKit
     // caps a single compiled list at ~150,000 rules, so merging
@@ -563,6 +594,27 @@ public final class AdBlocker {
     }
   }
 
+  private func enterRebuild() {
+    rebuildDepth += 1
+    broadcastRebuildState()
+  }
+
+  private func exitRebuild() {
+    rebuildDepth -= 1
+    broadcastRebuildState()
+  }
+
+  /// Notify observers that a rebuild started or ended. Only the
+  /// Settings UI listens; browser panes take
+  /// ``ruleListDidChangeNotification`` instead, which fires solely
+  /// when a new set was actually installed.
+  private func broadcastRebuildState() {
+    NotificationCenter.default.post(
+      name: Self.rebuildStateDidChangeNotification,
+      object: self
+    )
+  }
+
   /// Notify every observer that the rule list set has changed.
   /// Browser panes observe this once at first compile and re-observe
   /// on every reload (e.g. whitelist edit), each time removing the
@@ -596,6 +648,8 @@ public final class AdBlocker {
   /// whatever is there. Partial coverage beats none, but the layers
   /// can disagree until the next successful rebuild.
   public func reload(forceDownload: Bool = false) async {
+    enterRebuild()
+    defer { exitRebuild() }
     await rebuild(
       store: WKContentRuleListStore.default(),
       sources: Self.enabledSources()
@@ -616,6 +670,12 @@ public final class AdBlocker {
   /// one failed fetch.
   public func refreshFilterlists() async {
     refreshMissedASource = false
+    isRefreshing = true
+    broadcastRebuildState()
+    defer {
+      isRefreshing = false
+      broadcastRebuildState()
+    }
     await reload(forceDownload: true)
     // Only a run that reached every source is a successful refresh.
     // The auto-update schedule sleeps a full interval measured from

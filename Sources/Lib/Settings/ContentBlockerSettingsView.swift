@@ -29,6 +29,14 @@ struct ContentBlockerSettingsView: View {
       detail
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    // Here rather than on one form: `detail` swaps between three of
+    // them, and the Auto-Update form has a Refresh Now button too.
+    .onReceive(
+      NotificationCenter.default.publisher(
+        for: AdBlocker.rebuildStateDidChangeNotification)
+    ) { _ in
+      revision &+= 1
+    }
     .onAppear { subscribe() }
     .onDisappear { unsubscribe() }
   }
@@ -95,14 +103,6 @@ struct ContentBlockerSettingsView: View {
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
-    // A refresh is exactly when this tab is being watched, so follow
-    // the rebuild rather than showing whatever was true on open.
-    .onReceive(
-      NotificationCenter.default.publisher(
-        for: AdBlocker.ruleListDidChangeNotification)
-    ) { _ in
-      revision &+= 1
-    }
   }
 
   private var defaultListsSection: some View {
@@ -114,9 +114,10 @@ struct ContentBlockerSettingsView: View {
       HStack {
         Text("Default Lists")
         Spacer()
-        Button("Refresh Now") {
+        Button(refreshButtonTitle) {
           Task { await AdBlocker.shared.refreshFilterlists() }
         }
+        .disabled(isBusy)
         .controlSize(.small)
       }
     } footer: {
@@ -469,12 +470,40 @@ struct ContentBlockerSettingsView: View {
     return formatter
   }()
 
+  /// Whether any rebuild is running, from wherever it was started.
+  /// Held on ``AdBlocker`` rather than in view state so reopening this
+  /// tab mid-rebuild still shows the button as busy instead of
+  /// offering a second concurrent run.
+  private var isBusy: Bool {
+    _ = revision
+    return AdBlocker.shared.isRebuilding
+  }
+
+  /// Both refresh buttons name what is actually happening. A toggle
+  /// recompiles from the cached text without fetching anything, so
+  /// calling that "Refreshing" would promise a download the
+  /// last-updated line above then contradicts.
+  private var refreshButtonTitle: String {
+    _ = revision
+    if AdBlocker.shared.isRefreshing {
+      return "Refreshing…"
+    }
+    return AdBlocker.shared.isRebuilding ? "Applying…" : "Refresh Now"
+  }
+
   private var lastUpdatedSummary: String {
     _ = revision
     let updated: String
     if let date = PreferencesStore.shared.preferences.adblockerLastRefreshedAt {
+      let now = Date()
+      // An interval that rounds to zero comes back from
+      // `RelativeDateTimeFormatter` as "in 0 seconds" — future tense
+      // for something that just happened, which is precisely what a
+      // refresh finishing under this line produces.
       updated =
-        "Last updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: Date()))."
+        now.timeIntervalSince(date) < 60
+        ? "Last updated just now."
+        : "Last updated \(Self.relativeFormatter.localizedString(for: date, relativeTo: now))."
     } else {
       updated = "Last updated: never (filterlists download on first launch)."
     }
@@ -715,9 +744,10 @@ struct ContentBlockerSettingsView: View {
       }
 
       Section {
-        Button("Refresh Now") {
+        Button(refreshButtonTitle) {
           Task { await AdBlocker.shared.refreshFilterlists() }
         }
+        .disabled(isBusy)
       } footer: {
         Text(
           "A manual refresh re-downloads every enabled list, keeping the cached copy of any list it cannot reach."
