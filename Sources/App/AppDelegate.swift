@@ -471,7 +471,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           ?? AdBlocker.defaultAutoUpdateIntervalHours
         guard configured > 0 else { return }
         let interval = TimeInterval(configured) * 3600
-        let last = prefs.adblockerLastRefreshedAt ?? .distantPast
+        // Never refreshed means the launch that is happening right now
+        // downloads and compiles everything through `start()`. Measure
+        // from now, or the first interval elapses instantly and fires a
+        // second full rebuild concurrent with that one.
+        let last = prefs.adblockerLastRefreshedAt ?? Date()
         let elapsed = Date().timeIntervalSince(last)
         let delay = max(0, interval - elapsed)
         if delay > 0 {
