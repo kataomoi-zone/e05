@@ -110,11 +110,14 @@ struct PaneModelTests {
     #expect(!pane.isFindBarVisible)
   }
 
-  @Test("setFindBarVisible with the same value is a no-op")
-  func setFindBarVisibleIdempotent() {
+  @Test("repeating setFindBarVisible settles on the requested state")
+  func setFindBarVisibleRepeatsSettle() {
     let pane = PaneModel(address: .blankBrowser, ghosttyApp: nil)
-    // Re-applying the default must not drive spurious panel orderings
-    // or animation restarts.
+    // Hiding twice must not drive spurious panel orderings or animation
+    // restarts. Showing twice deliberately re-runs the panel's show —
+    // the panel can order itself out when the pane scrolls off the
+    // window, with no way to tell the flag — so only the settled state
+    // is asserted here.
     pane.setFindBarVisible(false)
     #expect(!pane.isFindBarVisible)
     pane.setFindBarVisible(true)

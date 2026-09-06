@@ -11,6 +11,12 @@ extension PaneContainerViewController {
   /// refer to the pane whose bar is currently revealed.
   public func openFindBar() {
     guard let pane = focusedPane, let helper = pane.findHelper else { return }
+    // The bar anchors to the pane, so a focused pane sitting outside the
+    // viewport (horizontal scrolling is free — focus doesn't follow it)
+    // has nowhere on screen to put one. `.frameIn` is a no-op when the
+    // column is already fully visible, so this only moves on the case
+    // that would otherwise open a bar clamped to the window edge.
+    _ = scrollToColumn(at: focusedColumnIndex)
     // Per-pane persistence: each pane keeps its own find bar state
     // across focus changes, so opening on a new pane no longer
     // dismisses the previous pane's session. The bars coexist as
@@ -22,8 +28,10 @@ extension PaneContainerViewController {
     // refreshes the buttons even though the same pane's bar instance
     // is reused.
     pane.findBar.setSteppingEnabled(helper.supportsStepping)
+    // No `focusField` here: the bar's own reveal takes the keyboard once
+    // it has a frame, which is the only moment it can. An open on a pane
+    // that is off-window is parked until the scroll above lands it.
     pane.setFindBarVisible(true)
-    pane.findBar.focusField()
     // ⌘F never auto-advances. The needle retained in the field
     // from a prior session stays put; the user steps explicitly
     // via Return / ⌘G or types to search anew. `performFind`

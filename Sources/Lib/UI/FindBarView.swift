@@ -73,6 +73,23 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// Same nonisolated rationale as `scrollObserver`.
   nonisolated(unsafe) private var parentResizeObserver: NSObjectProtocol?
 
+  /// Observer for the anchor pane's own frame change. The clipView and
+  /// window-resize observers cover the pane *moving*; this one covers it
+  /// changing shape in place — a vertical split, a divider drag, a width
+  /// cycle, a fold. Those resolve inside the workspace's layout without
+  /// scrolling the clipView or resizing the window, so without this the
+  /// bar stays parked at the geometry the pane had when it opened.
+  /// Same nonisolated rationale as `scrollObserver`.
+  nonisolated(unsafe) private var anchorFrameObserver: NSObjectProtocol?
+
+  /// Set when `show` was asked for while the anchor had no readable
+  /// slice on screen. The panel is left ordered out — revealing it
+  /// clamped to the window edge leaves a stub of a bar floating over an
+  /// unrelated pane, and revealing it unplaced steals key status while
+  /// staying invisible — and the first reposition that finds room
+  /// performs the reveal instead.
+  private var pendingReveal = false
+
   /// Observer for the find panel's `didBecomeKeyNotification`. Fires
   /// `onPanelBecameKey` so the host can chase pane focus when the
   /// user clicks a non-focused pane's bar.
@@ -152,6 +169,9 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       NotificationCenter.default.removeObserver(token)
     }
     if let token = parentResizeObserver {
+      NotificationCenter.default.removeObserver(token)
+    }
+    if let token = anchorFrameObserver {
       NotificationCenter.default.removeObserver(token)
     }
     if let token = panelKeyObserver {
@@ -334,7 +354,15 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// (typing falls through to whichever responder owns the main
   /// window).
   public func focusField() {
-    guard let panel else { return }
+    // Never key a panel that isn't on screen. `makeKey` on an ordered-out
+    // window still routes typing into the search field, so the search
+    // runs while nothing is visible — and the host window loses key
+    // status, which greys out every menu chord
+    // (`PaneContainerViewController.validateMenuItem` gates on
+    // `isKeyWindow`) with no bar on screen to explain why. `show` runs
+    // `repositionPanel` before this; when that declined to place the
+    // panel, leave key status where it is.
+    guard let panel, panel.isVisible else { return }
     if !panel.isKeyWindow { panel.makeKey() }
     panel.makeFirstResponder(searchField)
     searchField.selectText(nil)
@@ -415,15 +443,28 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// re-run the layout against the (possibly new) anchor.
   public func show(anchoredTo view: NSView) {
     guard let parentWindow = view.window else { return }
-    let panel = ensurePanel(parentWindow: parentWindow)
+    _ = ensurePanel(parentWindow: parentWindow)
     // Bump the generation so any in-flight hide tween's completion
     // handler is invalidated and won't orderOut the panel we're
     // about to reveal.
     hideGeneration += 1
     anchorView = view
     bindWorkspaceObservers(parent: parentWindow, anchor: view)
+    // The reveal itself is `repositionPanel`'s to perform, because only
+    // it knows whether the anchor has room on screen. Opening on a pane
+    // that is scrolled out of the window leaves the panel ordered out
+    // and the request parked — `openFindBar` scrolls the pane back in,
+    // and the reposition that scroll triggers completes the reveal.
+    pendingReveal = true
     repositionPanel()
+  }
 
+  /// Fade the panel in and hand it the keyboard. Called from
+  /// ``repositionPanel`` once the anchor has a readable slice on
+  /// screen, never directly — a panel ordered front without a resolved
+  /// frame is invisible and still takes key status, which reads as
+  /// "⌘F stopped working" while the field quietly eats the keystrokes.
+  private func revealPanel(_ panel: NSPanel) {
     // Always reset model alpha to 0 before the fade-in animation,
     // regardless of `panel.isVisible`. The previous "only reset when
     // not visible" branch trusted the hide-tween completion to leave
@@ -446,11 +487,19 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
       panel.animator().alphaValue = 1
     }
+    focusField()
   }
 
   /// Fade the panel out and order it out at the end of the tween.
   /// Safe to call when the bar was never shown.
   public func hide() {
+    // Runs before the visibility guard: a parked open — panel ordered
+    // out, waiting for its pane to scroll back on screen — has no
+    // visible panel to fade, and leaving its request and observers live
+    // would pop the bar open again on the next scroll.
+    pendingReveal = false
+    releaseAnchorObservers()
+    anchorView = nil
     guard let panel, panel.isVisible else { return }
     hideGeneration += 1
     let myGeneration = hideGeneration
@@ -473,15 +522,18 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
           self.panel?.orderOut(nil)
         }
       })
-    if let token = scrollObserver {
-      NotificationCenter.default.removeObserver(token)
-      scrollObserver = nil
-    }
-    if let token = parentResizeObserver {
-      NotificationCenter.default.removeObserver(token)
-      parentResizeObserver = nil
-    }
-    anchorView = nil
+  }
+
+  /// Drop the three anchor-tracking subscriptions. Shared by `hide` and
+  /// by `bindWorkspaceObservers`, which re-binds them against a new
+  /// anchor on every show.
+  private func releaseAnchorObservers() {
+    [scrollObserver, parentResizeObserver, anchorFrameObserver]
+      .compactMap { $0 }
+      .forEach(NotificationCenter.default.removeObserver)
+    scrollObserver = nil
+    parentResizeObserver = nil
+    anchorFrameObserver = nil
   }
 
   /// Build (or reattach) the find panel. Reparent guard mirrors
@@ -530,13 +582,20 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   /// parent window's resize so the panel re-anchors as the pane
   /// moves. Mirrors `PaneURLBar.viewDidMoveToWindow` setup.
   private func bindWorkspaceObservers(parent: NSWindow, anchor: NSView) {
-    if let token = scrollObserver {
-      NotificationCenter.default.removeObserver(token)
-      scrollObserver = nil
-    }
-    if let token = parentResizeObserver {
-      NotificationCenter.default.removeObserver(token)
-      parentResizeObserver = nil
+    releaseAnchorObservers()
+    // The pane changing shape where it stands — a vertical split, a
+    // divider drag, a width cycle, a fold — moves the bar's anchor
+    // without scrolling the clipView or resizing the window, so neither
+    // observer below sees it. No `postsFrameChangedNotifications` to set:
+    // unlike the clipView's bounds flag below, an NSView posts frame
+    // changes by default, and enabling it here would leave every pane
+    // that ever hosted a bar posting for the rest of the session.
+    anchorFrameObserver = NotificationCenter.default.addObserver(
+      forName: NSView.frameDidChangeNotification,
+      object: anchor,
+      queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.repositionPanel() }
     }
     if let clipView = anchor.enclosingScrollView?.contentView {
       clipView.postsBoundsChangedNotifications = true
@@ -589,7 +648,26 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
 
     let minVisibleWidth: CGFloat = 80
     if clippedWidth < minVisibleWidth {
-      if panel.isVisible { panel.orderOut(nil) }
+      if pendingReveal {
+        // The open is parked until the pane scrolls back into frame, and
+        // whatever the pane holds — a shell, a page — still owns first
+        // responder until then. Typing a search term into a shell and
+        // pressing Return runs it, so take the responder away now rather
+        // than leave a window where the keyboard points somewhere the
+        // user has already stopped looking.
+        parent.makeFirstResponder(nil)
+      }
+      if panel.isVisible {
+        // Ordering out a panel that holds key status would leave the app
+        // with an invisible key window: typing still reaches the search
+        // field, while every menu chord greys out because
+        // `PaneContainerViewController.validateMenuItem` gates on the
+        // host window being key — a dead keyboard with nothing on screen
+        // to explain it. Hand key back to the host on the way out.
+        let wasKey = panel.isKeyWindow
+        panel.orderOut(nil)
+        if wasKey { parent.makeKey() }
+      }
       return
     }
 
@@ -612,7 +690,15 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
       height: Self.barHeight
     )
     panel.setFrame(panelFrame, display: true)
-    if !panel.isVisible { panel.orderFront(nil) }
+    // A parked open completes here, now that the frame is real. Every
+    // other reposition just re-orders a bar that was folded away while
+    // its pane sat off-window.
+    if pendingReveal {
+      pendingReveal = false
+      revealPanel(panel)
+    } else if !panel.isVisible {
+      panel.orderFront(nil)
+    }
   }
 
   // MARK: - Button Actions

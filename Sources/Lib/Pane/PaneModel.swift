@@ -655,14 +655,16 @@ public final class PaneModel {
   /// Panes without a `findHelper` ignore the call so an external
   /// caller can't unfurl a bar over a surface that has no search
   /// engine wired up.
+  /// Showing is deliberately not gated on the flag. `FindBarView`
+  /// orders its panel out on its own when the pane scrolls far enough
+  /// out of the window, and has no way to tell the model — so the flag
+  /// can read `true` while nothing is on screen. Re-running the
+  /// idempotent `show` is what brings the bar back; returning early
+  /// left ⌘F silently no-oping on exactly the pane the user was
+  /// pointing it at.
   public func setFindBarVisible(_ visible: Bool) {
-    guard findHelper != nil else { return }
-    guard visible != isFindBarVisible else { return }
+    guard findHelper != nil, visible || isFindBarVisible else { return }
     isFindBarVisible = visible
-    if visible {
-      findBar.show(anchoredTo: containerView)
-    } else {
-      findBar.hide()
-    }
+    if visible { findBar.show(anchoredTo: containerView) } else { findBar.hide() }
   }
 }
