@@ -153,6 +153,28 @@ extension PaneContainerViewController {
     return pane
   }
 
+  /// Width a freshly inserted column adopts from the column the user is
+  /// on, or nil when the preference is off or there is nothing to
+  /// inherit from.
+  ///
+  /// The committed constant is copied rather than re-resolved from the
+  /// source's preset: a `.fraction` preset resolves against the visible
+  /// region at press time, and the sidebar may have opened since, so
+  /// re-resolving could land on a different number than the column
+  /// sitting next to it. The preset rides along so the first Cycle
+  /// Width press steps on from where the neighbour is rather than
+  /// re-applying the width the column already has.
+  ///
+  /// A folded source is skipped — its constant is the 30pt strip, which
+  /// is a fold artifact rather than a width the user chose.
+  private func inheritedNewColumnWidth() -> (width: CGFloat, preset: PaneWidthPreset?)? {
+    guard PreferencesStore.shared.preferences.inheritNewPaneWidth == true else { return nil }
+    guard let source = columns[safe: focusedColumnIndex], !source.isFolded,
+      let width = source.widthConstraint?.constant
+    else { return nil }
+    return (width, source.currentPreset)
+  }
+
   /// Whether `duplicateFocusedPane` would actually produce a copy — the
   /// gate for the Duplicate Pane command so it greys out on a pane that
   /// can't be duplicated rather than no-opping silently. Mirrors the kinds
@@ -236,9 +258,14 @@ extension PaneContainerViewController {
     // Applied before the expand animation so there's no width jump.
     // Restore runs before the window attaches (animated == false) and
     // keeps the saved width the caller assigns after the insert.
-    if animated, let firstPreset = Self.resolvedWidthCycle().first {
-      column.currentPreset = firstPreset
-      applyPreset(firstPreset, to: column)
+    if animated {
+      if let inherited = inheritedNewColumnWidth() {
+        column.currentPreset = inherited.preset
+        wc.constant = inherited.width
+      } else if let firstPreset = Self.resolvedWidthCycle().first {
+        column.currentPreset = firstPreset
+        applyPreset(firstPreset, to: column)
+      }
     }
     // Width the column settles at — the seeded preset for a fresh add,
     // otherwise the default. The insert animation below tweens to this

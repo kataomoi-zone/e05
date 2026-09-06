@@ -168,6 +168,18 @@ struct GeneralSettingsView: View {
           preferences.initialPaneKind = kind.rawValue
           persist()
         }
+
+        // The width counterpart to the Inherit options above. Off keeps
+        // the historical behaviour of opening every new column at the
+        // first Cycle Width preset.
+        Toggle(
+          "Open at the width of the current pane",
+          isOn: Binding(
+            get: { preferences.inheritNewPaneWidth ?? false },
+            set: {
+              preferences.inheritNewPaneWidth = $0
+              persist()
+            }))
       }
 
       Section("Navigation") {

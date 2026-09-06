@@ -155,6 +155,14 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// path (`~` expanded at use) roots there instead.
   public var newFinderDirectory: String?
 
+  /// Whether a newly inserted column opens at the width of the column
+  /// the user is on rather than at the first Cycle Width preset. `nil`
+  /// / `false` keeps the preset behaviour. Inheriting is the width
+  /// analogue of the terminal cwd and finder root "Inherit" options:
+  /// once a row of columns has been sized to taste, a new one joining
+  /// at a different width is the odd one out.
+  public var inheritNewPaneWidth: Bool?
+
   /// Whether a terminal pane's screen is written to disk at quit so the
   /// next launch can replay it. `nil` means on, the behaviour that
   /// shipped before the setting existed. Off is worth having because a
@@ -192,6 +200,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     splitPaneKind: String? = nil,
     newTerminalDirectory: String? = nil,
     newFinderDirectory: String? = nil,
+    inheritNewPaneWidth: Bool? = nil,
     restoreTerminalScrollback: Bool? = nil
   ) {
     self.homeURL = homeURL
@@ -217,6 +226,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.splitPaneKind = splitPaneKind
     self.newTerminalDirectory = newTerminalDirectory
     self.newFinderDirectory = newFinderDirectory
+    self.inheritNewPaneWidth = inheritNewPaneWidth
     self.restoreTerminalScrollback = restoreTerminalScrollback
   }
 
