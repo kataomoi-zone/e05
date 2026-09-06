@@ -1113,7 +1113,27 @@ extension PaneContainerViewController {
   /// missing / unsupported source so the caller can fall back.
   private func makeDuplicatePane(of source: PaneModel?) -> PaneModel? {
     guard let plan = Self.duplicatePlan(for: source) else { return nil }
-    return makePane(address: plan.address, dependencies: plan.dependencies)
+    // A duplicate copies a page the user is looking at right now, so it
+    // opens live. `PaneModel.init` reads `initialInteractionState` as the
+    // cross-launch restore signal and builds the pane suspended, and
+    // nothing would wake it afterwards — focus deliberately doesn't, so
+    // the copy sat as a placeholder until the user hit Reload by hand.
+    //
+    // The blob is withheld from the init and adopted onto the live web
+    // view instead, which is what `openDuplicatedBrowser` does for the
+    // new-column duplicate. Letting the pane suspend and calling
+    // `restore()` would reach the same screen but by the round trip that
+    // function's doc rules out: it spins up a second web view whose
+    // teardown races the back/forward list. A local page keeps the
+    // reload-instead-of-adopt rule from that path too.
+    var dependencies = plan.dependencies
+    let history = dependencies.initialInteractionState
+    dependencies.initialInteractionState = nil
+    let pane = makePane(address: plan.address, dependencies: dependencies)
+    if let history, !plan.address.url.isFileURL {
+      pane.browserView?.adoptDuplicatedHistory(history)
+    }
+    return pane
   }
 
   /// Launch cwd for a freshly opened terminal pane, from
