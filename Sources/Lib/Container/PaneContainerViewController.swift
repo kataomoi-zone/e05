@@ -156,6 +156,7 @@ public final class PaneContainerViewController: NSViewController {
   weak var toastOverlay: ToastOverlayView?
 
   nonisolated(unsafe) var scrollEventMonitor: Any?
+  nonisolated(unsafe) var keyEventMonitor: Any?
 
   /// Trackpad gestures get a single routing decision (pane vs. workspace)
   /// at their `.began` event, applied to every subsequent `.changed` /
@@ -314,6 +315,7 @@ public final class PaneContainerViewController: NSViewController {
     super.viewDidLoad()
     installInitialWorkspaceVC()
     installScrollEventMonitor()
+    installKeyEventMonitor()
     setupCommandPalette()
 
     var initiallyPinned = false
@@ -982,6 +984,9 @@ public final class PaneContainerViewController: NSViewController {
     if let monitor = scrollEventMonitor {
       NSEvent.removeMonitor(monitor)
     }
+    if let monitor = keyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+    }
     for closed in recentlyClosed {
       closed.timer.invalidate()
     }
@@ -1014,6 +1019,44 @@ public final class PaneContainerViewController: NSViewController {
       [weak self] event in
       guard let self else { return event }
       return self.routeScrollEvent(event)
+    }
+  }
+
+  /// Bring the focused column back into frame when the user types into
+  /// it. Horizontal scrolling is free and focus doesn't follow it, so the
+  /// focused pane can sit entirely outside the viewport while it still
+  /// owns the keyboard — keystrokes land somewhere the user can't see,
+  /// and the only way back was to scroll and hunt for the pane taking
+  /// them.
+  ///
+  /// Three things this deliberately does not react to:
+  ///
+  /// - **Chords.** A modifier means a command, not typing, and the
+  ///   commands that move focus scroll for themselves. Reacting would
+  ///   queue a tween toward the column the user is leaving — including
+  ///   ⌘W, where it aims at a column that is about to be removed. The
+  ///   AppDelegate's own key monitors all filter modifiers the same way.
+  /// - **Text controls in the window.** The URL field, the palette and
+  ///   the worklane's workspace-rename field all take typing while the
+  ///   user is deliberately looking somewhere else in the workspace;
+  ///   dragging the columns out from under them would be the opposite of
+  ///   helpful.
+  /// - **A column already fully on screen**, tested here rather than
+  ///   left to `scrollToColumn`. That function forces a layout pass
+  ///   before it decides, which is far too much to spend on every
+  ///   repeat of a held-down key in a terminal.
+  private func installKeyEventMonitor() {
+    keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+      [weak self] event in
+      guard let self, let window = self.view.window,
+        event.window === window,
+        event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift).isEmpty,
+        !(window.firstResponder is NSText),
+        let column = self.columns[safe: self.focusedColumnIndex],
+        !self.scrollView.documentVisibleRect.contains(column.containerView.frame)
+      else { return event }
+      _ = self.scrollToColumn(at: self.focusedColumnIndex)
+      return event
     }
   }
 
