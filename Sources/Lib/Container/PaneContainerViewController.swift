@@ -134,6 +134,12 @@ public final class PaneContainerViewController: NSViewController {
   /// `static` so the Settings UI can read the floor without a VC
   /// reference.
   static let minPaneWidth: CGFloat = 450
+  /// Slack allowed when asking whether a web view's pinch magnification
+  /// is still at its 1.0 baseline. A gesture rarely settles on exactly
+  /// 1, so an equality test would read a page as magnified at 1.0000003.
+  /// Matches the tolerance the worklane's zoom-reset gate uses for the
+  /// same question.
+  static let magnificationTolerance: CGFloat = 0.001
   let minPaneHeight: CGFloat = 50
   var focusBorderWidth: CGFloat { AppMetrics.focusedPaneBorderWidth }
   var focusBorderColor: NSColor {
@@ -1057,6 +1063,32 @@ public final class PaneContainerViewController: NSViewController {
       let browserView = pane.browserView
     else {
       return .workspace
+    }
+    // A pinch-magnified page overflows its pane at the rendering layer,
+    // so a horizontal gesture over it is a pan across the zoomed
+    // content. `horizontalScrollEdge` is reported by a script reading
+    // the DOM, and `magnification` is a visual scale that leaves
+    // `scrollWidth` untouched — so the script keeps saying "nothing to
+    // scroll" and the pan would go to the workspace, leaving the part of
+    // the page that just went off the edge reachable only by zooming
+    // back out.
+    //
+    // LIMITATION: the pane keeps every horizontal gesture for as long as
+    // the page is magnified, so column swiping is unavailable until the
+    // zoom returns to 1 (⌘0, or a pinch back). Panning wins because
+    // zooming in is a request to look closely at *this* page, and the
+    // columns stay reachable by keyboard and sidebar meanwhile. Serving
+    // both would need the edge of the magnified viewport: WebKit exposes
+    // no offset for it, and the page cannot see it either, since this is
+    // a view scale rather than page pinch-zoom.
+    //
+    // Only zooming *in* overflows — a pinch that shrinks the page has
+    // nothing to pan, so it must keep spilling to the workspace. The
+    // tolerance matches the worklane's zoom-reset gate: a gesture rarely
+    // settles on exactly 1, and an exact test would leave the pane
+    // holding every gesture at 1.0000003.
+    if browserView.webView.magnification > 1 + Self.magnificationTolerance {
+      return .pane
     }
     return canPaneAbsorbHorizontal(
       deltaX: event.scrollingDeltaX,
