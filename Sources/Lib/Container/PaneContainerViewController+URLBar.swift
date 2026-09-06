@@ -180,6 +180,19 @@ extension PaneContainerViewController {
       results.insert(direct, at: 0)
     }
 
+    // "terminal" and "finder" are words a search engine would happily
+    // take, but typed into a pane's URL bar they name destinations this
+    // app has. High in the list, never at the top: the first row is
+    // auto-selected, and a prefix is not enough to make Return switch
+    // what kind of pane the user is looking at. The slot above belongs
+    // to the Open URL row when the input is a full address, and to the
+    // best real match otherwise.
+    let internalStart = direct == nil ? 1 : 2
+    for row in internalPaneSuggestions(query: query).reversed() {
+      results.removeAll { $0.url == row.url }
+      results.insert(row, at: min(internalStart, results.count))
+    }
+
     // Insert a search-engine entry so the user can always search even
     // when history/bookmarks match (Brave-style). Placed after the top
     // few strong matches but before weaker tail results.
@@ -484,6 +497,86 @@ extension PaneContainerViewController {
       title: "Open URL",
       isBookmark: false
     )
+  }
+
+  /// Rows for the panes that have no browsing history to be found
+  /// through. A terminal or a finder is as much a destination as a
+  /// page, but the only way to reach one from the URL bar was to know
+  /// the internal scheme and type `e05://terminal` in full. These are
+  /// ordinary suggestions carrying that address, so selecting one
+  /// travels the same `onNavigate` → `PaneAddress.fromUserInput` path a
+  /// typed URL does.
+  ///
+  /// These rows never take the top slot, and the inline completion
+  /// refuses their scheme (``URLBarInlineCompletion/hostSuffix``). Both
+  /// matter because the match is a prefix: without them, typing "st"
+  /// would fill the field to "start" — an `e05://` address parses with
+  /// the pane's name as its host — and Return would replace the page
+  /// with the start pane instead of searching or completing a site.
+  func internalPaneSuggestions(query: String) -> [Suggestion] {
+    Self.internalPaneMatches(query: query).map { destination in
+      // The finder row resolves through `newFinderPaneAddress()` so it
+      // lands in the folder the New Finder Pane action would open,
+      // rather than at the bare `e05://finder` root.
+      let address: PaneAddress =
+        switch destination {
+        case .terminal: .terminal
+        case .finder: newFinderPaneAddress()
+        case .start: .start
+        }
+      return Suggestion(
+        url: address.url.absoluteString,
+        title: destination.title,
+        isBookmark: false
+      )
+    }
+  }
+
+  /// A pane kind reachable from the URL bar by name.
+  enum InternalPaneDestination: String, CaseIterable {
+    case terminal
+    case finder
+    case start
+
+    /// Row label. Named for what selecting the row produces, not for
+    /// the address behind it — the address is an implementation detail
+    /// the user shouldn't have to know to find the pane.
+    var title: String {
+      switch self {
+      case .terminal: "Terminal Pane"
+      case .finder: "Finder Pane"
+      case .start: "Start Page"
+      }
+    }
+  }
+
+  /// Destinations a URL-bar query names, in listing order. Split out of
+  /// ``internalPaneSuggestions`` so the matching rule is testable
+  /// without a live controller (the finder row needs one to resolve its
+  /// folder).
+  /// The scheme names the whole set — someone typing `e05` is asking
+  /// what it has to offer — and anything after it narrows by name, the
+  /// same way a bare word does. The punctuation variants are what a
+  /// half-typed address leaves behind between keystrokes.
+  ///
+  /// A bare word needs two characters: one letter prefixes too much of
+  /// the alphabet to mean anything, and the row would turn up on every
+  /// first keystroke. A name typed after the scheme has no minimum,
+  /// because the scheme already said what the user is looking for.
+  static func internalPaneMatches(query: String) -> [InternalPaneDestination] {
+    var needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !needle.isEmpty else { return [] }
+    let scheme = PaneAddress.internalScheme
+    var schemeTyped = false
+    for prefix in ["\(scheme)://", "\(scheme):/", "\(scheme):", scheme]
+    where needle.hasPrefix(prefix) {
+      needle = String(needle.dropFirst(prefix.count))
+      schemeTyped = true
+      break
+    }
+    guard schemeTyped || needle.count >= 2 else { return [] }
+    guard !needle.isEmpty else { return InternalPaneDestination.allCases }
+    return InternalPaneDestination.allCases.filter { $0.rawValue.hasPrefix(needle) }
   }
 
   /// Handle URL bar navigation: same-type navigates in place, cross-type switches content.

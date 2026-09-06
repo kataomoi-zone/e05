@@ -23,6 +23,12 @@ public enum URLBarInlineCompletion {
     else { return nil }
 
     guard let comps = URLComponents(string: candidateURL),
+      // An `e05://` address parses with the pane's name as its host, so
+      // without this a row for the start pane would complete a typed
+      // "st" to "start" and point the field at a pane the user never
+      // asked for. Completion is for hosts the user is part-way through
+      // typing; the internal scheme is never that.
+      comps.scheme?.lowercased() != PaneAddress.internalScheme,
       let host = comps.host, !host.isEmpty,
       // Complete only to an origin root. Filling a deep page's host
       // would point the field at the origin while a different, deeper

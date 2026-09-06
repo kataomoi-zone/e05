@@ -60,6 +60,34 @@ public final class StartPaneView: NSView {
     onFocusChanged?()
   }
 
+  /// `PaneModel.preferredFirstResponder` hands the start page keyboard
+  /// focus like any other pane content, but an `NSView` refuses it by
+  /// default — so focus fell through to the window and the launcher was
+  /// reachable only with the mouse.
+  public override var acceptsFirstResponder: Bool { true }
+
+  /// The buttons' own initials pick them: the launcher has exactly two
+  /// choices and no text to type into, so a mnemonic beats an arrow-key
+  /// walk over a two-item row.
+  ///
+  /// Bare keys only. `charactersIgnoringModifiers` reports "t" for ⌥T
+  /// and ⌃T as well, and a chord that no menu item claims arrives here
+  /// intact — so without the modifier test, ⌃F (emacs forward-char, in
+  /// the muscle memory of anyone who uses it elsewhere) would silently
+  /// replace the pane with a finder.
+  public override func keyDown(with event: NSEvent) {
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard modifiers.isEmpty else {
+      super.keyDown(with: event)
+      return
+    }
+    switch event.charactersIgnoringModifiers?.lowercased() {
+    case "t": onOpenTerminal?()
+    case "f": onOpenFinder?()
+    default: super.keyDown(with: event)
+    }
+  }
+
   private static func makeActionButton(
     title: String, symbol: String, action: Selector
   ) -> NSButton {
