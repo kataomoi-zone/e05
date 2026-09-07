@@ -211,6 +211,18 @@ struct GeneralSettingsView: View {
               preferences.paletteFocusCurrentWorkspaceOnly = $0
               persist()
             }))
+        // Off by default: focus staying put through a scroll is the
+        // behaviour this app has always had, and someone typing into a
+        // terminal while scrolling past it to read a neighbour would not
+        // thank us for moving it.
+        Toggle(
+          "Follow the focused pane when scrolling",
+          isOn: Binding(
+            get: { preferences.snapScrollToFocusedColumn ?? false },
+            set: {
+              preferences.snapScrollToFocusedColumn = $0
+              persist()
+            }))
       }
 
       Section("Search Engine") {

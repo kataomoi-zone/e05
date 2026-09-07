@@ -163,6 +163,13 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// at a different width is the odd one out.
   public var inheritNewPaneWidth: Bool?
 
+  /// Whether a horizontal scroll that comes to rest hands focus to a
+  /// column that pushed the old one off screen, and seats the result
+  /// against the viewport. `nil` / `false` leaves focus where it is and
+  /// the scroll wherever it stopped, the behaviour that shipped before
+  /// the setting existed.
+  public var snapScrollToFocusedColumn: Bool?
+
   /// Whether a terminal pane's screen is written to disk at quit so the
   /// next launch can replay it. `nil` means on, the behaviour that
   /// shipped before the setting existed. Off is worth having because a
@@ -201,6 +208,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     newTerminalDirectory: String? = nil,
     newFinderDirectory: String? = nil,
     inheritNewPaneWidth: Bool? = nil,
+    snapScrollToFocusedColumn: Bool? = nil,
     restoreTerminalScrollback: Bool? = nil
   ) {
     self.homeURL = homeURL
@@ -227,6 +235,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.newTerminalDirectory = newTerminalDirectory
     self.newFinderDirectory = newFinderDirectory
     self.inheritNewPaneWidth = inheritNewPaneWidth
+    self.snapScrollToFocusedColumn = snapScrollToFocusedColumn
     self.restoreTerminalScrollback = restoreTerminalScrollback
   }
 

@@ -881,7 +881,9 @@ extension PaneContainerViewController {
     case .alignLeft: showToast("Align Column Left")
     case .alignRight: showToast("Align Column Right")
     case .center: showToast("Center Column")
-    case .frameIn: break
+    // Neither is an alignment the user asked for by name: frame-in backs
+    // focus navigation, settle backs the end of a scroll.
+    case .frameIn, .settle: break
     }
   }
 

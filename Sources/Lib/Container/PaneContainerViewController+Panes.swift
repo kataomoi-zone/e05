@@ -1287,6 +1287,7 @@ extension PaneContainerViewController {
     case alignLeft
     case alignRight
     case center
+    case settle
   }
 
   /// Resolve where the scroll view should land to satisfy `mode` for
@@ -1410,7 +1411,117 @@ extension PaneContainerViewController {
       return clamp(
         distLeft <= distRight
           ? leadingEdgeX(margin: fitPadding) : trailingEdgeX(margin: fitPadding))
+    case .settle:
+      // Round the scroll into the range of origins where the column is
+      // seated, and leave it alone when it is already inside.
+      //
+      // The two ends are the origins that put the column's leading edge
+      // against the band's leading edge and its trailing edge against the
+      // band's trailing edge. Which of them is the lower bound flips with
+      // the column's size, and that flip is the whole point: a column
+      // narrower than the band is seated across the origins where it is
+      // *fully visible*, a wider one across the origins where it *covers
+      // the band*. One clamp serves both.
+      //
+      // For a narrow column this reproduces `.frameIn` exactly. It earns
+      // its own case for the wide one, where `.frameIn` pins the leading
+      // edge — right when the user has just focused the column and wants
+      // to start at its beginning, wrong at the end of a scroll, where it
+      // would undo every scroll made *inside* a column bigger than the
+      // screen and leave its far side unreachable.
+      let lead = leadingEdgeX(margin: fitPadding)
+      let trail = trailingEdgeX(margin: fitPadding)
+      let low = min(lead, trail)
+      let high = max(lead, trail)
+      if currentX >= low && currentX <= high { return nil }
+      return clamp(min(high, max(low, currentX)))
     }
+  }
+
+  /// How much of the focused column may be pushed off screen before it
+  /// gives focus up.
+  ///
+  /// An absolute distance rather than a fraction of the column, because
+  /// a fraction is not always reachable. The whole scrollable range is
+  /// `content − viewport`, which in a two-column workspace is a sliver:
+  /// asking for half a column to leave the screen asks for more travel
+  /// than exists, and focus can never move at all. It gets worse as
+  /// panes get wider — half of a 1000pt pane is 500pt of scrolling — so
+  /// the fraction fails at both ends. A fixed slack asks the same small
+  /// amount of every layout.
+  ///
+  /// Read against `min(width, band)` so a column wider than the viewport
+  /// is measured by how much of the screen it covers rather than by a
+  /// share of itself it can never show.
+  nonisolated static let focusHandoffSlack: CGFloat = 96
+
+  /// The largest misalignment the settle will scroll away.
+  ///
+  /// Smaller than ``focusHandoffSlack``, which leaves a band between the
+  /// two where the scroll is left exactly where it stopped. The two
+  /// numbers answer different questions and want different sizes. A
+  /// sliver of the focused column hanging off the edge reads as a
+  /// mistake and is worth closing; a column deliberately pushed aside to
+  /// see more of its neighbour is a position the user chose, and pulling
+  /// it back would fight them. Focus only follows once the push is
+  /// bigger than both.
+  ///
+  /// Setting the two equal removes the band and makes every clip short
+  /// of a hand-off snap closed, which is where this started.
+  nonisolated static let scrollSettleSlack: CGFloat = 48
+
+  /// Where focus lands when a horizontal scroll comes to rest at
+  /// `currentX`, or `nil` when the column holding it kept enough of
+  /// itself on screen to keep it.
+  ///
+  /// A column gives focus up once it has been pushed far enough off the
+  /// edge, and passes it to the neighbour on the side it was pushed from
+  /// — left off the leading edge hands rightwards, and vice versa.
+  ///
+  /// The threshold is ``focusHandoffSlack`` off `min(width, band)`,
+  /// which also makes the two directions mutually exclusive: a column
+  /// that overflows both edges covers the whole band by definition, so
+  /// it is never below the threshold while it does.
+  ///
+  /// Evaluated once, at the resting position, rather than along the way:
+  /// a column that has fallen below its threshold stays below it as the
+  /// scroll continues in the same direction, so walking from the old
+  /// holder at the final origin lands where a step-by-step walk would.
+  nonisolated static func scrollFocusHandoff(
+    from focusedIndex: Int,
+    columns: [(minX: CGFloat, width: CGFloat)],
+    currentX: CGFloat,
+    visibleWidth: CGFloat,
+    insetLeft: CGFloat,
+    insetRight: CGFloat
+  ) -> Int? {
+    let bandLeft = currentX + insetLeft
+    let bandRight = currentX + visibleWidth - insetRight
+    let band = bandRight - bandLeft
+    guard band > 0, columns.indices.contains(focusedIndex) else { return nil }
+
+    var index = focusedIndex
+    // The walk cannot turn around, because the columns are laid out edge
+    // to edge: one that takes over from a neighbour pushed off the
+    // leading edge starts at that neighbour's trailing edge, which is at
+    // the band's leading edge or behind it, so it is either wide enough
+    // to cover the band or short enough to end inside it — never past
+    // the far edge. The loop is bounded anyway, against a layout caught
+    // mid-animation with frames that have yet to settle.
+    for _ in 0...columns.count {
+      let column = columns[index]
+      let columnRight = column.minX + column.width
+      let visible = max(0, min(columnRight, bandRight) - max(column.minX, bandLeft))
+      guard visible < min(column.width, band) - Self.focusHandoffSlack else { break }
+      if column.minX < bandLeft, index + 1 < columns.count {
+        index += 1
+      } else if columnRight > bandRight, index > 0 {
+        index -= 1
+      } else {
+        break
+      }
+    }
+    return index == focusedIndex ? nil : index
   }
 
   /// Tween the scroll view to the given X in its own animation
