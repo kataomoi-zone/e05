@@ -170,6 +170,12 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// the setting existed.
   public var snapScrollToFocusedColumn: Bool?
 
+  /// Whether the pane under the pointer takes focus once the pointer
+  /// and the workspace have both been still for a moment. `nil` /
+  /// `false` leaves focus to clicks and the keyboard, which is how the
+  /// app behaved before the setting existed.
+  public var focusPaneUnderCursor: Bool?
+
   /// Whether a terminal pane's screen is written to disk at quit so the
   /// next launch can replay it. `nil` means on, the behaviour that
   /// shipped before the setting existed. Off is worth having because a
@@ -209,6 +215,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     newFinderDirectory: String? = nil,
     inheritNewPaneWidth: Bool? = nil,
     snapScrollToFocusedColumn: Bool? = nil,
+    focusPaneUnderCursor: Bool? = nil,
     restoreTerminalScrollback: Bool? = nil
   ) {
     self.homeURL = homeURL
@@ -236,6 +243,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.newFinderDirectory = newFinderDirectory
     self.inheritNewPaneWidth = inheritNewPaneWidth
     self.snapScrollToFocusedColumn = snapScrollToFocusedColumn
+    self.focusPaneUnderCursor = focusPaneUnderCursor
     self.restoreTerminalScrollback = restoreTerminalScrollback
   }
 

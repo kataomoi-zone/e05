@@ -223,6 +223,14 @@ struct GeneralSettingsView: View {
               preferences.snapScrollToFocusedColumn = $0
               persist()
             }))
+        Toggle(
+          "Focus the pane under the pointer when it rests",
+          isOn: Binding(
+            get: { preferences.focusPaneUnderCursor ?? false },
+            set: {
+              preferences.focusPaneUnderCursor = $0
+              persist()
+            }))
       }
 
       Section("Search Engine") {

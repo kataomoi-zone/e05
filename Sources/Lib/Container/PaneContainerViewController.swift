@@ -158,8 +158,19 @@ public final class PaneContainerViewController: NSViewController {
   nonisolated(unsafe) var scrollEventMonitor: Any?
   nonisolated(unsafe) var keyEventMonitor: Any?
 
+  nonisolated(unsafe) var mouseMovedMonitor: Any?
+
   /// Pending settle for the workspace scroll (see `scheduleScrollSettle`).
   var scrollSettleWorkItem: DispatchWorkItem?
+
+  /// Pending hover-focus check (see `scheduleHoverFocus`).
+  var hoverFocusWorkItem: DispatchWorkItem?
+
+  /// How long the pointer and the workspace both have to hold still
+  /// before the pane under the pointer takes focus. Long enough that a
+  /// pointer travelling across the window does not focus everything on
+  /// its way past, short enough to feel like a consequence of stopping.
+  static let hoverFocusDelay: TimeInterval = 0.3
 
   /// How long the scroll origin has to hold still before the settle
   /// runs. Short enough that the seat still reads as part of the gesture
@@ -325,6 +336,7 @@ public final class PaneContainerViewController: NSViewController {
     installInitialWorkspaceVC()
     installScrollEventMonitor()
     installKeyEventMonitor()
+    installMouseMovedMonitor()
     setupCommandPalette()
 
     var initiallyPinned = false
@@ -853,6 +865,12 @@ public final class PaneContainerViewController: NSViewController {
     DispatchQueue.main.async { [weak self] in
       self?.scrollView.scrollerStyle = .overlay
     }
+    // Hover focus needs a pointer position between panes, not only the
+    // ones a view happens to track, so the window has to post moves
+    // itself. Set here rather than in `viewDidLoad` for the same reason
+    // the traffic lights are re-synced below: there is no window yet at
+    // that point.
+    view.window?.acceptsMouseMovedEvents = true
     // Re-sync traffic lights against the sidebar state now that the
     // window is attached. In `installSidebar` the window may still
     // be nil (the contentViewController assignment hadn't wired
@@ -994,6 +1012,9 @@ public final class PaneContainerViewController: NSViewController {
       NSEvent.removeMonitor(monitor)
     }
     if let monitor = keyEventMonitor {
+      NSEvent.removeMonitor(monitor)
+    }
+    if let monitor = mouseMovedMonitor {
       NSEvent.removeMonitor(monitor)
     }
     // No cancel for `scrollSettleWorkItem`: it captures `self` weakly, so
@@ -1145,6 +1166,10 @@ public final class PaneContainerViewController: NSViewController {
     }
     scrollSettleWorkItem?.cancel()
     scrollSettleWorkItem = nil
+    // A column sliding under a motionless pointer is the other way the
+    // pane it is over can change, so give hover focus a look once the
+    // scroll comes to rest.
+    scheduleHoverFocus()
     if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
       settleScroll()
       return
@@ -1261,8 +1286,8 @@ public final class PaneContainerViewController: NSViewController {
     if abs(event.scrollingDeltaX) <= abs(event.scrollingDeltaY) {
       return .pane
     }
-    guard let pane = paneAtWindowLocation(event.locationInWindow),
-      let browserView = pane.browserView
+    guard let hit = paneAtWindowLocation(event.locationInWindow),
+      let browserView = columns[hit.column].panes[hit.pane].browserView
     else {
       return .workspace
     }
@@ -1329,16 +1354,98 @@ public final class PaneContainerViewController: NSViewController {
   /// unambiguous. Returns `nil` when the cursor is over chrome
   /// (sidebar, gaps between panes, the URL bar's hover-peek body,
   /// etc.) — those land on the workspace by default.
-  private func paneAtWindowLocation(_ pointInWindow: NSPoint) -> PaneModel? {
-    for col in columns {
-      for pane in col.panes {
+  private func paneAtWindowLocation(_ pointInWindow: NSPoint) -> (column: Int, pane: Int)? {
+    // Only what the viewport actually shows can be hit. Two ways a pane
+    // frame reaches somewhere the pane is not: a column scrolled past
+    // the right edge keeps a frame that goes out of the window with it,
+    // and columns pass *under* the sidebar, which overlays the scroll
+    // view rather than shortening it. Both put a pane's frame beneath a
+    // pointer that is looking at something else entirely.
+    //
+    // The sidebar's footprint is `contentInsets`, which is how the strip
+    // is reserved whether it is pinned or peeking — the same rectangle
+    // every other part of this feature calls the band.
+    let insets = scrollView.contentInsets
+    var band = scrollView.convert(scrollView.bounds, to: nil)
+    band.origin.x += insets.left
+    band.size.width -= insets.left + insets.right
+    guard band.contains(pointInWindow) else { return nil }
+    for (columnIndex, col) in columns.enumerated() {
+      for (paneIndex, pane) in col.panes.enumerated() {
         let frame = pane.containerView.convert(pane.containerView.bounds, to: nil)
         if frame.contains(pointInWindow) {
-          return pane
+          return (columnIndex, paneIndex)
         }
       }
     }
     return nil
   }
 
+  // MARK: - Hover Focus
+
+  /// Give focus to the pane the pointer is resting on, once both the
+  /// pointer and the workspace have been still long enough to call it
+  /// resting.
+  ///
+  /// The dwell is the whole idea. A pointer crossing a pane on its way
+  /// somewhere else should not drag focus through every pane it passes
+  /// over, so the check is armed on each movement and only the one that
+  /// survives ``hoverFocusDelay`` untouched gets to act. The scroll
+  /// origin is held to the same standard: a column sliding under a
+  /// motionless pointer is the workspace moving, not the user choosing.
+  private func installMouseMovedMonitor() {
+    mouseMovedMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
+      [weak self] event in
+      self?.scheduleHoverFocus()
+      return event
+    }
+  }
+
+  func scheduleHoverFocus() {
+    guard PreferencesStore.shared.preferences.focusPaneUnderCursor == true else { return }
+    hoverFocusWorkItem?.cancel()
+    hoverFocusWorkItem = nil
+    guard let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
+    let mouse = NSEvent.mouseLocation
+    let originX = scrollView.contentView.bounds.origin.x
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.hoverFocusWorkItem = nil
+      // A newer movement would have replaced this work item, so reaching
+      // here already means the pointer held still; the comparison covers
+      // a move that arrived without an event, and the origin covers a
+      // scroll still running under it.
+      guard NSEvent.mouseLocation == mouse,
+        abs(self.scrollView.contentView.bounds.origin.x - originX) < 0.5
+      else { return }
+      self.focusPaneUnderCursor()
+    }
+    hoverFocusWorkItem = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverFocusDelay, execute: work)
+  }
+
+  private func focusPaneUnderCursor() {
+    guard let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
+    guard !isAnimatingWorkspaceSwitch else { return }
+    // The last movement before the pointer left the window is still the
+    // one that armed this check, and it fires on whatever the pointer is
+    // resting on now — which may be another app entirely.
+    let mouse = NSEvent.mouseLocation
+    guard window.frame.contains(mouse) else { return }
+    let pointInWindow = window.convertPoint(fromScreen: mouse)
+    // Nothing under the pointer but chrome — a gap, the sidebar, the
+    // find bar — is not a request to focus anything.
+    guard let hit = paneAtWindowLocation(pointInWindow) else { return }
+    let pane = columns[hit.column].panes[hit.pane]
+    guard pane.id != focusedPane?.id else { return }
+    // Same scroll every other way of taking focus makes, and it cannot
+    // move the pane out from under the pointer: bringing a column into
+    // view only ever widens the slice of it that is on screen, and the
+    // pointer is already inside that slice. `scroll: false` on the focus
+    // call so it doesn't run its own frame-in first — `.settle` is the
+    // one to make, since frame-in would pin a column wider than the
+    // screen to its leading edge and undo a scroll made inside it.
+    setFocus(columnIndex: hit.column, paneIndex: hit.pane, scroll: false)
+    _ = scrollToColumn(at: hit.column, mode: .settle)
+  }
 }
