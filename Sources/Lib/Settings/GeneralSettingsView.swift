@@ -58,6 +58,11 @@ struct GeneralSettingsView: View {
   @State private var autoCheckUpdates = false
   @State private var autoInstallUpdates = false
   @State private var lastUpdateCheck: Date?
+  /// Snap-back distance in points, held locally so the field and the
+  /// stepper edit one value. `0` is the off state, not a missing one.
+  @State private var snapBackPoints: Int
+
+  private var maxSnapBack: Int { PaneContainerViewController.maxScrollSnapBackPoints }
 
   init() {
     let current = PreferencesStore.shared.preferences
@@ -74,6 +79,7 @@ struct GeneralSettingsView: View {
       initialValue: current.newTerminalDirectory?.isEmpty == false ? .custom : .inherit)
     _finderDirOption = State(
       initialValue: current.newFinderDirectory?.isEmpty == false ? .custom : .inherit)
+    _snapBackPoints = State(initialValue: Int(current.scrollSnapBackDistance))
   }
 
   var body: some View {
@@ -211,18 +217,8 @@ struct GeneralSettingsView: View {
               preferences.paletteFocusCurrentWorkspaceOnly = $0
               persist()
             }))
-        // Off by default: focus staying put through a scroll is the
-        // behaviour this app has always had, and someone typing into a
-        // terminal while scrolling past it to read a neighbour would not
-        // thank us for moving it.
-        Toggle(
-          "Follow the focused pane when scrolling",
-          isOn: Binding(
-            get: { preferences.snapScrollToFocusedColumn ?? false },
-            set: {
-              preferences.snapScrollToFocusedColumn = $0
-              persist()
-            }))
+        // Both off by default: focus staying put, and a scroll ending
+        // where it ended, are what this app has always done.
         Toggle(
           "Focus the pane under the pointer when it rests",
           isOn: Binding(
@@ -231,6 +227,38 @@ struct GeneralSettingsView: View {
               preferences.focusPaneUnderCursor = $0
               persist()
             }))
+        HStack {
+          Text("Nudge the focused pane back into view")
+          Spacer()
+          TextField("", value: $snapBackPoints, format: .number)
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 60)
+            .multilineTextAlignment(.trailing)
+          Stepper("", value: $snapBackPoints, in: 0...maxSnapBack, step: 8)
+            .labelsHidden()
+          Text("pt").foregroundStyle(.secondary)
+        }
+        .onChange(of: snapBackPoints) { _, raw in
+          // Clamp typed input before it is written: the Stepper keeps
+          // itself in range, a field entry does not. Reassigning re-fires
+          // this and takes the persist branch.
+          let clamped = max(0, min(maxSnapBack, raw))
+          if clamped == raw {
+            preferences.scrollSnapBackPoints = clamped
+            persist()
+          } else {
+            snapBackPoints = clamped
+          }
+        }
+        // A caption on the row rather than a section footer: the footer
+        // sits under every control in Navigation, and this describes one.
+        Text(
+          "A scroll that leaves the focused pane slightly off screen scrolls "
+            + "back so it fits. Zero leaves every scroll where it ended."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       Section("Search Engine") {

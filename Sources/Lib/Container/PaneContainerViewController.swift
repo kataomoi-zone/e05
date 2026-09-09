@@ -1127,6 +1127,11 @@ public final class PaneContainerViewController: NSViewController {
     switch decision {
     case .workspace:
       scrollView.scrollWheel(with: event)
+      // A column sliding under a motionless pointer is the other way the
+      // pane it is over can change. Armed here rather than inside the
+      // settle so it still runs with the snap-back turned off — the two
+      // are separate settings.
+      scheduleHoverFocus()
       scheduleScrollSettle(after: event)
       return nil
     case .pane:
@@ -1156,20 +1161,9 @@ public final class PaneContainerViewController: NSViewController {
   /// a way to settle on the same frame the fling stops rather than one
   /// delay later.
   private func scheduleScrollSettle(after event: NSEvent) {
-    guard PreferencesStore.shared.preferences.snapScrollToFocusedColumn == true else { return }
-    // One line per gesture, not per event: `.changed` and its momentum
-    // twin arrive by the dozen and would bury the rest. Enough to tell
-    // "the scroll never routed here" from "it did and the settle
-    // declined", which look identical from the outside.
-    if event.phase.contains(.began) {
-      logger.debug("[scroll/settle] workspace scroll began")
-    }
+    guard PreferencesStore.shared.preferences.scrollSnapBackDistance > 0 else { return }
     scrollSettleWorkItem?.cancel()
     scrollSettleWorkItem = nil
-    // A column sliding under a motionless pointer is the other way the
-    // pane it is over can change, so give hover focus a look once the
-    // scroll comes to rest.
-    scheduleHoverFocus()
     if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
       settleScroll()
       return
@@ -1197,89 +1191,35 @@ public final class PaneContainerViewController: NSViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrollSettleDelay, execute: work)
   }
 
-  /// Hand focus to the column that pushed the old one off screen and
-  /// then scroll the least that brings whichever column now holds it
-  /// into view.
+  /// Nudge a scroll that stopped just short of leaving the focused pane
+  /// fully on screen.
   ///
-  /// One scroll for both outcomes, and the same one a focus hop makes:
-  /// seating the new holder against the edge it came across moved the
-  /// full width of a column every time, including when it was already
-  /// on screen and needed nothing. `.settle` is the minimum move by
-  /// construction — for a column that fits it is `.frameIn`, the mode
-  /// Next Pane and its neighbours already use, so a hand-off and a
-  /// keyboard hop land the same way.
+  /// The correction runs against the direction just scrolled, so it is
+  /// only wanted while it is small: closing a sliver reads as tidying
+  /// up, while a bigger one takes back a scroll the user meant. How
+  /// small is the user's to set, and zero turns it off.
   ///
-  /// When no hand-off happens the same call closes the gap the scroll
-  /// stopped short of, but only while that gap is under
-  /// ``scrollSettleSlack``. The correction runs against the direction
-  /// just scrolled, and past a sliver it stops being tidying up and
-  /// starts being an argument with a position the user chose. Between
-  /// that limit and ``focusHandoffSlack`` the scroll is left exactly
-  /// where it stopped.
+  /// `.settle` rather than `.frameIn` because frame-in pins a column
+  /// wider than the viewport to its leading edge, which would undo every
+  /// scroll made inside a pane bigger than the screen. For anything that
+  /// fits, the two are the same move.
   private func settleScroll() {
     scrollSettleWorkItem = nil
-    guard PreferencesStore.shared.preferences.snapScrollToFocusedColumn == true else { return }
-    guard columns.indices.contains(focusedColumnIndex) else { return }
+    let limit = PreferencesStore.shared.preferences.scrollSnapBackDistance
+    guard limit > 0 else { return }
+    guard let column = columns[safe: focusedColumnIndex] else { return }
     // A pinned column rides in the fixed leading overlay rather than the
-    // scrolling stack, so nothing can push it off screen and there is
-    // nothing to seat it against.
-    guard columns[focusedColumnIndex].isPinned == false else { return }
+    // scrolling stack, so a scroll never leaves it half off screen.
+    guard !column.isPinned else { return }
 
-    // Both the hand-off geometry and the settle target are read off
-    // column frames, so settle the layout once before either.
+    // The target is read off column frames, so let the layout settle
+    // before asking for it.
     view.layoutSubtreeIfNeeded()
-    let insets = scrollView.contentInsets
-    let comp = hoverPeekScrollCompensation
-    let geometry = columns.map {
-      (minX: $0.containerView.frame.minX, width: $0.containerView.frame.width)
-    }
-    let currentX = scrollView.contentView.bounds.origin.x - comp
-    let visibleWidth = scrollView.contentView.bounds.width
-    let handoff = Self.scrollFocusHandoff(
-      from: focusedColumnIndex,
-      columns: geometry,
-      currentX: currentX,
-      visibleWidth: visibleWidth,
-      insetLeft: comp != 0 ? 0 : insets.left,
-      insetRight: insets.right)
-
-    // Everything the hand-off decision is made from, because the failure
-    // mode is silence: focus simply not moving looks the same whether the
-    // scroll never reached here, the geometry came out wrong, or the
-    // threshold was not met.
-    logger.debug(
-      """
-      [scroll/settle] focus=\(self.focusedColumnIndex, privacy: .public) \
-      x=\(currentX, privacy: .public) visible=\(visibleWidth, privacy: .public) \
-      insetL=\(insets.left, privacy: .public) insetR=\(insets.right, privacy: .public) \
-      comp=\(comp, privacy: .public) \
-      columns=\(geometry.map { "(\(Int($0.minX)),\(Int($0.width)))" }.joined(), privacy: .public) \
-      handoff=\(handoff.map(String.init) ?? "none", privacy: .public)
-      """
-    )
-
-    guard let handoff else {
-      // No hand-off, so this would be the correction that runs against
-      // the direction just scrolled. Only worth making while it is small
-      // enough to read as tidying up a sliver; past that the user has
-      // deliberately pushed the column aside to see its neighbour, and
-      // dragging it back would be arguing with them.
-      if let target = computeScrollTargetX(for: columns[focusedColumnIndex], mode: .settle),
-        abs(target - currentX) <= Self.scrollSettleSlack
-      {
-        _ = scrollToColumn(at: focusedColumnIndex, mode: .settle)
-      }
-      return
-    }
-    // `scroll: false` so the focus change doesn't run its own frame-in
-    // ahead of the one below; the two would fight over the same origin.
-    setFocus(
-      columnIndex: handoff,
-      paneIndex: columns[handoff].focusedPaneIndex,
-      scroll: false)
-    // No limit on this one: bringing the column that just took focus into
-    // view is the move the gesture asked for, however far it reaches.
-    _ = scrollToColumn(at: handoff, mode: .settle)
+    let currentX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    guard let target = computeScrollTargetX(for: column, mode: .settle),
+      abs(target - currentX) <= limit
+    else { return }
+    _ = scrollToColumn(at: focusedColumnIndex, mode: .settle)
   }
 
   private func decideScrollLock(for event: NSEvent) -> ScrollGestureLock {

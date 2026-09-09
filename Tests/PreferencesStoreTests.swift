@@ -236,3 +236,46 @@ struct PreferencesStoreTests {
     }
   }
 }
+
+/// `scrollSnapBackDistance` is the only reader of
+/// ``E05Preferences/scrollSnapBackPoints``, so it is where the value a
+/// hand-edited file or a stale schema can carry gets made safe.
+@Suite("E05Preferences.scrollSnapBackDistance")
+struct ScrollSnapBackDistanceTests {
+  private func distance(_ points: Int?) -> CGFloat {
+    var prefs = E05Preferences.default
+    prefs.scrollSnapBackPoints = points
+    return prefs.scrollSnapBackDistance
+  }
+
+  @Test("an unset or zero distance is off")
+  func offByDefault() {
+    #expect(distance(nil) == 0)
+    #expect(distance(0) == 0)
+  }
+
+  @Test("a distance in range is used as written")
+  func inRangeIsKept() {
+    #expect(distance(48) == 48)
+    #expect(
+      distance(PaneContainerViewController.maxScrollSnapBackPoints)
+        == CGFloat(PaneContainerViewController.maxScrollSnapBackPoints))
+  }
+
+  @Test("a distance past the ceiling is capped")
+  func aboveCeilingIsCapped() {
+    // Left uncapped, a big enough value bounces the workspace back to the
+    // focused column after every scroll and nothing else stays reachable.
+    #expect(
+      distance(100_000)
+        == CGFloat(PaneContainerViewController.maxScrollSnapBackPoints))
+  }
+
+  @Test("a negative distance reads as off rather than inverting the nudge")
+  func negativeIsOff() {
+    // Only a hand-edited file produces one, and a negative limit would
+    // compare true against every move.
+    #expect(distance(-1) == 0)
+    #expect(distance(-100_000) == 0)
+  }
+}
