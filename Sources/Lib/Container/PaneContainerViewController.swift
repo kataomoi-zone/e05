@@ -1376,15 +1376,26 @@ public final class PaneContainerViewController: NSViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverFocusDelay, execute: work)
   }
 
+  /// Whether `editor` is the field editor of the focused pane's URL bar
+  /// on a pane that auto-focuses it — the one text responder that is
+  /// there because focus arrived, not because the user aimed at it.
+  private func isAutoFocusedURLField(_ editor: NSText) -> Bool {
+    guard let pane = focusedPane, pane.isBlankBrowser || pane.startView != nil else { return false }
+    return editor.isDescendant(of: pane.containerView)
+  }
+
   private func focusPaneUnderCursor() {
     guard let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
     guard !isAnimatingWorkspaceSwitch else { return }
-    // The last movement before the pointer left the window is still the
-    // one that armed this check, and it fires on whatever the pointer is
-    // resting on now — which may be another app entirely.
-    let mouse = NSEvent.mouseLocation
-    guard window.frame.contains(mouse) else { return }
-    let pointInWindow = window.convertPoint(fromScreen: mouse)
+    // Resting the pointer somewhere is not a reason to abandon a field
+    // the user is typing in — the same responder the type-to-reveal
+    // monitor steps aside for. One exception, or hover would jam on the
+    // pane it just focused: `setFocus` puts a blank or start pane's URL
+    // field into edit on every focus change, including the one hover
+    // made, so that field is the one nobody reached for. A worklane
+    // rename is not it, hence the descendant test.
+    if let editor = window.firstResponder as? NSText, !isAutoFocusedURLField(editor) { return }
+    let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
     // Nothing under the pointer but chrome — a gap, the sidebar, the
     // find bar — is not a request to focus anything.
     guard let hit = paneAtWindowLocation(pointInWindow) else { return }
