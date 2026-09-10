@@ -593,6 +593,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   }
 
   public override func mouseMoved(with event: NSEvent) {
+    // The window posts moves to the first responder as well as to
+    // tracking areas, so a focused terminal hears about a pointer
+    // anywhere in the window. Reporting those to the surface puts the
+    // mouse outside the grid for any app doing mouse tracking.
+    guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
     updateMousePos(event)
   }
 
