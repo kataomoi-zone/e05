@@ -1302,13 +1302,14 @@ public final class PaneContainerViewController: NSViewController {
     // view rather than shortening it. Both put a pane's frame beneath a
     // pointer that is looking at something else entirely.
     //
-    // The sidebar's footprint is `contentInsets`, which is how the strip
-    // is reserved whether it is pinned or peeking — the same rectangle
-    // every other part of this feature calls the band.
-    let insets = scrollView.contentInsets
+    // `currentLeadingInset` rather than the scroll view's own
+    // `contentInsets.left`: the latter is the sidebar reserve *plus* the
+    // pinned-column reserve, and a pinned column is a real column
+    // sitting visibly inside that strip. Subtracting the whole inset
+    // would make the pin the one column nothing can hit.
     var band = scrollView.convert(scrollView.bounds, to: nil)
-    band.origin.x += insets.left
-    band.size.width -= insets.left + insets.right
+    band.origin.x += currentLeadingInset
+    band.size.width -= currentLeadingInset
     guard band.contains(pointInWindow) else { return nil }
     for (columnIndex, col) in columns.enumerated() {
       for (paneIndex, pane) in col.panes.enumerated() {
