@@ -1348,28 +1348,38 @@ public final class PaneContainerViewController: NSViewController {
   private func installMouseMovedMonitor() {
     mouseMovedMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
       [weak self] event in
-      self?.scheduleHoverFocus()
+      // A local monitor sees every window the app owns, including the
+      // find bar and suggestion panels that float over the panes. A move
+      // across one of those is a move over the panel, not over whatever
+      // column happens to lie beneath it.
+      if let self, event.window === self.view.window { self.scheduleHoverFocus() }
       return event
     }
   }
 
-  func scheduleHoverFocus() {
+  private func scheduleHoverFocus() {
     guard PreferencesStore.shared.preferences.focusPaneUnderCursor == true else { return }
     hoverFocusWorkItem?.cancel()
-    hoverFocusWorkItem = nil
     guard let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
     let mouse = NSEvent.mouseLocation
     let originX = scrollView.contentView.bounds.origin.x
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
       self.hoverFocusWorkItem = nil
+      // Still travelling under the pointer. Ask again rather than give
+      // up: the settle's own tween moves the origin after the last
+      // scroll event of all, so it has nothing left to re-arm this with
+      // — returning here is how hovering a column that the settle slid
+      // into place stops working.
+      guard abs(self.scrollView.contentView.bounds.origin.x - originX) < 0.5 else {
+        self.scheduleHoverFocus()
+        return
+      }
       // A newer movement would have replaced this work item, so reaching
       // here already means the pointer held still; the comparison covers
-      // a move that arrived without an event, and the origin covers a
-      // scroll still running under it.
-      guard NSEvent.mouseLocation == mouse,
-        abs(self.scrollView.contentView.bounds.origin.x - originX) < 0.5
-      else { return }
+      // a move that arrived without an event. No re-arm — the next move
+      // inside the window brings its own.
+      guard NSEvent.mouseLocation == mouse else { return }
       self.focusPaneUnderCursor()
     }
     hoverFocusWorkItem = work
