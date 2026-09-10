@@ -29,7 +29,7 @@ struct ColumnScrollTargetTests {
   @Test("whole content fits: no scroll for any mode")
   func contentFitsIsNoOp() {
     let modes: [PaneContainerViewController.ColumnScrollMode] = [
-      .frameIn, .alignLeft, .alignRight, .center,
+      .frameIn, .alignLeft, .alignRight, .center, .settle,
     ]
     for mode in modes {
       #expect(target(mode: mode, columnMinX: 0, columnWidth: 400, contentWidth: 900) == nil)
