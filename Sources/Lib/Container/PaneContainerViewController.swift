@@ -161,10 +161,10 @@ public final class PaneContainerViewController: NSViewController {
   nonisolated(unsafe) var mouseMovedMonitor: Any?
 
   /// Pending settle for the workspace scroll (see `scheduleScrollSettle`).
-  var scrollSettleWorkItem: DispatchWorkItem?
+  private var scrollSettleWorkItem: DispatchWorkItem?
 
   /// Pending hover-focus check (see `scheduleHoverFocus`).
-  var hoverFocusWorkItem: DispatchWorkItem?
+  private var hoverFocusWorkItem: DispatchWorkItem?
 
   /// How long the pointer and the workspace both have to hold still
   /// before the pane under the pointer takes focus. Long enough that a
@@ -1017,11 +1017,11 @@ public final class PaneContainerViewController: NSViewController {
     if let monitor = mouseMovedMonitor {
       NSEvent.removeMonitor(monitor)
     }
-    // No cancel for `scrollSettleWorkItem`: it captures `self` weakly, so
-    // a pending settle finds nothing and returns. Reading the property
-    // from a nonisolated deinit would need it to be Sendable, which
-    // `DispatchWorkItem` is not — the same reason the session autosave's
-    // work item is left alone here.
+    // No cancel for `scrollSettleWorkItem` / `hoverFocusWorkItem`: both
+    // capture `self` weakly, so a pending one finds nothing and returns.
+    // Reading the properties from a nonisolated deinit would need them to
+    // be Sendable, which `DispatchWorkItem` is not — the same reason the
+    // session autosave's work item is left alone here.
     for closed in recentlyClosed {
       closed.timer.invalidate()
     }

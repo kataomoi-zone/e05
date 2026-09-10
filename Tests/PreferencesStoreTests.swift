@@ -258,8 +258,8 @@ struct ScrollSnapBackDistanceTests {
   func inRangeIsKept() {
     #expect(distance(48) == 48)
     #expect(
-      distance(PaneContainerViewController.maxScrollSnapBackPoints)
-        == CGFloat(PaneContainerViewController.maxScrollSnapBackPoints))
+      distance(E05Preferences.maxScrollSnapBackPoints)
+        == CGFloat(E05Preferences.maxScrollSnapBackPoints))
   }
 
   @Test("a distance past the ceiling is capped")
@@ -268,7 +268,7 @@ struct ScrollSnapBackDistanceTests {
     // focused column after every scroll and nothing else stays reachable.
     #expect(
       distance(100_000)
-        == CGFloat(PaneContainerViewController.maxScrollSnapBackPoints))
+        == CGFloat(E05Preferences.maxScrollSnapBackPoints))
   }
 
   @Test("a negative distance reads as off rather than inverting the nudge")
@@ -277,5 +277,14 @@ struct ScrollSnapBackDistanceTests {
     // compare true against every move.
     #expect(distance(-1) == 0)
     #expect(distance(-100_000) == 0)
+  }
+
+  @Test("the ceiling stays under the narrowest window")
+  func ceilingIsBounded() {
+    // The nudge runs against the direction just scrolled, so a ceiling
+    // anywhere near a window's width would bounce the workspace back to
+    // the focused column after every scroll and leave nothing else
+    // reachable. `contentMinSize` is 480pt wide.
+    #expect(E05Preferences.maxScrollSnapBackPoints <= 240)
   }
 }

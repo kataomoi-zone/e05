@@ -1438,16 +1438,6 @@ extension PaneContainerViewController {
     }
   }
 
-  /// Upper limit on ``E05Preferences/scrollSnapBackPoints``.
-  ///
-  /// The correction runs against the direction just scrolled, so a large
-  /// enough value would bounce the workspace back to the focused column
-  /// after every scroll and leave nothing else reachable by scrolling at
-  /// all. Half of the narrowest window this app allows (`contentMinSize`
-  /// is 480pt wide) is well clear of anything that reads as tidying up a
-  /// sliver, and keeps the setting from being able to do that.
-  nonisolated static let maxScrollSnapBackPoints = 240
-
   /// Tween the scroll view to the given X in its own animation
   /// group, matching `paneAnimationDuration` so the scroll runs
   /// in visual lockstep with a concurrent insert / expand layout

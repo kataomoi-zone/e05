@@ -196,13 +196,4 @@ struct ColumnScrollTargetTests {
       }
     }
   }
-
-  @Test("the snap-back ceiling stays under the narrowest window")
-  func snapBackCeilingIsBounded() {
-    // The nudge runs against the direction just scrolled, so a ceiling
-    // anywhere near a window's width would bounce the workspace back to
-    // the focused column after every scroll and leave nothing else
-    // reachable. `contentMinSize` is 480pt wide.
-    #expect(PaneContainerViewController.maxScrollSnapBackPoints <= 240)
-  }
 }

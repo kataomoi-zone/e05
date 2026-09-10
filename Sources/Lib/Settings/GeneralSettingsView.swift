@@ -62,7 +62,7 @@ struct GeneralSettingsView: View {
   /// stepper edit one value. `0` is the off state, not a missing one.
   @State private var snapBackPoints: Int
 
-  private var maxSnapBack: Int { PaneContainerViewController.maxScrollSnapBackPoints }
+  private var maxSnapBack: Int { E05Preferences.maxScrollSnapBackPoints }
 
   init() {
     let current = PreferencesStore.shared.preferences
