@@ -1149,7 +1149,7 @@ public final class PaneContainerViewController: NSViewController {
       // settle so it still runs with the snap-back turned off — the two
       // are separate settings.
       scheduleHoverFocus()
-      scheduleScrollSettle(after: event)
+      scheduleScrollSettle()
       return nil
     case .pane:
       return event
@@ -1162,29 +1162,19 @@ public final class PaneContainerViewController: NSViewController {
   /// The question is answered by watching the scroll origin hold still,
   /// not by reading the event phases. Phases describe a trackpad gesture
   /// in two acts — `phase` reaches `.ended` when the fingers lift, then a
-  /// second stream of momentum events plays out the fling — and the end
-  /// of the second act does not reliably arrive. A fling that runs into
-  /// the end of the workspace has its momentum cut short, and the
-  /// `.ended` that would have closed the stream never comes; waiting for
-  /// it meant the settle simply never ran, which is exactly how this
-  /// looked in use.
+  /// second stream of momentum events plays out the fling — and neither
+  /// act ends when the scroll does. A fling that runs into the end of
+  /// the workspace has its momentum cut short and the closing `.ended`
+  /// never arrives, while a momentum `.cancelled` means the opposite of
+  /// a stop: fingers are back on the glass, starting the next push.
   ///
   /// Re-arming while the origin is still moving is what a plain debounce
   /// could not do. A fixed delay fires in the gaps of a thinning momentum
   /// tail, and the remaining momentum then drags the seated column back
   /// out from under the snap.
-  ///
-  /// `momentumPhase == .ended` is still honoured when it does arrive, as
-  /// a way to settle on the same frame the fling stops rather than one
-  /// delay later.
-  private func scheduleScrollSettle(after event: NSEvent) {
+  private func scheduleScrollSettle() {
     guard PreferencesStore.shared.preferences.scrollSnapBackDistance > 0 else { return }
     scrollSettleWorkItem?.cancel()
-    scrollSettleWorkItem = nil
-    if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
-      settleScroll()
-      return
-    }
     armScrollSettleCheck()
   }
 
