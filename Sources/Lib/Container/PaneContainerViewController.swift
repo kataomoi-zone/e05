@@ -1211,9 +1211,13 @@ public final class PaneContainerViewController: NSViewController {
   /// scroll made inside a pane bigger than the screen. For anything that
   /// fits, the two are the same move.
   private func settleScroll() {
-    scrollSettleWorkItem = nil
     let limit = PreferencesStore.shared.preferences.scrollSnapBackDistance
     guard limit > 0 else { return }
+    // A workspace switch is mid-flight over the same scroll view, and
+    // `scrollView` resolves to whichever one is current — seating a
+    // column against a view that is on its way out lands the nudge in
+    // the wrong workspace.
+    guard !isAnimatingWorkspaceSwitch else { return }
     guard let column = columns[safe: focusedColumnIndex] else { return }
     // A pinned column rides in the fixed leading overlay rather than the
     // scrolling stack, so a scroll never leaves it half off screen.
