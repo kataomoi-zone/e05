@@ -1405,11 +1405,17 @@ public final class PaneContainerViewController: NSViewController {
   }
 
   /// Whether `editor` is the field editor of the focused pane's URL bar
-  /// on a pane that auto-focuses it — the one text responder that is
-  /// there because focus arrived, not because the user aimed at it.
+  /// on a pane that auto-focuses it, with nothing typed into it yet —
+  /// the one text responder that is there because focus arrived rather
+  /// than because the user aimed at it.
   private func isAutoFocusedURLField(_ editor: NSText) -> Bool {
-    guard let pane = focusedPane, pane.isBlankBrowser || pane.startView != nil else { return false }
-    return editor.isDescendant(of: pane.containerView)
+    guard let pane = focusedPane, pane.isBlankBrowser || pane.startView != nil,
+      editor.isDescendant(of: pane.containerView)
+    else { return false }
+    // Still showing exactly what the pane pushed in. Once a character
+    // lands the field is being typed in like any other, and a pointer
+    // coming to rest must not take the half-entered URL with it.
+    return editor.string == pane.urlBar.lastDisplayedURL
   }
 
   private func focusPaneUnderCursor() {

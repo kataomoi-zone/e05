@@ -111,7 +111,9 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// Last URL pushed through `setDisplayURL` (the pane's live address),
   /// so a selection preview can revert to it on blur instead of leaving
   /// an unrelated previewed URL in the field.
-  private var lastDisplayedURL = ""
+  /// Readable so a caller can tell a field that merely has focus from
+  /// one that has been typed into: equal means nothing was typed.
+  public private(set) var lastDisplayedURL = ""
 
   /// Inline zoom indicator (percent label + -/+/Reset). Hidden while
   /// `pageZoom` is at 1.0 so the URL field claims the full trailing
