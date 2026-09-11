@@ -597,7 +597,10 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     // tracking areas, so a focused terminal hears about a pointer
     // anywhere in the window. Reporting those to the surface puts the
     // mouse outside the grid for any app doing mouse tracking.
-    guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+    // `visibleRect`, not `bounds`: a column scrolled half past the
+    // viewport edge keeps its full bounds, and the tracking area this
+    // stands in for is `.inVisibleRect` for the same reason.
+    guard visibleRect.contains(convert(event.locationInWindow, from: nil)) else { return }
     updateMousePos(event)
   }
 
