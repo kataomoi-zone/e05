@@ -242,14 +242,17 @@ struct GeneralSettingsView: View {
         .onChange(of: snapBackPoints) { _, raw in
           // Clamp typed input before it is written: the Stepper keeps
           // itself in range, a field entry does not. Reassigning re-fires
-          // this and takes the persist branch.
+          // this and takes the write branch.
           let clamped = max(0, min(maxSnapBack, raw))
-          if clamped == raw {
-            preferences.scrollSnapBackPoints = clamped
-            persist()
-          } else {
+          guard clamped == raw else {
             snapBackPoints = clamped
+            return
           }
+          // The store listener writes this field too, and echoing its own
+          // value back would turn an Import or a Reset into an edit.
+          guard clamped != Int(preferences.scrollSnapBackDistance) else { return }
+          preferences.scrollSnapBackPoints = clamped
+          persist()
         }
         // A caption on the row rather than a section footer: the footer
         // sits under every control in Navigation, and this describes one.
@@ -408,6 +411,7 @@ struct GeneralSettingsView: View {
       splitPaneKind = SplitPaneKindPreset.resolve(new.splitPaneKind)
       terminalDirOption = new.newTerminalDirectory?.isEmpty == false ? .custom : .inherit
       finderDirOption = new.newFinderDirectory?.isEmpty == false ? .custom : .inherit
+      snapBackPoints = Int(new.scrollSnapBackDistance)
     }
   }
 
