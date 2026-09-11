@@ -178,6 +178,52 @@ struct ColumnScrollTargetTests {
     #expect(target(mode: .settle, currentX: 800, columnMinX: 1000, columnWidth: 1200) == 1000)
   }
 
+  @Test("settle seats against the post-inset band")
+  func settleHonoursInsets() {
+    // A 60pt sidebar and a 40pt trailing inset shrink the band to 900pt,
+    // which seats the 400pt column at minX 1000 across origins
+    // [trailing 446, leading 934]. Every `.settle` case above runs with
+    // both insets at zero, where a swapped bound would still pass.
+    func settle(_ currentX: CGFloat) -> CGFloat? {
+      target(
+        mode: .settle, currentX: currentX, columnMinX: 1000, columnWidth: 400,
+        insetLeft: 60, insetRight: 40)
+    }
+    #expect(settle(700) == nil)
+    #expect(settle(300) == 446)
+    #expect(settle(1200) == 934)
+  }
+
+  @Test("settle never answers with the origin it was handed")
+  func settleNeverReturnsANoOp() {
+    // The caller measures the move against the user's snap-back limit,
+    // and a zero-length move passes any limit — so a target equal to
+    // `currentX` queues a tween to where the view already is on every
+    // scroll stop. The clamp is where one could come from, so this
+    // sweeps a column at each end of the content as well as the middle.
+    for insetLeft in [CGFloat(0), 60] {
+      for insetRight in [CGFloat(0), 40] {
+        for width in [CGFloat(200), 400, 900, 1200, 2400] {
+          for columnMinX in [CGFloat(6), 1000, 3000 - 6 - width] {
+            for currentX in stride(from: CGFloat(-100), through: 2100, by: 50) {
+              guard
+                let x = target(
+                  mode: .settle, currentX: currentX, columnMinX: columnMinX,
+                  columnWidth: width, insetLeft: insetLeft, insetRight: insetRight)
+              else { continue }
+              #expect(
+                x != currentX,
+                """
+                settle returned its own input at currentX \(currentX), \
+                minX \(columnMinX), width \(width), insets \(insetLeft)/\(insetRight)
+                """)
+            }
+          }
+        }
+      }
+    }
+  }
+
   @Test("settling a settled scroll moves nothing")
   func settleIsIdempotent() {
     // The caller measures this move and drops it when it exceeds the
