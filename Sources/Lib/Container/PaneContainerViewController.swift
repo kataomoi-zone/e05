@@ -1432,15 +1432,20 @@ public final class PaneContainerViewController: NSViewController {
     // Nothing under the pointer but chrome — a gap, the sidebar, the
     // find bar — is not a request to focus anything.
     guard let hit = paneAtWindowLocation(pointInWindow) else { return }
-    guard hit.pane.id != focusedPane?.id else { return }
-    // Same scroll every other way of taking focus makes, and it cannot
-    // move the pane out from under the pointer: bringing a column into
-    // view only ever widens the slice of it that is on screen, and the
-    // pointer is already inside that slice. `scroll: false` on the focus
-    // call so it doesn't run its own frame-in first — `.settle` is the
-    // one to make, since frame-in would pin a column wider than the
-    // screen to its leading edge and undo a scroll made inside it.
-    setFocus(columnIndex: hit.column, paneIndex: hit.paneIndex, scroll: false)
+    // Focus only moves when there is somewhere to move it. `scroll: false`
+    // so it doesn't run its own frame-in first — `.settle` is the scroll
+    // to make, since frame-in would pin a column wider than the screen to
+    // its leading edge and undo a scroll made inside it.
+    if hit.pane.id != focusedPane?.id {
+      setFocus(columnIndex: hit.column, paneIndex: hit.paneIndex, scroll: false)
+    }
+    // The scroll runs either way. Resting on a pane hanging half off the
+    // edge is the same request whether or not it already has focus, and
+    // `.settle` is what makes it safe to answer from a hover: it brings a
+    // column into view, so the slice of it on screen only ever grows and
+    // the pane cannot slide out from under the pointer, and it leaves a
+    // column that already covers the screen alone rather than pulling one
+    // of its edges in.
     _ = scrollToColumn(at: hit.column, mode: .settle)
   }
 }
