@@ -58,11 +58,6 @@ struct GeneralSettingsView: View {
   @State private var autoCheckUpdates = false
   @State private var autoInstallUpdates = false
   @State private var lastUpdateCheck: Date?
-  /// Snap-back distance in points, held locally so the field and the
-  /// stepper edit one value. `0` is the off state, not a missing one.
-  @State private var snapBackPoints: Int
-
-  private var maxSnapBack: Int { E05Preferences.maxScrollSnapBackPoints }
 
   init() {
     let current = PreferencesStore.shared.preferences
@@ -79,7 +74,6 @@ struct GeneralSettingsView: View {
       initialValue: current.newTerminalDirectory?.isEmpty == false ? .custom : .inherit)
     _finderDirOption = State(
       initialValue: current.newFinderDirectory?.isEmpty == false ? .custom : .inherit)
-    _snapBackPoints = State(initialValue: Int(current.scrollSnapBackDistance))
   }
 
   var body: some View {
@@ -217,8 +211,8 @@ struct GeneralSettingsView: View {
               preferences.paletteFocusCurrentWorkspaceOnly = $0
               persist()
             }))
-        // Both off by default: focus staying put, and a scroll ending
-        // where it ended, are what this app has always done.
+        // Off by default: focus staying where it was put is what this app
+        // has always done.
         Toggle(
           "Focus the pane under the pointer when it rests",
           isOn: Binding(
@@ -227,38 +221,11 @@ struct GeneralSettingsView: View {
               preferences.focusPaneUnderCursor = $0
               persist()
             }))
-        HStack {
-          Text("Nudge the focused pane back into view")
-          Spacer()
-          TextField("", value: $snapBackPoints, format: .number)
-            .labelsHidden()
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 60)
-            .multilineTextAlignment(.trailing)
-          Stepper("", value: $snapBackPoints, in: 0...maxSnapBack, step: 8)
-            .labelsHidden()
-          Text("pt").foregroundStyle(.secondary)
-        }
-        .onChange(of: snapBackPoints) { _, raw in
-          // Clamp typed input before it is written: the Stepper keeps
-          // itself in range, a field entry does not. Reassigning re-fires
-          // this and takes the write branch.
-          let clamped = max(0, min(maxSnapBack, raw))
-          guard clamped == raw else {
-            snapBackPoints = clamped
-            return
-          }
-          // The store listener writes this field too, and echoing its own
-          // value back would turn an Import or a Reset into an edit.
-          guard clamped != Int(preferences.scrollSnapBackDistance) else { return }
-          preferences.scrollSnapBackPoints = clamped
-          persist()
-        }
         // A caption on the row rather than a section footer: the footer
         // sits under every control in Navigation, and this describes one.
         Text(
-          "A scroll that leaves the focused pane slightly off screen scrolls "
-            + "back so it fits. Zero leaves every scroll where it ended."
+          "The pane the pointer comes to rest on takes focus, and scrolls "
+            + "into view if it is hanging off the edge."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -411,7 +378,6 @@ struct GeneralSettingsView: View {
       splitPaneKind = SplitPaneKindPreset.resolve(new.splitPaneKind)
       terminalDirOption = new.newTerminalDirectory?.isEmpty == false ? .custom : .inherit
       finderDirOption = new.newFinderDirectory?.isEmpty == false ? .custom : .inherit
-      snapBackPoints = Int(new.scrollSnapBackDistance)
     }
   }
 

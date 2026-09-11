@@ -163,38 +163,6 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// at a different width is the odd one out.
   public var inheritNewPaneWidth: Bool?
 
-  /// How far, in points, a horizontal scroll may be nudged back so the
-  /// focused pane ends up fully on screen. `nil` / `0` leaves the scroll
-  /// wherever it stopped, the behaviour that shipped before the setting
-  /// existed.
-  ///
-  /// The nudge runs against the direction just scrolled, so it is only
-  /// wanted while it is small: closing a sliver reads as tidying up,
-  /// while a bigger correction takes back a scroll the user meant. Read
-  /// through ``scrollSnapBackDistance``, which applies the ceiling.
-  public var scrollSnapBackPoints: Int?
-
-  /// Narrowest content width the main window can be dragged to. Lives
-  /// here rather than at the one `contentMinSize` call site so the
-  /// snap-back ceiling below can be stated against it.
-  public static let minWindowContentWidth: CGFloat = 480
-
-  /// Upper limit on ``scrollSnapBackPoints``.
-  ///
-  /// The correction runs against the direction just scrolled, so a large
-  /// enough value would bounce the workspace back to the focused column
-  /// after every scroll and leave nothing else reachable by scrolling at
-  /// all. Half of the narrowest window this app allows is well clear of
-  /// anything that reads as tidying up a sliver, and keeps the setting
-  /// from being able to do that.
-  public static let maxScrollSnapBackPoints = Int(minWindowContentWidth / 2)
-
-  /// ``scrollSnapBackPoints`` clamped to what the container will act on,
-  /// as points. Zero means the nudge is off.
-  public var scrollSnapBackDistance: CGFloat {
-    CGFloat(min(max(scrollSnapBackPoints ?? 0, 0), Self.maxScrollSnapBackPoints))
-  }
-
   /// Whether the pane under the pointer takes focus once the pointer
   /// and the workspace have both been still for a moment. `nil` /
   /// `false` leaves focus to clicks and the keyboard, which is how the
@@ -239,7 +207,6 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     newTerminalDirectory: String? = nil,
     newFinderDirectory: String? = nil,
     inheritNewPaneWidth: Bool? = nil,
-    scrollSnapBackPoints: Int? = nil,
     focusPaneUnderCursor: Bool? = nil,
     restoreTerminalScrollback: Bool? = nil
   ) {
@@ -267,7 +234,6 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.newTerminalDirectory = newTerminalDirectory
     self.newFinderDirectory = newFinderDirectory
     self.inheritNewPaneWidth = inheritNewPaneWidth
-    self.scrollSnapBackPoints = scrollSnapBackPoints
     self.focusPaneUnderCursor = focusPaneUnderCursor
     self.restoreTerminalScrollback = restoreTerminalScrollback
   }

@@ -164,9 +164,6 @@ public final class PaneContainerViewController: NSViewController {
   /// preference while Settings is open.
   nonisolated(unsafe) var hoverFocusPreferenceToken: UUID?
 
-  /// Pending settle for the workspace scroll (see `scheduleScrollSettle`).
-  private var scrollSettleWorkItem: DispatchWorkItem?
-
   /// Pending hover-focus check (see `scheduleHoverFocus`).
   private var hoverFocusWorkItem: DispatchWorkItem?
 
@@ -175,12 +172,6 @@ public final class PaneContainerViewController: NSViewController {
   /// pointer travelling across the window does not focus everything on
   /// its way past, short enough to feel like a consequence of stopping.
   static let hoverFocusDelay: TimeInterval = 0.3
-
-  /// How long the scroll origin has to hold still before the settle
-  /// runs. Short enough that the seat still reads as part of the gesture
-  /// that asked for it; long enough that a hand resting on the trackpad
-  /// between two pushes is not read as a stop.
-  static let scrollSettleDelay: TimeInterval = 0.2
 
   /// Trackpad gestures get a single routing decision (pane vs. workspace)
   /// at their `.began` event, applied to every subsequent `.changed` /
@@ -1021,13 +1012,12 @@ public final class PaneContainerViewController: NSViewController {
     if let monitor = mouseMovedMonitor {
       NSEvent.removeMonitor(monitor)
     }
-    // No cancel for `scrollSettleWorkItem` / `hoverFocusWorkItem`, and no
-    // `removeListener` for `hoverFocusPreferenceToken`: all three capture
-    // `self` weakly, so whatever survives finds nothing and returns.
-    // Reaching them from a nonisolated deinit would need `DispatchWorkItem`
-    // to be Sendable and `PreferencesStore` to be reachable off the main
-    // actor — the same reason the session autosave's work item is left
-    // alone here.
+    // No cancel for `hoverFocusWorkItem` and no `removeListener` for
+    // `hoverFocusPreferenceToken`: both capture `self` weakly, so
+    // whatever survives finds nothing and returns. Reaching them from a
+    // nonisolated deinit would need `DispatchWorkItem` to be Sendable and
+    // `PreferencesStore` to be reachable off the main actor — the same
+    // reason the session autosave's work item is left alone here.
     for closed in recentlyClosed {
       closed.timer.invalidate()
     }
@@ -1149,92 +1139,12 @@ public final class PaneContainerViewController: NSViewController {
     case .workspace:
       scrollView.scrollWheel(with: event)
       // A column sliding under a motionless pointer is the other way the
-      // pane it is over can change. Armed here rather than inside the
-      // settle so it still runs with the snap-back turned off — the two
-      // are separate settings.
+      // pane it is over can change.
       scheduleHoverFocus()
-      scheduleScrollSettle()
       return nil
     case .pane:
       return event
     }
-  }
-
-  /// Decide when the workspace scroll has actually stopped, and run the
-  /// settle then.
-  ///
-  /// The question is answered by watching the scroll origin hold still,
-  /// not by reading the event phases. Phases describe a trackpad gesture
-  /// in two acts — `phase` reaches `.ended` when the fingers lift, then a
-  /// second stream of momentum events plays out the fling — and neither
-  /// act ends when the scroll does. A fling that runs into the end of
-  /// the workspace has its momentum cut short and the closing `.ended`
-  /// never arrives, while a momentum `.cancelled` means the opposite of
-  /// a stop: fingers are back on the glass, starting the next push.
-  ///
-  /// Re-arming while the origin is still moving is what a plain debounce
-  /// could not do. A fixed delay fires in the gaps of a thinning momentum
-  /// tail, and the remaining momentum then drags the seated column back
-  /// out from under the snap.
-  private func scheduleScrollSettle() {
-    guard PreferencesStore.shared.preferences.scrollSnapBackDistance > 0 else { return }
-    scrollSettleWorkItem?.cancel()
-    armScrollSettleCheck()
-  }
-
-  /// Look again after `scrollSettleDelay`, and settle only if the scroll
-  /// origin has not moved since this check was armed.
-  private func armScrollSettleCheck() {
-    let anchorX = scrollView.contentView.bounds.origin.x
-    let work = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      self.scrollSettleWorkItem = nil
-      guard abs(self.scrollView.contentView.bounds.origin.x - anchorX) < 0.5 else {
-        // Still travelling — under a finger or on momentum. Settling into
-        // a position that is about to change is what makes a snap fight
-        // the fling, so ask again instead.
-        self.armScrollSettleCheck()
-        return
-      }
-      self.settleScroll()
-    }
-    scrollSettleWorkItem = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.scrollSettleDelay, execute: work)
-  }
-
-  /// Nudge a scroll that stopped just short of leaving the focused pane
-  /// fully on screen.
-  ///
-  /// The correction runs against the direction just scrolled, so it is
-  /// only wanted while it is small: closing a sliver reads as tidying
-  /// up, while a bigger one takes back a scroll the user meant. How
-  /// small is the user's to set, and zero turns it off.
-  ///
-  /// `.settle` rather than `.frameIn` because frame-in pins a column
-  /// wider than the viewport to its leading edge, which would undo every
-  /// scroll made inside a pane bigger than the screen. For anything that
-  /// fits, the two are the same move.
-  private func settleScroll() {
-    let limit = PreferencesStore.shared.preferences.scrollSnapBackDistance
-    guard limit > 0 else { return }
-    // A workspace switch is mid-flight over the same scroll view, and
-    // `scrollView` resolves to whichever one is current — seating a
-    // column against a view that is on its way out lands the nudge in
-    // the wrong workspace.
-    guard !isAnimatingWorkspaceSwitch else { return }
-    guard let column = columns[safe: focusedColumnIndex] else { return }
-    // A pinned column rides in the fixed leading overlay rather than the
-    // scrolling stack, so a scroll never leaves it half off screen.
-    guard !column.isPinned else { return }
-
-    // The target is read off column frames, so let the layout settle
-    // before asking for it.
-    view.layoutSubtreeIfNeeded()
-    let currentX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
-    guard let target = computeScrollTargetX(for: column, mode: .settle),
-      abs(target - currentX) <= limit
-    else { return }
-    _ = scrollToColumn(at: focusedColumnIndex, mode: .settle)
   }
 
   private func decideScrollLock(for event: NSEvent) -> ScrollGestureLock {
@@ -1384,10 +1294,10 @@ public final class PaneContainerViewController: NSViewController {
       guard let self else { return }
       self.hoverFocusWorkItem = nil
       // Still travelling under the pointer. Ask again rather than give
-      // up: the settle's own tween moves the origin after the last
-      // scroll event of all, so it has nothing left to re-arm this with
-      // — returning here is how hovering a column that the settle slid
-      // into place stops working.
+      // up: a `scrollToColumn` tween — a focus hop's, or this check's own
+      // from the last time it fired — moves the origin with no event
+      // behind it to re-arm this, so returning here is how hovering a
+      // column that slid into place stops working.
       guard abs(self.scrollView.contentView.bounds.origin.x - originX) < 0.5 else {
         self.scheduleHoverFocus()
         return

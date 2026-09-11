@@ -104,7 +104,6 @@ enum SettingsSearchIndex {
         "wrap", "wrap around", "next pane", "previous pane", "next workspace",
         "cycle", "stop at edge", "focus search", "palette", "current workspace",
         "hover", "pointer", "cursor", "focus follows mouse", "mouse focus",
-        "snap", "snap back", "nudge", "scroll",
       ]),
     SettingsSearchEntry(
       id: "general.search-engine", title: "Search Engine", tab: .general,

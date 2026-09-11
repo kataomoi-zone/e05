@@ -196,11 +196,11 @@ struct ColumnScrollTargetTests {
 
   @Test("settle never answers with the origin it was handed")
   func settleNeverReturnsANoOp() {
-    // The caller measures the move against the user's snap-back limit,
-    // and a zero-length move passes any limit — so a target equal to
-    // `currentX` queues a tween to where the view already is on every
-    // scroll stop. The clamp is where one could come from, so this
-    // sweeps a column at each end of the content as well as the middle.
+    // Non-nil is what tells the caller to scroll, so a target equal to
+    // `currentX` queues a tween to where the view already is — and a
+    // hover resting on a seated column would start one on every check.
+    // The clamp is where one could come from, so this sweeps a column at
+    // each end of the content as well as the middle.
     for insetLeft in [CGFloat(0), 60] {
       for insetRight in [CGFloat(0), 40] {
         for width in [CGFloat(200), 400, 900, 1200, 2400] {
@@ -226,10 +226,10 @@ struct ColumnScrollTargetTests {
 
   @Test("settling a settled scroll moves nothing")
   func settleIsIdempotent() {
-    // The caller measures this move and drops it when it exceeds the
-    // user's snap-back distance, which only means anything if the move
-    // is the distance to the seated range and not a scroll of its own.
-    // Landing somewhere that would move again would be exactly that.
+    // Hover re-arms its check whenever the origin moves, so a settle
+    // landing somewhere that would settle again gives the next check a
+    // reason to scroll, and the one after that, without the pointer ever
+    // moving.
     for width in [CGFloat(400), 900, 1200, 2400] {
       for currentX in stride(from: CGFloat(0), through: 2400, by: 120) {
         guard
