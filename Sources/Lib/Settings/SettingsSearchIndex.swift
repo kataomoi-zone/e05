@@ -96,12 +96,15 @@ enum SettingsSearchIndex {
         "new pane", "browser pane", "blank page", "specific url", "terminal pane",
         "cwd", "working directory", "finder pane", "folder", "directory", "inherit",
         "specific folder", "split vertical", "duplicate", "new workspace",
+        "width", "column width", "same width",
       ]),
     SettingsSearchEntry(
       id: "general.navigation", title: "Navigation", tab: .general,
       keywords: [
         "wrap", "wrap around", "next pane", "previous pane", "next workspace",
         "cycle", "stop at edge", "focus search", "palette", "current workspace",
+        "hover", "pointer", "cursor", "focus follows mouse", "mouse focus",
+        "snap", "snap back", "nudge", "scroll",
       ]),
     SettingsSearchEntry(
       id: "general.search-engine", title: "Search Engine", tab: .general,
