@@ -1241,8 +1241,7 @@ public final class PaneContainerViewController: NSViewController {
     if abs(event.scrollingDeltaX) <= abs(event.scrollingDeltaY) {
       return .pane
     }
-    guard let hit = paneAtWindowLocation(event.locationInWindow),
-      let browserView = columns[hit.column].panes[hit.pane].browserView
+    guard let browserView = paneAtWindowLocation(event.locationInWindow)?.pane.browserView
     else {
       return .workspace
     }
@@ -1309,7 +1308,9 @@ public final class PaneContainerViewController: NSViewController {
   /// unambiguous. Returns `nil` when the cursor is over chrome
   /// (sidebar, gaps between panes, the URL bar's hover-peek body,
   /// etc.) — those land on the workspace by default.
-  private func paneAtWindowLocation(_ pointInWindow: NSPoint) -> (column: Int, pane: Int)? {
+  private func paneAtWindowLocation(
+    _ pointInWindow: NSPoint
+  ) -> (pane: PaneModel, column: Int, paneIndex: Int)? {
     // Only what the viewport actually shows can be hit. Two ways a pane
     // frame reaches somewhere the pane is not: a column scrolled past
     // the right edge keeps a frame that goes out of the window with it,
@@ -1330,7 +1331,7 @@ public final class PaneContainerViewController: NSViewController {
       for (paneIndex, pane) in col.panes.enumerated() {
         let frame = pane.containerView.convert(pane.containerView.bounds, to: nil)
         if frame.contains(pointInWindow) {
-          return (columnIndex, paneIndex)
+          return (pane, columnIndex, paneIndex)
         }
       }
     }
@@ -1431,8 +1432,7 @@ public final class PaneContainerViewController: NSViewController {
     // Nothing under the pointer but chrome — a gap, the sidebar, the
     // find bar — is not a request to focus anything.
     guard let hit = paneAtWindowLocation(pointInWindow) else { return }
-    let pane = columns[hit.column].panes[hit.pane]
-    guard pane.id != focusedPane?.id else { return }
+    guard hit.pane.id != focusedPane?.id else { return }
     // Same scroll every other way of taking focus makes, and it cannot
     // move the pane out from under the pointer: bringing a column into
     // view only ever widens the slice of it that is on screen, and the
@@ -1440,7 +1440,7 @@ public final class PaneContainerViewController: NSViewController {
     // call so it doesn't run its own frame-in first — `.settle` is the
     // one to make, since frame-in would pin a column wider than the
     // screen to its leading edge and undo a scroll made inside it.
-    setFocus(columnIndex: hit.column, paneIndex: hit.pane, scroll: false)
+    setFocus(columnIndex: hit.column, paneIndex: hit.paneIndex, scroll: false)
     _ = scrollToColumn(at: hit.column, mode: .settle)
   }
 }
