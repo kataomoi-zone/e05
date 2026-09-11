@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // + `fullSizeContentView`. Button visibility is driven by the
     // sidebar state machine (see `applyTrafficLights`).
     window.isRestorable = false
-    window.contentMinSize = NSSize(width: 480, height: 320)
+    window.contentMinSize = NSSize(width: E05Preferences.minWindowContentWidth, height: 320)
 
     let container = PaneContainerViewController(ghosttyApp: ghosttyApp)
     window.contentViewController = container

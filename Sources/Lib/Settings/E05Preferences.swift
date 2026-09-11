@@ -174,15 +174,20 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// through ``scrollSnapBackDistance``, which applies the ceiling.
   public var scrollSnapBackPoints: Int?
 
+  /// Narrowest content width the main window can be dragged to. Lives
+  /// here rather than at the one `contentMinSize` call site so the
+  /// snap-back ceiling below can be stated against it.
+  public static let minWindowContentWidth: CGFloat = 480
+
   /// Upper limit on ``scrollSnapBackPoints``.
   ///
   /// The correction runs against the direction just scrolled, so a large
   /// enough value would bounce the workspace back to the focused column
   /// after every scroll and leave nothing else reachable by scrolling at
-  /// all. Half of the narrowest window this app allows (`contentMinSize`
-  /// is 480pt wide) is well clear of anything that reads as tidying up a
-  /// sliver, and keeps the setting from being able to do that.
-  public static let maxScrollSnapBackPoints = 240
+  /// all. Half of the narrowest window this app allows is well clear of
+  /// anything that reads as tidying up a sliver, and keeps the setting
+  /// from being able to do that.
+  public static let maxScrollSnapBackPoints = Int(minWindowContentWidth / 2)
 
   /// ``scrollSnapBackPoints`` clamped to what the container will act on,
   /// as points. Zero means the nudge is off.

@@ -279,12 +279,16 @@ struct ScrollSnapBackDistanceTests {
     #expect(distance(-100_000) == 0)
   }
 
-  @Test("the ceiling stays under the narrowest window")
+  @Test("the ceiling stays under half the narrowest window")
   func ceilingIsBounded() {
     // The nudge runs against the direction just scrolled, so a ceiling
     // anywhere near a window's width would bounce the workspace back to
     // the focused column after every scroll and leave nothing else
-    // reachable. `contentMinSize` is 480pt wide.
-    #expect(E05Preferences.maxScrollSnapBackPoints <= 240)
+    // reachable. Stated against the window minimum rather than against
+    // the ceiling's own literal, so narrowing one and not the other
+    // fails here instead of shipping.
+    #expect(
+      CGFloat(E05Preferences.maxScrollSnapBackPoints)
+        <= E05Preferences.minWindowContentWidth / 2)
   }
 }
