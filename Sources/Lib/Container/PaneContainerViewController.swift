@@ -160,6 +160,10 @@ public final class PaneContainerViewController: NSViewController {
 
   nonisolated(unsafe) var mouseMovedMonitor: Any?
 
+  /// Listener keeping ``applyHoverFocusMouseTracking`` in step with the
+  /// preference while Settings is open.
+  nonisolated(unsafe) var hoverFocusPreferenceToken: UUID?
+
   /// Pending settle for the workspace scroll (see `scheduleScrollSettle`).
   private var scrollSettleWorkItem: DispatchWorkItem?
 
@@ -865,12 +869,12 @@ public final class PaneContainerViewController: NSViewController {
     DispatchQueue.main.async { [weak self] in
       self?.scrollView.scrollerStyle = .overlay
     }
-    // Hover focus needs a pointer position between panes, not only the
-    // ones a view happens to track, so the window has to post moves
-    // itself. Set here rather than in `viewDidLoad` for the same reason
-    // the traffic lights are re-synced below: there is no window yet at
-    // that point.
-    view.window?.acceptsMouseMovedEvents = true
+    applyHoverFocusMouseTracking()
+    if hoverFocusPreferenceToken == nil {
+      hoverFocusPreferenceToken = PreferencesStore.shared.addListener { [weak self] _ in
+        self?.applyHoverFocusMouseTracking()
+      }
+    }
     // Re-sync traffic lights against the sidebar state now that the
     // window is attached. In `installSidebar` the window may still
     // be nil (the contentViewController assignment hadn't wired
@@ -1017,11 +1021,13 @@ public final class PaneContainerViewController: NSViewController {
     if let monitor = mouseMovedMonitor {
       NSEvent.removeMonitor(monitor)
     }
-    // No cancel for `scrollSettleWorkItem` / `hoverFocusWorkItem`: both
-    // capture `self` weakly, so a pending one finds nothing and returns.
-    // Reading the properties from a nonisolated deinit would need them to
-    // be Sendable, which `DispatchWorkItem` is not — the same reason the
-    // session autosave's work item is left alone here.
+    // No cancel for `scrollSettleWorkItem` / `hoverFocusWorkItem`, and no
+    // `removeListener` for `hoverFocusPreferenceToken`: all three capture
+    // `self` weakly, so whatever survives finds nothing and returns.
+    // Reaching them from a nonisolated deinit would need `DispatchWorkItem`
+    // to be Sendable and `PreferencesStore` to be reachable off the main
+    // actor — the same reason the session autosave's work item is left
+    // alone here.
     for closed in recentlyClosed {
       closed.timer.invalidate()
     }
@@ -1345,6 +1351,18 @@ public final class PaneContainerViewController: NSViewController {
   /// survives ``hoverFocusDelay`` untouched gets to act. The scroll
   /// origin is held to the same standard: a column sliding under a
   /// motionless pointer is the workspace moving, not the user choosing.
+  /// Arm window-wide mouse-moved delivery only while hover focus wants
+  /// it. The pointer between two panes belongs to no view's tracking
+  /// area, so the window has to post the moves itself — but that also
+  /// hands every move to the first responder, and a focused terminal or
+  /// web view forwards what it is handed to the page or the grid. With
+  /// the setting off nobody should be paying for a pointer that is over
+  /// the sidebar being reported as if it were over them.
+  private func applyHoverFocusMouseTracking() {
+    view.window?.acceptsMouseMovedEvents =
+      PreferencesStore.shared.preferences.focusPaneUnderCursor == true
+  }
+
   private func installMouseMovedMonitor() {
     mouseMovedMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) {
       [weak self] event in
