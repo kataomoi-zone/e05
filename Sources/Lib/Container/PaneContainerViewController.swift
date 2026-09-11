@@ -1082,23 +1082,10 @@ public final class PaneContainerViewController: NSViewController {
   ///   user is deliberately looking somewhere else in the workspace;
   ///   dragging the columns out from under them would be the opposite of
   ///   helpful.
-  /// - **A column already fully on screen**, tested here rather than
-  ///   left to `scrollToColumn`. That function forces a layout pass
-  ///   before it decides, which is far too much to spend on every
-  ///   repeat of a held-down key in a terminal.
-  /// Cheap approximation of "`.settle` would not move for this column",
-  /// used to skip the scroll call before it forces a layout pass — too
-  /// much to spend on every repeat of a held-down key in a terminal.
-  /// Ignores insets and the inter-column gap, so the exact answer still
-  /// comes from `columnScrollTargetX`; this only has to be right about
-  /// the common case of a column plainly seated, in either sense of it:
-  /// a narrow one wholly on screen, a wide one covering the screen.
-  private func seatsWithoutScrolling(_ column: ColumnModel) -> Bool {
-    let visible = scrollView.documentVisibleRect
-    let frame = column.containerView.frame
-    return visible.contains(frame) || frame.contains(visible)
-  }
-
+  /// - **A column already seated**, tested by `seatsWithoutScrolling`
+  ///   here rather than left to `scrollToColumn`. That function forces a
+  ///   layout pass before it decides, which is far too much to spend on
+  ///   every repeat of a held-down key in a terminal.
   private func installKeyEventMonitor() {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
       [weak self] event in
@@ -1116,6 +1103,17 @@ public final class PaneContainerViewController: NSViewController {
       _ = self.scrollToColumn(at: self.focusedColumnIndex, mode: .settle)
       return event
     }
+  }
+
+  /// Cheap approximation of "`.settle` would not move for this column".
+  /// Ignores the insets and the inter-column gap, so the exact answer
+  /// still comes from `columnScrollTargetX`; this only has to be right
+  /// about a column plainly seated, in either sense of it: a narrow one
+  /// wholly on screen, a wide one covering the screen.
+  private func seatsWithoutScrolling(_ column: ColumnModel) -> Bool {
+    let visible = scrollView.documentVisibleRect
+    let frame = column.containerView.frame
+    return visible.contains(frame) || frame.contains(visible)
   }
 
   private func routeScrollEvent(_ event: NSEvent) -> NSEvent? {
