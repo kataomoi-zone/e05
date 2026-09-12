@@ -926,10 +926,11 @@ extension PaneContainerViewController {
     if let pane = column.focusedPane {
       applyFocusBorder(pane)
     }
-    // Refresh the neighbouring resize handles — `updateHandleActiveStates`
-    // gates them on `column.isFolded`, so a fold/unfold transition has
-    // to repaint the active flag (otherwise the arrow chrome and
-    // mouseDown gate stay tied to the pre-toggle state).
+    // Refresh the resize handles — folding the focused column hands every
+    // handle back to its own left neighbour (see `columnResizeTarget`), so
+    // a fold/unfold transition has to repaint the active flag (otherwise
+    // the arrow chrome and mouseDown gate stay tied to the pre-toggle
+    // state).
     updateHandleActiveStates()
     // A pinned column's width drives its leading reserve, so recompute
     // it after a fold / unfold so the scrolling columns track the new

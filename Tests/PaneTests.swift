@@ -140,11 +140,26 @@ struct PaneResizeHandleTests {
     #expect(dragged == [30])
   }
 
+  @Test("a drag announces its start once, before the first delta")
+  func dragBeginsBeforeFirstDelta() {
+    let handle = activeHandle(.horizontal)
+    var order: [String] = []
+    handle.onDragBegan = { order.append("began") }
+    handle.onDrag = { order.append("drag \($0)") }
+
+    handle.mouseDown(with: mouse(.leftMouseDown, x: 100, y: 0))
+    handle.mouseDragged(with: mouse(.leftMouseDragged, x: 110, y: 0))
+    handle.mouseDragged(with: mouse(.leftMouseDragged, x: 125, y: 0))
+
+    #expect(order == ["began", "drag 10.0", "drag 15.0"])
+  }
+
   @Test("an inactive handle answers neither gesture")
   func inactiveHandleIsInert() {
     let handle = PaneResizeHandle(orientation: .vertical)
     var fired = 0
     handle.onDoubleClick = { fired += 1 }
+    handle.onDragBegan = { fired += 1 }
     handle.onDrag = { _ in fired += 1 }
 
     handle.mouseDown(with: mouse(.leftMouseDown, x: 0, y: 100, clicks: 2))

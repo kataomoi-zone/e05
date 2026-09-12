@@ -26,6 +26,14 @@ public final class PaneResizeHandle: NSView {
   /// reference to drive a live update without rebuilding the handle.
   public weak var sizeConstraint: NSLayoutConstraint?
 
+  /// Called once as a drag starts, before the first ``onDrag``. Lets the
+  /// owner resolve what the gesture resizes and hold that answer for the
+  /// length of the drag: focus can move while the button is down (a hover
+  /// focus timer armed just before the press still fires, and the keyboard
+  /// bindings keep working), and a per-delta lookup would hand the rest of
+  /// the drag to whatever the focus landed on.
+  public var onDragBegan: (() -> Void)?
+
   /// Called during drag with the delta along the resize axis.
   public var onDrag: ((_ delta: CGFloat) -> Void)?
 
@@ -39,7 +47,9 @@ public final class PaneResizeHandle: NSView {
   /// the button comes up would undo what the double click just did.
   public var onDoubleClick: (() -> Void)?
 
-  /// Only active handles (adjacent to focused pane) show resize cursor and respond to drag.
+  /// Only active handles show the resize cursor and respond to drag. What
+  /// makes a handle active is the owner's call — see
+  /// `PaneContainerViewController.updateHandleActiveStates`.
   public var isActive: Bool = false {
     didSet { window?.invalidateCursorRects(for: self) }
   }
@@ -118,6 +128,7 @@ public final class PaneResizeHandle: NSView {
       orientation == .horizontal
       ? event.locationInWindow.x
       : event.locationInWindow.y
+    onDragBegan?()
   }
 
   public override func mouseDragged(with event: NSEvent) {

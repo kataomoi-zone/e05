@@ -143,8 +143,13 @@ extension PaneContainerViewController {
 
   /// Resize handle on the pinned column's trailing edge so the column
   /// can be dragged wider / narrower in place, with the leading reserve
-  /// following. Sits in the overlay (above the scroll view), so it is
-  /// always active rather than gated on focus like the in-stack handles.
+  /// following. Sits in the overlay (above the scroll view) and is always
+  /// active.
+  ///
+  /// Unlike the in-stack handles it resizes the column it is attached to
+  /// rather than the focused one: a pinned column's width sets the reserve
+  /// the scrolling columns rest against, so it needs a grip of its own —
+  /// and it is the one column the strip's handles cannot reach.
   private func installPinResizeHandle(for column: ColumnModel, in vc: WorkspaceViewController) {
     let handle = PaneResizeHandle(orientation: .horizontal)
     handle.isActive = true
@@ -157,11 +162,13 @@ extension PaneContainerViewController {
         handle.bottomAnchor.constraint(equalTo: vc.view.bottomAnchor, constant: -margin),
       ])
     handle.onDrag = { [weak self, weak column, weak vc] deltaX in
-      guard let self, let column, let vc, let constraint = column.widthConstraint else { return }
+      guard let self, let column, let vc else { return }
       // Fold owns the width while folded, mirroring the in-stack handles.
       guard !column.isFolded else { return }
-      constraint.constant = max(Self.minPaneWidth, constraint.constant + deltaX)
-      column.currentPreset = nil
+      // Trailing edge, like any handle grabbed on its own column's right:
+      // the width follows the cursor. Shared with the in-stack handles so
+      // the floor and the preset reset are stated once.
+      self.resizeColumn(column, by: deltaX, pullingLeadingEdge: false)
       self.applyLeadingInset(in: vc)
     }
     column.pinResizeHandle = handle

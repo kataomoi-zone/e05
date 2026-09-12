@@ -506,32 +506,130 @@ extension PaneContainerViewController {
     }
   }
 
-  /// A horizontal handle is the right-edge grip of the column to its left.
-  /// The strip is left-anchored, so the divider position is the cumulative
-  /// width to its left — dragging it can only resize that left column (the
-  /// columns to the right simply follow). Every column is reachable this way:
-  /// the between-columns handles grab their left neighbour, the trailing
-  /// handle grabs the last column. Active state (folded columns excepted) is
-  /// handled by `updateHandleActiveStates`; `mouseDown` blocks drag when
-  /// `!isActive`, so `onDrag` only re-checks the fold.
-  private func makeColumnResizeHandle(for column: ColumnModel) -> PaneResizeHandle {
+  /// A horizontal handle sits on the right edge of the column to its left,
+  /// but it resizes the *focused* column wherever that sits in the strip.
+  /// The pane being worked in is the one whose width is worth changing, and
+  /// asking for it by name beats asking the user to first find the divider
+  /// that happens to belong to it.
+  ///
+  /// Active state is `updateHandleActiveStates`, and `mouseDown` blocks the
+  /// drag when `!isActive`, so `onDrag` only has to re-check the fold in
+  /// case the column folded mid-gesture.
+  private func makeColumnResizeHandle(for gripColumn: ColumnModel) -> PaneResizeHandle {
     let handle = PaneResizeHandle(orientation: .horizontal)
-    handle.onDrag = { [weak self, weak column] deltaX in
-      // `self` is captured weakly to break the retain cycle with the
-      // handle's stored closure; the body site only reaches for the
-      // type via `Self.minPaneWidth`, so a `!= nil` liveness check
-      // is sufficient.
-      guard self != nil, let column, let constraint = column.widthConstraint else { return }
+    // Resolved once per drag: focus can move while the button is held (see
+    // `PaneResizeHandle.onDragBegan`), and the rest of the gesture belongs
+    // to the column the user reached for, not to the new focus.
+    weak var target: ColumnModel?
+    var pullsLeadingEdge = false
+    handle.onDragBegan = { [weak self, weak gripColumn] in
+      guard let self, let gripColumn else { return }
+      let resolved = self.columnResizeTarget(grippedBy: gripColumn)
+      target = resolved?.column
+      pullsLeadingEdge = resolved?.pullsLeadingEdge ?? false
+    }
+    handle.onDrag = { [weak self] deltaX in
+      guard let self, let column = target else { return }
       // Folded columns are pinned by an upgraded-to-required
       // `widthConstraint`; mutating the constant from drag would
       // either no-op or write a value that survives past unfold.
       // Fold owns the column's width.
       guard !column.isFolded else { return }
-      let newWidth = max(Self.minPaneWidth, constraint.constant + deltaX)
-      constraint.constant = newWidth
-      column.currentPreset = nil
+      self.resizeColumn(column, by: deltaX, pullingLeadingEdge: pullsLeadingEdge)
     }
     return handle
+  }
+
+  /// What a horizontal handle's drag does: which column it resizes, and
+  /// which of that column's edges it pulls.
+  ///
+  /// The column is the focused one, falling back to the handle's own grip
+  /// column (the one on its left) when the focused column cannot take the
+  /// drag. A pinned column is out of the scrolling strip and carries its
+  /// own grip on the overlay, and a folded column's width belongs to the
+  /// fold — without the fallback, focusing either kind would leave every
+  /// divider in the workspace inert.
+  ///
+  /// A handle sitting to the left of its column pulls that column's
+  /// leading edge; every other handle pulls the trailing edge. Either way
+  /// the divider under the cursor travels with it (see ``resizeColumn``).
+  ///
+  /// A leading-edge pull is paid for in scroll, so it is only offered while
+  /// the strip has scroll to spend. With the whole strip inside the
+  /// viewport there is none — and the reason to reach past the divider for
+  /// the focused column has gone with it, since every column is already on
+  /// screen — so the handle goes back to being its own neighbour's grip.
+  ///
+  /// Returns nil when neither column can be resized, which is what makes
+  /// the handle inactive. A folded column's own handle therefore stays
+  /// live while the focus can take the drag — the fold only suppresses a
+  /// handle once it is the thing being resized.
+  func columnResizeTarget(
+    grippedBy gripColumn: ColumnModel
+  ) -> (column: ColumnModel, pullsLeadingEdge: Bool)? {
+    // Pinned columns sit in the leading overlay rather than the strip, so
+    // the handles are laid out against this filtered order (see
+    // `rebuildStackView`) and the left-of / right-of test has to match it.
+    let strip = columns.filter { !$0.isPinned }
+    guard let gripIndex = strip.firstIndex(where: { $0 === gripColumn }) else { return nil }
+    if let focused = columns[safe: focusedColumnIndex], !focused.isFolded,
+      let focusedIndex = strip.firstIndex(where: { $0 === focused })
+    {
+      let pullsLeadingEdge = gripIndex < focusedIndex
+      // The scrollable range is exactly `content - visible`, the same
+      // quantity `columnScrollTargetX` reads as "nothing to scroll for any
+      // mode".
+      if !pullsLeadingEdge || stackView.frame.width > effectiveVisibleWidth(in: scrollView) {
+        return (focused, pullsLeadingEdge)
+      }
+    }
+    return gripColumn.isFolded ? nil : (gripColumn, false)
+  }
+
+  /// Apply one drag delta to a column's width.
+  ///
+  /// Pulling the trailing edge is the plain case: the width follows the
+  /// cursor, and so does every divider to the right of the column.
+  ///
+  /// Pulling the leading edge needs the scroll. The strip is left-packed,
+  /// so everything to the left of a column fixes where its leading edge
+  /// sits and the edge cannot move on its own — a bare width change comes
+  /// out of the far edge instead, which is both backwards and, for a
+  /// column running past the window, invisible. Scrolling by the width
+  /// change pins the far edge in place, which leaves the near edge and the
+  /// grabbed divider moving with the cursor.
+  ///
+  /// LIMITATION: the scroll can only give back what it has taken, so
+  /// shrinking from the leading edge stops once the strip is against its
+  /// leading end. Letting the far edge start moving there is the behaviour
+  /// the scroll exists to avoid, and growing again is what buys the next
+  /// shrink back. ``columnResizeTarget`` keeps the pull off a strip that
+  /// has no scroll at all.
+  func resizeColumn(_ column: ColumnModel, by deltaX: CGFloat, pullingLeadingEdge: Bool) {
+    guard let constraint = column.widthConstraint else { return }
+    let originX = scrollView.contentView.bounds.origin.x
+    var widthDelta = pullingLeadingEdge ? -deltaX : deltaX
+    if pullingLeadingEdge {
+      // How far the strip can still scroll back toward its leading end.
+      // The scroll bottoms out at `-contentInsets.left` in logical
+      // coordinates and the origin read above is live, hence the
+      // compensation term.
+      let slack = max(0, originX - (hoverPeekScrollCompensation - scrollView.contentInsets.left))
+      widthDelta = max(widthDelta, -slack)
+    }
+    let previousWidth = constraint.constant
+    constraint.constant = max(Self.minPaneWidth, previousWidth + widthDelta)
+    let applied = constraint.constant - previousWidth
+    guard applied != 0 else { return }
+    column.currentPreset = nil
+    guard pullingLeadingEdge else { return }
+    // The origin is written against the strip's new width, so the layout
+    // has to settle first — the clip view would otherwise clamp the move to
+    // the content size it still believes in. The scroll view's own subtree
+    // is the whole of what has to settle, and a drag asks for this on every
+    // mouse-move event, so the rest of the container is left out of it.
+    scrollView.layoutSubtreeIfNeeded()
+    scrollView.contentView.setBoundsOrigin(NSPoint(x: originX + applied, y: 0))
   }
 
   /// Rebuild the containerView of a column from its panes array.
@@ -718,18 +816,18 @@ extension PaneContainerViewController {
     return handle
   }
 
-  /// Update which horizontal resize handles are active. Each handle grips the
-  /// right edge of the column to its left (see `makeColumnResizeHandle(for:)`),
-  /// so every column is resizable regardless of focus. A folded column
-  /// suppresses its own handle — the strip's width is owned by the fold path,
-  /// so the resize affordance has nothing to grab.
+  /// Update which horizontal resize handles are active. A handle is live
+  /// whenever `columnResizeTarget(grippedBy:)` finds something for it to
+  /// resize, which is the focused column for as long as that column can
+  /// take a drag. Focus moves therefore repaint the affordance, and
+  /// `setFocus` calls this.
   func updateHandleActiveStates() {
     let arranged = stackView.arrangedSubviews
     for (i, v) in arranged.enumerated() {
       guard let handle = v as? PaneResizeHandle else { continue }
       let leftView = arranged[safe: i - 1]
-      let leftColumn = columns.first { $0.containerView === leftView }
-      handle.isActive = leftColumn.map { !$0.isFolded } ?? false
+      let gripColumn = columns.first { $0.containerView === leftView }
+      handle.isActive = gripColumn.map { columnResizeTarget(grippedBy: $0) != nil } ?? false
     }
   }
 
