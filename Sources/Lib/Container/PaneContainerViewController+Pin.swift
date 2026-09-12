@@ -171,6 +171,13 @@ extension PaneContainerViewController {
       self.resizeColumn(column, by: deltaX, pullingLeadingEdge: false)
       self.applyLeadingInset(in: vc)
     }
+    // Every divider answers the tile, this one included. The pinned column
+    // is not part of the tiling set — its width is the reserve the others
+    // rest against — but the scrolling columns beside it are, and a handle
+    // that silently does nothing reads as broken rather than absent.
+    handle.onDoubleClick = { [weak self] in
+      self?.tileVisibleColumns()
+    }
     column.pinResizeHandle = handle
   }
 

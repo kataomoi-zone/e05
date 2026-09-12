@@ -537,6 +537,9 @@ extension PaneContainerViewController {
       guard !column.isFolded else { return }
       self.resizeColumn(column, by: deltaX, pullingLeadingEdge: pullsLeadingEdge)
     }
+    handle.onDoubleClick = { [weak self] in
+      self?.tileVisibleColumns()
+    }
     return handle
   }
 
@@ -814,6 +817,101 @@ extension PaneContainerViewController {
       }
     }
     return handle
+  }
+
+  /// Resize the columns on screen so they tile the viewport, and seat them
+  /// against its leading edge. Two columns in view become half the viewport
+  /// each, three become a third; whatever sits off screen keeps the width
+  /// it had. Reached by double-clicking any divider between columns.
+  ///
+  /// A column counts as on screen when more than half of it is inside the
+  /// band the strip rests in. A sliver at either edge is something the user
+  /// is looking past rather than at, and counting it would answer a
+  /// two-column screen with thirds.
+  func tileVisibleColumns() {
+    view.layoutSubtreeIfNeeded()
+    // The band is the scroll view minus its insets: the region the
+    // scrolling columns actually rest in, with the sidebar reserve and any
+    // pinned column's reserve carved off. `effectiveVisibleWidth` measures
+    // the same region, so the width below tiles exactly what is counted.
+    var band = scrollView.convert(scrollView.bounds, to: nil)
+    let insets = scrollView.contentInsets
+    band.origin.x += insets.left
+    band.size.width -= insets.left + insets.right
+    // A pinned column is in the overlay, not the strip — it is always on
+    // screen and its width drives the reserve the others rest against.
+    let candidates = columns.enumerated().filter { !$0.element.isPinned }
+    let frames = candidates.map {
+      $0.element.containerView.convert($0.element.containerView.bounds, to: nil)
+    }
+    let visible = Self.visibleColumnIndices(frames: frames, band: band).map { candidates[$0] }
+    guard let leading = visible.first else { return }
+
+    let perimeter = WorkspaceViewController.outerMargin
+    let folded = visible.filter { $0.element.isFolded }
+    guard
+      let width = Self.tiledColumnWidth(
+        usableWidth: effectiveVisibleWidth(in: scrollView) - 2 * perimeter,
+        gap: perimeter,
+        columnCount: visible.count,
+        fixedWidths: folded.map(\.element.containerView.frame.width)
+      )
+    else { return }
+    let constraints = visible.filter { !$0.element.isFolded }.compactMap {
+      $0.element.widthConstraint
+    }
+    guard !constraints.isEmpty else { return }
+
+    animatePaneLayoutChange {
+      for constraint in constraints { constraint.constant = width }
+    }
+    for (_, column) in visible where !column.isFolded { column.currentPreset = nil }
+    // `animatePaneLayoutChange` lays out inside its animation group, so the
+    // frames are already the tiled ones by the time it returns and
+    // `computeScrollTargetX` measures the layout the scroll is meant to
+    // seat rather than the one it started from.
+    if let scrollTarget = computeScrollTargetX(for: leading.element, mode: .alignLeft) {
+      animateScroll(toX: scrollTarget)
+    }
+  }
+
+  /// Which of `frames` are on screen enough to be tiled: more than half of
+  /// the column's own width inside `band`. Measured against the column
+  /// rather than the band so a column wider than the viewport still counts
+  /// when it is the one being looked at.
+  ///
+  /// Horizontal only — the columns span the band's height by construction,
+  /// and a rect intersection would quietly drop every column the moment
+  /// they did not (mid workspace-slide, say).
+  nonisolated static func visibleColumnIndices(frames: [CGRect], band: CGRect) -> [Int] {
+    frames.indices.filter { index in
+      let frame = frames[index]
+      let onScreen = min(frame.maxX, band.maxX) - max(frame.minX, band.minX)
+      return onScreen > frame.width / 2
+    }
+  }
+
+  /// The width each resizable column takes when `columnCount` columns tile
+  /// `usableWidth` (the visible region inside the workspace's perimeter),
+  /// separated by `gap`. Folded columns hold their width, so they are
+  /// passed as `fixedWidths` and the rest share what is left.
+  ///
+  /// With nothing folded this is the same arithmetic `applyPreset` runs for
+  /// `.fraction(1/N)` — `usable * f - (1 - f) * gap` — rearranged to let
+  /// the fixed widths out.
+  ///
+  /// Returns nil when there is nothing to resize or no room to do it in.
+  /// The caller still has `minPaneWidth` under it: a width below the floor
+  /// is clamped by Auto Layout, so a viewport too narrow for the count
+  /// tiles as far as it can and then overflows rather than refusing.
+  nonisolated static func tiledColumnWidth(
+    usableWidth: CGFloat, gap: CGFloat, columnCount: Int, fixedWidths: [CGFloat]
+  ) -> CGFloat? {
+    let resizableCount = columnCount - fixedWidths.count
+    guard resizableCount > 0 else { return nil }
+    let gaps = gap * CGFloat(columnCount - 1)
+    let share = (usableWidth - fixedWidths.reduce(0, +) - gaps) / CGFloat(resizableCount)
+    return share > 0 ? share : nil
   }
 
   /// Update which horizontal resize handles are active. A handle is live

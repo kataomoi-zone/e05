@@ -124,10 +124,12 @@ struct PaneResizeHandleTests {
     }
   }
 
-  /// The horizontal handles have no double-click action, and AppKit reports
-  /// the second press of any quick pair as `clickCount == 2`. Swallowing it
-  /// unconditionally would make a resize that starts on the heels of an
-  /// earlier click do nothing at all.
+  /// AppKit reports the second press of any quick pair as `clickCount 2`,
+  /// so a handle that swallowed those unconditionally would make a resize
+  /// starting on the heels of an earlier click do nothing at all. Every
+  /// handle the app builds now carries a double-click action, which is
+  /// what makes this the handle's own contract to keep rather than a case
+  /// some call site happens to rely on.
   @Test("without a double-click action the second click still drags")
   func doubleClickFallsThroughToDrag() {
     let handle = activeHandle(.horizontal)

@@ -243,3 +243,126 @@ struct ColumnScrollTargetTests {
     }
   }
 }
+
+/// The band a column has to show more than half of itself in is the
+/// scroll view minus its insets; these use a 1000pt band at x=0.
+@Suite("PaneContainerViewController.visibleColumnIndices")
+struct VisibleColumnIndicesTests {
+  private let band = CGRect(x: 0, y: 0, width: 1000, height: 800)
+
+  private func column(minX: CGFloat, width: CGFloat) -> CGRect {
+    CGRect(x: minX, y: 0, width: width, height: 800)
+  }
+
+  @Test("a column fully inside the band counts")
+  func fullyVisible() {
+    let frames = [column(minX: 10, width: 400), column(minX: 420, width: 400)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: frames, band: band) == [0, 1])
+  }
+
+  /// The whole point of the majority rule: a two-column screen with a
+  /// sliver of a third peeking in still tiles as two.
+  @Test("a sliver at the trailing edge does not count")
+  func sliverIsIgnored() {
+    let frames = [
+      column(minX: 0, width: 480), column(minX: 486, width: 480), column(minX: 972, width: 480),
+    ]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: frames, band: band) == [0, 1])
+  }
+
+  @Test("half in is not enough, more than half is")
+  func majorityBoundary() {
+    let halfOut = [column(minX: -200, width: 400)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: halfOut, band: band).isEmpty)
+    let mostlyIn = [column(minX: -199, width: 400)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: mostlyIn, band: band) == [0])
+  }
+
+  /// Measured against the column, not the band, so a column too wide to
+  /// fit still counts while most of it is showing — the tile then pulls it
+  /// back down to the viewport. Past twice the band it can never show half
+  /// of itself, and the gesture leaves it where it is.
+  @Test("a column wider than the band counts while most of it is showing")
+  func widerThanBand() {
+    #expect(
+      PaneContainerViewController.visibleColumnIndices(
+        frames: [column(minX: 0, width: 1400)], band: band) == [0])
+    #expect(
+      PaneContainerViewController.visibleColumnIndices(
+        frames: [column(minX: -100, width: 1400)], band: band) == [0])
+    #expect(
+      PaneContainerViewController.visibleColumnIndices(
+        frames: [column(minX: 0, width: 2400)], band: band
+      ).isEmpty)
+  }
+
+  /// The columns span the band's height by construction, so the rule is
+  /// horizontal. A rect intersection would answer "not visible" for every
+  /// column the moment that stopped holding — mid workspace-slide, or after
+  /// any change to the height pin — and the tile would silently do nothing.
+  @Test("the vertical axis has no say")
+  func verticalIsIgnored() {
+    let above = [CGRect(x: 100, y: 2000, width: 400, height: 800)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: above, band: band) == [0])
+    let shorter = [CGRect(x: 100, y: 400, width: 400, height: 10)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: shorter, band: band) == [0])
+  }
+
+  @Test("a column entirely off screen counts for nothing")
+  func offScreen() {
+    let frames = [column(minX: -500, width: 400), column(minX: 1200, width: 400)]
+    #expect(PaneContainerViewController.visibleColumnIndices(frames: frames, band: band).isEmpty)
+  }
+}
+
+/// The numbers come from the worked example in `applyPreset`: a 1000pt
+/// window with a 6pt perimeter leaves 988pt usable.
+@Suite("PaneContainerViewController.tiledColumnWidth")
+struct TiledColumnWidthTests {
+  private func width(count: Int, fixed: [CGFloat] = [], usable: CGFloat = 988) -> CGFloat? {
+    PaneContainerViewController.tiledColumnWidth(
+      usableWidth: usable, gap: 6, columnCount: count, fixedWidths: fixed)
+  }
+
+  /// Same answer `applyPreset(.fraction(0.5))` writes, which is what makes
+  /// a tiled pair line up with the width-cycle presets.
+  @Test("two columns split the viewport the way the 50% preset does")
+  func twoColumns() {
+    // 6 + 491 + 6 + 491 + 6 = the 1000pt window.
+    #expect(width(count: 2) == 491)
+  }
+
+  @Test("one column takes the whole usable width")
+  func oneColumn() {
+    #expect(width(count: 1) == 988)
+  }
+
+  @Test("three columns split what the two gaps leave")
+  func threeColumns() {
+    let share = width(count: 3) ?? 0
+    let expected: CGFloat = 976.0 / 3.0
+    #expect(abs(share - expected) < 0.0001)
+  }
+
+  /// A folded column is a 30pt strip whose width belongs to the fold, so
+  /// it keeps it and the others divide the remainder.
+  @Test("a folded column holds its width and the rest share the remainder")
+  func foldedColumnHoldsItsWidth() {
+    // 988 usable, less the folded 30 and the two 6pt gaps, halved.
+    let expected: CGFloat = 473
+    #expect(width(count: 3, fixed: [30]) == expected)
+  }
+
+  @Test("nothing to resize means no width to hand back")
+  func nothingResizable() {
+    #expect(width(count: 2, fixed: [30, 30]) == nil)
+    #expect(width(count: 0) == nil)
+  }
+
+  /// A viewport with no room left answers nil rather than a negative
+  /// width; the caller leaves the columns alone.
+  @Test("a band too narrow for the count answers nil")
+  func noRoom() {
+    #expect(width(count: 4, usable: 18) == nil)
+  }
+}
