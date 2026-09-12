@@ -539,7 +539,12 @@ extension PaneContainerViewController {
   func rebuildColumnView(column: ColumnModel) {
     let sv = column.containerView
 
-    // Drop previous equal-height constraints — reinstalled below.
+    // Drop previous equal-height constraints before the loops below detach
+    // and reorder the pane views they refer to, so Auto Layout never sees a
+    // live constraint against a view on its way out of the stack.
+    // `equalizePaneHeights` reinstalls them at the end and clears the array
+    // again on its way in — it has to stand on its own for the
+    // double-click caller, and repeating an empty reset costs nothing.
     NSLayoutConstraint.deactivate(column.equalHeightConstraints)
     column.equalHeightConstraints.removeAll()
 
@@ -574,7 +579,6 @@ extension PaneContainerViewController {
     // pane, handle, pane, handle, pane, …, matching
     // `column.panes`. Live panes already in `arrangedSubviews`
     // at the right index stay put.
-    var firstCV: NSView?
     for (i, pane) in column.panes.enumerated() {
       let handleIndex = i == 0 ? nil : (i * 2 - 1)
       if let handleIndex {
@@ -601,17 +605,9 @@ extension PaneContainerViewController {
           cv.trailingAnchor.constraint(equalTo: sv.trailingAnchor),
         ])
       }
-
-      // Equal height constraints between all panes
-      // (deactivated on drag-resize)
-      if let first = firstCV {
-        let c = cv.heightAnchor.constraint(equalTo: first.heightAnchor)
-        c.isActive = true
-        column.equalHeightConstraints.append(c)
-      } else {
-        firstCV = cv
-      }
     }
+
+    equalizePaneHeights(in: column)
 
     // `insertArrangedSubview` appends into `subviews` near the
     // end, which would sink the folded-label overlay behind the
@@ -642,13 +638,37 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Give every pane in the column the same height, which is the state a
+  /// fresh column is built in: each pane's height is tied to the first
+  /// pane's, so the stack divides its height evenly and follows the window.
+  /// A drag-resize replaces these with ratio constraints, and this puts the
+  /// column back.
+  func equalizePaneHeights(in column: ColumnModel) {
+    NSLayoutConstraint.deactivate(column.equalHeightConstraints)
+    column.equalHeightConstraints.removeAll()
+    guard let first = column.panes.first?.containerView else { return }
+    for pane in column.panes.dropFirst() {
+      let c = pane.containerView.heightAnchor.constraint(equalTo: first.heightAnchor)
+      c.isActive = true
+      column.equalHeightConstraints.append(c)
+    }
+  }
+
   private func makeVerticalResizeHandle(column: ColumnModel, topIndex: Int, bottomIndex: Int)
     -> PaneResizeHandle
   {
     let handle = PaneResizeHandle(orientation: .vertical)
-    // Vertical handles are always active within a column (unlike horizontal
-    // handles which are only active adjacent to the focused column).
+    // Vertical handles are always active: every pane in a column can be
+    // resized against its neighbour, with no folded-column case to gate on.
     handle.isActive = true
+    // A double click answers the question the drag leaves open — what the
+    // heights were before it started. Restoring the whole column rather
+    // than the two panes either side of the divider means one gesture
+    // clears the column however the splits got there.
+    handle.onDoubleClick = { [weak self, weak column] in
+      guard let self, let column else { return }
+      self.animatePaneLayoutChange { self.equalizePaneHeights(in: column) }
+    }
     let topPaneId = column.panes[topIndex].id
     let bottomPaneId = column.panes[bottomIndex].id
     handle.onDrag = { [weak self, weak column] deltaY in

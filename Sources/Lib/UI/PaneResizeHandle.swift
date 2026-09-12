@@ -29,6 +29,16 @@ public final class PaneResizeHandle: NSView {
   /// Called during drag with the delta along the resize axis.
   public var onDrag: ((_ delta: CGFloat) -> Void)?
 
+  /// Called on a double click instead of starting a drag. Handles without
+  /// one fall through to the drag, so a fast second click on a handle that
+  /// has no double-click meaning still resizes rather than doing nothing.
+  ///
+  /// Every press past the second answers too: AppKit keeps counting a run
+  /// of quick clicks, so a triple click would otherwise start a drag on a
+  /// gesture the user meant as another double click, and the tremor before
+  /// the button comes up would undo what the double click just did.
+  public var onDoubleClick: (() -> Void)?
+
   /// Only active handles (adjacent to focused pane) show resize cursor and respond to drag.
   public var isActive: Bool = false {
     didSet { window?.invalidateCursorRects(for: self) }
@@ -99,6 +109,10 @@ public final class PaneResizeHandle: NSView {
 
   public override func mouseDown(with event: NSEvent) {
     guard isActive else { return }
+    if event.clickCount >= 2, let onDoubleClick {
+      onDoubleClick()
+      return
+    }
     isDragging = true
     dragStartPos =
       orientation == .horizontal
