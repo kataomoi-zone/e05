@@ -86,6 +86,8 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
         "move_pane_down",
         "move_pane_up",
         "cycle_width",
+        "tile_visible_columns",
+        "equalize_pane_heights",
         "column_align_left",
         "column_align_right",
         "column_center",

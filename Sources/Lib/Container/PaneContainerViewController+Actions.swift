@@ -182,6 +182,31 @@ extension PaneContainerViewController {
         },
         separatorBefore: true
       ),
+      // The two double-click gestures on a divider, for when there is no
+      // divider under the pointer to double-click: the columns one needs
+      // none (it works from what is on screen), and the panes one takes
+      // the focused column.
+      Action(
+        id: "tile_visible_columns",
+        title: "Tile Visible Columns",
+        handler: { [weak self] in
+          guard let self, self.tileVisibleColumns() else { return }
+          self.showToast("Tile Visible Columns")
+        }
+      ),
+      Action(
+        id: "equalize_pane_heights",
+        title: "Equalize Pane Heights",
+        handler: { [weak self] in
+          // A single pane has no heights to even out, and confirming one
+          // would claim a change that never happened.
+          guard let self, let column = self.columns[safe: self.focusedColumnIndex],
+            column.panes.count > 1
+          else { return }
+          self.animatePaneLayoutChange { self.equalizePaneHeights(in: column) }
+          self.showToast("Equalize Pane Heights")
+        }
+      ),
       Action(
         id: "column_align_left",
         title: "Align Column Left",

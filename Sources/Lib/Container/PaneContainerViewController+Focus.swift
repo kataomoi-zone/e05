@@ -822,13 +822,19 @@ extension PaneContainerViewController {
   /// Resize the columns on screen so they tile the viewport, and seat them
   /// against its leading edge. Two columns in view become half the viewport
   /// each, three become a third; whatever sits off screen keeps the width
-  /// it had. Reached by double-clicking any divider between columns.
+  /// it had. Reached by double-clicking any divider between columns, and as
+  /// the `tile_visible_columns` action.
   ///
   /// A column counts as on screen when more than half of it is inside the
   /// band the strip rests in. A sliver at either edge is something the user
   /// is looking past rather than at, and counting it would answer a
   /// two-column screen with thirds.
-  func tileVisibleColumns() {
+  ///
+  /// Returns whether anything was resized, so the action only confirms a
+  /// tile that happened; the gestures ignore it, the layout moving under
+  /// the pointer being answer enough.
+  @discardableResult
+  func tileVisibleColumns() -> Bool {
     view.layoutSubtreeIfNeeded()
     // The band is the scroll view minus its insets: the region the
     // scrolling columns actually rest in, with the sidebar reserve and any
@@ -845,7 +851,7 @@ extension PaneContainerViewController {
       $0.element.containerView.convert($0.element.containerView.bounds, to: nil)
     }
     let visible = Self.visibleColumnIndices(frames: frames, band: band).map { candidates[$0] }
-    guard let leading = visible.first else { return }
+    guard let leading = visible.first else { return false }
 
     let perimeter = WorkspaceViewController.outerMargin
     let folded = visible.filter { $0.element.isFolded }
@@ -856,11 +862,11 @@ extension PaneContainerViewController {
         columnCount: visible.count,
         fixedWidths: folded.map(\.element.containerView.frame.width)
       )
-    else { return }
+    else { return false }
     let constraints = visible.filter { !$0.element.isFolded }.compactMap {
       $0.element.widthConstraint
     }
-    guard !constraints.isEmpty else { return }
+    guard !constraints.isEmpty else { return false }
 
     animatePaneLayoutChange {
       for constraint in constraints { constraint.constant = width }
@@ -873,6 +879,7 @@ extension PaneContainerViewController {
     if let scrollTarget = computeScrollTargetX(for: leading.element, mode: .alignLeft) {
       animateScroll(toX: scrollTarget)
     }
+    return true
   }
 
   /// Which of `frames` are on screen enough to be tiled: more than half of
