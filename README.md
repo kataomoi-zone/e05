@@ -89,7 +89,7 @@ The bindings below are the **defaults** — remap, clear, or reset any of them i
 
 The command palette surfaces every action by id (e.g. `new_terminal_pane`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
 
-Drag a pane edge to resize to an arbitrary width.
+Drag a divider between columns to resize the focused column from whichever of its sides is on screen, even while the column runs past the window; drag one between panes to trade height between them. Double-click a divider between columns to split the window evenly among the columns on screen, or one between panes to even out that column's heights — also available as the `tile_visible_columns` and `equalize_pane_heights` actions.
 
 ## Configuration
 
