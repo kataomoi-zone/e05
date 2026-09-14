@@ -112,6 +112,7 @@ Runtime data and caches live under macOS-native locations, keyed by bundle id so
 ├── suspend-exempt.json       Per-host auto-suspend exemptions
 ├── adblocker-whitelist.json  Per-host adblocker whitelist
 ├── finder-modes.json         Per-directory finder view mode
+├── stuck-load-report.txt     Last browser navigation that stopped making progress
 ├── resume/                   Per-pane download resume state
 ├── extensions/               Installed WKWebExtension bundles + state
 └── control.sock              e05 CLI Unix domain socket
