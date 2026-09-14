@@ -672,6 +672,9 @@ extension PaneContainerViewController {
           self.closePane(id: pane.id)
         }
       }
+      bv.onStuckLoad = { [weak self] in
+        self?.showToast("Page load stuck — report saved", style: .error)
+      }
       bv.onOpenInNewWorkspace = { [weak self, weak pane] url in
         // Mirrors bookmark / history "open in new workspace": the new
         // workspace opens with the link's browser pane as its only

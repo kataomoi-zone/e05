@@ -19,6 +19,9 @@ public enum E05Filenames {
   /// the shell on restore. One file per terminal pane, named by the id
   /// recorded in its `SessionState.PaneState`.
   public static let scrollbackDir = "scrollback"
+  /// The last browser navigation that stopped making progress, written
+  /// by `BrowserPaneView` so the incident can be read after the fact.
+  public static let stuckLoadReport = "stuck-load-report.txt"
   /// Unix-domain control socket the `e05` CLI connects to. The CLI
   /// target does not depend on `E05Lib`, so `Sources/CLI/main.swift`
   /// hardcodes this same literal — keep the two in sync.

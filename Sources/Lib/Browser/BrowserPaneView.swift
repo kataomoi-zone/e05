@@ -176,6 +176,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// callback fires only after the url actually moves, so a no-op press
   /// (no back history, or cursor-in-text-input) never triggers a toast.
   public var onNativeBackForward: ((_ isBack: Bool) -> Void)?
+  /// Called once a navigation has stayed pending for
+  /// ``stuckNavigationThreshold`` and its report has been written, so the
+  /// container can tell the user one was saved.
+  public var onStuckLoad: (() -> Void)?
 
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
@@ -190,15 +194,32 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// Diagnostic watchdog for a navigation that never completes. Armed
   /// when `isLoading` flips true, cancelled when it flips false; while a
   /// load is still in flight it logs the in-flight URL, elapsed time,
-  /// and progress at a fixed cadence so a hung web content process
-  /// leaves a trace in the log. Log-only — e05 does not (yet) abort or
-  /// auto-recover a hang, only a full process *termination* (see
+  /// and progress at a fixed cadence, and writes a report once the
+  /// navigation has been pending too long (``reportStuckNavigationIfDue``).
+  /// It never aborts or recovers the load — e05 recovers only from a
+  /// full process *termination* (see
   /// ``webViewWebContentProcessDidTerminate(_:)``).
   private var navigationWatchdog: DispatchSourceTimer?
+  /// The main frame's recent navigation steps, oldest first, capped at
+  /// ``navigationEventLimit``. Kept across suspend / restore, so a
+  /// report taken after a rebuild still shows what led up to it.
+  var navigationEvents: [NavigationEvent] = []
+  /// When, on ``uptime``, the navigation in flight was first asked for,
+  /// allowed or started (``beginPendingNavigation``), until it commits,
+  /// fails for any reason but a cancellation, moves within the document,
+  /// or loading stops. Not taken from `isLoading`, which stays true across
+  /// a click on a page still loading a subresource and would date the new
+  /// navigation back to the old one.
+  var pendingNavigationSince: TimeInterval?
+  /// Whether the pending navigation has already been reported, so a
+  /// stuck one writes a single report however long it stays stuck.
+  var reportedPendingNavigation = false
+  var webViewAttachedAt = Date()
+  var commitsSinceAttach = 0
   /// Short stable token identifying this pane instance in navigation
   /// logs so interleaved traces from several panes can be told apart.
   /// Diagnostic-only; derived from the object address, not persisted.
-  private lazy var logTag: String = String(
+  lazy var logTag: String = String(
     UInt(bitPattern: ObjectIdentifier(self).hashValue) & 0xFFFF, radix: 16)
   /// Timestamps of recent web content process terminations, newest
   /// last. Breaks a crash → reload → crash loop: a page that
@@ -284,7 +305,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// match the web view's real store there — but the favicon paths are
   /// already `http`/`https`-only and extension pages are
   /// `webkit-extension://`, so those panes never reach them regardless.
-  private var isPrivateBrowsing: Bool {
+  var isPrivateBrowsing: Bool {
     guard let savedDataStore else { return false }
     return !savedDataStore.isPersistent
   }
@@ -388,6 +409,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       goToHistory(offset: -1)
       return
     }
+    if webView.canGoBack { noteRequestedNavigation("back") }
     recentBackForwardAt = Date()
     webView.goBack()
   }
@@ -398,6 +420,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       goToHistory(offset: 1)
       return
     }
+    if webView.canGoForward { noteRequestedNavigation("forward") }
     recentBackForwardAt = Date()
     webView.goForward()
   }
@@ -820,6 +843,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       for await _ in stream {
         guard let self else { return }
         self.applyAdblockerRuleListsForCurrentHost()
+        self.noteNavigation("adblock rule lists replaced")
       }
     }
     adblockerWhitelistObserverTask = Task { @MainActor [weak self] in
@@ -955,6 +979,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     webView.setValue(false, forKey: "drawsBackground")
     webView.underPageBackgroundColor = AppColors.paneSurface
     browserHostView.addSubview(webView)
+    webViewAttachedAt = Date()
+    commitsSinceAttach = 0
+    noteNavigation("web view attached")
   }
 
   public override func viewDidChangeEffectiveAppearance() {
@@ -1102,6 +1129,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private func applyLoadingStateForProgressBar(isLoading: Bool) {
     progressBarRevealTimer?.cancel()
     progressBarRevealTimer = nil
+    noteNavigation(isLoading ? "loading started" : "loading stopped")
     if isLoading {
       startNavigationWatchdog()
       let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -1113,6 +1141,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       timer.resume()
       progressBarRevealTimer = timer
     } else {
+      // Read live rather than trusting the observed value: this runs a
+      // hop after the change, and by then loading may have started again
+      // for a navigation that replaced the one that stopped.
+      if !webView.isLoading { pendingNavigationSince = nil }
       cancelNavigationWatchdog()
       progressBar.dismiss()
     }
@@ -1123,12 +1155,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   private static let watchdogInterval: TimeInterval = 10
 
   /// Arm (or re-arm) the stuck-navigation watchdog. Logs the in-flight
-  /// URL, elapsed seconds, and `estimatedProgress` every
-  /// ``watchdogInterval`` for as long as the load keeps running, then
-  /// stops itself once `isLoading` clears. Diagnostic-only: it neither
-  /// aborts nor recovers the load — it exists so a navigation that
-  /// silently never finishes (e.g. a hung web content process) is
-  /// visible in the log even though e05 can't yet recover from it.
+  /// URL (as ``describe(_:)`` shows it), elapsed seconds, and
+  /// `estimatedProgress` every ``watchdogInterval`` for as long as the
+  /// load keeps running, then stops itself once `isLoading` clears. Each
+  /// tick also writes the stuck-load report once it is due
+  /// (``reportStuckNavigationIfDue``). It neither aborts nor recovers the
+  /// load.
   private func startNavigationWatchdog() {
     cancelNavigationWatchdog()
     let started = Date()
@@ -1142,12 +1174,11 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
         return
       }
       let elapsed = Int(Date().timeIntervalSince(started))
-      let url =
-        self.webView.url?.absoluteString
-        ?? self.lastAttemptedURL?.absoluteString ?? "—"
+      let url = self.describe(self.webView.url ?? self.lastAttemptedURL)
       logger.warning(
-        "[nav/watchdog \(self.logTag, privacy: .public)] still loading after \(elapsed, privacy: .public)s progress=\(self.webView.estimatedProgress, privacy: .public) url=\(url, privacy: .public)"
+        "[nav/watchdog \(self.logTag, privacy: .public)] still loading after \(elapsed, privacy: .public)s progress=\(self.webView.estimatedProgress, privacy: .public) url=\(url, privacy: .public) \(self.processSummary, privacy: .public)"
       )
+      self.reportStuckNavigationIfDue()
     }
     timer.resume()
     navigationWatchdog = timer
@@ -1407,6 +1438,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// pane reloads in place, a suspended pane restores from its
   /// snapshot (which itself triggers a load of the captured URL).
   public func reload() {
+    noteRequestedNavigation("reload")
     if isSuspended {
       restore()
     } else {
@@ -1424,6 +1456,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// `reloadFromOrigin` after `restore` would double-load the page
   /// without a clear user benefit.
   public func reloadFromOrigin() {
+    noteRequestedNavigation("reload from origin")
     if isSuspended {
       restore()
     } else {
@@ -1490,6 +1523,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // pane. Forcing the notification here keeps the spinner in lock-
     // step with the (now-dead) `WKWebView`.
     let wasLoading = webView.isLoading
+    noteNavigation("suspended")
     webView.stopLoading()
     webView.pauseAllMediaPlayback(completionHandler: nil)
     tearDownWebViewObservations()
@@ -1677,6 +1711,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     progressBarRevealTimer?.cancel()
     progressBarRevealTimer = nil
     cancelNavigationWatchdog()
+    pendingNavigationSince = nil
     progressBar.dismiss()
     adblockerObserverTask?.cancel()
     adblockerObserverTask = nil
@@ -1766,6 +1801,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // caller's intent (URL bar entry = `.typed`) so the `\.url` KVO
     // observer attributes the visit correctly.
     pendingTransition = transition
+    noteRequestedNavigation(describe(url))
     loadPossiblyLocal(url)
   }
 
@@ -2119,6 +2155,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     decidePolicyFor navigationAction: WKNavigationAction,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
   ) {
+    func decide(_ policy: WKNavigationActionPolicy) {
+      noteMainFramePolicy(for: navigationAction, policy: policy)
+      decisionHandler(policy)
+    }
     // A link WebKit flagged for download — the `<a download>` attribute
     // or the context menu's "Download Linked File" — must convert to a
     // WKDownload instead of loading. Answer `.download` so WebKit routes
@@ -2135,7 +2175,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // download is a deliberate non-goal — the case is rare and the
     // optimistic "download wins" rule keeps this branch simple.
     if navigationAction.shouldPerformDownload {
-      decisionHandler(.download)
+      decide(.download)
       return
     }
     // Track every accepted main-frame navigation so the error page
@@ -2168,21 +2208,21 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     guard navigationAction.navigationType == .linkActivated,
       let url = navigationAction.request.url
     else {
-      decisionHandler(.allow)
+      decide(.allow)
       return
     }
     let flags = navigationAction.modifierFlags
     if flags.contains(.shift) {
-      decisionHandler(.cancel)
+      decide(.cancel)
       onOpenInNewWorkspace?(url)
       return
     }
     if flags.contains(.command) {
-      decisionHandler(.cancel)
+      decide(.cancel)
       onOpenInNewPane?(url)
       return
     }
-    decisionHandler(.allow)
+    decide(.allow)
   }
 
   /// Decide whether a response should become a download. Explicit
@@ -2193,11 +2233,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     decidePolicyFor navigationResponse: WKNavigationResponse,
     decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
   ) {
-    if Self.shouldDownload(navigationResponse.response) {
-      decisionHandler(.download)
-    } else {
-      decisionHandler(.allow)
+    let policy: WKNavigationResponsePolicy =
+      Self.shouldDownload(navigationResponse.response) ? .download : .allow
+    if navigationResponse.isForMainFrame {
+      let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+      noteNavigation(
+        "response \(status.map(String.init) ?? "non-http") "
+          + "\(navigationResponse.response.mimeType ?? "no type")"
+          + (policy == .download ? " -> download" : ""))
     }
+    decisionHandler(policy)
   }
 
   // MARK: - WKUIDelegate
@@ -2557,11 +2602,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// auto-reload once a page crashes repeatedly within a short window,
   /// rendering an error page instead so a renderer that dies on every
   /// load can't flash forever. This is the crash path only — a process
-  /// that *hangs* without terminating never reaches here and is for now
-  /// just traced by the navigation watchdog log.
+  /// that *hangs* without terminating never reaches here; the navigation
+  /// watchdog logs it and reports it once it has been pending too long.
   public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-    let url =
-      webView.url?.absoluteString ?? lastAttemptedURL?.absoluteString ?? "—"
+    let url = describe(webView.url ?? lastAttemptedURL)
+    noteNavigation("web content process terminated")
+    pendingNavigationSince = nil
     cancelNavigationWatchdog()
     // Break a crash → reload → crash loop. Auto-reloading a page that
     // deterministically kills its renderer would flash and pin the CPU
@@ -2609,7 +2655,21 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     )
   }
 
+  public func webView(_: WKWebView, didStartProvisionalNavigation _: WKNavigation!) {
+    noteNavigation("provisional start")
+    beginPendingNavigation()
+  }
+
+  public func webView(
+    _ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation _: WKNavigation!
+  ) {
+    noteNavigation("redirect to \(describe(webView.url))")
+  }
+
   public func webView(_: WKWebView, didCommit _: WKNavigation!) {
+    noteNavigation("commit")
+    pendingNavigationSince = nil
+    commitsSinceAttach += 1
     // The committed URL determines whether the adblocker rule
     // lists belong on this pane. A subsequent commit (link click,
     // history navigation) re-evaluates the host so a whitelisted
@@ -2625,6 +2685,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   }
 
   public func webView(_: WKWebView, didFinish _: WKNavigation!) {
+    noteNavigation("finish")
     // Scan the rendered DOM for a `<link rel="icon">` (or apple-touch
     // variant) and feed the highest-resolution hit to the favicon
     // cache. This covers sites whose `/favicon.ico` route 404s (they
@@ -2678,12 +2739,23 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   public func webView(
     _: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: any Error
   ) {
+    let nsError = error as NSError
+    noteNavigation("provisional failure \(nsError.domain) \(nsError.code)")
+    // A cancellation is what the navigation being replaced reports, and
+    // it arrives after the replacement's policy decision: clearing here
+    // would stop timing the very click or reload that went in on top of
+    // a stuck navigation.
+    if !(nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled) {
+      pendingNavigationSince = nil
+    }
     handleNavigationFailure(error: error)
   }
 
   public func webView(
     _: WKWebView, didFail _: WKNavigation!, withError error: any Error
   ) {
+    let nsError = error as NSError
+    noteNavigation("failure \(nsError.domain) \(nsError.code)")
     handleNavigationFailure(error: error)
   }
 
@@ -2714,7 +2786,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // Logging before the benign cancellation / frame-load-interrupt
     // returns above would spam on every superseded load.
     logger.info(
-      "[nav/fail \(self.logTag, privacy: .public)] domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) url=\(self.webView.url?.absoluteString ?? self.lastAttemptedURL?.absoluteString ?? "—", privacy: .public)"
+      "[nav/fail \(self.logTag, privacy: .public)] domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public) url=\(self.describe(self.webView.url ?? self.lastAttemptedURL), privacy: .public)"
     )
     // Resolution order: NSError userInfo (most precise when set) →
     // tracker captured in `decidePolicyFor` (covers errors that don't
