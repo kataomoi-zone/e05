@@ -71,7 +71,7 @@ public enum ABPtoSafariConverter {
   /// the next launch. Starts at 3: 1 names the implicit pre-constant
   /// output and 2 an interim build, and compiled caches keyed by either
   /// may survive on disk, so neither value is safe to reuse.
-  public static let outputVersion = 3
+  public static let outputVersion = 4
 
   /// Convert a full filterlist text into Safari rules. `maxRules` guards
   /// against the WebKit compiler's hard limit (50k on older targets,
@@ -459,7 +459,10 @@ public enum ABPtoSafariConverter {
     case "document", "doc": return "document"
     case "popup": return "popup"
     case "object": return "raw"
-    case "ping": return "raw"
+    // WebKit's `raw` also takes in every fetch, XHR and WebSocket, so a
+    // ping rule mapped there blocks all of them: EasyPrivacy's
+    // `*$ping,third-party` would cut off every cross-site fetch.
+    case "ping": return "ping"
     case "other": return "other"
     default: return nil
     }

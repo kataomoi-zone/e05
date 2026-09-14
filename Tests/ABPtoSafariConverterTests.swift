@@ -212,6 +212,20 @@ struct ABPtoSafariConverterTests {
     #expect(types == Set(["script", "image"]))
   }
 
+  /// WebKit's `raw` type covers fetch, XHR and WebSockets as well as
+  /// pings, so a ping rule has to land on `ping` itself. The rule below
+  /// ships in EasyPrivacy; on `raw` it would block every cross-site
+  /// fetch on every page.
+  @Test("a ping rule blocks pings, not every request of the raw type")
+  func pingStaysPing() {
+    let rules = ABPtoSafariConverter.convert("*$ping,third-party").rules
+    #expect(!rules.isEmpty)
+    for rule in rules {
+      #expect(rule.trigger.resourceType == ["ping"])
+      #expect(rule.trigger.loadType == ["third-party"])
+    }
+  }
+
   @Test("load-type collapses conflicting options to the last winner")
   func loadTypeLastWins() {
     let rules = ABPtoSafariConverter.convert(
