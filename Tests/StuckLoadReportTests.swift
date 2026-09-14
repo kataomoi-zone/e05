@@ -91,6 +91,14 @@ struct StuckLoadPaneTests {
     #expect(pane.provisionalWebProcessIdentifier != nil)
   }
 
+  /// App shortcuts bypass the page only while this is true, so a page
+  /// that answers must never read as unresponsive.
+  @Test("a web view whose process answers is not taken for unresponsive")
+  func answeringProcessIsNotUnresponsive() {
+    let pane = BrowserPaneView(frame: .zero)
+    #expect(BrowserPaneView.webProcessIsResponsive(pane.webView) != false)
+  }
+
   @Test("a running process's memory footprint can be read")
   func footprintOfRunningProcess() {
     #expect((BrowserPaneView.physicalFootprint(of: getpid()) ?? 0) > 1_048_576)

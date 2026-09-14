@@ -5,7 +5,8 @@ import os.log
 private let logger = Logger(
   subsystem: LogSubsystem.app, category: "BrowserPaneView")
 
-/// WKWebView subclass that reports focus changes via callback.
+/// WKWebView subclass that reports focus changes via callback, and keeps
+/// app shortcuts reachable when its page stops responding.
 @MainActor
 final class FocusReportingWebView: WKWebView {
   var onFocusGained: (() -> Void)?
@@ -16,6 +17,26 @@ final class FocusReportingWebView: WKWebView {
     // doesn't fire this, but the pane is already focused in that case.
     if result { onFocusGained?() }
     return result
+  }
+
+  /// A focused web view claims every key equivalent, and gives the menu
+  /// the ones its page leaves alone only once the web content process
+  /// answers. A process stuck in a script never answers, so ⌘W, ⌘R and
+  /// every other e05 shortcut would vanish on the very pane the user wants
+  /// to close or reload. Once WebKit has marked the process unresponsive,
+  /// the menu gets the keystroke first.
+  ///
+  /// LIMITATION: WebKit marks the process only after something sent to it
+  /// has gone unanswered for a few seconds, so the first shortcut pressed
+  /// on a page that has just stopped is still lost.
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if window?.firstResponder === self,
+      BrowserPaneView.webProcessIsResponsive(self) == false,
+      NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+    {
+      return true
+    }
+    return super.performKeyEquivalent(with: event)
   }
 }
 
