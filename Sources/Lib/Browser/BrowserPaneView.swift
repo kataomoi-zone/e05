@@ -2346,6 +2346,38 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     popupWindows.removeAll()
   }
 
+  /// `<input type="file">`. On macOS WebKit shows no picker of its own:
+  /// without this method every file input behaves as if the user
+  /// pressed Cancel.
+  ///
+  /// The sheet goes on the window of the web view that asked, which is
+  /// a popup panel rather than the pane's window when a sign-in popup
+  /// uploads something.
+  ///
+  /// LIMITATION: the input's `accept` filter is not applied. WebKit
+  /// exposes it only through SPI on the parameters object.
+  public func webView(
+    _ webView: WKWebView,
+    runOpenPanelWith parameters: WKOpenPanelParameters,
+    initiatedByFrame _: WKFrameInfo,
+    completionHandler: @escaping @MainActor @Sendable ([URL]?) -> Void
+  ) {
+    guard let window = webView.window else {
+      completionHandler(nil)
+      return
+    }
+    let panel = NSOpenPanel()
+    panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+    // `webkitdirectory` asks for a folder rather than files.
+    panel.canChooseDirectories = parameters.allowsDirectories
+    panel.canChooseFiles = !parameters.allowsDirectories
+    panel.beginSheetModal(for: window) { response in
+      MainActor.assumeIsolated {
+        completionHandler(response == .OK ? panel.urls : nil)
+      }
+    }
+  }
+
   /// Camera / microphone permission requests originate here. WebKit
   /// surfaces a single decision per request, so a combined
   /// `.cameraAndMicrophone` request requires a unanimous grant
