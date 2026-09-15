@@ -102,6 +102,14 @@ enum AppColors {
     light: NSColor(white: 0.0, alpha: 1.0),
     dark: NSColor(white: 0.0, alpha: 1.0))
 
+  // MARK: - Logo
+
+  /// Letter ink of the e05 logo — the app icon's own light / dark
+  /// values, which are `paneSurface` inverted.
+  static let logoInk = dynamic(
+    light: NSColor(white: 0.15, alpha: 1.0),
+    dark: NSColor(white: 0.97, alpha: 1.0))
+
   // MARK: - Helpers
 
   /// Build a dynamic `NSColor` that resolves to `dark` under

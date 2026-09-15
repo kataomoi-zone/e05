@@ -16,13 +16,9 @@ import AppKit
 /// land without changing this contract.
 @MainActor
 final class BrowserPanePlaceholderView: NSView {
-  private let iconView: NSImageView = {
-    let v = NSImageView()
-    let config = NSImage.SymbolConfiguration(pointSize: 40, weight: .light)
-    v.image = NSImage(
-      systemSymbolName: "face.dashed", accessibilityDescription: "Suspended"
-    )?.withSymbolConfiguration(config)
-    v.contentTintColor = .tertiaryLabelColor
+  private let iconView: E05LogoView = {
+    let v = E05LogoView()
+    v.isMuted = true
     return v
   }()
   private let titleLabel = NSTextField(labelWithString: "")
@@ -106,8 +102,8 @@ final class BrowserPanePlaceholderView: NSView {
     NSLayoutConstraint.activate([
       iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
       iconView.bottomAnchor.constraint(equalTo: titleLabel.topAnchor, constant: -12),
-      iconView.widthAnchor.constraint(equalToConstant: 44),
-      iconView.heightAnchor.constraint(equalToConstant: 44),
+      iconView.widthAnchor.constraint(equalToConstant: 56),
+      iconView.heightAnchor.constraint(equalToConstant: 56),
 
       titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
       titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -10),

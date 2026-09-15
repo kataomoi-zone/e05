@@ -42,11 +42,20 @@ public final class StartPaneView: NSView {
     let row = NSStackView(views: [terminalButton, finderButton])
     row.orientation = .horizontal
     row.spacing = 16
-    row.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(row)
+
+    let logo = E05LogoView()
+    logo.translatesAutoresizingMaskIntoConstraints = false
+    logo.widthAnchor.constraint(equalToConstant: 80).isActive = true
+    logo.heightAnchor.constraint(equalToConstant: 80).isActive = true
+
+    let stack = NSStackView(views: [logo, row])
+    stack.orientation = .vertical
+    stack.spacing = 24
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(stack)
     NSLayoutConstraint.activate([
-      row.centerXAnchor.constraint(equalTo: centerXAnchor),
-      row.centerYAnchor.constraint(equalTo: centerYAnchor),
+      stack.centerXAnchor.constraint(equalTo: centerXAnchor),
+      stack.centerYAnchor.constraint(equalTo: centerYAnchor),
     ])
   }
 
