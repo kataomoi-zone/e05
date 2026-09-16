@@ -308,11 +308,9 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     addSubview(actionsStack)
 
     progressOverlay.wantsLayer = true
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      progressOverlay.layer?.backgroundColor =
-        NSColor.controlAccentColor
-        .withAlphaComponent(0.7).cgColor
-    }
+    progressOverlay.layer?.backgroundColor =
+      NSColor.controlAccentColor
+      .withAlphaComponent(0.7).cgColor(under: effectiveAppearance)
     progressOverlay.layer?.cornerRadius = 1
     progressOverlay.translatesAutoresizingMaskIntoConstraints = false
     progressOverlay.isHidden = true

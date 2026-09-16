@@ -95,11 +95,9 @@ public final class LoadingProgressBarView: NSView {
   }
 
   private func applyAccent() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor =
-        accent.withAlphaComponent(Self.baselineAlpha).cgColor
-      comet.layer?.backgroundColor = accent.cgColor
-    }
+    layer?.backgroundColor =
+      accent.withAlphaComponent(Self.baselineAlpha).cgColor(under: effectiveAppearance)
+    comet.layer?.backgroundColor = accent.cgColor(under: effectiveAppearance)
   }
 
   /// Fade in and start the shuttling comet. Re-installs the shuttle

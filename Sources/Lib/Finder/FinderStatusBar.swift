@@ -10,17 +10,13 @@ final class FinderStatusBar: NSView {
 
   override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.statusBarSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.statusBarSurface.cgColor(under: effectiveAppearance)
   }
 
   override init(frame: NSRect) {
     super.init(frame: frame)
     wantsLayer = true
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.statusBarSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.statusBarSurface.cgColor(under: effectiveAppearance)
 
     label.font = .systemFont(ofSize: 11)
     label.textColor = .secondaryLabelColor

@@ -63,16 +63,12 @@ public final class FoldedLabelView: NSView {
 
   public override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.popoverSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.popoverSurface.cgColor(under: effectiveAppearance)
   }
 
   private func setup() {
     wantsLayer = true
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.popoverSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.popoverSurface.cgColor(under: effectiveAppearance)
     // Clip the rounded corner so the rotated label and the expand
     // button don't bleed past the rounded edge installed by the
     // column's `SurfaceCornerObserver`.

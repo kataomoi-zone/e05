@@ -336,10 +336,8 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
   /// when nil). See ``PaneContainerViewController/applyThemeChrome(under:)``
   /// for why the fan-out path passes an explicit appearance.
   public func refreshAppearance(under appearance: NSAppearance? = nil) {
-    let target = appearance ?? effectiveAppearance
-    target.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.popoverSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.popoverSurface.cgColor(
+      under: appearance ?? effectiveAppearance)
   }
 
   @available(*, unavailable)

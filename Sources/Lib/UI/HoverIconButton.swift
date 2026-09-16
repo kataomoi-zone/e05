@@ -56,12 +56,10 @@ public final class HoverIconButton: NSButton {
   }
 
   private func updateHoverAppearance() {
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor =
-        isHovering
-        ? AppColors.buttonHoverOverlay.cgColor
-        : nil
-    }
+    layer?.backgroundColor =
+      isHovering
+      ? AppColors.buttonHoverOverlay.cgColor(under: effectiveAppearance)
+      : nil
   }
 
   /// Show / hide a hover-revealed button without using `isHidden`.

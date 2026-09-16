@@ -393,9 +393,7 @@ final class WorklanePaneCellView: NSTableCellView {
     guard suspendedRingLayer == nil else { return }
     let ring = CAShapeLayer()
     ring.fillColor = nil
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
-    }
+    ring.strokeColor = NSColor.tertiaryLabelColor.cgColor(under: effectiveAppearance)
     ring.lineWidth = 1
     ring.lineDashPattern = [3, 2]
     layer?.addSublayer(ring)
@@ -499,9 +497,7 @@ final class WorklanePaneCellView: NSTableCellView {
   override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
     if let ring = suspendedRingLayer {
-      effectiveAppearance.performAsCurrentDrawingAppearance {
-        ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
-      }
+      ring.strokeColor = NSColor.tertiaryLabelColor.cgColor(under: effectiveAppearance)
     }
     // Loading ring uses the workspace accent (passed at apply time),
     // which is appearance-independent — nothing to re-resolve here.
@@ -533,10 +529,8 @@ final class WorklanePaneCellView: NSTableCellView {
     isHovered = hovered
     closeButton.setRevealed(hovered)
     // Selection highlight still wins visually when both apply.
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor =
-        hovered ? AppColors.hoverOverlay.cgColor : nil
-    }
+    layer?.backgroundColor =
+      hovered ? AppColors.hoverOverlay.cgColor(under: effectiveAppearance) : nil
     layer?.cornerRadius = hovered ? 4 : 0
   }
 

@@ -555,9 +555,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       self?.horizontalScrollEdge = edge
     }
     wantsLayer = true
-    effectiveAppearance.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.paneSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.paneSurface.cgColor(under: effectiveAppearance)
 
     built.webView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()

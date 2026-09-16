@@ -19,7 +19,8 @@ import AppKit
 /// the appearance changed without putting the new one in effect, so a
 /// colour resolved there comes back in the old theme. Every site that
 /// resolves one (at construction, on an appearance change, on hover,
-/// on selection) therefore names the appearance to resolve under.
+/// on selection) therefore names the appearance to resolve under,
+/// through ``AppKit/NSColor/cgColor(under:)``.
 enum AppColors {
   // MARK: - Surfaces
 
@@ -130,5 +131,18 @@ enum AppColors {
       let match = appearance.bestMatch(from: [.aqua, .darkAqua])
       return match == .darkAqua ? dark : light
     }
+  }
+}
+
+extension NSColor {
+  /// Resolve to a `CGColor` under `appearance` instead of whichever
+  /// drawing appearance happens to be in effect — see ``AppColors``
+  /// for why the difference bites. Views pass their own
+  /// `effectiveAppearance`; the theme fan-out passes the appearance it
+  /// is installing, which subviews have not picked up yet.
+  func cgColor(under appearance: NSAppearance) -> CGColor {
+    var resolved = cgColor
+    appearance.performAsCurrentDrawingAppearance { resolved = self.cgColor }
+    return resolved
   }
 }

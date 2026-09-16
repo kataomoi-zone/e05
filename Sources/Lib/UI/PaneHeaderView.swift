@@ -38,10 +38,8 @@ public final class PaneHeaderView: NSView {
   /// when nil). See ``PaneContainerViewController/applyThemeChrome(under:)``
   /// for why the fan-out path passes an explicit appearance.
   public func refreshAppearance(under appearance: NSAppearance? = nil) {
-    let target = appearance ?? effectiveAppearance
-    target.performAsCurrentDrawingAppearance {
-      layer?.backgroundColor = AppColors.paneHeaderSurface.cgColor
-    }
+    layer?.backgroundColor = AppColors.paneHeaderSurface.cgColor(
+      under: appearance ?? effectiveAppearance)
   }
 
   private func setup() {
