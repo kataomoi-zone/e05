@@ -131,7 +131,11 @@ if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
     echo "build_app.sh: $RESOURCE_BUNDLE not found — run \`swift build\` first" >&2
     exit 1
 fi
-cp -f "$RESOURCE_BUNDLE"/*.js "$CONTENTS/Resources/"
+# Swift 6.4's SwiftPM builds this as a versioned bundle; earlier
+# toolchains left the resources in the bundle root.
+RESOURCE_DIR="$RESOURCE_BUNDLE/Contents/Resources"
+[[ -d "$RESOURCE_DIR" ]] || RESOURCE_DIR="$RESOURCE_BUNDLE"
+cp -f "$RESOURCE_DIR"/*.js "$CONTENTS/Resources/"
 
 # Sparkle (in-app updates). SwiftPM stages the framework beside the
 # built binaries but does not embed it, so the bundle needs its own copy
