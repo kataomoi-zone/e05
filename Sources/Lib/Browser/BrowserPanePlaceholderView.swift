@@ -68,7 +68,9 @@ final class BrowserPanePlaceholderView: NSView {
   init() {
     super.init(frame: .zero)
     wantsLayer = true
-    layer?.backgroundColor = AppColors.paneSurface.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneSurface.cgColor
+    }
 
     iconView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(iconView)

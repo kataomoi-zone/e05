@@ -49,7 +49,7 @@ public final class HoverLinkOverlayView: NSView {
 
   private func setup() {
     wantsLayer = true
-    layer?.backgroundColor = AppColors.hoverLinkSurface.cgColor
+    refreshAppearance()
     layer?.cornerRadius = 4
     // Clip to the rounded rect so any future subview (icon, badge)
     // added inside the overlay honours the corner radius instead of

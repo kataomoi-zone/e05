@@ -20,7 +20,9 @@ public final class StartPaneView: NSView {
   public override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     wantsLayer = true
-    layer?.backgroundColor = AppColors.paneSurface.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneSurface.cgColor
+    }
     setupUI()
   }
 
@@ -29,7 +31,9 @@ public final class StartPaneView: NSView {
 
   public override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
-    layer?.backgroundColor = AppColors.paneSurface.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.paneSurface.cgColor
+    }
   }
 
   private func setupUI() {

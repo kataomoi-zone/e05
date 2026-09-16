@@ -318,7 +318,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
 
     super.init(frame: frame)
     wantsLayer = true
-    layer?.backgroundColor = AppColors.popoverSurface.cgColor
+    refreshAppearance()
 
     setupButtons()
     setupURLField()

@@ -46,7 +46,7 @@ public final class PaneHeaderView: NSView {
 
   private func setup() {
     wantsLayer = true
-    layer?.backgroundColor = AppColors.paneHeaderSurface.cgColor
+    refreshAppearance()
     layer?.cornerRadius = 4
     alphaValue = 0  // start hidden
 
