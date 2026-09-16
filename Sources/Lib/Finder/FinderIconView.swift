@@ -381,10 +381,12 @@ final class FinderIconItem: NSCollectionViewItem {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     let active = isSelected && !editing
-    view.layer?.backgroundColor =
-      active
-      ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).cgColor
-      : NSColor.clear.cgColor
+    view.effectiveAppearance.performAsCurrentDrawingAppearance {
+      view.layer?.backgroundColor =
+        active
+        ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).cgColor
+        : NSColor.clear.cgColor
+    }
     CATransaction.commit()
     applyAlpha()
   }
@@ -444,7 +446,9 @@ final class FinderIconItem: NSCollectionViewItem {
     tf.delegate = delegate
     tf.focusRingType = .none
     tf.wantsLayer = true
-    tf.layer?.borderColor = NSColor.controlAccentColor.cgColor
+    tf.effectiveAppearance.performAsCurrentDrawingAppearance {
+      tf.layer?.borderColor = NSColor.controlAccentColor.cgColor
+    }
     tf.layer?.borderWidth = 1
     tf.layer?.cornerRadius = 2
     // `wraps = true` alone leaves NSTextField unable to compute its

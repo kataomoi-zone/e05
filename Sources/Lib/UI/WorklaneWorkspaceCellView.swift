@@ -281,8 +281,10 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     closeButton.setRevealed(hovered)
     addButton.setRevealed(hovered)
     addMoreButton.setRevealed(hovered)
-    layer?.backgroundColor =
-      hovered ? AppColors.hoverOverlay.cgColor : nil
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor =
+        hovered ? AppColors.hoverOverlay.cgColor : nil
+    }
     layer?.cornerRadius = hovered ? 4 : 0
   }
 

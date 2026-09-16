@@ -91,7 +91,9 @@ public final class PaneResizeHandle: NSView {
   public override func mouseEntered(with _: NSEvent) {
     guard isActive else { return }
     isHovering = true
-    layer?.backgroundColor = NSColor.separatorColor.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = NSColor.separatorColor.cgColor
+    }
     if !cursorPushed {
       resizeCursor.push()
       cursorPushed = true

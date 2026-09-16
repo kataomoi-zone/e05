@@ -208,8 +208,10 @@ final class WorklaneColumnCellView: NSTableCellView {
     guard hovered != isHovered else { return }
     isHovered = hovered
     closeButton.setRevealed(hovered)
-    layer?.backgroundColor =
-      hovered ? AppColors.hoverOverlay.cgColor : nil
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor =
+        hovered ? AppColors.hoverOverlay.cgColor : nil
+    }
     layer?.cornerRadius = hovered ? 4 : 0
   }
 

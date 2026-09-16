@@ -393,7 +393,9 @@ final class WorklanePaneCellView: NSTableCellView {
     guard suspendedRingLayer == nil else { return }
     let ring = CAShapeLayer()
     ring.fillColor = nil
-    ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      ring.strokeColor = NSColor.tertiaryLabelColor.cgColor
+    }
     ring.lineWidth = 1
     ring.lineDashPattern = [3, 2]
     layer?.addSublayer(ring)
@@ -531,8 +533,10 @@ final class WorklanePaneCellView: NSTableCellView {
     isHovered = hovered
     closeButton.setRevealed(hovered)
     // Selection highlight still wins visually when both apply.
-    layer?.backgroundColor =
-      hovered ? AppColors.hoverOverlay.cgColor : nil
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor =
+        hovered ? AppColors.hoverOverlay.cgColor : nil
+    }
     layer?.cornerRadius = hovered ? 4 : 0
   }
 

@@ -242,8 +242,10 @@ private final class PlacesButton: NSView {
   /// layer stacked on top of it.
   private func applyBackground() {
     let showHover = isHovered && !isSelected
-    layer?.backgroundColor =
-      showHover ? AppColors.hoverOverlay.cgColor : nil
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor =
+        showHover ? AppColors.hoverOverlay.cgColor : nil
+    }
     layer?.cornerRadius = showHover ? 6 : 0
   }
 
@@ -278,7 +280,9 @@ private final class SelectionIndicator: NSView {
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
-    layer?.backgroundColor = AppColors.activeOverlay.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = AppColors.activeOverlay.cgColor
+    }
     layer?.cornerRadius = 6
   }
 
@@ -315,7 +319,9 @@ private final class DownloadsBadgeView: NSView {
     super.init(frame: .zero)
     translatesAutoresizingMaskIntoConstraints = false
     wantsLayer = true
-    layer?.backgroundColor = NSColor.systemBlue.cgColor
+    effectiveAppearance.performAsCurrentDrawingAppearance {
+      layer?.backgroundColor = NSColor.systemBlue.cgColor
+    }
     layer?.cornerRadius = Self.height / 2
     setupLayout()
   }

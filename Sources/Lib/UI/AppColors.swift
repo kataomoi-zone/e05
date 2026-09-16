@@ -11,6 +11,15 @@ import AppKit
 /// Text colors stay at their call sites through `NSColor.labelColor`
 /// and friends: they form a hierarchy (primary / secondary /
 /// accessory) that wants its own pass, not a value-by-value rename.
+///
+/// Turning one of these into a `CGColor` resolves it against the
+/// drawing appearance in effect on the thread, and outside `draw(_:)`
+/// and `updateLayer` that is still the appearance the app launched
+/// with. `viewDidChangeEffectiveAppearance` is no exception: it says
+/// the appearance changed without putting the new one in effect, so a
+/// colour resolved there comes back in the old theme. Every site that
+/// resolves one (at construction, on an appearance change, on hover,
+/// on selection) therefore names the appearance to resolve under.
 enum AppColors {
   // MARK: - Surfaces
 
