@@ -333,11 +333,11 @@ extension PaneContainerViewController {
     // leave `column.containerView.frame.minX` pointing into the
     // wrong neighbourhood and the scroll would aim at a 1-pixel
     // sliver instead of the full column.
-    // A freshly inserted column lands to the right of focus, so seat it
-    // against the trailing edge: the new pane slides in from the right
-    // and the columns already on screen to its left stay visible
-    // instead of being shoved off by a centre snap.
-    let scrollTarget = animated ? computeScrollTargetX(for: column, mode: .alignRight) : nil
+    // Frame-in: a new column that fits in the space already on screen
+    // opens in place, and one that runs past the edge scrolls only as
+    // far as it overflows. Not a trailing-edge seat, which moves the
+    // view even when nothing needs to move.
+    let scrollTarget = animated ? computeScrollTargetX(for: column, mode: .frameIn) : nil
 
     if animated {
       // Now that the target frame is known, snap the column back
@@ -1300,12 +1300,11 @@ extension PaneContainerViewController {
   /// final width — reading the frame mid-tween captures an intermediate
   /// width and targets the wrong X.
   ///
-  /// `.frameIn` (default, used by focus navigation) scrolls the minimum
-  /// to bring the column fully into view and never centres, so adjacent
-  /// columns stay on screen — the whole point of a horizontally
-  /// scrolling layout. `.center` keeps the old centre-on-focus
-  /// behaviour for the explicit "centre column" action and the
-  /// insert / session-restore snaps that still want it. `.alignLeft` /
+  /// `.frameIn` (default, used by focus navigation and new columns)
+  /// scrolls the minimum to bring the column fully into view and never
+  /// centres, so adjacent columns stay on screen — the whole point of a
+  /// horizontally scrolling layout. `.center` serves the explicit
+  /// "centre column" action and the reopen / session-restore snaps. `.alignLeft` /
   /// `.alignRight` pin the column to the matching viewport edge. The
   /// math lives in the pure `columnScrollTargetX` so it is unit testable
   /// without an AppKit view tree.
@@ -1876,8 +1875,8 @@ extension PaneContainerViewController {
       // Capture scroll target while the layout reflects the
       // column's saved width — see the matching comment in
       // `insertColumn` for the 1-pixel-sliver pitfall.
-      // `.center` keeps the new-column entrance snap centring as before;
-      // the frame-in default is scoped to focus navigation for now.
+      // A reopened column centres on arrival; a new one frames in
+      // (`insertColumn`).
       let scrollTarget = animated ? computeScrollTargetX(for: column, mode: .center) : nil
 
       if animated {
