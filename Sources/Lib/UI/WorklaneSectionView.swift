@@ -103,10 +103,9 @@ final class WorklaneRowView: NSTableRowView {
   }
 }
 
-/// Outline view subclass that swallows clicks landing on the empty
-/// gutter below the last row (and the 2pt inter-row gap from
-/// `intercellSpacing`) so the focused-pane highlight survives stray
-/// clicks outside any row.
+/// Outline view subclass that swallows clicks landing between rows
+/// (the 2pt gap from `intercellSpacing`) so the focused-pane
+/// highlight survives stray clicks outside any row.
 ///
 /// Why not `allowsEmptySelection = false`: that flag also turns
 /// `deselectAll(_:)` into a no-op (documented AppKit behaviour),
@@ -119,14 +118,14 @@ final class WorklaneRowView: NSTableRowView {
 /// propagation, so the swallowed click never reaches parent views
 /// and never triggers a first-responder transfer. Worklane rows
 /// route focus through `outlineViewSelectionDidChange`, so the
-/// outline view doesn't need to claim first responder on a gutter
+/// outline view doesn't need to claim first responder on such a
 /// click anyway.
 @MainActor
 final class WorklaneOutlineView: NSOutlineView {
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     if row(at: point) < 0 {
-      // Empty gutter or inter-row gap click. Suppress so AppKit's
+      // Inter-row gap click. Suppress so AppKit's
       // default handler doesn't drop the selection; a real row's
       // `mouseDown` forwards through `super` as usual.
       return
@@ -185,13 +184,18 @@ final class WorklaneSectionView: NSView {
   private var nodesByColumnId: [ULID: WorklaneColumnNode] = [:]
   private var nodesByWorkspaceId: [ULID: WorklaneWorkspaceNode] = [:]
 
-  /// Sticky footer pinned below the outline view. Hosts the New
-  /// Workspace / New Private Workspace buttons. Pinned outside the
-  /// scroll content rather than embedded as a row per workspace so
-  /// it stays at the bottom regardless of which workspace is
-  /// expanded — workspace creation always appends to the tail, so
+  /// Footer that follows the last row. Hosts the New Workspace / New
+  /// Private Workspace buttons. A sibling of the scroll view rather
+  /// than a row of the outline, so it stays out of the drag, selection
+  /// and diff paths — workspace creation always appends to the tail, so
   /// the affordance only needs to live in one place.
   private let footerView = WorklaneFooterView()
+
+  /// Holds the scroll view at the height of its rows so the footer sits
+  /// right under the last one. Not required: once the rows outgrow the
+  /// section the footer's bottom limit wins, the scroll view takes the
+  /// remaining height, and the footer stays on screen.
+  private var listHeightConstraint: NSLayoutConstraint?
 
   /// Most recent reload input. Cell views fetch the live closures
   /// (onClick / onClose / accentColor lookup) from here so the input
@@ -285,8 +289,8 @@ final class WorklaneSectionView: NSView {
     // Empty selection stays *allowed* at the AppKit level so
     // `deselectAll(_:)` keeps working for the drag-start clear
     // (see `willBeginAt`) and the `syncSelection` nil branch.
-    // Stray clicks in the empty gutter below the last row are
-    // intercepted by `WorklaneOutlineView.mouseDown` instead,
+    // Stray clicks between rows are intercepted by
+    // `WorklaneOutlineView.mouseDown` instead,
     // which preserves the focused-pane highlight without
     // crippling programmatic deselection.
     outlineView.allowsEmptySelection = true
@@ -336,18 +340,41 @@ final class WorklaneSectionView: NSView {
     footerView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(footerView)
 
+    let listHeight = scrollView.heightAnchor.constraint(equalToConstant: 0)
+    // Below the window's stay-put size, so a long list scrolls inside
+    // the section instead of growing the window to show every row.
+    listHeight.priority = NSLayoutConstraint.Priority(
+      NSLayoutConstraint.Priority.windowSizeStayPut.rawValue - 1)
+    listHeightConstraint = listHeight
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: topAnchor),
       scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      // The footer is the bottom-pinned sibling of the outline view;
-      // the scroll content runs above it so workspaces / panes stay
-      // scrollable while the New Workspace buttons remain visible.
-      scrollView.bottomAnchor.constraint(equalTo: footerView.topAnchor),
+      // Half a row of air, so the buttons read as ending the list rather
+      // than as one more row of it.
+      scrollView.bottomAnchor.constraint(
+        equalTo: footerView.topAnchor, constant: -WorklanePaneCellView.height / 2),
+      listHeight,
       footerView.leadingAnchor.constraint(equalTo: leadingAnchor),
       footerView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      footerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      footerView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
     ])
+  }
+
+  /// Re-measure the rows after anything that changes how many are shown.
+  /// Reads the last row's rect, not the outline view's frame: a table
+  /// view grows to fill its clip view, so its frame never drops below the
+  /// scroll view's height and would hold the footer where it was.
+  private func updateListHeight() {
+    let rows = outlineView.numberOfRows
+    let rowsHeight = rows > 0 ? outlineView.rect(ofRow: rows - 1).maxY : 0
+    let insets = scrollView.contentInsets
+    let height = rowsHeight + insets.top + insets.bottom
+    guard let constraint = listHeightConstraint, constraint.constant != height else { return }
+    constraint.constant = height
+    // `syncSelection` scrolls the focused row into view next; resize the
+    // clip view first so it measures against the new height.
+    layoutSubtreeIfNeeded()
   }
 
   /// Input bundle for `reload(_:)`. All closures are expected to run
@@ -427,11 +454,10 @@ final class WorklaneSectionView: NSView {
     /// Add a finder column to the given workspace. Surfaced from
     /// the workspace row's chevron split-menu next to the plus.
     let onAddFinderPaneToWorkspace: (ULID) -> Void
-    /// Append a fresh workspace. Bound to the `+` button in each
-    /// expanded workspace's footer row.
+    /// Append a fresh workspace. Bound to the footer's `+` button.
     let onCreateWorkspace: () -> Void
-    /// Append a fresh private workspace. Bound to the dashed `+`
-    /// button in each expanded workspace's footer row.
+    /// Append a fresh private workspace. Bound to the footer's dashed
+    /// `+` button.
     let onCreatePrivateWorkspace: () -> Void
     /// Effective `Action` snapshot the worklane context menu consults
     /// to populate menu items. Closure rather than `[Action]` so the
@@ -486,6 +512,7 @@ final class WorklaneSectionView: NSView {
     }
     lastSnapshot = snapshot
     applyPersistedCollapseState(input: input)
+    updateListHeight()
     syncSelection(to: input.focusedPaneId)
     footerView.configure(input: input)
   }

@@ -1,12 +1,12 @@
 import AppKit
 
-/// Sticky footer pinned below the worklane outline view. Hosts
-/// two buttons — plain `+` (New Workspace) and dashed `+` (New
-/// Private Workspace) — so the workspace-creation entry points
-/// live inside the worklane mode where they make sense without
-/// taking up screen space inside any single workspace's row group
-/// (`createWorkspace` always appends, so a single bottom-of-list
-/// affordance is all we need).
+/// Footer that follows the worklane's last row, and stays at the
+/// bottom of the section once the list outgrows it. Hosts two
+/// buttons — plain `+` (New Workspace) and dashed `+` (New Private
+/// Workspace) — so the workspace-creation entry points live inside
+/// the worklane mode where they make sense without taking up screen
+/// space inside any single workspace's row group (`createWorkspace`
+/// always appends, so a single end-of-list affordance is all we need).
 @MainActor
 final class WorklaneFooterView: NSView {
   /// 28pt matches the workspace header row's rhythm — the footer
