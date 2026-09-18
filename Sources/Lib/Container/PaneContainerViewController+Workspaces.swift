@@ -789,7 +789,7 @@ extension PaneContainerViewController {
     let targetVC = workspaceVCs[adjustedTarget]
     // Same-workspace splits where source column collapsed shrink
     // the target columns array on the same axis the drop position
-    // refers to: AppKit gave us a child index computed against the
+    // refers to: the worklane resolves the position against the
     // pre-remove array, so a drop landing to the right of the
     // departing column slot has to shift left by one to keep
     // pointing at the same visual gap.

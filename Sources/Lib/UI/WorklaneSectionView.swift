@@ -122,6 +122,16 @@ final class WorklaneRowView: NSTableRowView {
 /// click anyway.
 @MainActor
 final class WorklaneOutlineView: NSOutlineView {
+  /// Fired when a drag leaves the list, so the section view can take
+  /// down the drop feedback it draws itself — AppKit only clears the
+  /// drop line it drew.
+  var onDraggingExited: (() -> Void)?
+
+  override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+    super.draggingExited(sender)
+    onDraggingExited?()
+  }
+
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
     if row(at: point) < 0 {
@@ -132,6 +142,26 @@ final class WorklaneOutlineView: NSOutlineView {
     }
     super.mouseDown(with: event)
   }
+}
+
+/// Outline around a multi-pane column while a pane drag would land
+/// inside it. The drop line alone draws the column's end and the gap
+/// after the column at the same height, one indent level apart; the
+/// outline is what tells the two apart. Drawn in `draw(_:)` so the
+/// accent resolves under the current appearance every time.
+@MainActor
+private final class WorklaneDropGroupView: NSView {
+  override func draw(_: NSRect) {
+    let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6)
+    path.lineWidth = 2
+    NSColor.controlAccentColor.withAlphaComponent(0.1).setFill()
+    path.fill()
+    NSColor.controlAccentColor.setStroke()
+    path.stroke()
+  }
+
+  // The drag keeps talking to the outline view underneath.
+  override func hitTest(_: NSPoint) -> NSView? { nil }
 }
 
 /// Sidebar worklane section: a three-level outline view listing every
@@ -153,12 +183,9 @@ final class WorklaneSectionView: NSView {
   fileprivate static let workspaceDragType = NSPasteboard.PasteboardType(
     "com.kawarimidoll.e05.worklane.workspace")
 
-  /// Pasteboard type for a pane row dragged inside the worklane.
-  /// Cross-workspace drag only — same-workspace reorder is not
-  /// supported yet because the worklane's column dimension would
-  /// need column-aware drop semantics (insert into column vs new
-  /// column adjacent to it) that aren't fleshed out. Payload is
-  /// the pane's ULID string.
+  /// Pasteboard type for a pane row dragged inside the worklane,
+  /// within a workspace or across to another one. Payload is the
+  /// pane's ULID string.
   fileprivate static let paneDragType = NSPasteboard.PasteboardType(
     "com.kawarimidoll.e05.worklane.pane")
 
@@ -190,6 +217,15 @@ final class WorklaneSectionView: NSView {
   /// and diff paths — workspace creation always appends to the tail, so
   /// the affordance only needs to live in one place.
   private let footerView = WorklaneFooterView()
+
+  /// Pane-drag feedback for a drop inside a column. Lives in the outline
+  /// view's coordinates, shown and hidden by `validatePaneDrop`.
+  private let dropGroupView = WorklaneDropGroupView()
+
+  /// The pane drop the latest `validatePaneDrop` showed, which is the
+  /// one `acceptPaneDrop` commits — re-reading the pointer at release
+  /// could land a pixel or an autoscroll step away from it.
+  private var validatedPaneDrop: PaneDropAction?
 
   /// Holds the scroll view at the height of its rows so the footer sits
   /// right under the last one. Not required: once the rows outgrow the
@@ -326,6 +362,9 @@ final class WorklaneSectionView: NSView {
     // redundant rather than load-bearing.
     outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
     outlineView.setDraggingSourceOperationMask([], forLocal: false)
+    dropGroupView.isHidden = true
+    outlineView.addSubview(dropGroupView)
+    outlineView.onDraggingExited = { [weak self] in self?.dropGroupView.isHidden = true }
 
     scrollView.documentView = outlineView
     scrollView.hasVerticalScroller = true
@@ -1029,6 +1068,8 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     endedAt _: NSPoint, operation _: NSDragOperation
   ) {
     isDragging = false
+    dropGroupView.isHidden = true
+    validatedPaneDrop = nil
     // A committed reorder triggers a reload whose own `syncSelection`
     // restores the highlight. A cancelled or no-op drag never
     // reaches that path, so endedAt is the only place that can
@@ -1067,9 +1108,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     {
       return workspaceDrag
     }
-    if let paneDrag = validatePaneDrop(
-      info: info, outlineView: outlineView, item: item, index: index)
-    {
+    if let paneDrag = validatePaneDrop(info: info, outlineView: outlineView) {
       return paneDrag
     }
     if let columnDrag = validateColumnDrop(
@@ -1088,7 +1127,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       return acceptWorkspaceDrop(info: info, item: item, childIndex: childIndex)
     }
     if draggedPaneId(from: info) != nil {
-      return acceptPaneDrop(info: info, item: item, childIndex: childIndex)
+      return acceptPaneDrop(info: info)
     }
     if draggedColumnId(from: info) != nil {
       return acceptColumnDrop(info: info, item: item, childIndex: childIndex)
@@ -1184,22 +1223,77 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     case insertIntoColumn(column: WorklaneColumnNode, position: Int)
   }
 
+  /// A worklane row as the pane-drop rule sees it: what kind of row
+  /// it is and where it sits, with no AppKit geometry attached.
+  enum PaneDropRow {
+    /// A workspace header. `previousColumnCount` is the column count
+    /// of the workspace listed above it, `nil` for the first one.
+    case workspace(previousColumnCount: Int?)
+    /// A multi-pane column's header row.
+    case column(index: Int, paneCount: Int, isExpanded: Bool)
+    /// A single-pane column, listed as its pane under the workspace.
+    case pane(column: Int)
+    /// A pane inside a multi-pane column.
+    case paneInColumn(index: Int)
+  }
+
+  /// Where a pane dropped on a row lands — in the row's own workspace,
+  /// or in the row's own column for `intoColumn`, unless the case says
+  /// otherwise.
+  enum PaneDropSlot: Equatable {
+    case newColumn(position: Int)
+    case newColumnInPreviousWorkspace(position: Int)
+    case intoColumn(position: Int)
+  }
+
+  /// The pane-drop rule: the upper half of a row drops before it, the
+  /// lower half after it, each at the row's own level. The answer is a
+  /// function of the row and the half alone, not of AppKit's proposed
+  /// drop, which at the gap under a column's last pane depends on the
+  /// direction the pointer arrives from. Here that gap splits by
+  /// position: the last pane's lower half is the column's end, the next
+  /// row's upper half a new column after it.
+  nonisolated static func paneDropSlot(on row: PaneDropRow, lowerHalf: Bool) -> PaneDropSlot {
+    switch row {
+    case .workspace(let previousColumnCount):
+      // Above a header is the end of the workspace listed before it,
+      // which a column closing that workspace would otherwise leave
+      // unreachable.
+      if !lowerHalf, let previousColumnCount {
+        return .newColumnInPreviousWorkspace(position: previousColumnCount)
+      }
+      return .newColumn(position: 0)
+    case .column(let index, let paneCount, let isExpanded):
+      if !lowerHalf { return .newColumn(position: index) }
+      // Collapsed, the header is the column's last visible row, so its
+      // lower half is the column's end, as the last pane's would be.
+      return .intoColumn(position: isExpanded ? 0 : paneCount)
+    case .pane(let column):
+      return .newColumn(position: lowerHalf ? column + 1 : column)
+    case .paneInColumn(let index):
+      return .intoColumn(position: lowerHalf ? index + 1 : index)
+    }
+  }
+
   private func validatePaneDrop(
-    info: NSDraggingInfo, outlineView: NSOutlineView,
-    item: Any?, index: Int
+    info: NSDraggingInfo, outlineView: NSOutlineView
   ) -> NSDragOperation? {
+    // Every rejection below leaves no feedback behind and nothing to
+    // commit; only an accepted drop sets them again.
+    dropGroupView.isHidden = true
+    validatedPaneDrop = nil
     guard let paneId = draggedPaneId(from: info),
       let sourcePaneNode = nodesByPaneId[paneId],
-      let sourceWsNode = sourcePaneNode.workspaceNode,
-      let action = paneDropAction(item: item, childIndex: index)
+      let sourceWsNode = sourcePaneNode.workspaceNode
     else { return nil }
+    guard let action = paneDropAction(at: info) else { return [] }
 
     let targetWsNode: WorklaneWorkspaceNode
     switch action {
     case .newColumn(let ws, _):
       targetWsNode = ws
     case .insertIntoColumn(let column, _):
-      guard let wsNode = column.workspaceNode else { return nil }
+      guard let wsNode = column.workspaceNode else { return [] }
       targetWsNode = wsNode
     }
 
@@ -1231,34 +1325,38 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       return []
     }
 
-    // Retarget the drop indicator so its gap visualises exactly
-    // what's about to happen — workspace-level for new columns,
-    // column wrapper for column merges. `setDropItem` is what
-    // makes a hit on a pane row resolve as "between siblings"
-    // instead of "into the pane".
+    // Point AppKit's drop line at the resolved slot — workspace level
+    // for a new column, column level for a drop inside one. A collapsed
+    // parent has no child rows on screen to draw a line between, so
+    // AppKit highlights the parent row instead.
+    let parent: Any
+    let position: Int
     switch action {
-    case .newColumn(let ws, let position):
-      outlineView.setDropItem(ws, dropChildIndex: position)
-    case .insertIntoColumn(let column, let position):
-      outlineView.setDropItem(column, dropChildIndex: position)
+    case .newColumn(let ws, let index): (parent, position) = (ws, index)
+    case .insertIntoColumn(let column, let index): (parent, position) = (column, index)
     }
+    let expanded = outlineView.isItemExpanded(parent)
+    outlineView.setDropItem(
+      parent, dropChildIndex: expanded ? position : NSOutlineViewDropOnItemIndex)
+    // Inside an expanded column the line sits at the same height as the
+    // gap after the column, one indent apart; the outline tells them apart.
+    if expanded, case .insertIntoColumn(let column, _) = action {
+      showDropGroup(around: column)
+    }
+    validatedPaneDrop = action
     return .move
   }
 
-  private func acceptPaneDrop(
-    info: NSDraggingInfo, item: Any?, childIndex: Int
-  ) -> Bool {
+  private func acceptPaneDrop(info: NSDraggingInfo) -> Bool {
+    dropGroupView.isHidden = true
     guard let input = lastInput,
       let paneId = draggedPaneId(from: info),
-      let sourcePaneNode = nodesByPaneId[paneId],
-      let action = paneDropAction(item: item, childIndex: childIndex),
-      !isNoOpAction(action, sourcePane: sourcePaneNode)
+      let action = validatedPaneDrop
     else {
       logger.warning(
         """
         [worklane/drag] pane drop guard failed \
-        item=\(String(describing: item), privacy: .public) \
-        childIndex=\(childIndex, privacy: .public)
+        location=\(String(describing: info.draggingLocation), privacy: .public)
         """)
       return false
     }
@@ -1272,79 +1370,90 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     return true
   }
 
-  /// Resolve where a pane drop should land. Returns the action
-  /// describing the destination, or `nil` for hits the worklane
-  /// can't interpret (root-level gaps between workspaces, or a hit
-  /// on a node whose parent chain doesn't lead back to a known
-  /// workspace).
-  private func paneDropAction(
-    item: Any?, childIndex: Int
-  ) -> PaneDropAction? {
-    guard let item else { return nil }
+  /// Resolve where a pane drop should land from the pointer's
+  /// position, through `paneDropSlot`. Returns `nil` off the rows, or
+  /// for a row whose parent chain doesn't lead back to a known
+  /// workspace.
+  private func paneDropAction(at info: NSDraggingInfo) -> PaneDropAction? {
+    let point = outlineView.convert(info.draggingLocation, from: nil)
+    var row = outlineView.row(at: point)
+    if row < 0 {
+      // The inter-row spacing belongs to no row; hand it to the row
+      // above, so a pointer resting on it still resolves one way.
+      let probe = NSRect(x: 0, y: point.y - 2, width: outlineView.bounds.width, height: 4)
+      let near = outlineView.rows(in: probe)
+      guard near.length > 0 else { return nil }
+      row = near.location
+    }
+    guard let item = outlineView.item(atRow: row),
+      let (shape, wsNode, columnNode) = paneDropRow(for: item)
+    else { return nil }
+    // Outline views are flipped, so the lower half has the larger y.
+    let lowerHalf = point.y >= outlineView.rect(ofRow: row).midY
+    switch Self.paneDropSlot(on: shape, lowerHalf: lowerHalf) {
+    case .newColumn(let position):
+      return .newColumn(workspace: wsNode, position: position)
+    case .newColumnInPreviousWorkspace(let position):
+      guard let previous = workspaceNodes[safe: wsNode.index - 1] else { return nil }
+      return .newColumn(workspace: previous, position: position)
+    case .intoColumn(let position):
+      guard let columnNode else { return nil }
+      return .insertIntoColumn(column: columnNode, position: position)
+    }
+  }
+
+  /// Describe `item` for `paneDropSlot`, together with the workspace
+  /// it sits in and the column node a drop inside would target.
+  private func paneDropRow(
+    for item: Any
+  ) -> (PaneDropRow, WorklaneWorkspaceNode, WorklaneColumnNode?)? {
     if let ws = item as? WorklaneWorkspaceNode {
-      // Drop directly on the workspace header (childIndex == -1):
-      // insert at the leading edge so the moved pane lands as the
-      // workspace's first column. Reads more naturally than the
-      // trailing-edge default, where dropping on a workspace title
-      // would silently put the pane at the far right of an
-      // existing chain.
-      //
-      // Drop between top-level children (childIndex >= 0): the
-      // worklane's top-level child count matches
-      // `workspaces.columns.count` (single-pane columns surface
-      // their pane directly, multi-pane columns surface their
-      // `WorklaneColumnNode`), so the index passes through unchanged.
-      if childIndex == NSOutlineViewDropOnItemIndex {
-        return .newColumn(workspace: ws, position: 0)
-      }
-      return .newColumn(workspace: ws, position: childIndex)
+      let previous = workspaceNodes[safe: ws.index - 1]
+      return (.workspace(previousColumnCount: previous?.model.columns.count), ws, nil)
     }
-    if let column = item as? WorklaneColumnNode {
-      // Drop on the column wrapper itself (`childIndex == -1`)
-      // inserts at the leading edge, matching the workspace-header
-      // shape. Drop between its panes uses the proposed child
-      // index directly.
-      if childIndex == NSOutlineViewDropOnItemIndex {
-        return .insertIntoColumn(column: column, position: 0)
-      }
-      return .insertIntoColumn(column: column, position: childIndex)
-    }
-    if let pane = item as? WorklanePaneNode,
-      let wsNode = pane.workspaceNode
+    if let column = item as? WorklaneColumnNode,
+      let ws = column.workspaceNode,
+      let index = ws.model.columns.firstIndex(where: { $0.id == column.id })
     {
-      // AppKit reports `proposedItem = pane, proposedChildIndex
-      // = -1` for hover near a row's centre. Resolve those hits
-      // to the slot **before** the pane: the user sees the drop
-      // indicator above the row and reads it as "insert here".
-      // Resolving to `paneIdx + 1` (below) silently shifted the
-      // commit down by one whenever the hit landed on the row's
-      // mid-band, even though the visible indicator sat above
-      // the next row. Hover over a row's top or bottom edge
-      // still falls through to AppKit's column+childIndex
-      // resolution path, so explicit before / after intent stays
-      // expressible.
-      if let columnNode = pane.columnNode,
-        let paneIdx =
-          panesByColumnId[columnNode.id]?.firstIndex(where: { $0.id == pane.id })
-      {
-        return .insertIntoColumn(column: columnNode, position: paneIdx)
-      }
-      // Workspace direct child = single-pane column. Same
-      // before-the-hit convention: new column lands to the left
-      // of the row's column slot.
-      if let columnIdx = wsNode.model.columns.firstIndex(where: { column in
-        column.panes.contains(where: { $0.id == pane.id })
-      }) {
-        return .newColumn(workspace: wsNode, position: columnIdx)
-      }
+      let shape = PaneDropRow.column(
+        index: index, paneCount: column.model.panes.count,
+        isExpanded: outlineView.isItemExpanded(column))
+      return (shape, ws, column)
     }
-    return nil
+    guard let pane = item as? WorklanePaneNode, let ws = pane.workspaceNode else { return nil }
+    if let column = pane.columnNode {
+      guard let paneIdx = panesByColumnId[column.id]?.firstIndex(where: { $0.id == pane.id })
+      else { return nil }
+      return (.paneInColumn(index: paneIdx), ws, column)
+    }
+    guard
+      let columnIdx = ws.model.columns.firstIndex(where: { column in
+        column.panes.contains(where: { $0.id == pane.id })
+      })
+    else { return nil }
+    return (.pane(column: columnIdx), ws, nil)
+  }
+
+  /// Outline an expanded `column` from its header row through its
+  /// last pane.
+  private func showDropGroup(around column: WorklaneColumnNode) {
+    let header = outlineView.row(forItem: column)
+    let last = panesByColumnId[column.id]?.last.map { outlineView.row(forItem: $0) } ?? -1
+    guard header >= 0, last >= 0 else { return }
+    // Rows the list realises while it scrolls land on top of it, so
+    // lift the outline back above them.
+    if outlineView.subviews.last !== dropGroupView {
+      outlineView.addSubview(dropGroupView, positioned: .above, relativeTo: nil)
+    }
+    let frame = outlineView.rect(ofRow: header).union(outlineView.rect(ofRow: last))
+    dropGroupView.frame = frame.insetBy(dx: 4, dy: -1)
+    dropGroupView.isHidden = false
   }
 
   /// True when `action` would put the dragged pane back where it
-  /// already is. Lets `validateDrop` suppress the indicator and
-  /// `acceptDrop` reject the commit so the moved pane never gets
-  /// pulled out and re-inserted into the exact same slot.
+  /// already is. Lets `validateDrop` suppress the indicator and refuse
+  /// the drop, so the moved pane never gets pulled out and re-inserted
+  /// into the exact same slot.
   private func isNoOpAction(
     _ action: PaneDropAction, sourcePane: WorklanePaneNode
   ) -> Bool {
