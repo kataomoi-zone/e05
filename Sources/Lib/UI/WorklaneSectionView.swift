@@ -227,6 +227,14 @@ final class WorklaneSectionView: NSView {
   /// could land a pixel or an autoscroll step away from it.
   private var validatedPaneDrop: PaneDropAction?
 
+  /// Where the list was scrolled when a drop was committed, spent by the
+  /// next `syncSelection`. The drop's reload re-selects the focused row,
+  /// and scrolling that row fully into view moved the list under the
+  /// pointer the moment the drop landed; the dropped row sits where the
+  /// user let go, so the list holds still unless it has ended up wholly
+  /// off screen.
+  private var listOriginAtDrop: NSPoint?
+
   /// Holds the scroll view at the height of its rows so the footer sits
   /// right under the last one. Not required: once the rows outgrow the
   /// section the footer's bottom limit wins, the scroll view takes the
@@ -955,6 +963,14 @@ final class WorklaneSectionView: NSView {
   /// by `isSyncingSelection` so the cascade can't re-enter the
   /// click handlers.
   private func syncSelection(to focusedPaneId: ULID?) {
+    let originAtDrop = listOriginAtDrop
+    listOriginAtDrop = nil
+    if let originAtDrop {
+      let clip = scrollView.contentView
+      let target = clip.constrainBoundsRect(NSRect(origin: originAtDrop, size: clip.bounds.size))
+      clip.setBoundsOrigin(target.origin)
+      scrollView.reflectScrolledClipView(clip)
+    }
     guard let focusedPaneId, let node = nodesByPaneId[focusedPaneId]
     else {
       isSyncingSelection = true
@@ -967,7 +983,9 @@ final class WorklaneSectionView: NSView {
     guard row >= 0 else { return }
     isSyncingSelection = true
     outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    outlineView.scrollRowToVisible(row)
+    if originAtDrop == nil || !outlineView.visibleRect.intersects(outlineView.rect(ofRow: row)) {
+      outlineView.scrollRowToVisible(row)
+    }
     isSyncingSelection = false
   }
 
@@ -1123,6 +1141,9 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     _: NSOutlineView, acceptDrop info: NSDraggingInfo,
     item: Any?, childIndex: Int
   ) -> Bool {
+    listOriginAtDrop = scrollView.contentView.bounds.origin
+    // Nothing moved, so no reload comes to spend it.
+    defer { if !didCommitReorderInLastDrag { listOriginAtDrop = nil } }
     if draggedWorkspaceId(from: info) != nil {
       return acceptWorkspaceDrop(info: info, item: item, childIndex: childIndex)
     }
