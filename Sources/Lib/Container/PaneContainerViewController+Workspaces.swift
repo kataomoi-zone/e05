@@ -58,9 +58,13 @@ extension PaneContainerViewController {
   /// The two conventions intentionally differ: palette-driven switches
   /// read like spatial navigation, cycle-driven switches read like
   /// sequential navigation. Both are correct for their use case.
+  /// `duration` is the slide's. A caller that brings its own transition
+  /// passes 0: a slide underneath one is a second animation going the
+  /// other way.
   public func switchWorkspace(
     to index: Int,
     slidingUp: Bool? = nil,
+    duration: TimeInterval = 0.25,
     completion: (@MainActor @Sendable () -> Void)? = nil
   ) {
     let targetCol = workspaces[safe: index]?.focusedColumnIndex ?? -1
@@ -102,7 +106,8 @@ extension PaneContainerViewController {
     focusedWorkspaceIndex = index
     restoreScroll(in: currentWorkspace)
     showToast(workspaces[index].displayName(at: index))
-    animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp) { [weak self] in
+    animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: resolvedSlidingUp, duration: duration) {
+      [weak self] in
       self?.restoreFocusInCurrentWorkspace()
       completion?()
     }
