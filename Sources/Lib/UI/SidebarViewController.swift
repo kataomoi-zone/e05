@@ -141,7 +141,7 @@ final class SidebarViewController: NSViewController {
       )
       return
     }
-    action.handler()
+    container?.run(action)
   }
 
   /// Wire up container-dependent state. Called exactly once by

@@ -36,6 +36,31 @@ public final class WorkspaceViewController: NSViewController {
   /// need a side-dictionary to find it at animation time.
   weak var topConstraint: NSLayoutConstraint?
 
+  /// Trailing constraint pinning this VC's root view to the container's
+  /// trailing edge. Held for the pane map, which swaps it for a width so
+  /// the row can show every column instead of the window-wide slice.
+  ///
+  /// Strong, unlike ``topConstraint``: that one is active for the VC's
+  /// whole life and so stays owned by the container view, while this one
+  /// spends the map deactivated — and a deactivated constraint nobody
+  /// holds is deallocated, leaving the row with no width at all when the
+  /// map tries to put it back.
+  var trailingConstraint: NSLayoutConstraint?
+
+  /// Leading constraint pinning this VC's root view to the container's.
+  /// Weak like ``topConstraint``: the pane map only slides it, so it stays
+  /// active — and owned by the container view — for the VC's whole life.
+  weak var leadingConstraint: NSLayoutConstraint?
+
+  /// Height constraint pinning this VC's root view to the container's, and
+  /// the pin holding its column strip to the bottom of the clip view.
+  /// Strong for the same reason as ``trailingConstraint``: the pane map
+  /// takes both off — the row becomes as tall as the zoomed-out workspace,
+  /// and the strip stops following the clip view, which is what stops the
+  /// zoom from re-flowing every pane.
+  var heightConstraint: NSLayoutConstraint?
+  var stackBottomConstraint: NSLayoutConstraint?
+
   public init(workspace: WorkspaceModel) {
     self.workspace = workspace
     super.init(nibName: nil, bundle: nil)
@@ -87,6 +112,9 @@ public final class WorkspaceViewController: NSViewController {
     stackView.translatesAutoresizingMaskIntoConstraints = false
     root.addSubview(scrollView)
 
+    let stackBottom = stackView.bottomAnchor.constraint(
+      equalTo: scrollView.contentView.bottomAnchor)
+    stackBottomConstraint = stackBottom
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: root.topAnchor),
       scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -94,7 +122,7 @@ public final class WorkspaceViewController: NSViewController {
       scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
       stackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-      stackView.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
+      stackBottom,
     ])
   }
 

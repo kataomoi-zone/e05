@@ -140,6 +140,14 @@ extension PaneContainerViewController {
     animated: Bool,
     completion: (@MainActor @Sendable () -> Void)?
   ) {
+    // Every reveal and retract rewrites each workspace's leading inset
+    // and shifts its clip origin, which is the ground the pane map's rows
+    // are measured against — a peek retracting behind an open map would
+    // slide every row's columns 260pt sideways under rects that say
+    // otherwise. Leave the map first. Nothing here is reached during the
+    // close: it restores the insets through `applyLeadingInset(in:)`.
+    if isPaneMapOpen { closePaneMap() }
+
     // The find bar floats centered at the pane bottom and the
     // sidebar slides in from the leading edge — they no longer
     // overlap visually, so revealing the sidebar leaves any open

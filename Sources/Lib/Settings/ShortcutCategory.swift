@@ -93,6 +93,7 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
         "column_center",
         "toggle_fold",
         "toggle_pin_column",
+        "toggle_pane_map",
       ]
     ),
     (

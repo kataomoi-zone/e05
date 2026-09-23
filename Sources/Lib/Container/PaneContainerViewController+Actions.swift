@@ -16,8 +16,22 @@ extension PaneContainerViewController {
     guard let action = actions().first(where: { $0.id == id }) else {
       return false
     }
-    action.handler()
+    run(action)
     return true
+  }
+
+  /// Run `action`, whatever asked for it.
+  ///
+  /// Only the pane map's key monitor steps the map aside for a chord, and
+  /// most of the ways an action starts never reach it: the menu bar, the
+  /// command palette, the sidebar's buttons and context menus, the
+  /// control socket. The map lays the workspaces out in rows that nothing
+  /// but its own toggle knows how to read — a pin run against them lifts
+  /// a column out of a zoomed-out strip and back to full size — so every
+  /// entry point leaves it first, here, rather than each remembering to.
+  public func run(_ action: Action) {
+    if isPaneMapOpen, action.id != "toggle_pane_map" { closePaneMap() }
+    action.handler()
   }
 
   /// All user-facing actions, in menu display order. Both the menu bar
@@ -273,6 +287,13 @@ extension PaneContainerViewController {
           // `togglePinColumn` flips `isPinned` synchronously.
           self.showToast(column.isPinned ? "Pin Column" : "Unpin Column")
         }
+      ),
+      Action(
+        id: "toggle_pane_map",
+        title: "Toggle Pane Map",
+        keyEquivalent: "m",
+        modifierMask: [.option, .control],
+        handler: { [weak self] in self?.togglePaneMap() }
       ),
       Action(
         id: "toggle_bookmark",

@@ -167,6 +167,9 @@ public final class PaneContainerViewController: NSViewController {
   /// Pending hover-focus check (see `scheduleHoverFocus`).
   private var hoverFocusWorkItem: DispatchWorkItem?
 
+  /// What the open pane map has to undo on close; `nil` while it is closed.
+  var paneMapSession: PaneMapSession?
+
   /// How long the pointer and the workspace both have to hold still
   /// before the pane under the pointer takes focus. Long enough that a
   /// pointer travelling across the window does not focus everything on
@@ -775,13 +778,14 @@ public final class PaneContainerViewController: NSViewController {
     // sidebar give the glass a blur source. The pinned-sidebar
     // offset is applied below as a `scrollView.contentInsets.left`,
     // not as a leading constant on the root view.
-    NSLayoutConstraint.activate([
-      top,
-      wv.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      wv.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      wv.heightAnchor.constraint(equalTo: view.heightAnchor),
-    ])
+    let trailing = wv.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+    let leading = wv.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+    let height = wv.heightAnchor.constraint(equalTo: view.heightAnchor)
+    NSLayoutConstraint.activate([top, leading, trailing, height])
     vc.topConstraint = top
+    vc.leadingConstraint = leading
+    vc.trailingConstraint = trailing
+    vc.heightConstraint = height
     // `viewDidLoad` runs before `installSidebar`, so the first call
     // here resolves to 0 (`currentLeadingInset` defaults to 0 and
     // `applyInitialState` rewrites it during `installSidebar`).
@@ -985,8 +989,9 @@ public final class PaneContainerViewController: NSViewController {
     // mid-animation to avoid snapping interpolated constants.
     // The `!=` guards keep this pass idempotent — rewriting the same
     // constant would dirty the constraint engine and risk scheduling
-    // another layout loop.
-    if !isAnimatingWorkspaceSwitch {
+    // another layout loop. The pane map lays every workspace out in rows
+    // of its own, so it is left alone too.
+    if !isAnimatingWorkspaceSwitch, !isPaneMapOpen {
       let h = view.bounds.height
       for (i, vc) in workspaceVCs.enumerated() {
         guard let top = vc.topConstraint else { continue }
@@ -999,6 +1004,7 @@ public final class PaneContainerViewController: NSViewController {
         }
       }
     }
+    reapplyPaneMapCameraIfGeometryMoved()
     isUpdatingLayout = false
   }
 
@@ -1081,6 +1087,7 @@ public final class PaneContainerViewController: NSViewController {
       [weak self] event in
       guard let self, let window = self.view.window,
         event.window === window,
+        !self.isPaneMapOpen,
         event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift).isEmpty,
         !(window.firstResponder is NSText),
         let column = self.columns[safe: self.focusedColumnIndex],
@@ -1114,6 +1121,9 @@ public final class PaneContainerViewController: NSViewController {
     // where it usually does land inside the pane area, and gets routed
     // to the workspace instead of to the panel under the pointer.
     guard event.window === view.window else { return event }
+    // The map's shield swallows scrolls; routing one to the workspace
+    // would scroll the strip underneath it.
+    guard !isPaneMapOpen else { return event }
 
     let locationInView = scrollView.convert(event.locationInWindow, from: nil)
     guard scrollView.bounds.contains(locationInView) else { return event }
@@ -1330,6 +1340,11 @@ public final class PaneContainerViewController: NSViewController {
   private func focusPaneUnderCursor() {
     guard let window = view.window, window.isKeyWindow, window.attachedSheet == nil else { return }
     guard !isAnimatingWorkspaceSwitch else { return }
+    // The map has its own hover, over the shrunk copies. This one reads
+    // the full-size layout still underneath them and would scroll it out
+    // from under the map. Here rather than only at the scheduling end: a
+    // check armed just before the map opened still comes due inside it.
+    guard !isPaneMapOpen else { return }
     // Resting the pointer somewhere is not a reason to abandon a field
     // the user is typing in — the same responder the type-to-reveal
     // monitor steps aside for. One exception, or hover would jam on the

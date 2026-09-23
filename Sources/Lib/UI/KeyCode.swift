@@ -19,7 +19,10 @@ public enum KeyCode {
   public static let space: UInt16 = 0x31
   /// Backspace / Delete (the key labelled "delete" on most layouts).
   public static let delete: UInt16 = 0x33
+  public static let escape: UInt16 = 0x35
   public static let numpadEnter: UInt16 = 0x4C
   public static let leftArrow: UInt16 = 0x7B
   public static let rightArrow: UInt16 = 0x7C
+  public static let downArrow: UInt16 = 0x7D
+  public static let upArrow: UInt16 = 0x7E
 }

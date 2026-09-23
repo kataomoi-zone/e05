@@ -954,7 +954,7 @@ extension PaneContainerViewController {
     }
     commandPalette.onExecute = { [weak self] index in
       guard let self, self.cachedActionResults.indices.contains(index) else { return }
-      self.cachedActionResults[index].handler()
+      self.run(self.cachedActionResults[index])
     }
     commandPalette.onDismiss = { [weak self] in
       // Re-arm the responder chain on the focused pane. Focus alone
@@ -2251,7 +2251,7 @@ extension PaneContainerViewController {
     // pane before invoking them would feel like an unrelated focus
     // jump.
     if Self.paneAgnosticMenuActions.contains(actionId) {
-      menuActionsSnapshot.first(where: { $0.id == actionId })?.handler()
+      menuActionsSnapshot.first(where: { $0.id == actionId }).map(run)
       return
     }
     guard let initialTarget = locatePane(id: paneId) else { return }
@@ -2264,8 +2264,7 @@ extension PaneContainerViewController {
       guard let self, let current = self.locatePane(id: paneId) else { return }
       self.setFocus(
         columnIndex: current.columnIndex, paneIndex: current.paneIndex)
-      self.menuActionsSnapshot
-        .first(where: { $0.id == actionId })?.handler()
+      self.menuActionsSnapshot.first(where: { $0.id == actionId }).map(self.run)
     }
     if initialTarget.workspaceIndex == focusedWorkspaceIndex {
       invoke()
@@ -2349,8 +2348,7 @@ extension PaneContainerViewController {
         current.column.focusedPaneIndex, current.column.panes.count - 1)
       self.setFocus(
         columnIndex: current.columnIndex, paneIndex: paneIndex)
-      self.menuActionsSnapshot
-        .first(where: { $0.id == actionId })?.handler()
+      self.menuActionsSnapshot.first(where: { $0.id == actionId }).map(self.run)
     }
     if initialTarget.workspaceIndex == focusedWorkspaceIndex {
       invoke()

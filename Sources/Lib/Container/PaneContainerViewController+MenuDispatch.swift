@@ -34,7 +34,7 @@ extension PaneContainerViewController: NSMenuItemValidation {
   @objc public func performAction(_ sender: NSMenuItem) {
     let snapshot = menuActionsSnapshot
     guard snapshot.indices.contains(sender.tag) else { return }
-    snapshot[sender.tag].handler()
+    run(snapshot[sender.tag])
   }
 
   public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

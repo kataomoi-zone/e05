@@ -25,7 +25,13 @@ extension PaneContainerViewController {
     // active hover-peek compensation — otherwise a save while peek
     // is open would persist a 260pt shift that the next launch
     // (which never restores `.hoverPeek`) couldn't undo.
-    currentWorkspace.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    // The pane map parks each row at its leading edge, so while it is
+    // open the live origin is the map's, not the user's. It writes the
+    // logical offset to the model when it opens; leave that alone.
+    if !isPaneMapOpen {
+      currentWorkspace.scrollX =
+        scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    }
 
     // Drop private workspaces from the snapshot: they're explicitly
     // ephemeral and persisting their URLs would defeat the mode.

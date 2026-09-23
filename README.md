@@ -65,6 +65,7 @@ The bindings below are the **defaults** — remap, clear, or reset any of them i
 | | `⌘⇧ T` | Reopen last closed pane (within 10s) |
 | Layout | `⌥⌃ /` | Cycle pane width preset (defaults to 640 pt → 1/2 → 1/3; editable in Settings → Appearance) |
 | | `⌥⌃ F` | Toggle column fold |
+| | `⌥⌃ M` | Pane map — every workspace zoomed out at once (see below) |
 | Browser | `⌘ L` / `⌘⇧ L` | Focus URL bar / toggle URL bar visibility |
 | | `⌘ R` / `⌘⇧ R` | Reload / hard reload (bypass cache) |
 | | `⌘ .` | Stop loading |
@@ -90,6 +91,8 @@ The bindings below are the **defaults** — remap, clear, or reset any of them i
 The command palette surfaces every action by id (e.g. `new_terminal_pane`, `browser_suspend`, `finder_view_as_icons`), so unbound actions are still reachable by typing.
 
 Drag a divider between columns to resize the focused column from whichever of its sides is on screen, even while the column runs past the window; drag one between panes to trade height between them. Double-click a divider between columns to split the window evenly among the columns on screen, or one between panes to even out that column's heights — also available as the `tile_visible_columns` and `equalize_pane_heights` actions.
+
+`⌥⌃ M` opens the **pane map**: every workspace shrinks into a row of its own — live, not a screenshot — with the whole workspace on show rather than the window-wide slice of it. Arrow keys or `h` / `j` / `k` / `l` move the selection, sideways within a workspace and up or down through the rows; `⏎` (or a click) goes to the selected pane, switching workspace if that is where it is; `esc` leaves everything as it was. Scrolling pans the map, and hovering picks out a pane when **Settings → General → Navigation → Focus the pane under the pointer** is on.
 
 ## Configuration
 
