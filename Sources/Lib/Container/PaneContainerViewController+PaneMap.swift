@@ -348,6 +348,7 @@ extension PaneContainerViewController {
     let h = view.bounds.height
     NSLayoutConstraint.deactivate(session.mapConstraints)
     for (i, vc) in workspaceVCs.enumerated() {
+      returnPinnedColumnToOverlay(in: vc)
       vc.trailingConstraint?.isActive = true
       vc.heightConstraint?.isActive = true
       vc.stackBottomConstraint?.isActive = true
@@ -390,15 +391,9 @@ extension PaneContainerViewController {
   /// that is now `1/scale` taller, and the row itself, which is no longer
   /// the height of the window.
   ///
-  /// LIMITATION: a pinned column is a sibling of the scroll view rather
-  /// than part of the document, so `magnification` does not reach it — it
-  /// draws at full size over its row, and the top and bottom pins holding
-  /// it to the row do shrink it, which reflows its panes for as long as
-  /// the map is up. Moving it into the stack fixes both and cannot be
-  /// done: a live pane does not survive leaving the view hierarchy (a
-  /// terminal comes back with its scrollback gone and its keyboard dead).
-  /// The remaining route is a fixed size plus a layer transform, with the
-  /// map's own rects scaled to match for that one column.
+  /// Everything the map shows therefore has to be *inside* the document
+  /// the magnification applies to, which is what `lendPinnedColumnToStack`
+  /// is for.
   private func applyPaneMapLayout() {
     guard let session = paneMapSession else { return }
     let scale = Self.paneMapScale
@@ -414,14 +409,12 @@ extension PaneContainerViewController {
           for pane in column.panes { pane.terminalView?.resyncSurfaceSize() }
         }
       }
-      // Drop the sidebar's share of the leading reserve for as long as the
-      // map is up. On screen that lane is the sidebar; in the map it would
-      // be an empty strip down the left of every row. The pinned column's
-      // own reserve stays, and its overlay moves to where the lane starts.
-      vc.scrollView.contentInsets.left = pinnedColumnReserve(in: vc)
-      pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = WorkspaceViewController.outerMargin
-      let strip = max(vc.stackView.frame.width, vc.stackView.fittingSize.width)
-      let content = vc.scrollView.contentInsets.left + strip
+      lendPinnedColumnToStack(in: vc)
+      // No leading reserve at all while the map is up: the sidebar's share
+      // would be an empty strip down the left of every row, and the pinned
+      // column's lane is not needed now that the column is in the strip.
+      vc.scrollView.contentInsets.left = 0
+      let content = max(vc.stackView.frame.width, vc.stackView.fittingSize.width)
       let stripHeight = vc.stackView.frame.height
 
       vc.stackBottomConstraint?.isActive = false
@@ -769,13 +762,18 @@ extension PaneContainerViewController {
       // sit under the very column it marks. (The row name plates get away
       // with being layers only because they hang in the gap, over no
       // subview at all.)
+      //
+      // A child of the row rather than of the column, so it keeps its own
+      // size while the column is drawn at map scale. `convert` reads the
+      // magnification, so the corner it is placed against is the one on
+      // screen.
       let badge = NSImageView(image: glyph)
       badge.imageScaling = .scaleProportionallyUpOrDown
       badge.contentTintColor = Self.accentColor(forWorkspaceAt: i)
       let rect = column.containerView.convert(column.containerView.bounds, to: vc.view)
       badge.frame = CGRect(
         x: rect.minX + inset, y: rect.maxY - side - inset, width: side, height: side)
-      vc.view.addSubview(badge, positioned: .above, relativeTo: column.containerView)
+      vc.view.addSubview(badge)
       session.pinBadges.append(badge)
     }
   }

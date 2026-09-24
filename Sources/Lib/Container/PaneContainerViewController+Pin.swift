@@ -244,6 +244,55 @@ extension PaneContainerViewController {
     layer.shadowRadius = 10
   }
 
+  /// Lend a pinned column to the scrolling stack, and take it back with
+  /// ``returnPinnedColumnToOverlay(in:)``. For the pane map, which is the
+  /// only caller.
+  ///
+  /// The map zooms a workspace out with `NSScrollView.magnification`, and
+  /// that scales the scroll view's document and nothing else. A pinned
+  /// column is a sibling of the scroll view, so it would draw at full size
+  /// over a row drawn at map scale — and the top and bottom pins holding
+  /// it to the row *do* follow the row down, so its panes really are laid
+  /// out that small and reflow whatever they are showing.
+  ///
+  /// In the stack it is a column like any other: same magnification, same
+  /// stack height pin, and no second copy of the map's geometry to drift.
+  /// `isPinned` stays true — it is what the sidebar reads and what a
+  /// session save writes out, and nothing here is unpinning anything.
+  func lendPinnedColumnToStack(in vc: WorkspaceViewController) {
+    guard let column = pinnedColumn(in: vc) else { return }
+    // The handle is constrained to the column from outside the scroll
+    // view. Left in place it would have Auto Layout relate a magnified
+    // frame to an unmagnified one, and the row's whole layout goes with
+    // it; rebuilding it on the way back is cheaper than re-pointing it.
+    removePinResizeHandle(column)
+    NSLayoutConstraint.deactivate(column.pinConstraints)
+    reparentColumn(column) {
+      vc.stackView.insertArrangedSubview(column.containerView, at: 0)
+    }
+    // After the insert, so the column and the stack share an ancestor —
+    // the ordering `insertColumn` documents at its own height pin.
+    let heightPin = column.containerView.heightAnchor.constraint(
+      equalTo: vc.stackView.heightAnchor,
+      constant: -(WorkspaceViewController.outerMargin * 2))
+    heightPin.isActive = true
+    column.heightPin = heightPin
+  }
+
+  /// Hand a lent column back to the leading overlay. `pinConstraints` is
+  /// held strongly by the column, so it goes back on the same pins it came
+  /// off; the caller resets their constants through `applyLeadingInset`.
+  func returnPinnedColumnToOverlay(in vc: WorkspaceViewController) {
+    guard let column = pinnedColumn(in: vc), !column.pinConstraints.isEmpty else { return }
+    column.heightPin?.isActive = false
+    vc.stackView.removeArrangedSubview(column.containerView)
+    reparentColumn(column) {
+      vc.view.addSubview(column.containerView, positioned: .above, relativeTo: vc.scrollView)
+      NSLayoutConstraint.activate(column.pinConstraints)
+    }
+    installPinResizeHandle(for: column, in: vc)
+  }
+
   /// Return `column` from the leading overlay to the scrolling stack.
   func unpinColumn(_ column: ColumnModel) {
     let vc = currentWorkspaceVC
