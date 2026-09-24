@@ -82,6 +82,38 @@ extension PaneContainerViewController {
     }
   }
 
+  /// Move `column`'s view somewhere else in the hierarchy — `reattach`
+  /// puts it back — without its panes paying for the trip.
+  ///
+  /// Everything hangs off the moment `removeFromSuperview` takes the view
+  /// out of the *window*:
+  ///
+  /// - a terminal reads that as its surface being finished.
+  ///   `viewDidMoveToWindow` frees it, and the view comes back carrying a
+  ///   brand-new shell: the scrollback, and whatever was running in it,
+  ///   gone. `keepSurfaceAlive` is the same flag a workspace switch sets,
+  ///   and is sticky the same way — a close path turns it back off.
+  /// - AppKit hands the first responder back to the window, so the pane
+  ///   that had the keyboard quietly stops taking input.
+  ///
+  /// Neither is something a pin is allowed to cost.
+  func reparentColumn(_ column: ColumnModel, reattach: () -> Void) {
+    for pane in column.panes { pane.terminalView?.keepSurfaceAlive = true }
+    let window = column.containerView.window
+    let previous = window?.firstResponder
+    let hadKeyboard = (previous as? NSView)?.isDescendant(of: column.containerView) ?? false
+    column.containerView.removeFromSuperview()
+    reattach()
+    guard hadKeyboard else { return }
+    // Back to whatever actually had it, not to the column's idea of where
+    // focus belongs: a URL bar being typed into would otherwise hand the
+    // keyboard to the web view behind it and drop the half-entered text.
+    // A field editor is shared and does not survive the trip, so its
+    // client — the text field — stands in for it.
+    let target = (previous as? NSText)?.delegate as? NSResponder ?? previous
+    window?.makeFirstResponder(target)
+  }
+
   /// Repaint the worklane row(s) for `column` so its fold / pin indicators
   /// update without a structural reload.
   private func refreshWorklaneColumnRow(_ column: ColumnModel) {
@@ -119,8 +151,9 @@ extension PaneContainerViewController {
     // the stack's arranged list is left explicitly consistent rather
     // than relying on `removeFromSuperview`'s implicit detach.
     vc.stackView.removeArrangedSubview(column.containerView)
-    column.containerView.removeFromSuperview()
-    vc.view.addSubview(column.containerView, positioned: .above, relativeTo: vc.scrollView)
+    reparentColumn(column) {
+      vc.view.addSubview(column.containerView, positioned: .above, relativeTo: vc.scrollView)
+    }
 
     let margin = WorkspaceViewController.outerMargin
     let leading = column.containerView.leadingAnchor.constraint(
@@ -220,13 +253,12 @@ extension PaneContainerViewController {
     NSLayoutConstraint.deactivate(column.pinConstraints)
     column.pinConstraints = []
     column.pinLeadingConstraint = nil
-    column.containerView.removeFromSuperview()
 
     // Re-insert into the scrolling stack, then restore the stack height
     // pin (activated after `rebuildStackView` so the column and the
     // stack share a common ancestor — see the same ordering note in
     // `insertColumn`).
-    rebuildStackView(in: vc)
+    reparentColumn(column) { rebuildStackView(in: vc) }
     let heightPin = column.containerView.heightAnchor.constraint(
       equalTo: vc.stackView.heightAnchor,
       constant: -(WorkspaceViewController.outerMargin * 2))
