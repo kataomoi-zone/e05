@@ -127,6 +127,62 @@ extension PaneContainerViewController {
 
   // MARK: - State machine layout application
 
+  /// Trailing reserve matching the hover peek's leading one, and 0 in
+  /// every other state.
+  ///
+  /// The peek takes `sidebarWidth` off the leading edge for AppKit's
+  /// cursor and tracking dispatch, then scrolls the same distance back so
+  /// the columns underneath do not move. That only works while the scroll
+  /// view still has the range to take it, and the leading reserve costs
+  /// exactly that much at the far end: a workspace whose columns already
+  /// fit on screen has none to give, the clip clamps the compensation,
+  /// and its columns slide out from under a sidebar that is only meant to
+  /// be lying on top of them. A matching trailing reserve keeps the range
+  /// the size it was.
+  var peekTrailingInset: CGFloat { hoverPeekScrollCompensation }
+
+  /// Widen every row's trailing reserve to whatever the transition will
+  /// need, before anything starts moving, and ``settlePeekTrailingReserve``
+  /// brings it down to the target once everything has landed.
+  ///
+  /// The reserve has to outlast the move it pays for, in both directions.
+  /// Shrinking it up front cost a row scrolled to its far end the range
+  /// it was about to travel through: the clip clamped the origin down to
+  /// the new, shorter limit, and the compensation then took the same
+  /// distance again, so leaving a peek jumped its columns a sidebar's
+  /// width to the left.
+  private func growPeekTrailingReserve() {
+    for vc in workspaceVCs {
+      vc.scrollView.contentInsets.right = max(
+        vc.scrollView.contentInsets.right, peekTrailingInset)
+    }
+  }
+
+  /// Drop every row's trailing reserve to what the settled state owes.
+  private func settlePeekTrailingReserve() {
+    for vc in workspaceVCs {
+      vc.scrollView.contentInsets.right = peekTrailingInset
+    }
+  }
+
+  /// Cancel the leading reserve's push by moving every row's scroll
+  /// origin the same distance, so a hover peek lies over the columns
+  /// instead of shifting them.
+  ///
+  /// Relative, and deliberately so: writing `contentInsets.left` makes
+  /// the scroll view move the origin itself, and this shift is what
+  /// cancels that. Computing an absolute target from the origin as it was
+  /// before instead throws the scroll view's own adjustment away, and
+  /// every workspace slides by the sidebar's width.
+  private func compensatePeekScroll(by delta: CGFloat) {
+    guard delta != 0 else { return }
+    for vc in workspaceVCs {
+      var origin = vc.scrollView.contentView.bounds.origin
+      origin.x += delta
+      vc.scrollView.contentView.setBoundsOrigin(origin)
+    }
+  }
+
   /// Drive the sidebar/workspace layout to match `state`. `animated`
   /// wraps the constraint changes in an `NSAnimationContext` group;
   /// the cold-start `applyInitialState` passes `false` so the sidebar
@@ -191,17 +247,15 @@ extension PaneContainerViewController {
 
     guard animated else {
       sidebarLeadingConstraint?.constant = sidebarConst
+      growPeekTrailingReserve()
       for vc in workspaceVCs {
         // Compose the sidebar reserve with this workspace's pinned-
         // column reserve so neither inset write clobbers the other.
         vc.scrollView.contentInsets.left = pinnedInset + pinnedColumnReserve(in: vc)
         pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = pinnedOverlayLeading()
-        if scrollDelta != 0 {
-          var origin = vc.scrollView.contentView.bounds.origin
-          origin.x += scrollDelta
-          vc.scrollView.contentView.setBoundsOrigin(origin)
-        }
       }
+      compensatePeekScroll(by: scrollDelta)
+      settlePeekTrailingReserve()
       view.layoutSubtreeIfNeeded()
       completion?()
       return
@@ -231,6 +285,8 @@ extension PaneContainerViewController {
         completion?()
         return
       }
+      // Before anything moves, whichever branch below does the moving.
+      self.growPeekTrailingReserve()
       if snapContent {
         // `.hoverPeek` transitions only — the inset/origin shifts
         // cancel visually, so we snap them synchronously and let the
@@ -245,12 +301,8 @@ extension PaneContainerViewController {
         for vc in self.workspaceVCs {
           vc.scrollView.contentInsets.left = pinnedInset + self.pinnedColumnReserve(in: vc)
           self.pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = self.pinnedOverlayLeading()
-          if scrollDelta != 0 {
-            var origin = vc.scrollView.contentView.bounds.origin
-            origin.x += scrollDelta
-            vc.scrollView.contentView.setBoundsOrigin(origin)
-          }
         }
+        self.compensatePeekScroll(by: scrollDelta)
       }
       NSAnimationContext.runAnimationGroup(
         { ctx in
@@ -287,6 +339,9 @@ extension PaneContainerViewController {
         },
         completionHandler: {
           MainActor.assumeIsolated {
+            // Only now: the reserve that was widened for this transition
+            // is what the origin travelled through, animated or not.
+            self.settlePeekTrailingReserve()
             completion?()
           }
         })

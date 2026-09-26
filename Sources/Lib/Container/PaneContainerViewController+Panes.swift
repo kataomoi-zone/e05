@@ -1278,7 +1278,12 @@ extension PaneContainerViewController {
   /// centring) all agree on the same notion of "visible".
   func effectiveVisibleWidth(in scrollView: NSScrollView) -> CGFloat {
     let insets = scrollView.contentInsets
-    return scrollView.contentView.bounds.width - insets.left - insets.right
+    // A hover peek's trailing reserve is compensation for its leading
+    // one, not chrome: nothing is hidden behind it, and counting it would
+    // make the window read a sidebar's width narrower than it is for as
+    // long as the pointer rests on the sidebar.
+    let trailing = hoverPeekScrollCompensation != 0 ? 0 : insets.right
+    return scrollView.contentView.bounds.width - insets.left - trailing
   }
 
   /// How `computeScrollTargetX` should seat a column in the viewport.
@@ -1337,7 +1342,7 @@ extension PaneContainerViewController {
       visibleWidth: scrollView.contentView.bounds.width,
       contentWidth: stackView.frame.width,
       insetLeft: insetLeft,
-      insetRight: insets.right,
+      insetRight: comp != 0 ? 0 : insets.right,
       gap: WorkspaceViewController.outerMargin)
   }
 

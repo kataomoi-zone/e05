@@ -794,7 +794,7 @@ public final class PaneContainerViewController: NSViewController {
     // leftmost column buried under a pinned sidebar. Composed with any
     // pinned-column reserve so a session-restored pin isn't dropped
     // when its view is seated.
-    vc.scrollView.contentInsets.left = totalLeadingInset(in: vc)
+    applyLeadingInset(in: vc)
     // Seed the live scroll origin from the workspace's logical
     // `scrollX` plus the active hover-peek compensation, so the
     // invariant `live bounds.origin.x = ws.scrollX + compensation`

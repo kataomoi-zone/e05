@@ -41,12 +41,20 @@ extension PaneContainerViewController {
     currentLeadingInset - hoverPeekScrollCompensation + WorkspaceViewController.outerMargin
   }
 
-  /// Re-apply `vc`'s leading content inset and reposition its pinned
-  /// column overlay to match the current sidebar + pin reserves. Call
-  /// after anything that changes either reserve (pin / unpin, sidebar
-  /// reveal where the per-vc loop doesn't already handle it).
+  /// Re-apply `vc`'s content insets and reposition its pinned column
+  /// overlay to match the current sidebar + pin reserves. Call after
+  /// anything that changes either reserve (pin / unpin, a workspace view
+  /// being seated, sidebar reveal where the per-vc loop doesn't already
+  /// handle it).
+  ///
+  /// Both insets, because they are one decision: the leading reserve is
+  /// what the sidebar and the pin claim, and the trailing one is what a
+  /// hover peek owes back for it (see ``peekTrailingInset``). Writing
+  /// either alone leaves a workspace peeking against a range a sidebar's
+  /// width short.
   func applyLeadingInset(in vc: WorkspaceViewController) {
     vc.scrollView.contentInsets.left = totalLeadingInset(in: vc)
+    vc.scrollView.contentInsets.right = peekTrailingInset
     pinnedColumn(in: vc)?.pinLeadingConstraint?.constant = pinnedOverlayLeading()
   }
 
