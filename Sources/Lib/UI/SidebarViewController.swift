@@ -769,7 +769,15 @@ final class SidebarViewController: NSViewController {
     // Text-field first responder — URL bar, command palette input,
     // any suggestion field. NSTextField delegates to an
     // NSTextView-based field editor; both inherit from NSText.
-    if let responder = view.window?.firstResponder, responder is NSText {
+    //
+    // One exception, the same one pane hover-focus makes: focusing a
+    // blank or start pane puts its URL field into edit by itself, so that
+    // field is the one nobody reached for. Counting it as typing meant
+    // simply focusing a start pane switched the edge hover off, with the
+    // sidebar then unreachable by pointer until focus moved elsewhere.
+    if let responder = view.window?.firstResponder as? NSText,
+      !container.isAutoFocusedURLField(responder)
+    {
       return false
     }
     return true
@@ -785,7 +793,8 @@ final class SidebarViewController: NSViewController {
     let animatingSB = isAnimating
     let modalActive = NSApp.modalWindow != nil
     let responder = view.window?.firstResponder
-    let textResponder = responder is NSText
+    let textResponder =
+      (responder as? NSText).map { container?.isAutoFocusedURLField($0) == false } ?? false
     let responderType = responder.map { String(describing: type(of: $0)) } ?? "nil"
     return
       "container=\(hasContainer) palette=\(paletteVisible) animWS=\(animatingWS) animSB=\(animatingSB) modal=\(modalActive) textFR=\(textResponder) responder=\(responderType)"

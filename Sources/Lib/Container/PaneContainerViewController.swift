@@ -1327,7 +1327,7 @@ public final class PaneContainerViewController: NSViewController {
   /// on a pane that auto-focuses it, with nothing typed into it yet —
   /// the one text responder that is there because focus arrived rather
   /// than because the user aimed at it.
-  private func isAutoFocusedURLField(_ editor: NSText) -> Bool {
+  func isAutoFocusedURLField(_ editor: NSText) -> Bool {
     guard let pane = focusedPane, pane.isBlankBrowser || pane.startView != nil,
       editor.isDescendant(of: pane.containerView)
     else { return false }
