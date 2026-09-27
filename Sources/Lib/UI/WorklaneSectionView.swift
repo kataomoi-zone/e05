@@ -227,6 +227,10 @@ final class WorklaneSectionView: NSView {
   /// could land a pixel or an autoscroll step away from it.
   private var validatedPaneDrop: PaneDropAction?
 
+  /// The column drop the latest `validateColumnDrop` showed, which
+  /// `acceptColumnDrop` commits for the same reason.
+  private var validatedColumnDrop: (ws: WorklaneWorkspaceNode, position: Int)?
+
   /// Where the list was scrolled when a drop was committed, spent by the
   /// next `syncSelection`. The drop's reload re-selects the focused row,
   /// and scrolling that row fully into view moved the list under the
@@ -1088,6 +1092,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     isDragging = false
     dropGroupView.isHidden = true
     validatedPaneDrop = nil
+    validatedColumnDrop = nil
     // A committed reorder triggers a reload whose own `syncSelection`
     // restores the highlight. A cancelled or no-op drag never
     // reaches that path, so endedAt is the only place that can
@@ -1126,12 +1131,10 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     {
       return workspaceDrag
     }
-    if let paneDrag = validatePaneDrop(info: info, outlineView: outlineView) {
+    if let paneDrag = validatePaneDrop(info: info) {
       return paneDrag
     }
-    if let columnDrag = validateColumnDrop(
-      info: info, outlineView: outlineView, item: item, index: index)
-    {
+    if let columnDrag = validateColumnDrop(info: info) {
       return columnDrag
     }
     return []
@@ -1151,7 +1154,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       return acceptPaneDrop(info: info)
     }
     if draggedColumnId(from: info) != nil {
-      return acceptColumnDrop(info: info, item: item, childIndex: childIndex)
+      return acceptColumnDrop(info: info)
     }
     return false
   }
@@ -1296,9 +1299,7 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     }
   }
 
-  private func validatePaneDrop(
-    info: NSDraggingInfo, outlineView: NSOutlineView
-  ) -> NSDragOperation? {
+  private func validatePaneDrop(info: NSDraggingInfo) -> NSDragOperation? {
     // Every rejection below leaves no feedback behind and nothing to
     // commit; only an accepted drop sets them again.
     dropGroupView.isHidden = true
@@ -1346,19 +1347,12 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       return []
     }
 
-    // Point AppKit's drop line at the resolved slot — workspace level
-    // for a new column, column level for a drop inside one. A collapsed
-    // parent has no child rows on screen to draw a line between, so
-    // AppKit highlights the parent row instead.
-    let parent: Any
-    let position: Int
-    switch action {
-    case .newColumn(let ws, let index): (parent, position) = (ws, index)
-    case .insertIntoColumn(let column, let index): (parent, position) = (column, index)
-    }
-    let expanded = outlineView.isItemExpanded(parent)
-    outlineView.setDropItem(
-      parent, dropChildIndex: expanded ? position : NSOutlineViewDropOnItemIndex)
+    // Workspace level for a new column, column level for a drop inside one.
+    let expanded =
+      switch action {
+      case .newColumn(let ws, let index): pointDropLine(at: ws, position: index)
+      case .insertIntoColumn(let column, let index): pointDropLine(at: column, position: index)
+      }
     // Inside an expanded column the line sits at the same height as the
     // gap after the column, one indent apart; the outline tells them apart.
     if expanded, case .insertIntoColumn(let column, _) = action {
@@ -1366,6 +1360,18 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     }
     validatedPaneDrop = action
     return .move
+  }
+
+  /// Point AppKit's drop line at the slot `position` under `parent`. A
+  /// collapsed parent has no child rows on screen to draw a line
+  /// between, so AppKit highlights the parent row instead. Returns
+  /// whether the parent is expanded.
+  @discardableResult
+  private func pointDropLine(at parent: Any, position: Int) -> Bool {
+    let expanded = outlineView.isItemExpanded(parent)
+    outlineView.setDropItem(
+      parent, dropChildIndex: expanded ? position : NSOutlineViewDropOnItemIndex)
+    return expanded
   }
 
   private func acceptPaneDrop(info: NSDraggingInfo) -> Bool {
@@ -1564,45 +1570,47 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     return nil
   }
 
-  /// Resolve where a column drop should land. Returns the target
-  /// workspace node and the column-slot index, or `nil` for hits
-  /// the worklane can't interpret.
-  private func columnDropAction(
-    item: Any?, childIndex: Int
-  ) -> (ws: WorklaneWorkspaceNode, position: Int)? {
-    guard let item else { return nil }
-    if let ws = item as? WorklaneWorkspaceNode {
-      let position =
-        childIndex == NSOutlineViewDropOnItemIndex ? 0 : childIndex
-      return (ws, position)
-    }
-    if let column = item as? WorklaneColumnNode {
-      guard let ws = column.workspaceNode else { return nil }
-      guard let position = ws.model.columns.firstIndex(where: { $0.id == column.id })
-      else { return nil }
-      return (ws, position)
-    }
-    if let pane = item as? WorklanePaneNode {
-      guard let ws = pane.workspaceNode else { return nil }
-      guard
-        let position = ws.model.columns.firstIndex(where: { column in
-          column.panes.contains(where: { $0.id == pane.id })
-        })
-      else { return nil }
-      return (ws, position)
-    }
-    return nil
+  /// The column-drop rule sits on the pane rule: a column lands only
+  /// between columns, so a slot the pane rule puts inside one (`slot`
+  /// panes down a column of `paneCount`) goes before that column,
+  /// `index`, until it reaches half the panes, and after it,
+  /// `index + 1`, from there on.
+  nonisolated static func columnDropPosition(
+    insideColumn index: Int, slot: Int, paneCount: Int
+  ) -> Int {
+    slot * 2 >= paneCount ? index + 1 : index
   }
 
-  private func validateColumnDrop(
-    info: NSDraggingInfo, outlineView: NSOutlineView,
-    item: Any?, index: Int
-  ) -> NSDragOperation? {
+  /// Resolve where a column drop should land from the pointer's
+  /// position: the pane drop's slot, taken out of a column through
+  /// `columnDropPosition`. Returns the target workspace node and the
+  /// column-slot index, or `nil` where the pane drop finds no slot or
+  /// the column's parent chain doesn't lead back to a known workspace.
+  private func columnDropAction(
+    at info: NSDraggingInfo
+  ) -> (ws: WorklaneWorkspaceNode, position: Int)? {
+    switch paneDropAction(at: info) {
+    case .newColumn(let ws, let position):
+      return (ws, position)
+    case .insertIntoColumn(let column, let slot):
+      guard let ws = column.workspaceNode,
+        let index = ws.model.columns.firstIndex(where: { $0.id == column.id })
+      else { return nil }
+      let position = Self.columnDropPosition(
+        insideColumn: index, slot: slot, paneCount: column.model.panes.count)
+      return (ws, position)
+    case nil:
+      return nil
+    }
+  }
+
+  private func validateColumnDrop(info: NSDraggingInfo) -> NSDragOperation? {
+    validatedColumnDrop = nil
     guard let columnId = draggedColumnId(from: info),
       let sourceNode = nodesByColumnId[columnId],
-      let sourceWsNode = sourceNode.workspaceNode,
-      let (targetWs, position) = columnDropAction(item: item, childIndex: index)
+      let sourceWsNode = sourceNode.workspaceNode
     else { return nil }
+    guard let (targetWs, position) = columnDropAction(at: info) else { return [] }
 
     if sourceWsNode.model.isPrivate != targetWs.model.isPrivate {
       if !didNotifyPrivateBoundaryInLastDrag,
@@ -1620,14 +1628,14 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
       return []
     }
 
-    outlineView.setDropItem(targetWs, dropChildIndex: position)
+    pointDropLine(at: targetWs, position: position)
+    validatedColumnDrop = (targetWs, position)
     return .move
   }
 
   /// True when a column drop would land the column back on its own slot
   /// (same workspace, same or immediately-following index) — the no-op
-  /// the drag rejects, mirroring `isNoOpAction` for panes. Shared by
-  /// `validateColumnDrop` and `acceptColumnDrop` so both reject it.
+  /// the drag rejects, mirroring `isNoOpAction` for panes.
   private func isColumnDropNoOp(
     columnId: ULID, sourceWs: WorklaneWorkspaceNode,
     targetWs: WorklaneWorkspaceNode, position: Int
@@ -1638,22 +1646,15 @@ extension WorklaneSectionView: NSOutlineViewDataSource {
     return position == sourceIdx || position == sourceIdx + 1
   }
 
-  private func acceptColumnDrop(
-    info: NSDraggingInfo, item: Any?, childIndex: Int
-  ) -> Bool {
+  private func acceptColumnDrop(info: NSDraggingInfo) -> Bool {
     guard let input = lastInput,
       let columnId = draggedColumnId(from: info),
-      let sourceNode = nodesByColumnId[columnId],
-      let sourceWsNode = sourceNode.workspaceNode,
-      let (targetWs, position) = columnDropAction(item: item, childIndex: childIndex),
-      !isColumnDropNoOp(
-        columnId: columnId, sourceWs: sourceWsNode, targetWs: targetWs, position: position)
+      let (targetWs, position) = validatedColumnDrop
     else {
       logger.warning(
         """
         [worklane/drag] column drop guard failed \
-        item=\(String(describing: item), privacy: .public) \
-        childIndex=\(childIndex, privacy: .public)
+        location=\(String(describing: info.draggingLocation), privacy: .public)
         """)
       return false
     }

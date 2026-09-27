@@ -49,3 +49,20 @@ struct WorklanePaneDropSlotTests {
     #expect(slot(.paneInColumn(index: 0), lowerHalf: true) == .intoColumn(position: 1))
   }
 }
+
+@Suite("WorklaneSectionView.columnDropPosition")
+struct WorklaneColumnDropPositionTests {
+  private func position(insideColumn index: Int, slot: Int, paneCount: Int) -> Int {
+    WorklaneSectionView.columnDropPosition(
+      insideColumn: index, slot: slot, paneCount: paneCount)
+  }
+
+  @Test("a slot inside a column goes before it until half the panes, after it from there on")
+  func splitsAtHalfThePanes() {
+    #expect(position(insideColumn: 1, slot: 0, paneCount: 2) == 1)
+    #expect(position(insideColumn: 1, slot: 1, paneCount: 2) == 2)
+    #expect(position(insideColumn: 1, slot: 2, paneCount: 2) == 2)
+    #expect(position(insideColumn: 1, slot: 1, paneCount: 3) == 1)
+    #expect(position(insideColumn: 1, slot: 2, paneCount: 3) == 2)
+  }
+}
