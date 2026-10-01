@@ -43,6 +43,10 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate {
   /// through the property it is stored in.
   var onClose: ((BrowserPopupWindowController) -> Void)?
 
+  /// The tab this popup is to extensions, announced by the opener
+  /// once it lists the popup.
+  let extensionTab: PopupExtensionBridge
+
   private var titleObservation: NSKeyValueObservation?
   private var urlObservation: NSKeyValueObservation?
   private var didFinish = false
@@ -99,15 +103,18 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate {
       height: min(max(height ?? 700, 240), 1000))
   }
 
-  /// `masksTitle` comes from a private workspace. The main window
+  /// `isPrivate` comes from a private workspace. The main window
   /// already replaces its title with a fixed string while a private
   /// pane has focus, so that Mission Control, the window switcher and
   /// a screen recording cannot read the site from it. A panel carrying
   /// the site's own title would put back exactly what that hides, so
-  /// popups from a private pane are titled the same fixed way and
-  /// nothing about the page is observed at all.
-  init(webView: WKWebView, features: WKWindowFeatures, masksTitle: Bool) {
+  /// popups from a private pane are titled the same fixed way and the
+  /// panel observes nothing about the page. The same flag puts the
+  /// popup in the private window extensions see; what the tab bridge
+  /// observes reaches only extensions granted private access.
+  init(webView: WKWebView, features: WKWindowFeatures, isPrivate: Bool) {
     self.webView = webView
+    self.extensionTab = PopupExtensionBridge(webView: webView, isPrivate: isPrivate)
 
     let size = Self.contentSize(
       width: features.width?.doubleValue, height: features.height?.doubleValue)
@@ -134,7 +141,7 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate {
     panel.delegate = self
     panel.contentView = webView
 
-    guard !masksTitle else {
+    guard !isPrivate else {
       panel.title = Self.privateTitle
       return
     }

@@ -21,7 +21,8 @@ import WebKit
 /// exists because `WKWebExtensionWindow.isPrivate` is fixed per window
 /// lifetime — see `WorkspaceExtensionBridge`.
 
-/// Reports e05's browser panes to web extensions as a host window.
+/// Reports e05's browser panes, and the popups their pages open, to
+/// web extensions as a host window.
 /// The controller keeps two stable instances — a normal window
 /// (non-private workspaces) and a private window (private workspaces) —
 /// because `WKWebExtensionWindow.isPrivate(for:)` is cached for a
@@ -117,6 +118,11 @@ final class WorkspaceExtensionBridge: NSObject, WKWebExtensionWindow {
       for column in workspace.columns {
         for pane in column.panes where pane.address.kind == .browser {
           tabs.append(ExtensionController.shared.bridge(for: pane))
+          // A page's popups sit in the same window as the pane that
+          // opened them, so the privacy filter above covers them.
+          for popup in pane.browserView?.popupWindows ?? [] {
+            tabs.append(popup.extensionTab)
+          }
         }
       }
     }
@@ -250,9 +256,7 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
   /// reported correctly; everything else belongs to the normal window.
   func window(for _: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
     let isPrivate = pane.flatMap { container?.workspaceContaining(pane: $0)?.isPrivate } ?? false
-    return isPrivate
-      ? ExtensionController.shared.privateWorkspaceBridge
-      : ExtensionController.shared.workspaceBridge
+    return ExtensionController.shared.windowBridge(isPrivate: isPrivate)
   }
 
   /// Bypass standard host permission checks. e05 already auto-grants
@@ -272,25 +276,9 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     Double(pane?.browserView?.webView.pageZoom ?? 1.0)
   }
 
-  /// Index of this pane among the host's browser panes, flattened
-  /// across workspaces and columns. Extensions sometimes use the
-  /// index to reorder tabs or pick the next/previous one; returning
-  /// a stable monotonically-increasing index per snapshot is enough
-  /// for those callers without committing to a workspace-wide id
-  /// scheme.
-  func indexInWindow(for _: WKWebExtensionContext) -> Int {
-    guard let pane, let container else { return 0 }
-    var index = 0
-    for workspace in container.workspaces {
-      for column in workspace.columns {
-        for sibling in column.panes where sibling.address.kind == .browser {
-          if sibling === pane { return index }
-          index += 1
-        }
-      }
-    }
-    return 0
-  }
+  // `indexInWindow(for:)` is left to the header's default, the tab's
+  // position in its window's `tabs(for:)`: that is the one ordering
+  // panes and popups share, and it already honours the privacy split.
 
   /// `chrome.tabs.update({active: true})` lands here. Route through
   /// the container's existing focus path so cross-workspace and
@@ -371,4 +359,80 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
     pane?.browserView?.goForward()
     completionHandler(nil)
   }
+}
+
+/// Per-popup bridge to `WKWebExtensionTab`, for the window a page's
+/// `window.open` gets. That web view inherits its opener's extension
+/// controller with the configuration WebKit hands over, so content
+/// scripts run in it — and a web view under the controller that no tab
+/// wraps makes every runtime message from those scripts fail, which an
+/// extension that retries on failure turns into a saturated main
+/// thread. Owned by the popup's controller for as long as the window
+/// is up; nothing restores a popup later, so there is no cache to keep.
+/// Title, URL, loading state, size and zoom are left to the header's
+/// defaults, which read the web view.
+@MainActor
+final class PopupExtensionBridge: NSObject, WKWebExtensionTab {
+  let webView: WKWebView
+  /// Captured from the opener: a popup belongs to the window its
+  /// opener's pane does, and pane privacy never changes.
+  let isPrivate: Bool
+  /// Emptied by `close()`, which also stops a change observed just
+  /// before the close from reaching WebKit after it.
+  private var observations: [NSKeyValueObservation] = []
+
+  init(webView: WKWebView, isPrivate: Bool) {
+    self.webView = webView
+    self.isPrivate = isPrivate
+    super.init()
+    // `chrome.tabs.onUpdated`: a sign-in popup opens on about:blank
+    // and navigates from there, and an extension that waits for the
+    // page to finish loading before it offers to fill a form needs
+    // the `.loading` edge as much as the URL. Not `.initial`: nothing
+    // may reach WebKit before `didOpenTab`. The hop to the main queue
+    // is the same one the popup's title observation makes.
+    observations = [
+      webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+        DispatchQueue.main.async { self?.notifyChanged(.URL) }
+      },
+      webView.observe(\.title, options: [.new]) { [weak self] _, _ in
+        DispatchQueue.main.async { self?.notifyChanged(.title) }
+      },
+      webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
+        DispatchQueue.main.async { self?.notifyChanged(.loading) }
+      },
+    ]
+  }
+
+  private func notifyChanged(_ properties: WKWebExtension.TabChangedProperties) {
+    guard !observations.isEmpty else { return }
+    ExtensionController.shared.controller.didChangeTabProperties(properties, for: self)
+  }
+
+  /// Fired once the opener lists the popup, which `tabs(for:)` may be
+  /// asked for from inside `didOpenTab` to place the tab in its window.
+  func open() {
+    ExtensionController.shared.controller.didOpenTab(self)
+  }
+
+  /// Fired after the opener dropped the popup from its list, for the
+  /// same reason the pane's close notification follows the model
+  /// mutation. Once only: a pane closing all its popups fires it
+  /// ahead of its own close, and the window's deferred close callback
+  /// arrives afterwards.
+  func close() {
+    guard !observations.isEmpty else { return }
+    observations = []
+    ExtensionController.shared.controller.didCloseTab(self, windowIsClosing: false)
+  }
+
+  func webView(for _: WKWebExtensionContext) -> WKWebView? { webView }
+
+  func window(for _: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
+    ExtensionController.shared.windowBridge(isPrivate: isPrivate)
+  }
+
+  /// Same reason as the pane bridge: content-script messaging is
+  /// refused otherwise.
+  func shouldBypassPermissions(for _: WKWebExtensionContext) -> Bool { true }
 }

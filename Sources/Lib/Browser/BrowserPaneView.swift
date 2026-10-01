@@ -63,7 +63,9 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// belongs to the page that opened it: the two talk to each other,
   /// and a popup outliving its opener would be a window with nothing
   /// on the other end of `window.opener`.
-  private var popupWindows: [BrowserPopupWindowController] = []
+  /// Read by the extension bridge, which lists a page's popups as tabs
+  /// under this pane's window.
+  private(set) var popupWindows: [BrowserPopupWindowController] = []
 
   /// Parks the in-flight find's completion until the asynchronous
   /// `_WKFindDelegate` callback drains it. `_findString:` reports its
@@ -2364,11 +2366,19 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     popupWebView.allowsMagnification = true
     popupWebView.uiDelegate = self
     let controller = BrowserPopupWindowController(
-      webView: popupWebView, features: windowFeatures, masksTitle: isPrivateBrowsing)
+      webView: popupWebView, features: windowFeatures, isPrivate: isPrivateBrowsing)
     controller.onClose = { [weak self] closed in
       self?.popupWindows.removeAll { $0 === closed }
+      // Once the list has dropped it, and not through `self`: the
+      // callback is deferred, and the pane may be gone by then.
+      closed.extensionTab.close()
     }
     popupWindows.append(controller)
+    // The configuration carries the extension controller over from
+    // this pane, so content scripts run in the popup, and a tab has to
+    // stand for it or their messages have no sender. Announced once
+    // the list holds it, which `tabs(for:)` reads.
+    controller.extensionTab.open()
     controller.showWindow(nil)
     return popupWebView
   }
@@ -2406,10 +2416,16 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// ends of a pane's life call this: suspending drops the web view
   /// the popups were talking to, and removal takes the pane itself.
   public func closeAllPopups() {
-    // `close()` runs the callback that mutates `popupWindows`, so walk
-    // a copy and let the callbacks drain the real one.
-    for controller in popupWindows { controller.close() }
+    // Dropped from the list first, so the tabs go while the pane's own
+    // tab is still open and before the opener's close notification
+    // follows this call; the deferred close callbacks find nothing
+    // left to do.
+    let closing = popupWindows
     popupWindows.removeAll()
+    for controller in closing {
+      controller.extensionTab.close()
+      controller.close()
+    }
   }
 
   /// `<input type="file">`. On macOS WebKit shows no picker of its own:

@@ -814,6 +814,12 @@ public final class ExtensionController {
     }
   }
 
+  /// The window a tab of the given privacy belongs to: the one place
+  /// that pairs privacy with a window bridge, which both tab kinds ask.
+  func windowBridge(isPrivate: Bool) -> WorkspaceExtensionBridge {
+    isPrivate ? privateWorkspaceBridge : workspaceBridge
+  }
+
   /// Resolve the bridge for `pane`, creating + caching it on first
   /// access. Returns the same instance for repeat queries so the
   /// controller's identity-based set tracking holds across popup
@@ -828,9 +834,10 @@ public final class ExtensionController {
   // MARK: - Tab lifecycle notifications
   //
   // Extensions only see `chrome.tabs.*` events when these helpers
-  // fire — the controller's `openTabs` set is seeded once at
-  // extension load and otherwise relies on the host telling it
-  // every state change. Skipping any of these leaves a popup
+  // fire, or when a page's popup announces itself through its own
+  // `PopupExtensionBridge` — the controller's `openTabs` set is
+  // seeded once at extension load and otherwise relies on the host
+  // telling it every state change. Skipping any of these leaves a popup
   // listening on `tabs.onUpdated` (Bitwarden waits on this to
   // detect navigation finish before offering autofill) hanging
   // indefinitely.
