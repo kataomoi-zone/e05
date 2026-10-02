@@ -8,7 +8,8 @@
          and a native filesystem-browser pane that all need broad
          user-tier access. Each cs.* key relaxes one Hardened Runtime
          restriction; start minimal and add more only when a release
-         crash log demands it. -->
+         crash log, or a device the OS refuses without a prompt,
+         demands it. -->
 
     <!-- WebKit JIT compiles JavaScript via writable+executable pages. -->
     <key>com.apple.security.cs.allow-jit</key>
@@ -19,6 +20,21 @@
          identities, not e05's. Library validation would refuse to
          load them otherwise. -->
     <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- The devices a page can ask for through the pane's permission
+         prompt. Under the Hardened Runtime the OS refuses each of
+         these without any prompt unless the signature carries its
+         entitlement; the usage strings in Info.plist alone are not
+         enough. A dev build signs without the runtime and so never
+         notices their absence. The grant is the process's, so a
+         program run in a terminal pane reaches the same devices,
+         behind the OS's own prompt. -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.personal-information.location</key>
     <true/>
 </dict>
 </plist>

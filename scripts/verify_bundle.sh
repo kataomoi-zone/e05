@@ -84,6 +84,32 @@ if [ -x "$C/MacOS/e05" ]; then
     || bad "app binary has no @executable_path/../Frameworks rpath; Sparkle will not load"
 fi
 
+# The devices the pane's permission prompt can grant. Each needs its
+# usage string, and under the Hardened Runtime an entitlement as well,
+# or the OS refuses the device without showing a prompt. The dev build
+# signs without the runtime, so passing there says nothing about the
+# entitlements.
+for key in NSCameraUsageDescription NSMicrophoneUsageDescription \
+  NSLocationUsageDescription NSLocationWhenInUseUsageDescription; do
+  contains "device usage string" "$C/Info.plist" "$key"
+done
+signature=$(codesign -dv "$APP" 2>&1 || true)
+# The flags read `(runtime)` or `(adhoc,runtime)`.
+if [[ "$signature" =~ flags=[^[:space:]]*[\(,]runtime[,\)] ]]; then
+  if entitlements=$(codesign -d --entitlements - --xml "$APP" 2> /dev/null); then
+    for key in com.apple.security.device.camera \
+      com.apple.security.device.audio-input \
+      com.apple.security.personal-information.location; do
+      # plutil reads a dot as a key-path step unless it is escaped.
+      value=$(printf '%s' "$entitlements" | plutil -extract "${key//./\\.}" raw -o - - 2> /dev/null || true)
+      [ "$value" = true ] \
+        || bad "hardened runtime without $key; the OS will refuse the device silently"
+    done
+  else
+    bad "could not read the signature's entitlements"
+  fi
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "verify_bundle: ${APP##*/} looks complete"
 else
