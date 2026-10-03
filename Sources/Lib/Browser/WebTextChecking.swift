@@ -11,6 +11,8 @@ import Foundation
 /// when it builds its text-checker state and keeps that for the
 /// process.
 public enum WebTextChecking {
+  /// Every substitution off. The spelling underline, which WebKit keeps
+  /// off unless asked, on: it marks a word and changes nothing.
   public static func register() {
     UserDefaults.standard.register(defaults: [
       "WebAutomaticQuoteSubstitutionEnabled": false,
@@ -19,6 +21,7 @@ public enum WebTextChecking {
       "WebAutomaticTextReplacementEnabled": false,
       "WebAutomaticSpellingCorrectionEnabled": false,
       "WebSmartInsertDeleteEnabled": false,
+      "WebContinuousSpellCheckingEnabled": true,
     ])
   }
 }
