@@ -7,12 +7,13 @@ import AppKit
 /// dashed circle around the favicon while the pane is suspended, and
 /// a hover-revealed × on the trailing edge for close.
 /// An audio speaker glyph slips between favicon and title whenever
-/// the pane is emitting or muting active audio.
+/// the pane is emitting or muting active audio. Hovering the row
+/// shows the whole title and, where the pane has one, its location.
 ///
 /// Focused-pane indication is delegated to the outline view's
 /// source-list selection highlight — the cell doesn't paint a border.
 @MainActor
-final class WorklanePaneCellView: NSTableCellView {
+final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
   static let height: CGFloat = 24
   static let iconSize: CGFloat = 16
 
@@ -135,6 +136,11 @@ final class WorklanePaneCellView: NSTableCellView {
   private var isHovered = false
 
   private weak var node: WorklanePaneNode?
+  /// Resolves the row's title when the tooltip asks for it.
+  private var paneTitle: ((PaneModel) -> String)?
+  /// The tooltip rect, and the bounds it was registered for.
+  private var toolTipTag: NSView.ToolTipTag?
+  private var toolTipBounds = NSRect.zero
   private var onCloseHandler: (() -> Void)?
   private var onAudioToggleHandler: (() -> Void)?
   private var onPinToggleHandler: (() -> Void)?
@@ -281,6 +287,7 @@ final class WorklanePaneCellView: NSTableCellView {
 
     titleLabel.stringValue = input.paneTitle(pane)
     iconView.image = input.paneIcon(pane)
+    paneTitle = input.paneTitle
     baseIconAlpha = isCurrent ? 1.0 : Self.inactiveIconAlpha
     baseLabelAlpha = isCurrent ? 1.0 : Self.inactiveLabelAlpha
 
@@ -489,9 +496,47 @@ final class WorklanePaneCellView: NSTableCellView {
     arc.add(spin, forKey: "spin")
   }
 
+  /// The whole title and, where the pane has one, its location: a
+  /// page's URL, the path of a folder or a local file (decoded, not
+  /// the percent-encoded URL), and the raw address of a kind the row
+  /// cannot name. A title that is the location itself is not repeated.
+  nonisolated static func toolTipText(title: String, address: PaneAddress) -> String {
+    let location: String
+    switch address.kind {
+    case .browser, .unknown:
+      let url = address.url
+      location = url.isFileURL ? url.path(percentEncoded: false) : url.absoluteString
+    case .finder:
+      location = address.currentPath
+    case .terminal, .settings, .start:
+      return title
+    }
+    // Empty for a bare finder address and for a path that does not
+    // decode.
+    guard !location.isEmpty, location != title else { return title }
+    return "\(title)\n\(location)"
+  }
+
   override func layout() {
     super.layout()
     updateSuspendedRingFrame()
+    // A tooltip rect does not follow the view's size on its own.
+    if toolTipBounds != bounds {
+      if let toolTipTag { removeToolTip(toolTipTag) }
+      toolTipTag = addToolTip(bounds, owner: self, userData: nil)
+      toolTipBounds = bounds
+    }
+  }
+
+  /// Asked as the tooltip is about to show, so it reads the pane as it
+  /// is then. The address has several writers, and a string stored at
+  /// configure time would lag every one that does not reload the row.
+  func view(
+    _: NSView, stringForToolTip _: NSView.ToolTipTag, point _: NSPoint,
+    userData _: UnsafeMutableRawPointer?
+  ) -> String {
+    guard let pane = node?.model, let paneTitle else { return "" }
+    return Self.toolTipText(title: paneTitle(pane), address: pane.address)
   }
 
   override func viewDidChangeEffectiveAppearance() {

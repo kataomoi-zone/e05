@@ -3,7 +3,8 @@ import AppKit
 /// Workspace-header cell in the worklane outline view. Renders a 3pt
 /// accent indicator (solid pill, or vertical dashed line for private
 /// workspaces) plus the workspace title, with a hover-revealed × on
-/// the trailing edge for close. Expand / collapse is driven by
+/// the trailing edge for close and the whole title in a tooltip.
+/// Expand / collapse is driven by
 /// AppKit's built-in disclosure triangle on the leading indent — the
 /// cell itself doesn't paint a chevron.
 ///
@@ -165,7 +166,10 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     // this row while the user is mid-rename (e.g. an unrelated pane
     // title change fires `notifySidebarWorklaneDidChange`). The
     // commit/cancel path owns the label's string until editing ends.
-    if !isRenaming { label.stringValue = title }
+    if !isRenaming {
+      label.stringValue = title
+      toolTip = title
+    }
     label.font =
       isCurrent
       ? NSFont.boldSystemFont(ofSize: 13)
@@ -219,6 +223,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     label.bezelStyle = .squareBezel
     label.drawsBackground = true
     label.alphaValue = 1.0
+    // No tooltip over the text being typed.
+    toolTip = nil
     label.delegate = self
     if let window, window.makeFirstResponder(label) {
       label.currentEditor()?.selectAll(nil)
@@ -240,7 +246,11 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     label.isBezeled = false
     label.drawsBackground = false
     label.delegate = nil
-    if let node { label.stringValue = node.model.displayName(at: node.index) }
+    if let node {
+      let title = node.model.displayName(at: node.index)
+      label.stringValue = title
+      toolTip = title
+    }
   }
 
   /// Walk up to the hosting outline view so first responder can be
