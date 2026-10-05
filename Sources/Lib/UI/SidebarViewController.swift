@@ -851,7 +851,13 @@ final class SidebarViewController: NSViewController {
     switch pane.address.kind {
     case .terminal: return "Terminal"
     case .browser:
-      return pane.address.url.host() ?? pane.address.url.absoluteString
+      let url = pane.address.url
+      // A local file has no host, and its URL is percent-encoded.
+      if url.isFileURL {
+        let last = url.lastPathComponent
+        return last.isEmpty || last == "/" ? url.absoluteString : last
+      }
+      return url.host() ?? url.absoluteString
     case .finder:
       let last = pane.address.url.lastPathComponent
       return last.isEmpty || last == "/" ? "Finder" : last
