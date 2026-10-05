@@ -162,19 +162,22 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     let title = node.model.displayName(at: node.index)
     let accent = input.accentColor(node.index)
     let isCurrent = node.index == input.focusedWorkspaceIndex
-    // Leave the in-progress text alone if a worklane reload re-vends
-    // this row while the user is mid-rename (e.g. an unrelated pane
-    // title change fires `notifySidebarWorklaneDidChange`). The
-    // commit/cancel path owns the label's string until editing ends.
+    // Leave the field alone if a worklane reload reaches this row
+    // while the user is mid-rename (e.g. an unrelated pane title
+    // change fires `notifySidebarWorklaneDidChange`). The commit/cancel
+    // path owns it until editing ends: its string, the full opacity
+    // `beginRename` gives it, and the font under the field editor.
     if !isRenaming {
       label.stringValue = title
-      toolTip = title
+      // Only when it changes: the row is refreshed where it stands,
+      // possibly with its tooltip showing.
+      if toolTip != title { toolTip = title }
+      label.alphaValue = isCurrent ? 1.0 : 0.6
+      label.font =
+        isCurrent
+        ? NSFont.boldSystemFont(ofSize: 13)
+        : NSFont.systemFont(ofSize: 13)
     }
-    label.font =
-      isCurrent
-      ? NSFont.boldSystemFont(ofSize: 13)
-      : NSFont.systemFont(ofSize: 13)
-    label.alphaValue = isCurrent ? 1.0 : 0.6
     indicator.color =
       isCurrent ? accent : accent.withAlphaComponent(0.6)
     indicator.isPrivate = node.model.isPrivate
@@ -355,7 +358,7 @@ extension WorklaneWorkspaceCellView: NSTextFieldDelegate {
   /// here, so this only handles commits. Reads the value, exits edit
   /// mode, then hands the trimmed name to the captured commit sink —
   /// the container normalises empty to "unnamed" and reloads the
-  /// worklane, which re-vends this row with the resolved display name.
+  /// worklane, which refreshes this row with the resolved display name.
   func controlTextDidEndEditing(_ notification: Notification) {
     guard isRenaming else { return }
     let newName = label.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -364,7 +367,7 @@ extension WorklaneWorkspaceCellView: NSTextFieldDelegate {
     // Unlike the ESC path, no explicit first-responder hand-back: a
     // Return / focus-loss end-edit already moves it (focus loss to the
     // new responder, Return back to the outline view), and the commit
-    // triggers a worklane reload that re-vends this row regardless.
+    // triggers a worklane reload that refreshes this row regardless.
     commit?(newName)
   }
 }

@@ -364,10 +364,12 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
       audioIndicator.image = NSImage(
         systemSymbolName: symbol, accessibilityDescription: desc
       )?.withSymbolConfiguration(config)
-      audioIndicator.toolTip = desc
+      // Only when it changes, here and below: the row is refreshed
+      // where it stands, possibly with this tooltip showing.
+      if audioIndicator.toolTip != desc { audioIndicator.toolTip = desc }
     } else {
       audioIndicator.image = nil
-      audioIndicator.toolTip = nil
+      if audioIndicator.toolTip != nil { audioIndicator.toolTip = nil }
     }
   }
 

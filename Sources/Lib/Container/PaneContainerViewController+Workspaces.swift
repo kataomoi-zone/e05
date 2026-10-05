@@ -116,7 +116,7 @@ extension PaneContainerViewController {
   /// Apply an inline rename to the workspace identified by `id`.
   /// Whitespace-only / empty input clears `name` back to `nil` so the
   /// row reverts to its positional "Workspace N" label. Routes through
-  /// `notifySidebarWorklaneDidChange` so the worklane re-vends the row
+  /// `notifySidebarWorklaneDidChange` so the worklane refreshes the row
   /// with the resolved display name and the change is autosaved.
   public func renameWorkspace(id: ULID, to newName: String) {
     guard let workspace = workspaces.first(where: { $0.id == id }) else {

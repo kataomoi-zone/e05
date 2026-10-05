@@ -297,7 +297,7 @@ final class WorklaneSectionView: NSView {
   /// there's nothing to animate against an empty starting state.
   private var lastSnapshot: WorklaneSnapshot?
 
-  private struct WorklaneSnapshot {
+  private struct WorklaneSnapshot: Equatable {
     let workspaceIds: [ULID]
     /// Workspace-level child ids per workspace. Each id is either a
     /// pane ULID or a column ULID; collisions are ruled out by
@@ -553,18 +553,22 @@ final class WorklaneSectionView: NSView {
   }
 
   func reload(_ input: ReloadInput) {
+    let focusMoved = lastInput?.focusedPaneId != input.focusedPaneId
     lastInput = input
     rebuildNodeTree(from: input)
     let snapshot = currentSnapshot()
-    if let previous = lastSnapshot {
+    let rowsMoved = lastSnapshot != snapshot
+    if let previous = lastSnapshot, rowsMoved {
       applyDiff(from: previous, to: snapshot)
+    } else if lastSnapshot != nil {
+      refreshCellsInPlace(input)
     } else {
       outlineView.reloadData()
     }
     lastSnapshot = snapshot
     applyPersistedCollapseState(input: input)
     updateListHeight()
-    syncSelection(to: input.focusedPaneId)
+    syncSelection(to: input.focusedPaneId, reveal: focusMoved || rowsMoved)
     footerView.configure(input: input)
   }
 
@@ -592,7 +596,9 @@ final class WorklaneSectionView: NSView {
 
   /// Walk the diff between two snapshots and translate it into
   /// `insertItems` / `removeItems` calls so AppKit animates structural
-  /// changes. Still-present rows get a follow-up `reloadItem` so
+  /// changes. A reload that moved no row never gets here; `reload`
+  /// has its cells refreshed where they stand (`refreshCellsInPlace`).
+  /// Still-present rows get a follow-up `reloadItem` so
   /// content that depends on position (workspace accent color,
   /// focused-pane dot) stays in sync when a sibling row was added or
   /// removed without changing this row's own identity.
@@ -664,6 +670,31 @@ final class WorklaneSectionView: NSView {
         if let pane = nodesByPaneId[paneId] {
           outlineView.reloadItem(pane)
         }
+      }
+    }
+  }
+
+  /// Bring every realised cell up to date where it stands, for a reload
+  /// that moved no row (a title, the focus, an icon). Not `reloadItem`:
+  /// that takes a cell out of the window and puts it back, which takes
+  /// down the tooltip showing over its row, and a pane that keeps
+  /// rewriting its title would do that to every row several times a
+  /// second. `prepareForReuse` does not run here, and should not: the
+  /// row under the pointer keeps its hover, and `configure` sets
+  /// everything else outright.
+  private func refreshCellsInPlace(_ input: ReloadInput) {
+    outlineView.enumerateAvailableRowViews { _, row in
+      let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+      switch outlineView.item(atRow: row) {
+      case let ws as WorklaneWorkspaceNode:
+        (cell as? WorklaneWorkspaceCellView)?.configure(node: ws, input: input)
+      case let column as WorklaneColumnNode:
+        (cell as? WorklaneColumnCellView)?.configure(node: column, input: input)
+      case let pane as WorklanePaneNode:
+        (cell as? WorklanePaneCellView)?.configure(
+          node: pane, input: input, focusedPaneId: input.focusedPaneId)
+      default:
+        break
       }
     }
   }
@@ -966,7 +997,13 @@ final class WorklaneSectionView: NSView {
   /// a visual indicator — `outlineViewSelectionDidChange` is gated
   /// by `isSyncingSelection` so the cascade can't re-enter the
   /// click handlers.
-  private func syncSelection(to focusedPaneId: ULID?) {
+  ///
+  /// `reveal` scrolls the row into view, as does a selection that lands
+  /// on a different row than before (the focused pane's own row coming
+  /// out of a collapsed workspace). A reload that moved neither the
+  /// rows nor the focus passes false: a title changing somewhere must
+  /// not pull back a list the user has scrolled.
+  private func syncSelection(to focusedPaneId: ULID?, reveal: Bool = true) {
     let originAtDrop = listOriginAtDrop
     listOriginAtDrop = nil
     if let originAtDrop {
@@ -985,9 +1022,12 @@ final class WorklaneSectionView: NSView {
     let targetItem: AnyObject = ancestorForCascade(of: node) ?? node
     let row = outlineView.row(forItem: targetItem)
     guard row >= 0 else { return }
+    let selectionMoved = outlineView.selectedRow != row
     isSyncingSelection = true
     outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-    if originAtDrop == nil || !outlineView.visibleRect.intersects(outlineView.rect(ofRow: row)) {
+    if reveal || selectionMoved,
+      originAtDrop == nil || !outlineView.visibleRect.intersects(outlineView.rect(ofRow: row))
+    {
       outlineView.scrollRowToVisible(row)
     }
     isSyncingSelection = false
