@@ -238,12 +238,13 @@ final class SidebarOverlayView: NSView {
   // not whatever the workspace pane underneath would install (link
   // hover → pointing hand, text → I-beam). Use the older cursor-rect
   // mechanism rather than a `cursorUpdate` tracking area: AppKit
-  // resolves cursor rects hierarchically so a row's own cursor rect
-  // (PaneRow / WorkspaceHeaderRow / PlacesRow / SidebarListCellView →
-  // pointing hand) wins over this fallback when the cursor is over
+  // resolves cursor rects hierarchically, so the one cursor a child
+  // still asks for (the field editor's I-beam while a workspace is
+  // being renamed) wins over this fallback when the cursor is over
   // its bounds. A `cursorUpdate` tracking area on the overlay would
-  // have out-claimed every child instead, breaking row hover cursors
-  // entirely (verified regression in macOS 26 Tahoe).
+  // out-claim every child instead (verified regression in macOS 26
+  // Tahoe). Rows and buttons ask for nothing: the platform keeps the
+  // hand for links and the hover highlight says what can be clicked.
   override func resetCursorRects() {
     addCursorRect(bounds, cursor: .arrow)
   }

@@ -619,7 +619,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // the same default template tint). The earlier controlAccentColor
     // fill looked like a misplaced hyperlink on dark aqua and hit
     // the WCAG AA contrast boundary with graphite / gray accents.
-    // Pointing-hand cursor from `HoverIconButton` still signals
+    // The hover tint from `HoverIconButton` still signals
     // clickability.
     zoomResetInlineButton.bezelStyle = .inline
     zoomResetInlineButton.isBordered = false
@@ -1025,6 +1025,15 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     // strip. Same pattern as `FindBarView.hitTest`.
     guard alphaValue > 0.01 else { return nil }
     return super.hitTest(point)
+  }
+
+  // The bar floats over a page, and WebKit sets the page's own cursor
+  // from its tracking area no matter what is on top of it. Only while
+  // the bar shows: a cursor rect ignores alpha, so a collapsed bar
+  // would otherwise hold the arrow over the page's top strip.
+  public override func resetCursorRects() {
+    guard alphaValue > 0.01 else { return }
+    addCursorRect(bounds, cursor: .arrow)
   }
 
   public override func mouseDown(with _: NSEvent) {

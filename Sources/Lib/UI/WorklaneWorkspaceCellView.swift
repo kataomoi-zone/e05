@@ -334,10 +334,6 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   @objc private func addBrowserSelected() { onAddBrowserHandler?() }
   @objc private func addTerminalSelected() { onAddTerminalHandler?() }
   @objc private func addFinderSelected() { onAddFinderHandler?() }
-
-  override func resetCursorRects() {
-    addCursorRect(bounds, cursor: .pointingHand)
-  }
 }
 
 extension WorklaneWorkspaceCellView: NSTextFieldDelegate {

@@ -100,9 +100,4 @@ final class WorklaneFooterView: NSView {
   @objc private func addPrivateTapped(_: NSButton) {
     onCreatePrivateHandler?()
   }
-
-  override func resetCursorRects() {
-    addCursorRect(addButton.frame, cursor: .pointingHand)
-    addCursorRect(addPrivateButton.frame, cursor: .pointingHand)
-  }
 }

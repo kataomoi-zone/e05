@@ -182,9 +182,10 @@ public final class ToastPillView: NSView {
     }
   }
 
+  // The pill floats over a page, and WebKit sets the page's own cursor
+  // from its tracking area no matter what is on top of it.
   public override func resetCursorRects() {
-    discardCursorRects()
-    addCursorRect(bounds, cursor: .pointingHand)
+    addCursorRect(bounds, cursor: .arrow)
   }
 
   func animateIn() {

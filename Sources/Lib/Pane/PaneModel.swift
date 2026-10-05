@@ -641,6 +641,8 @@ public final class PaneModel {
       urlBar.alphaValue = target
       contentTopConstraint?.constant = contentInset
     }
+    // The bar claims the arrow only while it shows (`resetCursorRects`).
+    urlBar.window?.invalidateCursorRects(for: urlBar)
   }
 
   // MARK: - Find Bar Toggle

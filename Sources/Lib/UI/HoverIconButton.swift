@@ -1,6 +1,6 @@
 import AppKit
 
-/// NSButton subclass that provides hover feedback: pointing-hand cursor and subtle background tint.
+/// NSButton subclass that tints its background subtly while hovered.
 @MainActor
 public final class HoverIconButton: NSButton {
   private var trackingArea: NSTrackingArea?
@@ -30,19 +30,11 @@ public final class HoverIconButton: NSButton {
     if let old = trackingArea { removeTrackingArea(old) }
     let area = NSTrackingArea(
       rect: bounds,
-      options: [.mouseEnteredAndExited, .activeInKeyWindow, .cursorUpdate, .inVisibleRect],
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
       owner: self
     )
     addTrackingArea(area)
     trackingArea = area
-  }
-
-  public override func cursorUpdate(with event: NSEvent) {
-    if isEnabled {
-      NSCursor.pointingHand.set()
-    } else {
-      super.cursorUpdate(with: event)
-    }
   }
 
   public override func mouseEntered(with event: NSEvent) {

@@ -589,8 +589,4 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
 
   @objc private func pinTapped(_: NSButton) { onPinToggleHandler?() }
   @objc private func foldTapped(_: NSButton) { onFoldToggleHandler?() }
-
-  override func resetCursorRects() {
-    addCursorRect(bounds, cursor: .pointingHand)
-  }
 }

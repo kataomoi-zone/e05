@@ -259,10 +259,6 @@ private final class PlacesButton: NSView {
   override func mouseDown(with _: NSEvent) {
     onClick?()
   }
-
-  override func resetCursorRects() {
-    addCursorRect(bounds, cursor: .pointingHand)
-  }
 }
 
 /// Shared selection chip that slides between mode buttons in

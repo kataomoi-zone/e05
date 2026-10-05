@@ -65,10 +65,9 @@ final class SidebarListRowView: NSTableRowView {
 
 /// Cell view base class that encapsulates the hover-tracking
 /// boilerplate every sidebar list cell shares:
-/// - `.inVisibleRect` tracking area with cursor updates
+/// - `.inVisibleRect` tracking area
 /// - mouseExited guard against spurious AppKit events when the pointer
 ///   moves into a subview's own tracking area and back
-/// - pointing-hand cursor on hover
 /// - `forceHideHoverActions()` entry point used by the parent list
 ///   when the clip view scrolls, because `.inVisibleRect` doesn't
 ///   reliably deliver `mouseExited` when a hovered cell slides out
@@ -92,10 +91,7 @@ class SidebarListCellView: NSView {
     if let old = trackingArea { removeTrackingArea(old) }
     let area = NSTrackingArea(
       rect: bounds,
-      // `.cursorUpdate` lets AppKit call `cursorUpdate(with:)`
-      // while the pointer is inside the cell so rows advertise
-      // their clickability (hover highlight alone looks passive).
-      options: [.mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+      options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
       owner: self
     )
     addTrackingArea(area)
@@ -115,10 +111,6 @@ class SidebarListCellView: NSView {
     if cursorIsStillInsideBounds() { return }
     isHovered = false
     setHoverActionsHidden(true)
-  }
-
-  override func cursorUpdate(with _: NSEvent) {
-    NSCursor.pointingHand.set()
   }
 
   /// Force-hide the hover-revealed action button(s) regardless of
