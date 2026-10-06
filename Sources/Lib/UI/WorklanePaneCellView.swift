@@ -63,31 +63,16 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
   private static let loadingRingRotationDuration: CFTimeInterval = 0.9
 
   private let pinIndicator: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Unpin column")
+    let b = HoverIconButton.sidebarIcon("pin.fill", description: "Unpin column")
     b.contentTintColor = .secondaryLabelColor
-    b.toolTip = "Unpin column"
     b.isHidden = true
     b.refusesFirstResponder = true
     return b
   }()
   private let foldIndicator: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "arrow.down.right.and.arrow.up.left",
-      accessibilityDescription: "Unfold column")
+    let b = HoverIconButton.sidebarIcon(
+      "arrow.down.right.and.arrow.up.left", description: "Unfold column")
     b.contentTintColor = .secondaryLabelColor
-    b.toolTip = "Unfold column"
     b.isHidden = true
     b.refusesFirstResponder = true
     return b
@@ -95,21 +80,13 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
   private let statusIndicatorStack: NSStackView = {
     let s = NSStackView()
     s.orientation = .horizontal
-    s.spacing = 3
+    s.spacing = 4
     s.translatesAutoresizingMaskIntoConstraints = false
     return s
   }()
 
   private let closeButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "xmark", accessibilityDescription: "Close pane")
-    b.toolTip = "Close pane"
+    let b = HoverIconButton.sidebarIcon("xmark", description: "Close pane")
     b.setRevealed(false)
     return b
   }()
@@ -118,17 +95,11 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
   /// active (no hover gate) so a noisy tab is spottable without first
   /// pointing at the row.
   private let audioIndicator: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
+    let b = HoverIconButton.sidebarIcon("speaker.wave.2.fill", description: "Mute pane")
     b.isHidden = true
     b.refusesFirstResponder = true
     return b
   }()
-  private static let audioIndicatorSize: CGFloat = 14
   private var labelLeadingToIcon: NSLayoutConstraint?
   private var labelLeadingToAudio: NSLayoutConstraint?
 
@@ -200,14 +171,10 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     pinIndicator.target = self
     pinIndicator.action = #selector(pinTapped(_:))
     statusIndicatorStack.addArrangedSubview(pinIndicator)
-    pinIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
-    pinIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
 
     foldIndicator.target = self
     foldIndicator.action = #selector(foldTapped(_:))
     statusIndicatorStack.addArrangedSubview(foldIndicator)
-    foldIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
-    foldIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
 
     addSubview(statusIndicatorStack)
 
@@ -246,8 +213,6 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
       audioIndicator.leadingAnchor.constraint(
         equalTo: iconView.trailingAnchor, constant: 4),
       audioIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
-      audioIndicator.widthAnchor.constraint(equalToConstant: Self.audioIndicatorSize),
-      audioIndicator.heightAnchor.constraint(equalToConstant: Self.audioIndicatorSize),
 
       titleLabel.trailingAnchor.constraint(
         lessThanOrEqualTo: statusIndicatorStack.leadingAnchor, constant: -4),
@@ -259,8 +224,6 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      closeButton.widthAnchor.constraint(equalToConstant: 16),
-      closeButton.heightAnchor.constraint(equalToConstant: 16),
     ])
   }
 
@@ -360,7 +323,7 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
       let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
       let desc = isMuted ? "Unmute pane" : "Mute pane"
       let config = NSImage.SymbolConfiguration(
-        pointSize: 10, weight: .regular)
+        pointSize: 11, weight: .regular)
       audioIndicator.image = NSImage(
         systemSymbolName: symbol, accessibilityDescription: desc
       )?.withSymbolConfiguration(config)

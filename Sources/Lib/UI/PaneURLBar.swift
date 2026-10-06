@@ -637,7 +637,7 @@ public final class PaneURLBar: NSView, NSTextFieldDelegate, NSMenuDelegate {
     zoomResetInlineButton.toolTip = "Reset zoom"
     // Height matches the icon buttons so the whole cluster sits on
     // a uniform baseline; width tracks the intrinsic "Reset" title
-    // plus the corner-radius padding.
+    // plus the inline bezel's padding.
     NSLayoutConstraint.activate([
       zoomResetInlineButton.heightAnchor.constraint(equalToConstant: zoomButtonSize)
     ])

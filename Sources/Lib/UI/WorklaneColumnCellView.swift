@@ -21,31 +21,16 @@ final class WorklaneColumnCellView: NSTableCellView {
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let pinIndicator: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Unpin column")
+    let b = HoverIconButton.sidebarIcon("pin.fill", description: "Unpin column")
     b.contentTintColor = .secondaryLabelColor
-    b.toolTip = "Unpin column"
     b.isHidden = true
     b.refusesFirstResponder = true
     return b
   }()
   private let foldIndicator: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "arrow.down.right.and.arrow.up.left",
-      accessibilityDescription: "Unfold column")
+    let b = HoverIconButton.sidebarIcon(
+      "arrow.down.right.and.arrow.up.left", description: "Unfold column")
     b.contentTintColor = .secondaryLabelColor
-    b.toolTip = "Unfold column"
     b.isHidden = true
     b.refusesFirstResponder = true
     return b
@@ -53,22 +38,13 @@ final class WorklaneColumnCellView: NSTableCellView {
   private let statusIndicatorStack: NSStackView = {
     let s = NSStackView()
     s.orientation = .horizontal
-    s.spacing = 3
+    s.spacing = 4
     s.translatesAutoresizingMaskIntoConstraints = false
     return s
   }()
 
   private let closeButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "xmark",
-      accessibilityDescription: "Close every pane in this column")
-    b.toolTip = "Close every pane in this column"
+    let b = HoverIconButton.sidebarIcon("xmark", description: "Close every pane in this column")
     b.setRevealed(false)
     return b
   }()
@@ -128,14 +104,10 @@ final class WorklaneColumnCellView: NSTableCellView {
     pinIndicator.target = self
     pinIndicator.action = #selector(pinTapped(_:))
     statusIndicatorStack.addArrangedSubview(pinIndicator)
-    pinIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
-    pinIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
 
     foldIndicator.target = self
     foldIndicator.action = #selector(foldTapped(_:))
     statusIndicatorStack.addArrangedSubview(foldIndicator)
-    foldIndicator.widthAnchor.constraint(equalToConstant: 12).isActive = true
-    foldIndicator.heightAnchor.constraint(equalToConstant: 12).isActive = true
 
     addSubview(statusIndicatorStack)
 
@@ -157,8 +129,6 @@ final class WorklaneColumnCellView: NSTableCellView {
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      closeButton.widthAnchor.constraint(equalToConstant: 16),
-      closeButton.heightAnchor.constraint(equalToConstant: 16),
     ])
   }
 

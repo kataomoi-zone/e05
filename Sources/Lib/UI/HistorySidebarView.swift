@@ -254,7 +254,7 @@ private final class HistorySidebarCellView: SidebarListCellView {
   private let iconView = NSImageView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let subtitleLabel = NSTextField(labelWithString: "")
-  private let actionButton = HoverIconButton()
+  private let actionButton = HoverIconButton.sidebarIcon("ellipsis", description: "More actions")
   private var currentID: Int64 = 0
 
   var onRowAction: ((Int64, HistoryRowAction) -> Void)?
@@ -285,16 +285,8 @@ private final class HistorySidebarCellView: SidebarListCellView {
     subtitleLabel.drawsBackground = false
     subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-    actionButton.image = NSImage(
-      systemSymbolName: "ellipsis", accessibilityDescription: "More actions"
-    )
-    actionButton.imagePosition = .imageOnly
-    actionButton.isBordered = false
-    actionButton.bezelStyle = .regularSquare
-    actionButton.translatesAutoresizingMaskIntoConstraints = false
     actionButton.target = self
     actionButton.action = #selector(actionTapped)
-    actionButton.toolTip = "More actions"
     // Hover-revealed: the cell's tracking area toggles visibility.
     actionButton.isHidden = true
 
@@ -318,9 +310,10 @@ private final class HistorySidebarCellView: SidebarListCellView {
       subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
       actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-      actionButton.widthAnchor.constraint(equalToConstant: 18),
-      actionButton.heightAnchor.constraint(equalToConstant: 18),
+      // The list sits 4pt inside the sidebar; 6 more puts the circle's
+      // centre 19pt from its edge, level with the header's buttons and
+      // the worklane's.
+      actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
     ])
   }
 

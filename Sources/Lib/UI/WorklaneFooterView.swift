@@ -13,32 +13,9 @@ final class WorklaneFooterView: NSView {
   /// reads as a sibling chrome strip rather than another workspace.
   static let height: CGFloat = 28
 
-  private let addButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "plus", accessibilityDescription: "New workspace")
-    b.toolTip = "New Workspace"
-    return b
-  }()
-
-  private let addPrivateButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "plus.circle.dashed",
-      accessibilityDescription: "New private workspace")
-    b.toolTip = "New Private Workspace"
-    return b
-  }()
+  private let addButton = HoverIconButton.sidebarIcon("plus", description: "New Workspace")
+  private let addPrivateButton = HoverIconButton.sidebarIcon(
+    "plus.circle.dashed", description: "New Private Workspace")
 
   private var onCreateWorkspaceHandler: (() -> Void)?
   private var onCreatePrivateHandler: (() -> Void)?
@@ -75,14 +52,10 @@ final class WorklaneFooterView: NSView {
       // outline view's gutter.
       addButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
       addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      addButton.widthAnchor.constraint(equalToConstant: 18),
-      addButton.heightAnchor.constraint(equalToConstant: 18),
 
       addPrivateButton.leadingAnchor.constraint(
         equalTo: addButton.trailingAnchor, constant: 6),
       addPrivateButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      addPrivateButton.widthAnchor.constraint(equalToConstant: 18),
-      addPrivateButton.heightAnchor.constraint(equalToConstant: 18),
     ])
   }
 

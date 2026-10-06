@@ -444,7 +444,7 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
   private let titleLabel = NSTextField(labelWithString: "")
   private let subtitleLabel = NSTextField(labelWithString: "")
   private let toggle = NSSwitch()
-  private let menuButton = HoverIconButton()
+  private let menuButton = HoverIconButton.sidebarIcon("ellipsis", description: "More actions")
   private var currentSourceURL: URL?
   /// Mirrored from the latest `configure(with:)` so menu construction
   /// can gate `Open Options Page` on the manifest declaration without
@@ -513,16 +513,8 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
     toggle.target = self
     toggle.action = #selector(toggleChanged)
 
-    menuButton.image = NSImage(
-      systemSymbolName: "ellipsis", accessibilityDescription: "More actions"
-    )
-    menuButton.imagePosition = .imageOnly
-    menuButton.isBordered = false
-    menuButton.bezelStyle = .regularSquare
-    menuButton.translatesAutoresizingMaskIntoConstraints = false
     menuButton.target = self
     menuButton.action = #selector(menuTapped)
-    menuButton.toolTip = "More actions"
     menuButton.isHidden = true
 
     addSubview(iconView)
@@ -547,8 +539,6 @@ private final class ExtensionsSidebarCellView: SidebarListCellView {
 
       menuButton.centerYAnchor.constraint(equalTo: centerYAnchor),
       menuButton.trailingAnchor.constraint(equalTo: toggle.leadingAnchor, constant: -4),
-      menuButton.widthAnchor.constraint(equalToConstant: 18),
-      menuButton.heightAnchor.constraint(equalToConstant: 18),
 
       toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
       toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),

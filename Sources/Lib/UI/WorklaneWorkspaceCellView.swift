@@ -21,28 +21,12 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   private let indicator = WorkspaceAccentIndicator()
   private let label = NSTextField(labelWithString: "")
   private let closeButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "xmark", accessibilityDescription: "Close workspace")
-    b.toolTip = "Close workspace"
+    let b = HoverIconButton.sidebarIcon("xmark", description: "Close workspace")
     b.setRevealed(false)
     return b
   }()
   private let addButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "plus", accessibilityDescription: "New start pane in this workspace")
-    b.toolTip = "New start pane in this workspace"
+    let b = HoverIconButton.sidebarIcon("plus", description: "New start pane in this workspace")
     b.setRevealed(false)
     return b
   }()
@@ -51,16 +35,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   /// case stays a one-click affordance while the longer tail moves
   /// behind a hover-revealed dropdown rather than crowding the row.
   private let addMoreButton: HoverIconButton = {
-    let b = HoverIconButton()
-    b.translatesAutoresizingMaskIntoConstraints = false
-    b.isBordered = false
-    b.bezelStyle = .regularSquare
-    b.imagePosition = .imageOnly
-    b.imageScaling = .scaleProportionallyDown
-    b.image = NSImage(
-      systemSymbolName: "chevron.down",
-      accessibilityDescription: "New browser, terminal, or finder pane in this workspace")
-    b.toolTip = "New browser, terminal, or finder pane in this workspace"
+    let b = HoverIconButton.sidebarIcon(
+      "chevron.down", description: "New browser, terminal, or finder pane in this workspace")
     b.setRevealed(false)
     return b
   }()
@@ -137,20 +113,14 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
         lessThanOrEqualTo: addMoreButton.leadingAnchor, constant: -4),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-      addMoreButton.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -2),
+      addMoreButton.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -4),
       addMoreButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      addMoreButton.widthAnchor.constraint(equalToConstant: 14),
-      addMoreButton.heightAnchor.constraint(equalToConstant: 18),
 
       addButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
       addButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      addButton.widthAnchor.constraint(equalToConstant: 18),
-      addButton.heightAnchor.constraint(equalToConstant: 18),
 
       closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-      closeButton.widthAnchor.constraint(equalToConstant: 18),
-      closeButton.heightAnchor.constraint(equalToConstant: 18),
     ])
   }
 

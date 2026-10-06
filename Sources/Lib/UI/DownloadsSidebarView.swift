@@ -297,7 +297,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     addSubview(subtitleLabel)
 
     actionsStack.orientation = .horizontal
-    actionsStack.spacing = 2
+    actionsStack.spacing = 4
     // Keep hidden arranged subviews in layout so toggling
     // individual button visibility on hover doesn't reflow the
     // title. Reflow would move the button out from under the
@@ -337,7 +337,10 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
       subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
       actionsStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-      actionsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      // The list sits 4pt inside the sidebar; 6 more puts the circle's
+      // centre 19pt from its edge, level with the header's buttons and
+      // the worklane's.
+      actionsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
 
       progressOverlay.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
       progressOverlay.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
@@ -491,18 +494,9 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
   }
 
   private func makeButton(symbol: String, tooltip: String, action: Selector) -> HoverIconButton {
-    let button = HoverIconButton()
-    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-    button.imagePosition = .imageOnly
-    button.isBordered = false
-    button.bezelStyle = .regularSquare
-    button.toolTip = tooltip
+    let button = HoverIconButton.sidebarIcon(symbol, description: tooltip)
     button.target = self
     button.action = action
-    NSLayoutConstraint.activate([
-      button.widthAnchor.constraint(equalToConstant: 18),
-      button.heightAnchor.constraint(equalToConstant: 18),
-    ])
     return button
   }
 
