@@ -785,16 +785,7 @@ extension PaneContainerViewController {
     }
 
     // 2. Build a new single-pane column in the target workspace.
-    let newColumn = ColumnModel(pane: pane)
-    setupPaneCallbacks(pane: pane, column: newColumn)
-    let cv = pane.containerView
-    newColumn.containerView.addArrangedSubview(cv)
-    NSLayoutConstraint.activate([
-      cv.leadingAnchor.constraint(equalTo: newColumn.containerView.leadingAnchor),
-      cv.trailingAnchor.constraint(equalTo: newColumn.containerView.trailingAnchor),
-    ])
-    attachFoldedLabel(to: newColumn)
-    installColumnWidthConstraints(on: newColumn, initial: sourceWidth)
+    let (newColumn, _) = makeColumn(around: pane, width: sourceWidth)
     newColumn.currentPreset = sourcePreset
 
     let targetWs = workspaces[adjustedTarget]
@@ -818,6 +809,9 @@ extension PaneContainerViewController {
       targetWs.columns.count)
     targetWs.columns.insert(newColumn, at: insertIndex)
     targetWs.focusedColumnIndex = insertIndex
+    // Again now that the pane is in its workspace: the bar takes that
+    // workspace's accent, which it could not look up before the insert.
+    ensureProgressBarAttached(pane: pane, in: newColumn)
 
     rebuildStackView(in: targetVC)
 
@@ -849,7 +843,7 @@ extension PaneContainerViewController {
     // unfold does: the surface skipped every resize while hidden, and
     // kept whatever focus it had when the column folded.
     if sourceWasFolded {
-      cv.isHidden = false
+      pane.containerView.isHidden = false
       targetVC.view.layoutSubtreeIfNeeded()
       pane.terminalView?.clearSurfaceFocus()
       pane.terminalView?.resyncSurfaceSize()

@@ -207,27 +207,25 @@ extension PaneContainerViewController {
     showToast("Duplicate Pane")
   }
 
-  @discardableResult
-  func insertColumn(
-    with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
-  ) -> ColumnModel {
+  /// A new column holding only `pane`, wired the way every path that
+  /// gives a pane a column of its own needs it — a fresh pane, an undone
+  /// close, a pane moved out of its column. Not yet in any workspace.
+  ///
+  /// The pane's pins sit one priority notch below the column's
+  /// `widthConstraint` so the fold path (which promotes `widthConstraint`
+  /// to `.required`) can shrink the column to its narrow strip without
+  /// these pins forcing the pane subtree's intrinsic width back onto the
+  /// stack. At unfolded widths the pin's equality and the pane subtree's
+  /// intrinsic `>=` are both satisfiable simultaneously, so the pane
+  /// lines up with the stack edges. At the fold's strip width the
+  /// equality loses and the pane overflows — `isHidden` on it during the
+  /// fold keeps that overflow invisible.
+  func makeColumn(
+    around pane: PaneModel, id: ULID = ULID(), width: CGFloat
+  ) -> (ColumnModel, NSLayoutConstraint) {
     let column = ColumnModel(pane: pane, id: id)
-
     setupPaneCallbacks(pane: pane, column: column)
-
     let cv = pane.containerView
-
-    // Add pane's containerView to column's containerView. The pins
-    // sit one priority notch below the column's `widthConstraint`
-    // so the fold path (which promotes `widthConstraint` to
-    // `.required`) can shrink the column to its narrow strip
-    // without these pins forcing the pane subtree's intrinsic
-    // width back onto the stack. At unfolded widths the pin's
-    // equality and the pane subtree's intrinsic `>=` are both
-    // satisfiable simultaneously, so the cv lines up with the
-    // stack edges. At the fold's strip width the equality loses
-    // and the cv overflows — `isHidden` on the cv during the fold
-    // keeps that overflow invisible.
     column.containerView.addArrangedSubview(cv)
     let cvLeading = cv.leadingAnchor.constraint(
       equalTo: column.containerView.leadingAnchor)
@@ -237,19 +235,26 @@ extension PaneContainerViewController {
     cvTrailing.priority = NSLayoutConstraint.Priority(rawValue: 998)
     NSLayoutConstraint.activate([cvLeading, cvTrailing])
     ensureProgressBarAttached(pane: pane, in: column)
-
-    // Folded label overlay — shown only when column is folded
+    // Folded label overlay — shown only when the column is folded.
     attachFoldedLabel(to: column)
+    let wc = installColumnWidthConstraints(on: column, initial: width)
+    return (column, wc)
+  }
+
+  @discardableResult
+  func insertColumn(
+    with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
+  ) -> ColumnModel {
+    // Start the column at its target width so the post-insert
+    // layout pass below resolves the final frame. `animateScroll(toX:)`
+    // reads that frame to compute the scroll target; launching the
+    // scroll from a width-0 start would land on the wrong X.
+    let (column, wc) = makeColumn(around: pane, id: id, width: defaultPaneWidth)
 
     // Session restore runs before the window is attached and would
     // flash every restored column through the animation; the guard
     // keeps that path immediate.
     let animated = view.window != nil
-    // Start the column at its target width so the post-insert
-    // layout pass below resolves the final frame. `animateScroll(toX:)`
-    // reads that frame to compute the scroll target; launching the
-    // scroll from a width-0 start would land on the wrong X.
-    let wc = installColumnWidthConstraints(on: column, initial: defaultPaneWidth)
 
     // A fresh add (window attached) opens at the user's first width-cycle
     // preset and seeds `currentPreset`, so the column starts at the
@@ -1816,30 +1821,11 @@ extension PaneContainerViewController {
 
     if closed.wasOnlyPaneInColumn {
       // Re-create a column for this pane
-      let column = ColumnModel(pane: pane)
-      setupPaneCallbacks(pane: pane, column: column)
-
-      let cv = pane.containerView
-      column.containerView.addArrangedSubview(cv)
-      // Same priority-below-`widthConstraint` rationale as
-      // `insertColumn(with:)`.
-      let cvLeading = cv.leadingAnchor.constraint(
-        equalTo: column.containerView.leadingAnchor)
-      let cvTrailing = cv.trailingAnchor.constraint(
-        equalTo: column.containerView.trailingAnchor)
-      cvLeading.priority = NSLayoutConstraint.Priority(rawValue: 998)
-      cvTrailing.priority = NSLayoutConstraint.Priority(rawValue: 998)
-      NSLayoutConstraint.activate([cvLeading, cvTrailing])
-      ensureProgressBarAttached(pane: pane, in: column)
-
-      // Folded label overlay — same setup as insertColumn(with:)
-      attachFoldedLabel(to: column)
-
-      let targetWidth = closed.columnWidth ?? defaultPaneWidth
-      let animated = view.window != nil
       // Start at the saved width so the layout pass below can
       // resolve the final frame for `animateScroll(toX:)`.
-      let wc = installColumnWidthConstraints(on: column, initial: targetWidth)
+      let targetWidth = closed.columnWidth ?? defaultPaneWidth
+      let (column, wc) = makeColumn(around: pane, width: targetWidth)
+      let animated = view.window != nil
 
       if animated {
         // Hide the restored column's contents through the width
