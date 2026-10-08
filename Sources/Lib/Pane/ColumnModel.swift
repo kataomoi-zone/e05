@@ -34,6 +34,11 @@ public final class ColumnModel {
   public var isFolded: Bool = false
   /// Width before folding — used to restore on unfold.
   public var unfoldedWidth: CGFloat = 0
+  /// The column's own width: the live one, or while folded the one it
+  /// unfolds to rather than the strip.
+  public var restingWidth: CGFloat? {
+    isFolded ? unfoldedWidth : widthConstraint?.constant
+  }
 
   /// Whether the column is pinned: lifted out of the horizontal scroll
   /// flow into a fixed leading overlay so it stays on screen while the

@@ -710,6 +710,12 @@ extension PaneContainerViewController {
     clearAllFocusBorders(in: sourceWs)
     clearAllFocusBorders(in: workspaces[target])
 
+    // The pane was as wide as the column it leaves, so the column it
+    // lands in starts at that width rather than the default.
+    let sourceWidth = column.restingWidth ?? defaultPaneWidth
+    let sourcePreset = column.currentPreset
+    let sourceWasFolded = column.isFolded
+
     // 1. Detach pane from source column.
     clearFocusBorder(pane)
     pane.containerView.removeFromSuperview()
@@ -788,7 +794,8 @@ extension PaneContainerViewController {
       cv.trailingAnchor.constraint(equalTo: newColumn.containerView.trailingAnchor),
     ])
     attachFoldedLabel(to: newColumn)
-    installColumnWidthConstraints(on: newColumn, initial: defaultPaneWidth)
+    installColumnWidthConstraints(on: newColumn, initial: sourceWidth)
+    newColumn.currentPreset = sourcePreset
 
     let targetWs = workspaces[adjustedTarget]
     let targetVC = workspaceVCs[adjustedTarget]
@@ -836,6 +843,17 @@ extension PaneContainerViewController {
     )
     heightPin.isActive = true
     newColumn.heightPin = heightPin
+
+    // Fold hides a column's panes, and the moved one would otherwise
+    // land hidden in a column that is not folded. Unhide it the way
+    // unfold does: the surface skipped every resize while hidden, and
+    // kept whatever focus it had when the column folded.
+    if sourceWasFolded {
+      cv.isHidden = false
+      targetVC.view.layoutSubtreeIfNeeded()
+      pane.terminalView?.clearSurfaceFocus()
+      pane.terminalView?.resyncSurfaceSize()
+    }
 
     let toastLabel =
       isSameWs
