@@ -109,7 +109,9 @@ private func runCLI(
   _ arguments: [String],
   socketPath: String?,
   workingDirectory: URL? = nil,
-  executable: URL = cliURL
+  executable: URL = cliURL,
+  paneID: String? = nil,
+  stdin: String? = nil
 ) async throws -> CLIRun {
   try await Task.detached {
     // `Process` is not Sendable and nothing outside this task touches
@@ -124,6 +126,8 @@ private func runCLI(
     // discovery cases: a developer who exports E05_SOCKET would
     // otherwise have them aim at their own running app.
     environment["E05_SOCKET"] = socketPath
+    // Same reasoning: a run from inside an e05 pane inherits a real one.
+    environment["E05_PANE_ID"] = paneID
     process.environment = environment
     if let workingDirectory { process.currentDirectoryURL = workingDirectory }
 
@@ -131,7 +135,13 @@ private func runCLI(
     let err = Pipe()
     process.standardOutput = out
     process.standardError = err
+    // Always a pipe, closed after writing: a CLI that reads stdin would
+    // otherwise wait on the test runner's own.
+    let input = Pipe()
+    process.standardInput = input
     try process.run()
+    if let stdin { input.fileHandleForWriting.write(Data(stdin.utf8)) }
+    try input.fileHandleForWriting.close()
 
     // Nothing else in the round trip has a bound of its own — not the
     // CLI's read loop, not the host's hop to the main actor, not the
@@ -163,6 +173,8 @@ private func described(_ request: ControlSocket.Request?) -> String {
   case .action(let id): "action \(id)"
   case .switchWorkspace(let index): "switch-workspace \(index)"
   case .notify(let message): "notify \(message)"
+  case .agentSession(let agent, let event, let session, let pane, let pid):
+    "agent-session \(agent) \(event) \(session) \(pane) \(pid)"
   case .invalid(let message): "invalid \(message)"
   case nil: "<nothing sent>"
   }
@@ -256,6 +268,91 @@ struct CLIRequestTests {
       let run = try await runCLI(["switch-workspace", "3"], socketPath: socket)
       #expect(run.status == 0)
       #expect(described(host.requests.first) == "switch-workspace 3")
+    }
+  }
+}
+
+// MARK: - Agent hooks
+
+/// What an agent's hook writes to `e05 agent-hook`'s stdin.
+private func hookEvent(_ name: String, session: String = "s-1") -> String {
+  #"{"hook_event_name":"\#(name)","session_id":"\#(session)","cwd":"/tmp","source":"startup"}"#
+}
+
+@Suite("e05 CLI agent-hook")
+@MainActor
+struct CLIAgentHookTests {
+  /// The pid is the agent's (`$PPID` in the hook command) and the pane is
+  /// the inherited `E05_PANE_ID`. The session id goes through as given:
+  /// the host owns what a valid one is.
+  @Test("a session start is forwarded with its pane and pid")
+  func forwardsStart() async throws {
+    try await withHost { host, socket in
+      let run = try await runCLI(
+        ["agent-hook", "claude", "4242"], socketPath: socket,
+        paneID: "pane-1", stdin: hookEvent("SessionStart"))
+      #expect(run.status == 0)
+      #expect(described(host.requests.first) == "agent-session claude start s-1 pane-1 4242")
+    }
+  }
+
+  @Test("a session end is forwarded as end")
+  func forwardsEnd() async throws {
+    try await withHost { host, socket in
+      let run = try await runCLI(
+        ["agent-hook", "claude", "4242"], socketPath: socket,
+        paneID: "pane-1", stdin: hookEvent("SessionEnd"))
+      #expect(run.status == 0)
+      #expect(described(host.requests.first) == "agent-session claude end s-1 pane-1 4242")
+    }
+  }
+
+  /// Outside an e05 pane there is nothing to report to.
+  @Test("no E05_PANE_ID exits 2 without contacting the host")
+  func missingPaneExitsTwo() async throws {
+    try await withHost { host, socket in
+      let run = try await runCLI(
+        ["agent-hook", "claude", "4242"], socketPath: socket,
+        stdin: hookEvent("SessionStart"))
+      #expect(run.status == 2)
+      #expect(host.requests.isEmpty)
+    }
+  }
+
+  @Test("a hook wired to another event exits 2 without contacting the host")
+  func otherEventExitsTwo() async throws {
+    try await withHost { host, socket in
+      let run = try await runCLI(
+        ["agent-hook", "claude", "4242"], socketPath: socket,
+        paneID: "pane-1", stdin: hookEvent("PreToolUse"))
+      #expect(run.status == 2)
+      #expect(run.stderr.contains("PreToolUse"))
+      #expect(host.requests.isEmpty)
+    }
+  }
+
+  @Test("stdin that is not a hook event exits 2 without contacting the host")
+  func malformedStdinExitsTwo() async throws {
+    for stdin in ["", "not json", #"{"hook_event_name":"SessionStart"}"#] {
+      try await withHost { host, socket in
+        let run = try await runCLI(
+          ["agent-hook", "claude", "4242"], socketPath: socket,
+          paneID: "pane-1", stdin: stdin)
+        #expect(run.status == 2)
+        #expect(host.requests.isEmpty)
+      }
+    }
+  }
+
+  @Test("a missing or non-numeric pid exits 2 without contacting the host")
+  func badPIDExitsTwo() async throws {
+    for arguments in [["agent-hook", "claude"], ["agent-hook", "claude", "abc"]] {
+      try await withHost { host, socket in
+        let run = try await runCLI(
+          arguments, socketPath: socket, paneID: "pane-1", stdin: hookEvent("SessionStart"))
+        #expect(run.status == 2)
+        #expect(host.requests.isEmpty)
+      }
     }
   }
 }

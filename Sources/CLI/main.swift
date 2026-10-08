@@ -21,6 +21,8 @@ case "switch-workspace":
   runSwitchWorkspace(rest)
 case "notify":
   runNotify(rest)
+case "agent-hook":
+  runAgentHook(rest)
 case "help", "--help", "-h":
   printUsage(to: FileHandle.standardOutput)
   exit(0)
@@ -84,6 +86,44 @@ func runNotify(_ args: [String]) {
     exit(2)
   }
   exitFromReply(sendRequest(["op": "notify", "message": message]), prefix: "e05 notify")
+}
+
+/// Relay a coding agent's lifecycle hook to the host. The agent runs the
+/// hook with its event as JSON on stdin; `pid` is the agent's own process
+/// (the hook command passes `$PPID`), and the pane comes from the
+/// `E05_PANE_ID` the agent inherited from the pane's shell. Only session
+/// start and end are forwarded; any other event is a misconfigured hook.
+func runAgentHook(_ args: [String]) {
+  guard args.count == 2, let pid = Int(args[1]), pid > 0 else {
+    errln("e05 agent-hook: usage: e05 agent-hook <agent> <pid>  (event JSON on stdin)")
+    exit(2)
+  }
+  guard let pane = ProcessInfo.processInfo.environment["E05_PANE_ID"], !pane.isEmpty else {
+    errln("e05 agent-hook: E05_PANE_ID is not set (not inside an e05 terminal pane)")
+    exit(2)
+  }
+  let input = FileHandle.standardInput.readDataToEndOfFile()
+  guard let json = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
+    let name = json["hook_event_name"] as? String,
+    let session = json["session_id"] as? String
+  else {
+    errln("e05 agent-hook: stdin is not a hook event with hook_event_name and session_id")
+    exit(2)
+  }
+  let event: String
+  switch name {
+  case "SessionStart": event = "start"
+  case "SessionEnd": event = "end"
+  default:
+    errln("e05 agent-hook: unsupported event '\(name)'")
+    exit(2)
+  }
+  exitFromReply(
+    sendRequest([
+      "op": "agent-session", "agent": args[0], "event": event,
+      "session": session, "pane": pane, "pid": pid,
+    ]),
+    prefix: "e05 agent-hook")
 }
 
 /// Bare paths become `file://` URLs so the host can route them through
@@ -265,12 +305,17 @@ func printUsage(to handle: FileHandle) {
       action <id>           Run a registered palette action by id
       switch-workspace <i>  Switch focus to workspace at zero-based index
       notify <message...>   Post a toast in the current workspace
+      agent-hook <agent> <pid>
+                            Relay a coding agent's session hook (event
+                            JSON on stdin) so the pane can resume it
       help                  Show this message
 
     Environment:
       E05_SOCKET            Override the control-socket path
                             (default: derived from the hosting .app
                             bundle's CFBundleIdentifier)
+      E05_PANE_ID           Set in each terminal pane; names the pane
+                            for agent-hook
 
     """
   handle.write(Data(text.utf8))

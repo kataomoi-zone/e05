@@ -134,6 +134,11 @@ public struct SessionState: Codable, Sendable {
     /// that came back empty, and sessions written before this field
     /// existed.
     public var terminalScrollbackID: String?
+    /// Coding agent conversation still running in a terminal pane at save
+    /// time, reported by the agent's hooks. Reopened at the restored
+    /// shell's first prompt. `nil` when nothing was running, and for
+    /// sessions written before this field existed.
+    public var terminalAgentSession: TerminalAgentSession?
   }
 
   // MARK: - File Path

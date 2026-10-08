@@ -1,0 +1,14 @@
+{
+  "name": "e05",
+  "description": "Claude Code integration for the e05 terminal and browser app",
+  "owner": {
+    "name": "kawarimidoll"
+  },
+  "plugins": [
+    {
+      "name": "e05",
+      "source": "./integrations/claude-code",
+      "description": "Reopen the Claude Code conversation an e05 terminal pane was running when e05 restarts"
+    }
+  ]
+}

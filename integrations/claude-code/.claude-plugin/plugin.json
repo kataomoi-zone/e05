@@ -1,0 +1,7 @@
+{
+  "name": "e05",
+  "description": "Reopen the Claude Code conversation an e05 terminal pane was running when e05 restarts",
+  "author": {
+    "name": "kawarimidoll"
+  }
+}

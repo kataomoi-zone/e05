@@ -255,11 +255,18 @@ public final class GhosttyApp {
         let pwdPtr = action.action.pwd.pwd,
         let pwd = String(validatingCString: pwdPtr)
       else { return false }
+      view.sendPendingStartupCommand()
       // Shell integration re-emits OSC 7 on every prompt redraw, so log
       // only when the directory actually moves to keep the noise down.
       if view.noteWorkingDirectoryChanged(pwd) {
         logger.debug("[ghostty/pwd] surface cwd=\(pwd, privacy: .public)")
       }
+      return true
+    case GHOSTTY_ACTION_COMMAND_FINISHED:
+      // Raised only for a command whose start (OSC 133 C) was seen, so
+      // the first prompt of a fresh shell never trips it.
+      guard let view = terminalView(for: target) else { return false }
+      view.noteCommandFinished()
       return true
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
       // GUI notification for abnormal exit or wait_after_command.

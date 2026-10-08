@@ -19,10 +19,14 @@ public final class ControlSocket: @unchecked Sendable {
     case action(id: String)
     case switchWorkspace(index: Int)
     case notify(message: String)
+    /// A coding agent's lifecycle hook reporting that a session started or
+    /// ended in the pane `paneID` names (its `E05_PANE_ID`).
+    case agentSession(agent: String, event: String, sessionID: String, paneID: String, pid: Int)
     case invalid(message: String)
 
     private enum CodingKeys: String, CodingKey {
       case op, url, id, index, message
+      case agent, event, session, pane, pid
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +63,29 @@ public final class ControlSocket: @unchecked Sendable {
           return
         }
         self = .notify(message: message)
+      case "agent-session":
+        guard let agent = Self.string(in: container, forKey: .agent, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("agent", in: container))
+          return
+        }
+        guard let event = Self.string(in: container, forKey: .event, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("event", in: container))
+          return
+        }
+        guard let session = Self.string(in: container, forKey: .session, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("session", in: container))
+          return
+        }
+        guard let pane = Self.string(in: container, forKey: .pane, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("pane", in: container))
+          return
+        }
+        guard let pid = Self.int(in: container, forKey: .pid, op: op) else {
+          self = .invalid(message: Self.fieldDiagnostic("pid", in: container))
+          return
+        }
+        self = .agentSession(
+          agent: agent, event: event, sessionID: session, paneID: pane, pid: pid)
       default:
         self = .invalid(message: "unknown op: \(op)")
       }

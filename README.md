@@ -141,6 +141,7 @@ e05 open <url-or-path>          # Open URL as a browser column, dir as a finder 
 e05 action <action-id>          # Run any command-palette action by id
 e05 switch-workspace <index>    # Switch to workspace at zero-based index
 e05 notify <message>            # Surface a toast in the running app
+e05 agent-hook <agent> <pid>    # Relay a coding agent's session hook (used by the Claude Code plugin below)
 ```
 
 Inside terminal panes the bundled `open` shim is prepended to `PATH`, so shell-typed `open .` / `open https://...` becomes a new finder / browser column. `open -a App` / `open file.pdf` etc. fall through to the system `/usr/bin/open` and keep their stock Launch Services behaviour.
@@ -156,6 +157,19 @@ A pane running any other shell still works as a terminal. It opens without its p
 **zsh is the only one the author uses daily.** bash and fish are covered by the same suite in CI (`scripts/test-shell-integration.sh`, run on every push to `main` and every pull request), but see no day-to-day use here, so they are the likelier ones to have rough edges. Reports welcome.
 
 Scrollback restore can be turned off in **Settings → General → Terminal**, and the saved screens deleted in **Settings → About → Reset**. Worth knowing before leaving it on: a saved screen is the pane verbatim, so anything that was displayed — a token you echoed, the output of `env` — is in the file. They live in `~/Library/Application Support/<bundle-id>/scrollback/`, in a `0700` directory, each file `0600` once written.
+
+### Claude Code
+
+A pane that was running [Claude Code](https://code.claude.com) when e05 quit can reopen that conversation on the next launch: after the scrollback replay, e05 types `claude --resume <session-id>` at the restored shell's first prompt. Claude Code reports which session runs in which pane through its own hooks, which ship as a plugin in this repository:
+
+```
+claude plugin marketplace add kawarimidoll/e05
+claude plugin install e05@e05
+```
+
+(or `/plugin marketplace add kawarimidoll/e05` and `/plugin install e05@e05` inside Claude Code).
+
+The hook does nothing outside an e05 terminal pane, and prints nothing. Only a session whose `claude` process is still running at quit is reopened; one you exited, or one Claude Code ran headless from inside another session, is not. The command is typed when the shell reports its directory over OSC 7 at its first prompt, so it needs a shell whose integration does that — zsh, bash, fish and elvish.
 
 ## Building from source
 

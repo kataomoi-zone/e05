@@ -98,6 +98,7 @@ extension PaneContainerViewController {
             if let cwd = terminalView.currentWorkingDirectory {
               state.terminalWorkingDirectory = cwd
             }
+            state.terminalAgentSession = terminalView.resumableAgentSession
             // Scrollback goes to its own file, keyed by an id in the
             // pane state. Only captured when the caller asks: reading
             // the whole screen for every pane is too much work for the
@@ -340,7 +341,8 @@ extension PaneContainerViewController {
             initialTitle: firstPaneState.title,
             initialInteractionState: firstPaneState.interactionState,
             terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory,
-            terminalScrollbackPath: Self.scrollbackPath(for: firstPaneState)
+            terminalScrollbackPath: Self.scrollbackPath(for: firstPaneState),
+            terminalAgentSession: firstPaneState.terminalAgentSession
           ),
           focusOnInsert: false,
           id: columnId
@@ -368,7 +370,8 @@ extension PaneContainerViewController {
               initialTitle: paneState.title,
               initialInteractionState: paneState.interactionState,
               terminalWorkingDirectory: paneState.terminalWorkingDirectory,
-              terminalScrollbackPath: Self.scrollbackPath(for: paneState)
+              terminalScrollbackPath: Self.scrollbackPath(for: paneState),
+              terminalAgentSession: paneState.terminalAgentSession
             )
           )
           if let title = paneState.title { pane.title = title }
@@ -496,5 +499,35 @@ extension PaneContainerViewController {
       vc.view.isHidden = true
     }
     restoreScroll(in: currentWorkspace)
+  }
+}
+
+extension PaneContainerViewController {
+  /// Apply a report from an agent's lifecycle hook (`e05 agent-hook`),
+  /// relayed over the control socket. Returns an error message for the
+  /// CLI, or nil when the report landed.
+  ///
+  /// Saves soon after, like a `cd`: the report is what lets a crash or a
+  /// force quit still reopen the conversation, not only a clean quit.
+  public func recordAgentSession(
+    agent: String, event: String, sessionID: String, paneID: String, pid: Int
+  ) -> String? {
+    guard let event = TerminalAgentTracker.Event(rawValue: event) else {
+      return "unknown event: \(event)"
+    }
+    guard let session = TerminalAgentSession(agent: agent, sessionID: sessionID) else {
+      return "unsupported agent or session id"
+    }
+    guard pid > 1, let pid = pid_t(exactly: pid) else { return "invalid pid" }
+    // The undo-close stash too: a closed pane's agent keeps running for
+    // the undo window, and a report missed there would come back stale.
+    let panes = workspaces.flatMap(\.columns).flatMap(\.panes) + recentlyClosed.map(\.pane)
+    let terminal = panes.lazy
+      .compactMap(\.terminalView)
+      .first { $0.agentHookPaneID == paneID }
+    guard let terminal else { return "no pane with id \(paneID)" }
+    terminal.recordAgentSession(event, session: session, pid: pid)
+    scheduleSessionAutosave()
+    return nil
   }
 }

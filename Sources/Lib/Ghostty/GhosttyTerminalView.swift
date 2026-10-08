@@ -54,6 +54,27 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// fresh panes and for restores with nothing captured.
   private let restoreScrollbackPath: String?
 
+  /// Handed to the shell as `E05_PANE_ID` so an agent's lifecycle hooks,
+  /// which inherit it, can tell `e05 agent-hook` which pane they run in.
+  /// Only lives as long as the view: a restored pane gets a new one, and
+  /// the agent it resumes reports in again under it.
+  public let agentHookPaneID = UUID().uuidString
+
+  /// Agent sessions this pane's shell has started, for session save.
+  private var agentTracker = TerminalAgentTracker()
+
+  /// Command typed into the shell at its first prompt — the agent
+  /// conversation a restored pane was running. Consumed once.
+  private var pendingStartupCommand: String?
+
+  /// The conversation a restored pane was running, still offered to
+  /// session save until the agent typed back in reports for itself.
+  /// Without it, a quit or crash in the seconds before the resumed agent's
+  /// start hook lands would save nothing and lose the conversation.
+  /// Dropped on the first report, or when the typed command finishes
+  /// without one (the resume failed).
+  private var restoredAgentSession: TerminalAgentSession?
+
   /// When true, surface is preserved when the view is removed from window.
   /// Used by undo close to keep the terminal alive while detached.
   public var keepSurfaceAlive = false
@@ -94,11 +115,15 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   public init(
     frame: NSRect, ghosttyApp: GhosttyApp, restoreWorkingDirectory: String? = nil,
-    restoreScrollbackPath: String? = nil
+    restoreScrollbackPath: String? = nil, resumeAgentSession: TerminalAgentSession? = nil
   ) {
     self.ghosttyApp = ghosttyApp
     self.restoreWorkingDirectory = restoreWorkingDirectory
     self.restoreScrollbackPath = restoreScrollbackPath
+    if let command = resumeAgentSession?.resumeCommand {
+      pendingStartupCommand = command
+      restoredAgentSession = resumeAgentSession
+    }
     super.init(frame: frame)
     // Deliberately do NOT set `wantsLayer` or override `makeBackingLayer`.
     // libghostty's Metal renderer makes the view layer-hosting by
@@ -198,14 +223,19 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     defer {
       for pointer in envStrings { free(pointer) }
     }
-    if let path = restoreScrollbackPath,
-      let key = strdup("E05_RESTORE_SCROLLBACK_FILE"),
-      let value = strdup(path)
-    {
+    var envPairs = [("E05_PANE_ID", agentHookPaneID)]
+    if let path = restoreScrollbackPath {
+      envPairs.append(("E05_RESTORE_SCROLLBACK_FILE", path))
+    }
+    for (name, text) in envPairs {
+      guard let key = strdup(name) else { continue }
       envStrings.append(key)
+      guard let value = strdup(text) else { continue }
       envStrings.append(value)
       env.append(ghostty_env_var_s(key: key, value: value))
     }
+    // A new surface is a new shell: whatever the previous one ran is gone.
+    agentTracker.reset()
 
     // The pointers only need to outlive `ghostty_surface_new`, which
     // copies the config during init — same contract as the cwd string.
@@ -244,6 +274,46 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   public func releaseDetachedSurface() {
     keepSurfaceAlive = false
     destroySurface()
+  }
+
+  /// Apply one report from an agent's lifecycle hook (`e05 agent-hook`).
+  func recordAgentSession(
+    _ event: TerminalAgentTracker.Event, session: TerminalAgentSession, pid: pid_t
+  ) {
+    agentTracker.record(event, session: session, pid: pid)
+    restoredAgentSession = nil
+  }
+
+  /// The agent conversation to reopen if this pane is restored: one whose
+  /// process is still running inside this app, read at session save.
+  public var resumableAgentSession: TerminalAgentSession? {
+    agentTracker.resumable(root: getpid(), parent: TerminalAgentTracker.parentPID)
+      ?? restoredAgentSession
+  }
+
+  /// A command run from this pane's prompt exited (OSC 133 D). Once the
+  /// resume command has been typed, that is the resumed agent exiting
+  /// without ever reporting in.
+  func noteCommandFinished() {
+    guard pendingStartupCommand == nil else { return }
+    restoredAgentSession = nil
+  }
+
+  /// Type the restored pane's agent command into the shell, once. Called
+  /// on each OSC 7 report: shell integration emits it from the prompt
+  /// hook, after the user's rc files, so the command meets a shell whose
+  /// PATH can find the agent and a line editor that takes it as typed.
+  /// Sent as a `text:` binding (a raw pty write), not a paste — a
+  /// bracketed paste would sit in the line editor instead of running.
+  func sendPendingStartupCommand() {
+    guard let command = pendingStartupCommand, let surface else { return }
+    pendingStartupCommand = nil
+    // `text:` takes a Zig string literal; the command is a fixed word and
+    // a UUID, so `\n` is the only escape in it.
+    let action = "text:\(command)\\n"
+    action.withCString { ptr in
+      _ = ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+    }
   }
 
   /// Record the shell's reported working directory, delivered by

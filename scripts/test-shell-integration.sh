@@ -642,6 +642,54 @@ chmod -x "$SHIM_DIR/e05"
 run_shim 'a CLI that cannot run falls through' 'sys:https://example.com' 'https://example.com'
 chmod +x "$SHIM_DIR/e05"
 
+# The Claude Code plugin's hook command is shell too, run by Claude with
+# `sh -c` and the event on stdin. Read out of the shipped hooks.json
+# rather than copied here, so the command under test is the one users get.
+echo "== claude code hook =="
+
+HOOKS="$REPO/integrations/claude-code/hooks/hooks.json"
+HOOK_START=$(plutil -extract hooks.SessionStart.0.hooks.0.command raw -o - "$HOOKS")
+HOOK_END=$(plutil -extract hooks.SessionEnd.0.hooks.0.command raw -o - "$HOOKS")
+check "hook: start and end run the same command" "$HOOK_START" "$HOOK_END"
+
+HOOK_DIR="$TMP/hook bin"
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/e05" <<'STUB'
+#!/usr/bin/env bash
+printf '%s|%s' "$*" "$(cat)" > "$HOOK_OUT"
+STUB
+chmod +x "$HOOK_DIR/e05"
+export HOOK_OUT="$TMP/hook.out"
+
+# run_hook <label> <expected> <env assignments...>: runs the command the
+# way Claude does and reports what the CLI received plus the exit status.
+# `$PPID` inside the command is the process that ran `sh` — Claude in
+# real use, the subshell `$BASHPID` here.
+run_hook() {
+  local label="$1" want="$2"
+  shift 2
+  rm -f "$HOOK_OUT"
+  check "hook: $label" "$want" "$(
+    printf '{"hook_event_name":"SessionStart"}' |
+      env -u E05_BIN_DIR -u E05_PANE_ID "$@" sh -c "$HOOK_START" 2>&1
+    status=$?
+    received=$(cat "$HOOK_OUT" 2>/dev/null || echo none)
+    printf '%s exit=%s' "${received//$BASHPID/PPID}" "$status"
+  )"
+}
+
+run_hook 'inside a pane it relays the agent pid and the event' \
+  'agent-hook claude PPID|{"hook_event_name":"SessionStart"} exit=0' \
+  E05_BIN_DIR="$HOOK_DIR" E05_PANE_ID=p1
+# Claude runs it for every session on the machine, e05 or not.
+run_hook 'outside e05 it does nothing' 'none exit=0'
+run_hook 'without a pane id it does nothing' 'none exit=0' E05_BIN_DIR="$HOOK_DIR"
+# A non-zero hook shows up as an error in the Claude transcript.
+chmod -x "$HOOK_DIR/e05"
+run_hook 'a CLI that cannot run still exits 0' 'none exit=0' \
+  E05_BIN_DIR="$HOOK_DIR" E05_PANE_ID=p1
+chmod +x "$HOOK_DIR/e05"
+
 if [ -n "$skipped_shells" ]; then
   printf '\n%d passed, %d failed, SKIPPED: %s\n' "$pass" "$fail" "$skipped_shells"
 else

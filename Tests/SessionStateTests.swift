@@ -436,6 +436,41 @@ struct SessionStateTests {
     #expect(!json.contains("\"terminalWorkingDirectory\":null"))
   }
 
+  @Test("terminal agent session round-trips and is omitted when unset")
+  func terminalAgentSessionRoundTrip() throws {
+    let agent = try #require(
+      TerminalAgentSession(agent: "claude", sessionID: "11111111-1111-4111-8111-111111111111"))
+    let session = SessionState(
+      workspaces: [
+        SessionState.WorkspaceState(
+          columns: [
+            SessionState.ColumnState(
+              panes: [
+                SessionState.PaneState(address: "e05://terminal", terminalAgentSession: agent),
+                SessionState.PaneState(address: "e05://terminal"),
+              ],
+              focusedPaneIndex: 0,
+              width: 640,
+              heightRatios: [1]
+            )
+          ],
+          focusedColumnIndex: 0,
+          scrollX: 0
+        )
+      ],
+      focusedWorkspaceIndex: 0
+    )
+
+    let data = try JSONEncoder().encode(session)
+    let decoded = try JSONDecoder().decode(SessionState.self, from: data)
+    let panes = decoded.workspaces[0].columns[0].panes
+
+    #expect(panes[0].terminalAgentSession == agent)
+    #expect(panes[1].terminalAgentSession == nil)
+    let json = try #require(String(data: data, encoding: .utf8))
+    #expect(!json.contains("\"terminalAgentSession\":null"))
+  }
+
   @Test("finder addresses round-trip through session JSON intact")
   func finderAddressesRoundTrip() throws {
     // Covers the full save/load contract for `e05://finder` panes:

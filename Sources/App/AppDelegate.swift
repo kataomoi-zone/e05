@@ -576,6 +576,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       }
       container.showToast(message)
       return ControlSocket.Response(ok: true)
+    case .agentSession(let agent, let event, let sessionID, let paneID, let pid):
+      if let error = container.recordAgentSession(
+        agent: agent, event: event, sessionID: sessionID, paneID: paneID, pid: pid)
+      {
+        return ControlSocket.Response(ok: false, error: error)
+      }
+      return ControlSocket.Response(ok: true)
     case .invalid(let message):
       return ControlSocket.Response(ok: false, error: message)
     }

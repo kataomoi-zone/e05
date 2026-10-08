@@ -88,6 +88,10 @@ public struct PaneDependencies {
   /// environment. Only meaningful for terminal panes.
   public var terminalScrollbackPath: String?
 
+  /// Agent conversation a restored terminal pane was running, reopened at
+  /// the shell's first prompt. Only meaningful for terminal panes.
+  public var terminalAgentSession: TerminalAgentSession?
+
   public init(
     dataStore: WKWebsiteDataStore? = nil,
     startSuspended: Bool = false,
@@ -95,7 +99,8 @@ public struct PaneDependencies {
     initialInteractionState: Data? = nil,
     openerConfiguration: WKWebViewConfiguration? = nil,
     terminalWorkingDirectory: String? = nil,
-    terminalScrollbackPath: String? = nil
+    terminalScrollbackPath: String? = nil,
+    terminalAgentSession: TerminalAgentSession? = nil
   ) {
     self.dataStore = dataStore
     self.startSuspended = startSuspended
@@ -104,6 +109,7 @@ public struct PaneDependencies {
     self.openerConfiguration = openerConfiguration
     self.terminalWorkingDirectory = terminalWorkingDirectory
     self.terminalScrollbackPath = terminalScrollbackPath
+    self.terminalAgentSession = terminalAgentSession
   }
 }
 
@@ -322,7 +328,8 @@ public final class PaneModel {
       let tv = GhosttyTerminalView(
         frame: .zero, ghosttyApp: ghosttyApp,
         restoreWorkingDirectory: dependencies.terminalWorkingDirectory,
-        restoreScrollbackPath: dependencies.terminalScrollbackPath)
+        restoreScrollbackPath: dependencies.terminalScrollbackPath,
+        resumeAgentSession: dependencies.terminalAgentSession)
       tv.translatesAutoresizingMaskIntoConstraints = false
       self.content = .terminal(tv)
     case .browser:
