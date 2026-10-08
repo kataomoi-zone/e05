@@ -835,6 +835,18 @@ extension PaneContainerViewController {
 
   /// Toggle fold state of the focused column. Folded columns collapse to a narrow strip
   /// with vertical title text (Watchtower-style).
+  /// The folded strip's text: the focused pane's title — its address
+  /// until the page reports one (e.g. a blank browser pane) — and the
+  /// pane count when there is more than one.
+  func refreshFoldedLabel(_ column: ColumnModel) {
+    let base =
+      (column.focusedPane ?? column.panes.first).map {
+        $0.title.isEmpty ? $0.address.description : $0.title
+      } ?? ""
+    column.foldedLabelView.text =
+      column.panes.count > 1 ? "\(base) (\(column.panes.count))" : base
+  }
+
   public func toggleFold() {
     guard let column = columns[safe: focusedColumnIndex],
       let constraint = column.widthConstraint
@@ -902,19 +914,7 @@ extension PaneContainerViewController {
       column.widthConstraint?.priority = .required
       constraint.constant = Self.foldedColumnWidth
       column.isFolded = true
-      // Prefer the focused pane's title; fall back to its address when
-      // the page hasn't reported a title yet (e.g. blank browser pane).
-      let base: String
-      if let pane = column.focusedPane {
-        base = pane.title.isEmpty ? pane.address.description : pane.title
-      } else {
-        base = ""
-      }
-      // Append pane count if the column has multiple panes
-      column.foldedLabelView.text =
-        column.panes.count > 1
-        ? "\(base) (\(column.panes.count))"
-        : base
+      refreshFoldedLabel(column)
       column.foldedLabelView.isHidden = false
       // Hide all arranged subviews (pane containers + vertical resize handles)
       for sub in column.containerView.arrangedSubviews {
@@ -959,16 +959,7 @@ extension PaneContainerViewController {
     // on the fold path — see that comment for the chain explanation.
     column.widthConstraint?.priority = .required
     column.widthConstraint?.constant = Self.foldedColumnWidth
-    let base: String
-    if let pane = column.focusedPane ?? column.panes.first {
-      base = pane.title.isEmpty ? pane.address.description : pane.title
-    } else {
-      base = ""
-    }
-    column.foldedLabelView.text =
-      column.panes.count > 1
-      ? "\(base) (\(column.panes.count))"
-      : base
+    refreshFoldedLabel(column)
     column.foldedLabelView.isHidden = false
     for sub in column.containerView.arrangedSubviews {
       sub.isHidden = true

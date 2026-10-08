@@ -737,6 +737,14 @@ extension PaneContainerViewController {
     for pane in column.panes {
       ensureProgressBarAttached(pane: pane, in: column)
     }
+
+    // A folded column stays folded through a change of panes: the
+    // handles just built and a pane that arrived are hidden like the
+    // rest, and the strip shows the new count.
+    if column.isFolded {
+      for sub in sv.arrangedSubviews { sub.isHidden = true }
+      refreshFoldedLabel(column)
+    }
   }
 
   /// Give every pane in the column the same height, which is the state a
