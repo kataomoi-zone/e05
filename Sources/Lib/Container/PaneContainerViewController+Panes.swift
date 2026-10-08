@@ -226,6 +226,9 @@ extension PaneContainerViewController {
     let column = ColumnModel(pane: pane, id: id)
     setupPaneCallbacks(pane: pane, column: column)
     let cv = pane.containerView
+    // A pane coming out of a folded column was hidden by the fold, and
+    // this column starts unfolded.
+    cv.isHidden = false
     column.containerView.addArrangedSubview(cv)
     let cvLeading = cv.leadingAnchor.constraint(
       equalTo: column.containerView.leadingAnchor)
@@ -1591,7 +1594,8 @@ extension PaneContainerViewController {
     pane.browserView?.webView.pauseAllMediaPlayback(completionHandler: nil)
 
     let wasOnlyPane = column.panes.isEmpty
-    let columnWidth = column.widthConstraint?.constant
+    // A folded column reopens at the width it unfolds to, not the strip.
+    let columnWidth = column.restingWidth
 
     // Preserve surface BEFORE removing from view hierarchy
     pane.terminalView?.keepSurfaceAlive = true

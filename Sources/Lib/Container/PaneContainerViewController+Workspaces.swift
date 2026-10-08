@@ -838,12 +838,10 @@ extension PaneContainerViewController {
     heightPin.isActive = true
     newColumn.heightPin = heightPin
 
-    // Fold hides a column's panes, and the moved one would otherwise
-    // land hidden in a column that is not folded. Unhide it the way
-    // unfold does: the surface skipped every resize while hidden, and
-    // kept whatever focus it had when the column folded.
+    // A pane out of a folded column comes back the way unfold brings
+    // one back: its surface skipped every resize while hidden, and kept
+    // whatever focus it had when the column folded.
     if sourceWasFolded {
-      pane.containerView.isHidden = false
       targetVC.view.layoutSubtreeIfNeeded()
       pane.terminalView?.clearSurfaceFocus()
       pane.terminalView?.resyncSurfaceSize()
