@@ -4,6 +4,44 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "GhosttyApp")
 
+/// Answer a clipboard read with `text` as its text/plain representation
+/// (or none), listing text/plain as available when `listsText`.
+/// libghostty borrows the buffers only for the duration of the call.
+private func completeClipboardRequest(
+  _ surface: ghostty_surface_t,
+  text: String?,
+  state: UnsafeMutableRawPointer?,
+  listsText: Bool
+) {
+  // A byte copy rather than strdup: the length is explicit, and text
+  // holding a NUL would make strdup stop short of it. Never empty, so
+  // an empty paste still hands over a non-null pointer.
+  let bytes = Array((text ?? "").utf8)
+  let buffer = bytes.isEmpty ? [0] : bytes
+  "text/plain".withCString { mime in
+    buffer.withUnsafeBufferPointer { data in
+      data.withMemoryRebound(to: CChar.self) { data in
+        let contents =
+          text == nil
+          ? [] : [ghostty_clipboard_content_s(mime: mime, data: data.baseAddress, len: bytes.count)]
+        let available: [UnsafePointer<CChar>?] = listsText ? [mime] : []
+        contents.withUnsafeBufferPointer { contentsBuf in
+          available.withUnsafeBufferPointer { availableBuf in
+            var complete = ghostty_clipboard_complete_s(
+              contents: contentsBuf.baseAddress,
+              contents_len: contentsBuf.count,
+              available: availableBuf.baseAddress,
+              available_len: availableBuf.count,
+              confirmed: false,
+              remember: false)
+            ghostty_surface_complete_clipboard_request(surface, &complete, state)
+          }
+        }
+      }
+    }
+  }
+}
+
 /// Light / dark hint forwarded to libghostty so a
 /// `theme = light:X,dark:Y` config swaps the color scheme without an
 /// app restart. The host owns the appearance observer because
@@ -120,48 +158,81 @@ public final class GhosttyApp {
       return mgr.handleAction(target, action)
     }
 
-    // read_clipboard_cb: (void* surfaceUD, ghostty_clipboard_e, void* state) -> Bool
-    // API: ghostty_surface_complete_clipboard_request(surface, text, state, confirm)
-    runtime.read_clipboard_cb = { ud, clipboard, state in
-      guard let ud, let state else {
-        logger.error("read_clipboard_cb: ud or state is nil")
-        return false
+    // read_clipboard_cb: (void* surfaceUD, ghostty_clipboard_e, void* state,
+    //   const char* const* mimes, size_t mimesLen, bool list) -> read result
+    // Every location is the general pasteboard, as in write_clipboard_cb,
+    // so `paste_from_selection` keeps pasting it. Only text/plain: that is
+    // what paste and OSC 52 ask for. LIMITATION: a Kitty clipboard read
+    // for another type, or a listing of the available types, sees
+    // text/plain at most.
+    runtime.read_clipboard_cb = { ud, clipboard, state, mimes, mimesLen, list in
+      guard let ud else {
+        logger.error("read_clipboard_cb: ud is nil")
+        return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
       }
       let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
-      guard let surface = view.surface else { return false }
+      guard let surface = view.surface else { return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED }
       let pasteboard = NSPasteboard.general
-      guard let text = pasteboard.string(forType: .string) else {
+      let wantsText =
+        mimes.map { mimes in
+          (0..<mimesLen).contains { i in mimes[i].map { String(cString: $0) } == "text/plain" }
+        } ?? false
+      let text = wantsText ? pasteboard.string(forType: .string) : nil
+      if text == nil && !list {
         logger.debug("read_clipboard_cb: no text in pasteboard")
-        return false
+        return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
       }
-      logger.debug("read_clipboard_cb: pasting \(text.count) chars")
-      guard let cStr = strdup(text) else { return false }
-      DispatchQueue.main.async {
-        ghostty_surface_complete_clipboard_request(surface, cStr, state, true)
-        free(cStr)
-      }
-      return true
+      // Name text/plain as available without reading it, for a listing
+      // that asks for no types (a paste event's).
+      let listsText =
+        list && (text != nil || pasteboard.availableType(from: [.string]) != nil)
+      logger.debug("read_clipboard_cb: serving \(text?.count ?? 0) chars")
+      completeClipboardRequest(surface, text: text, state: state, listsText: listsText)
+      return GHOSTTY_CLIPBOARD_READ_STARTED
     }
 
-    // confirm_read_clipboard_cb: (void* surfaceUD, const char*, void* state, ghostty_clipboard_request_e) -> Void
-    runtime.confirm_read_clipboard_cb = { ud, text, state, request in
-      guard let ud, let state else { return }
+    // confirm_read_clipboard_cb: (void* surfaceUD, const ghostty_clipboard_confirm_s*,
+    //   void* state, ghostty_clipboard_request_e) -> Void
+    // libghostty asks here before an unsafe paste, an OSC 52 read, or a
+    // Kitty clipboard read or write that its config says to ask about.
+    // LIMITATION: e05 has no prompt, so every such request is approved
+    // with exactly the contents libghostty proposed, the same way
+    // write_clipboard_cb below ignores its `confirm` flag.
+    runtime.confirm_read_clipboard_cb = { ud, confirm, state, request in
+      guard let ud else { return }
       let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
       guard let surface = view.surface else { return }
-      DispatchQueue.main.async {
-        ghostty_surface_complete_clipboard_request(surface, text, state, true)
+      guard let confirm else {
+        ghostty_surface_deny_clipboard_request(surface, state)
+        return
       }
+      var complete = ghostty_clipboard_complete_s(
+        contents: confirm.pointee.contents,
+        contents_len: confirm.pointee.contents_len,
+        available: confirm.pointee.available,
+        available_len: confirm.pointee.available_len,
+        confirmed: true,
+        remember: false)
+      ghostty_surface_complete_clipboard_request(surface, &complete, state)
     }
 
     // write_clipboard_cb: (void*, ghostty_clipboard_e, ghostty_clipboard_content_s*, size_t, bool) -> Void
+    // Takes the first text entry. A Kitty clipboard write keeps the
+    // program's own MIME name, so the text aliases are the ones ghostty's
+    // `terminal.clipboard.isTextMime` accepts. LIMITATION: a write with no
+    // text entry (an image alone) leaves the pasteboard as it was.
     runtime.write_clipboard_cb = { ud, clipboard, content, contentLen, confirm in
       guard let content, contentLen > 0 else { return }
-      // Find text/plain content
+      let textMimes: Set = [
+        "text/plain", "text/plain;charset=utf-8", "UTF8_STRING", "TEXT", "STRING",
+      ]
       for i in 0..<contentLen {
         let item = content[i]
         guard let mime = item.mime, let data = item.data else { continue }
-        if String(cString: mime) == "text/plain" {
-          let str = String(cString: data)
+        if textMimes.contains(String(cString: mime)) {
+          // Length-delimited, not NUL-terminated.
+          let str = String(
+            decoding: UnsafeRawBufferPointer(start: data, count: item.len), as: UTF8.self)
           let pasteboard = NSPasteboard.general
           pasteboard.clearContents()
           pasteboard.setString(str, forType: .string)
