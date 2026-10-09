@@ -809,8 +809,6 @@ extension PaneContainerViewController {
       targetWs.columns.count)
     targetWs.columns.insert(newColumn, at: insertIndex)
     targetWs.focusedColumnIndex = insertIndex
-    // Again now that the pane is in its workspace: the bar takes that
-    // workspace's accent, which it could not look up before the insert.
     ensureProgressBarAttached(pane: pane, in: newColumn)
 
     rebuildStackView(in: targetVC)

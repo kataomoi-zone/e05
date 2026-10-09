@@ -209,7 +209,9 @@ extension PaneContainerViewController {
 
   /// A new column holding only `pane`, wired the way every path that
   /// gives a pane a column of its own needs it — a fresh pane, an undone
-  /// close, a pane moved out of its column. Not yet in any workspace.
+  /// close, a pane moved out of its column. Not yet in any workspace, so
+  /// the caller attaches a browser pane's progress bar once it is: the
+  /// bar takes the accent of the workspace it is found in.
   ///
   /// The pane's pins sit one priority notch below the column's
   /// `widthConstraint` so the fold path (which promotes `widthConstraint`
@@ -237,7 +239,6 @@ extension PaneContainerViewController {
     cvLeading.priority = NSLayoutConstraint.Priority(rawValue: 998)
     cvTrailing.priority = NSLayoutConstraint.Priority(rawValue: 998)
     NSLayoutConstraint.activate([cvLeading, cvTrailing])
-    ensureProgressBarAttached(pane: pane, in: column)
     // Folded label overlay — shown only when the column is folded.
     attachFoldedLabel(to: column)
     let wc = installColumnWidthConstraints(on: column, initial: width)
@@ -305,6 +306,7 @@ extension PaneContainerViewController {
       insertIndex = columns.isEmpty ? 0 : focusedColumnIndex + 1
     }
     columns.insert(column, at: insertIndex)
+    ensureProgressBarAttached(pane: pane, in: column)
     // Tell the extension controller about the new tab now that the
     // pane is reachable from the workspace bridge's `tabs(for:)`
     // walk. A no-op when no extensions are loaded yet (e.g. session
@@ -1851,6 +1853,7 @@ extension PaneContainerViewController {
         focusedColumnIndex += 1
       }
       columns.insert(column, at: insertIndex)
+      ensureProgressBarAttached(pane: pane, in: column)
       rebuildStackView()
       // Match `addColumn`: pin the restored column's height to the
       // workspace stack so the layout is never ambiguous, and store
