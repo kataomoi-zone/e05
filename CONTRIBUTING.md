@@ -16,12 +16,13 @@ git checkout main && git pull
 # for OSC 133 command-output copy) and are not upstream. See patches/.
 git apply /path/to/e05/patches/*.patch
 
-# macOS-only minimal build (use Homebrew's zig@0.15, not Nix's).
+# macOS-only minimal build. zig comes from ghostty's own flake, so it
+# always matches the checked-out commit's minimum_zig_version.
 # `-Demit-macos-app=false` because `-Demit-xcframework=true` turns the
 # app bundle on by default, and e05 does not use Ghostty.app — building
 # it only costs time, and its CodeSign step fails outright on a machine
 # whose CoreSimulator is out of step with Xcode.
-/opt/homebrew/opt/zig@0.15/bin/zig build \
+nix develop -c zig build \
   -Doptimize=ReleaseFast \
   -Dapp-runtime=none \
   -Demit-xcframework=true \
@@ -48,7 +49,7 @@ git rev-parse HEAD   # write the FULL sha into e05's GHOSTTY_VERSION (release CI
 
 Notes:
 
-- Use Homebrew's **zig@0.15** keg (0.15.2, ghostty's `minimum_zig_version`). The main `zig` formula has moved to 0.16, so invoke the keg path directly. Nix's zig (0.16+) does not build libghostty successfully (empirical result)
+- zig is taken from ghostty's flake (`nix develop`), the same way upstream CI builds GhosttyKit on macOS. `scripts/bump_ghostty.sh` does the same
 - The macOS app build (which is what produces the apprt-enabled xcframework) needs the **Metal Toolchain** (`xcodebuild -downloadComponent MetalToolchain`) and a CoreSimulator in sync with Xcode (`sudo xcodebuild -runFirstLaunch`; reboot if `xcrun simctl list` still errors). Missing either fails the `Ld ghostty` step
 - `-Demit-macos-app=false` costs nothing: in `build.zig` the xcframework is built and installed under `emit_xcframework` alone, and `emit_macos_app` only gates `Ghostty.app`. The apprt symbols e05 links against (`ghostty_init`, `ghostty_surface_*`) are still exported — `nm GhosttyKit.xcframework/macos-arm64/libghostty-internal-fat.a` to confirm after a bump
 - `-Dxcframework-target=native` produces a host-arch binary only. Use `universal` for a fat xcframework

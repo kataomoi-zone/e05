@@ -14,12 +14,12 @@
 #   scripts/bump_ghostty.sh --ghostty <path-to-ghostty-checkout> [<ref>]
 #
 #   <ref> defaults to origin/main. Pass a SHA/tag to pin a specific one.
-#   ZIG=<path> overrides the zig binary (default: Homebrew's zig@0.15 keg).
+#   zig comes from ghostty's own flake (`nix develop`), so it always
+#   matches the checked-out commit's minimum_zig_version.
 
 set -euo pipefail
 
 E05_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZIG="${ZIG:-/opt/homebrew/opt/zig@0.15/bin/zig}"
 
 GHOSTTY_DIR=""
 REF="origin/main"
@@ -48,10 +48,11 @@ if [[ ! -d "$GHOSTTY_DIR/.git" ]]; then
   echo "error: $GHOSTTY_DIR is not a git checkout" >&2
   exit 2
 fi
-if [[ ! -x "$ZIG" ]]; then
-  echo "error: zig not found at $ZIG (set ZIG=<path>)" >&2
+# Up front, before the ghostty tree below is moved and patched.
+command -v nix >/dev/null || {
+  echo "error: nix not found; zig comes from ghostty's flake" >&2
   exit 2
-fi
+}
 
 echo "[bump] fetching ghostty and checking out $REF"
 git -C "$GHOSTTY_DIR" fetch --quiet origin
@@ -65,7 +66,7 @@ git -C "$GHOSTTY_DIR" apply "$E05_ROOT"/patches/*.patch
 echo "[bump] building GhosttyKit (this needs the Metal Toolchain; see CONTRIBUTING)"
 (
   cd "$GHOSTTY_DIR"
-  "$ZIG" build \
+  nix develop -c zig build \
     -Doptimize=ReleaseFast \
     -Dapp-runtime=none \
     -Demit-xcframework=true \

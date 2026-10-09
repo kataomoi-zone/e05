@@ -19,8 +19,6 @@ concurrency:
 
 env:
   GHOSTTY_REPO: https://github.com/ghostty-org/ghostty
-  # ghostty's minimum_zig_version; the main `zig` formula is on 0.16+.
-  ZIG_FORMULA: zig@0.15
 
 jobs:
   test:
@@ -59,18 +57,16 @@ jobs:
           path: GhosttyKit.xcframework
           key: ghosttykit-${{ runner.os }}-${{ hashFiles('GHOSTTY_VERSION', 'patches/**') }}
 
-      # Homebrew's zig, not an upstream tarball: ghostty's own flake picks
-      # `zig.packages.<system>.brew."0.15.2"` on Darwin and the plain build
-      # everywhere else, and upstream 0.15.2 indeed links no libSystem
-      # symbol at all here. CONTRIBUTING calls for the same keg locally.
-      - name: Install zig (only on cache miss)
+      # zig comes from ghostty's own flake (`nix develop` in the checkout
+      # below), so it always matches the pinned commit's
+      # minimum_zig_version. Upstream builds GhosttyKit the same way.
+      - name: Install nix (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
-        run: |
-          set -euo pipefail
-          brew install "$ZIG_FORMULA"
-          PREFIX="$(brew --prefix "$ZIG_FORMULA")"
-          "$PREFIX/bin/zig" version
-          echo "$PREFIX/bin" >> "$GITHUB_PATH"
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          # Upstream nix; the default also logs in to FlakeHub, which
+          # needs an id-token this job does not grant.
+          determinate: false
 
       - name: Download Metal Toolchain (only on cache miss)
         if: ${{ steps.ghostty_cache.outputs.cache-hit != 'true' }}
@@ -102,7 +98,7 @@ jobs:
           # flag turns the app bundle on by default and e05 does not use
           # Ghostty.app; building it only adds time and a CodeSign step
           # that can fail for reasons unrelated to this build.
-          ( cd ghostty && zig build \
+          ( cd ghostty && nix develop -c zig build \
               -Doptimize=ReleaseFast \
               -Dapp-runtime=none \
               -Demit-xcframework=true \
