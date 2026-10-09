@@ -14,11 +14,15 @@
 # `source` appended into the GPLv3 integration stays under GPL.
 
 _e05_fix_path() {
+  # Runs first in PROMPT_COMMAND, so whatever it returns is the `$?` the
+  # hooks after it see — ghostty's among them, which reports it as the
+  # command's exit status. Hand back the status it was called with.
+  local status=$?
   # The caller gates on E05_BIN_DIR too, but only once at source time;
   # this runs before every prompt, and an empty value would prepend an
   # empty PATH entry — which is the current directory. `:-` so the check
   # survives `set -u` instead of tripping over the state it guards.
-  [ -n "${E05_BIN_DIR:-}" ] || return
+  [ -n "${E05_BIN_DIR:-}" ] || return "$status"
   # Strip any existing occurrence (mid / leading / trailing) so the
   # per-prompt run doesn't grow PATH, then prepend. The pattern is
   # quoted because bash reads it as a glob otherwise, which breaks in
@@ -33,6 +37,7 @@ _e05_fix_path() {
   p="${p%:}"
   PATH="$E05_BIN_DIR${p:+:$p}"
   export PATH
+  return "$status"
 }
 
 # Prepend to PROMPT_COMMAND, guarding against a double-add when the

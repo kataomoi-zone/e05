@@ -153,14 +153,23 @@ EOF
 
 # Without the guard an empty value prepends an empty PATH entry, which
 # bash reads as the current directory.
-run_bash 'guards an unset bin dir under set -u' '1|/usr/bin:/bin' <<'EOF'
+run_bash 'guards an unset bin dir under set -u' '3|/usr/bin:/bin' <<'EOF'
 set -u
 export E05_BIN_DIR=/opt/e05
 . "$INTEG/e05-integration.bash"
 PATH=/usr/bin:/bin
 unset E05_BIN_DIR
-_e05_fix_path && rc=0 || rc=$?
+(exit 3); _e05_fix_path && rc=0 || rc=$?
 printf '%s|%s' "$rc" "$PATH"
+EOF
+
+# The hook runs first in PROMPT_COMMAND, so ghostty's hook after it
+# reports whatever this returns as the command's exit status.
+run_bash 'hands the last command status to later prompt hooks' '3' <<'EOF'
+export E05_BIN_DIR=/opt/e05
+. "$INTEG/e05-integration.bash"
+(exit 3); _e05_fix_path
+printf %s "$?"
 EOF
 
 # Three properties in one pass, all of which the historical bug broke at
