@@ -61,8 +61,8 @@
         result: *Text,
     ) bool {
         const core_surface = &surface.core_surface;
-        core_surface.renderer_state.mutex.lock();
-        defer core_surface.renderer_state.mutex.unlock();
+        core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        defer core_surface.renderer_state.mutex.unlock(global.io());
 
         const screen = core_surface.renderer_state.terminal.screens.get(
             .primary,
@@ -81,7 +81,7 @@
         // pair that would otherwise carry the capture-time theme along
         // and override the live one. (write_screen_file passes all
         // three, which is why that route bakes the old theme in.)
-        var aw: std.Io.Writer.Allocating = .init(global.alloc);
+        var aw: std.Io.Writer.Allocating = .init(global.alloc());
         defer aw.deinit();
 
         var formatter: terminal.formatter.ScreenFormatter = .init(screen, .{

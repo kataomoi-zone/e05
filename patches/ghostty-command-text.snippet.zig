@@ -2,7 +2,7 @@
 // TWO files: ghostty.h is hand-written (not generated), so the Zig export
 // alone makes the symbol but not the C declaration e05 calls against.
 //
-// On the ghostty checkout at the pinned commit (GHOSTTY_VERSION = 5659cef41):
+// On the ghostty checkout at the pinned commit (GHOSTTY_VERSION = 9d479dcb1):
 //
 // (1) src/apprt/embedded.zig — paste / REPLACE the `ghostty_surface_command_text`
 //     export below into `pub const CAPI = struct { ... }`, directly AFTER
@@ -10,7 +10,7 @@
 //     (If you applied the earlier 2-mode version, replace it wholesale.)
 //
 // (2) include/ghostty.h — the declaration right AFTER the existing
-//     `ghostty_surface_free_text` line (~1164). The 4th arg is the mode
+//     `ghostty_surface_free_text` line. The 4th arg is the mode
 //     (uint8_t), not a bool:
 //
 //       GHOSTTY_API bool ghostty_surface_command_text(ghostty_surface_t, ghostty_point_s, bool, uint8_t, ghostty_text_s*);
@@ -44,8 +44,8 @@
         result: *Text,
     ) bool {
         const core_surface = &surface.core_surface;
-        core_surface.renderer_state.mutex.lock();
-        defer core_surface.renderer_state.mutex.unlock();
+        core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        defer core_surface.renderer_state.mutex.unlock(global.io());
 
         const screen = core_surface.renderer_state.terminal.screens.active;
 
