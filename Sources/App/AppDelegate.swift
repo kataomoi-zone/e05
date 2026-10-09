@@ -152,39 +152,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       UpdateController.shared.start()
     }
 
-    // Expose the bundled `Contents/Resources/bin` to ghostty surfaces
-    // so the `open` shim (Resources/bin/open) shadows /usr/bin/open and
-    // `open .` / `open https://...` lands as a pane on the host:
-    //   - E05_BIN_DIR, read by the shell-integration PATH fix
-    //     (Resources/bin/e05-integration.{zsh,bash,fish}). It re-prepends
-    //     this dir from a prompt hook, which runs after a login shell's
-    //     path_helper has reordered PATH — the only reliable way to
-    //     keep the shim ahead of /usr/bin. The exported PATH is
-    //     inherited by child processes too.
-    //   - PATH prepend here, the fallback for shells that don't load
-    //     the integration (non-interactive, or unsupported shells).
-    // Skipped when the directory is absent so `swift run` and other
-    // non-bundled launches keep stock PATH; the `contains` gate makes
-    // the PATH inject idempotent against future re-init paths.
-    if let resourceURL = Bundle.main.resourceURL {
-      let binDir = resourceURL.appendingPathComponent("bin").path
-      if FileManager.default.fileExists(atPath: binDir) {
-        // Set unconditionally: the integration's PATH fix reads it to
-        // know what to prepend, and it gates the fix to e05 (the var is
-        // unset in any shell e05 didn't spawn).
-        if setenv("E05_BIN_DIR", binDir, 1) != 0 {
-          logger.error("[app/path-inject] setenv E05_BIN_DIR failed errno=\(errno)")
-        }
-        let current = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let alreadyInjected = current.split(separator: ":").contains(Substring(binDir))
-        if !alreadyInjected {
-          if setenv("PATH", "\(binDir):\(current)", 1) != 0 {
-            logger.error("[app/path-inject] setenv PATH failed errno=\(errno)")
-          }
-        }
-      }
-    }
-
     // Age out stale URL-bar input-history associations once per day.
     // Gated on wall-clock rather than every launch so a burst of
     // restarts doesn't over-decay the counters.
