@@ -71,6 +71,7 @@ echo "[bump] building GhosttyKit (this needs the Metal Toolchain; see CONTRIBUTI
     -Demit-xcframework=true \
     -Dxcframework-target=native \
     -Demit-exe=false \
+    -Demit-macos-app=false \
     -Dsentry=false
 )
 
