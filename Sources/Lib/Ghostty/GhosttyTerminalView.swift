@@ -42,6 +42,15 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   private var programStatus = ProgramStatusRecords()
 
+  /// Shuttles above the pane while its program reports working, like a
+  /// browser pane's page load. The host attaches it to the column.
+  public let progressBar = LoadingProgressBarView()
+
+  /// Fades the bar in once working has lasted
+  /// `LoadingProgressBarView.revealDelay`, so a program that reports
+  /// working only for a moment never flashes it.
+  private var progressBarReveal: DispatchWorkItem?
+
   /// The program status most in need of the user, or `nil`.
   var programStatusSummary: ProgramStatusReport? { programStatus.summary }
 
@@ -332,6 +341,22 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     }
   }
 
+  private func showProgressBar(_ working: Bool) {
+    progressBarReveal?.cancel()
+    progressBarReveal = nil
+    guard working else {
+      progressBar.dismiss()
+      return
+    }
+    let reveal = DispatchWorkItem { [weak self] in
+      self?.progressBar.reveal()
+      self?.progressBarReveal = nil
+    }
+    progressBarReveal = reveal
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + LoadingProgressBarView.revealDelay, execute: reveal)
+  }
+
   /// Typing into this pane, and able to see it: a folded column or a
   /// parked workspace can keep first responder while out of sight.
   private var isInFrontOfUser: Bool {
@@ -353,6 +378,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     change(&programStatus)
     let after = programStatus.summary
     guard after != before else { return }
+    if (after?.state == .working) != (before?.state == .working) {
+      showProgressBar(after?.state == .working)
+    }
     logger.debug(
       "[program-status] \(reason, privacy: .public): \(before?.state.rawValue ?? "none", privacy: .public) -> \(after?.state.rawValue ?? "none", privacy: .public)"
     )

@@ -380,7 +380,8 @@ extension PaneContainerViewController {
     return column
   }
 
-  /// Attach the browser pane's loading progress bar to its column's
+  /// Attach the pane's loading progress bar (a browser's, or a
+  /// terminal's for a working program) to its column's
   /// container view as a non-arranged subview. Anchors the bar
   /// *above* the pane (negative offset from `pane.containerView.top`)
   /// at 80% width centred so it can't be mistaken for a
@@ -391,8 +392,7 @@ extension PaneContainerViewController {
   /// the same column refreshes the accent without piling up
   /// constraints.
   func ensureProgressBarAttached(pane: PaneModel, in column: ColumnModel) {
-    guard let bv = pane.browserView else { return }
-    let bar = bv.progressBar
+    guard let bar = pane.progressBar else { return }
     // Always refresh the accent — workspace moves end up here via
     // `rebuildColumnView`, and the bar's existing tint would be one
     // workspace behind otherwise.
@@ -403,6 +403,10 @@ extension PaneContainerViewController {
     // `removeFromSuperview` drops every constraint that referenced
     // this view, so the re-attach below builds a clean set.
     bar.removeFromSuperview()
+    // Here, for every kind of pane: left on, the zero frame's
+    // autoresizing constraints fight the ones below, and the layout
+    // gives way by collapsing the pane — and the window with it.
+    bar.translatesAutoresizingMaskIntoConstraints = false
     column.containerView.addSubview(bar)
     NSLayoutConstraint.activate([
       bar.bottomAnchor.constraint(

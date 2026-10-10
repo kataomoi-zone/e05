@@ -724,13 +724,13 @@ extension PaneContainerViewController {
     // belongs to a different column, which Auto Layout flags between
     // the source rebuild and the target rebuild.
     for sub in sv.subviews where sub is LoadingProgressBarView {
-      let owned = column.panes.contains { $0.browserView?.progressBar === sub }
+      let owned = column.panes.contains { $0.progressBar === sub }
       if !owned {
         sub.removeFromSuperview()
       }
     }
 
-    // Re-anchor each browser pane's progress bar to the rebuilt
+    // Re-anchor each pane's progress bar to the rebuilt
     // column. Drag-moves between columns and `splitVertical` both
     // route through here, so this is the single chokepoint that
     // keeps the bar following its pane across structural changes.

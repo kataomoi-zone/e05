@@ -244,6 +244,12 @@ public final class PaneModel {
     return nil
   }
 
+  /// The loading bar above the pane: a browser's page load, or a
+  /// terminal program reporting that it is working (OSC 7501).
+  public var progressBar: LoadingProgressBarView? {
+    browserView?.progressBar ?? terminalView?.progressBar
+  }
+
   /// Convenience: returns FinderPaneView if this is a finder pane.
   public var finderView: FinderPaneView? {
     if case .finder(let fv) = content { return fv }
@@ -513,9 +519,9 @@ public final class PaneModel {
     containerView.addSubview(urlBar)
     containerView.addSubview(urlBarTopEdgeHitZone)
     containerView.addSubview(headerView)
-    // The browser progress bar is *not* a subview of `containerView`.
-    // It's anchored above the pane (in the column's stack view) so
-    // it reads as chrome, not as page-rendered content — see
+    // The progress bar is *not* a subview of `containerView`. It's
+    // anchored above the pane (in the column's stack view) so it
+    // reads as chrome, not as content — see
     // `ensureProgressBarAttached(pane:in:)` in the container.
 
     urlBarTopConstraint = urlBar.topAnchor.constraint(equalTo: containerView.topAnchor)

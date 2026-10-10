@@ -973,12 +973,6 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       hoverLinkOverlay.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.7),
     ])
 
-    // The progress bar lives on `PaneModel.containerView` so it sits
-    // inside the focus-border ring — see `PaneModel` setup. KVO and
-    // timer logic still hang off this view because they own the
-    // `WKWebView.estimatedProgress` source of truth.
-    progressBar.translatesAutoresizingMaskIntoConstraints = false
-
     attachWebView()
   }
 
