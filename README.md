@@ -166,7 +166,7 @@ A program can tell its terminal what it is doing through the [program status pro
 
 | Reported | Shown |
 |---|---|
-| working | the loading ring around the pane's icon in the sidebar, and a bar shuttling above the pane (after half a second, so a moment's work never flashes it) |
+| working | the loading ring around the pane's icon in the sidebar, and a bar above the pane (after half a second, so a moment's work never flashes it) that fills to the program's `progress` percentage, or shuttles when it gives none |
 | blocked | an orange icon on the pane's row: a hand for permission, a question mark for a question, a key for a sign-in, an exclamation mark otherwise |
 | failed | a red ✕ |
 | done | a green ✓ |
@@ -178,6 +178,8 @@ Try it from any pane — the record clears once the `sleep` returns to the promp
 ```sh
 printf '\e]7501;state=blocked:msg=%s\e\\' "$(printf 'Apply 3 changes?' | base64)"; sleep 10
 ```
+
+The same bar shows the older ConEmu progress report (OSC 9;4): red for an error, orange for a pause. It clears when the program removes it or returns to the prompt, and gives way to OSC 7501 while a program reports working or blocked.
 
 Programs only report after the terminal has answered the protocol's support query, which upstream libghostty does not do inside an app yet; e05's build patches it in (`patches/ghostty-program-status.patch`).
 
