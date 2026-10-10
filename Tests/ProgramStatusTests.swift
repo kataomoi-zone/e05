@@ -50,13 +50,32 @@ struct ProgramStatusTests {
     #expect(r?.progress == expected)
   }
 
+  private func bar(_ body: String?, _ report: ProgressReport? = nil) -> TerminalProgress? {
+    TerminalProgress(status: body.map(self.report), report: report)
+  }
+
   @Test("the bar shuttles or fills for working, and hides otherwise")
   func terminalProgress() {
-    #expect(TerminalProgress(status: report("state=working"))?.fraction == nil)
-    #expect(TerminalProgress(status: report("state=working:progress=40"))?.fraction == 0.4)
-    #expect(TerminalProgress(status: report("state=working")) != nil)
-    #expect(TerminalProgress(status: report("state=blocked:progress=40")) == nil)
-    #expect(TerminalProgress(status: nil) == nil)
+    #expect(bar("state=working") == TerminalProgress(fraction: nil, tone: .normal))
+    #expect(bar("state=working:progress=40")?.fraction == 0.4)
+    #expect(bar("state=blocked:progress=40") == nil)
+    #expect(bar("state=done") == nil)
+    #expect(bar(nil) == nil)
+  }
+
+  @Test("an OSC 9;4 report runs the bar unless OSC 7501 has it")
+  func terminalProgressReport() {
+    let set = ProgressReport(state: .set, progress: 30)
+    #expect(bar(nil, set) == TerminalProgress(fraction: 0.3, tone: .normal))
+    #expect(bar("state=done", set)?.fraction == 0.3)
+    #expect(bar("state=working:progress=40", set)?.fraction == 0.4)
+    #expect(bar("state=working", set)?.fraction == nil)
+    #expect(bar("state=blocked", set) == nil)
+    #expect(bar(nil, ProgressReport(state: .indeterminate, progress: 30))?.fraction == nil)
+    #expect(bar(nil, ProgressReport(state: .error, progress: nil))?.tone == .error)
+    #expect(
+      bar(nil, ProgressReport(state: .pause, progress: nil))
+        == TerminalProgress(fraction: 1, tone: .paused))
   }
 
   @Test("the last of a repeated key wins")

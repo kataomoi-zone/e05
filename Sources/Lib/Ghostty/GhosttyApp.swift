@@ -360,6 +360,24 @@ public final class GhosttyApp {
         as: UTF8.self)
       view.applyProgramStatus(body: body)
       return true
+    case GHOSTTY_ACTION_PROGRESS_REPORT:
+      guard let view = terminalView(for: target) else { return false }
+      let report = action.action.progress_report
+      let progress = report.progress >= 0 ? Int(report.progress) : nil
+      let state: ProgressReport.State
+      switch report.state {
+      case GHOSTTY_PROGRESS_STATE_REMOVE:
+        view.applyProgressReport(nil)
+        return true
+      case GHOSTTY_PROGRESS_STATE_SET: state = .set
+      case GHOSTTY_PROGRESS_STATE_ERROR: state = .error
+      case GHOSTTY_PROGRESS_STATE_INDETERMINATE: state = .indeterminate
+      case GHOSTTY_PROGRESS_STATE_PAUSE: state = .pause
+      // A state newer than this build leaves the bar as it was.
+      default: return false
+      }
+      view.applyProgressReport(ProgressReport(state: state, progress: progress))
+      return true
     case GHOSTTY_ACTION_COMMAND_FINISHED:
       // Raised only for a command whose start (OSC 133 C) was seen, so
       // the first prompt of a fresh shell never trips it.

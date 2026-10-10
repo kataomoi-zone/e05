@@ -49,6 +49,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   private var progressBarShown = false
 
+  /// The last OSC 9;4 report, until it is removed or the command ends.
+  private var progressReport: ProgressReport?
+
   /// Fades the bar in once working has lasted
   /// `LoadingProgressBarView.revealDelay`, so a program that reports
   /// working only for a moment never flashes it.
@@ -329,7 +332,11 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// resume command has been typed, that is the resumed agent exiting
   /// without ever reporting in.
   func noteCommandFinished() {
+    // LIMITATION: like a working record, an OSC 9;4 report outlives its
+    // program in a shell without integration, until another replaces it.
+    progressReport = nil
     updateProgramStatus("command finished") { $0.commandFinished() }
+    refreshProgressBar()
     guard pendingStartupCommand == nil else { return }
     restoredAgentSession = nil
   }
@@ -344,9 +351,23 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     }
   }
 
+  /// Record one OSC 9;4 report; `nil` removes the last one.
+  func applyProgressReport(_ report: ProgressReport?) {
+    progressReport = report
+    refreshProgressBar()
+  }
+
   private func refreshProgressBar() {
-    let progress = TerminalProgress(status: programStatus.summary)
-    if let progress { progressBar.progress = progress.fraction }
+    let progress = TerminalProgress(status: programStatus.summary, report: progressReport)
+    if let progress {
+      progressBar.progress = progress.fraction
+      progressBar.tint =
+        switch progress.tone {
+        case .normal: nil
+        case .error: .systemRed
+        case .paused: .systemOrange
+        }
+    }
     guard (progress != nil) != progressBarShown else { return }
     progressBarShown = progress != nil
     showProgressBar(progressBarShown)
