@@ -36,6 +36,15 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// `GhosttyTerminalView+Clipboard`.
   var pendingClipboardConfirmation: PendingClipboardConfirmation?
 
+  /// Fired when the record that speaks for this pane's program status
+  /// (OSC 7501) may have changed. Read it from `programStatusSummary`.
+  public var onProgramStatusChange: (() -> Void)?
+
+  private var programStatus = ProgramStatusRecords()
+
+  /// The program status most in need of the user, or `nil`.
+  var programStatusSummary: ProgramStatusReport? { programStatus.summary }
+
   /// Fired when the surface's reported working directory actually
   /// changes (deduped against OSC 7's per-prompt re-emits). Lets the
   /// host persist a `cd` promptly so it survives a crash / force quit,
@@ -308,8 +317,46 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// resume command has been typed, that is the resumed agent exiting
   /// without ever reporting in.
   func noteCommandFinished() {
+    updateProgramStatus("command finished") { $0.commandFinished() }
     guard pendingStartupCommand == nil else { return }
     restoredAgentSession = nil
+  }
+
+  /// Record one OSC 7501 report. Finished or failed work in the pane the
+  /// user is typing into is seen as it lands, so it never lingers there.
+  func applyProgramStatus(body: String) {
+    guard let report = ProgramStatusReport(body: body) else { return }
+    updateProgramStatus("report") {
+      $0.apply(report)
+      if isInFrontOfUser { $0.seen() }
+    }
+  }
+
+  /// Typing into this pane, and able to see it: a folded column or a
+  /// parked workspace can keep first responder while out of sight.
+  private var isInFrontOfUser: Bool {
+    NSApp.isActive && window?.isKeyWindow == true && window?.firstResponder === self
+      && !isHiddenOrHasHiddenAncestor && !visibleRect.isEmpty
+  }
+
+  /// Coming back to the app, or to its window, puts the focused pane in
+  /// front of the user again without it becoming first responder anew.
+  func noteReturnedToUser() {
+    guard isInFrontOfUser else { return }
+    updateProgramStatus("returned to user") { $0.seen() }
+  }
+
+  private func updateProgramStatus(
+    _ reason: StaticString, _ change: (inout ProgramStatusRecords) -> Void
+  ) {
+    let before = programStatus.summary
+    change(&programStatus)
+    let after = programStatus.summary
+    guard after != before else { return }
+    logger.debug(
+      "[program-status] \(reason, privacy: .public): \(before?.state.rawValue ?? "none", privacy: .public) -> \(after?.state.rawValue ?? "none", privacy: .public)"
+    )
+    onProgramStatusChange?()
   }
 
   /// Type the restored pane's agent command into the shell, once. Called
@@ -440,6 +487,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     if result {
       ghostty_surface_set_focus(surface, true)
       onFocusChanged?(true)
+      // Not when focus lands with e05 in the background or the pane out
+      // of sight (a clipboard prompt's focusPane, an `e05 action`).
+      if isInFrontOfUser { updateProgramStatus("focused") { $0.seen() } }
     }
     return result
   }

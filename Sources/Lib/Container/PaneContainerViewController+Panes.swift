@@ -443,6 +443,12 @@ extension PaneContainerViewController {
     }
   }
 
+  /// The app or its window came back to the front; see
+  /// `GhosttyTerminalView.noteReturnedToUser`.
+  public func noteReturnedToUser() {
+    focusedPane?.terminalView?.noteReturnedToUser()
+  }
+
   func setupPaneCallbacks(pane: PaneModel, column: ColumnModel) {
     if let tv = pane.terminalView {
       tv.onFocusChanged = { [weak self, weak pane] focused in
@@ -504,6 +510,12 @@ extension PaneContainerViewController {
           address = PaneAddress(url)
         }
         self?.addColumn(address: address)
+      }
+
+      tv.onProgramStatusChange = { [weak self, weak pane, weak tv] in
+        guard let self, let pane else { return }
+        self.sidebarVC?.updatePaneProgramStatus(
+          paneId: pane.id, status: tv?.programStatusSummary)
       }
 
       // A clipboard prompt is a sheet on the whole window; focusing the

@@ -441,6 +441,7 @@ final class WorklaneSectionView: NSView {
     let paneAudioState: (PaneModel) -> (isMuted: Bool, isPlayingAudio: Bool, hasActiveMedia: Bool)
     let paneIsSuspended: (PaneModel) -> Bool
     let paneIsLoading: (PaneModel) -> Bool
+    let paneProgramStatus: (PaneModel) -> ProgramStatusReport?
     /// Persisted collapse predicate. Receives either a workspace or
     /// a column ULID — NSOutlineView treats both as expandable items
     /// and the persistence layer carries one merged set of ids.
@@ -550,6 +551,12 @@ final class WorklaneSectionView: NSView {
     /// (`beginRenamingWorkspace`); only the committed value crosses
     /// back to the container.
     let onRenameWorkspace: (_ workspaceId: ULID, _ newName: String) -> Void
+
+    /// What a column or workspace row shows for its panes: the most
+    /// urgent program status an indicator draws.
+    func shownProgramStatus(of panes: [PaneModel]) -> ProgramStatusReport? {
+      ProgramStatusRecords.mostShown(panes.map(paneProgramStatus))
+    }
   }
 
   func reload(_ input: ReloadInput) {
@@ -849,6 +856,28 @@ final class WorklaneSectionView: NSView {
     visibleCell(forPaneId: paneId)?.applyLoadingState(isLoading, accent: accent)
   }
 
+  /// Per-pane program status repaint, same off-screen rule as above.
+  /// The pane's column and workspace rows show the most urgent status
+  /// among their panes, so they are repainted with it.
+  func updatePaneProgramStatus(paneId: ULID, status: ProgramStatusReport?) {
+    visibleCell(forPaneId: paneId)?.applyProgramStatus(status)
+    guard let input = lastInput, let node = nodesByPaneId[paneId] else { return }
+    if let column = node.columnNode {
+      (visibleView(for: column) as? WorklaneColumnCellView)?.applyProgramStatus(
+        input.shownProgramStatus(of: column.model.panes))
+    }
+    if let ws = node.workspaceNode {
+      (visibleView(for: ws) as? WorklaneWorkspaceCellView)?.applyProgramStatus(
+        input.shownProgramStatus(of: ws.model.columns.flatMap(\.panes)))
+    }
+  }
+
+  private func visibleView(for item: Any) -> NSView? {
+    let row = outlineView.row(forItem: item)
+    guard row >= 0 else { return nil }
+    return outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+  }
+
   /// Re-render the worklane row(s) representing `columnId` so fold / pin
   /// indicators repaint without a structural reload. Reloads the column
   /// node for a multi-pane column, or the lone pane node for a single-
@@ -873,10 +902,7 @@ final class WorklaneSectionView: NSView {
       )
       return nil
     }
-    let row = outlineView.row(forItem: node)
-    guard row >= 0 else { return nil }
-    return outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
-      as? WorklanePaneCellView
+    return visibleView(for: node) as? WorklanePaneCellView
   }
 
   // MARK: - Node tree

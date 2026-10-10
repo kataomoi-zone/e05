@@ -19,6 +19,13 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
   static let height: CGFloat = 28
 
   private let indicator = WorkspaceAccentIndicator()
+  /// In a stack so that, hidden, it gives its width back to the title.
+  private let programStatusIndicator = ProgramStatusIndicatorView()
+  private let programStatusStack: NSStackView = {
+    let s = NSStackView()
+    s.translatesAutoresizingMaskIntoConstraints = false
+    return s
+  }()
   private let label = NSTextField(labelWithString: "")
   private let closeButton: HoverIconButton = {
     let b = HoverIconButton.sidebarIcon("xmark", description: "Close workspace")
@@ -98,6 +105,8 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
 
     addSubview(indicator)
     addSubview(label)
+    programStatusStack.addArrangedSubview(programStatusIndicator)
+    addSubview(programStatusStack)
     addSubview(addMoreButton)
     addSubview(addButton)
     addSubview(closeButton)
@@ -109,9 +118,14 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
       indicator.widthAnchor.constraint(equalToConstant: 3),
 
       label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 8),
-      label.trailingAnchor.constraint(
-        lessThanOrEqualTo: addMoreButton.leadingAnchor, constant: -4),
+      // No gap of its own: the 18pt indicator already pads its 11pt
+      // glyph, and a hidden one then costs the title nothing.
+      label.trailingAnchor.constraint(lessThanOrEqualTo: programStatusStack.leadingAnchor),
       label.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+      programStatusStack.trailingAnchor.constraint(
+        equalTo: addMoreButton.leadingAnchor, constant: -4),
+      programStatusStack.centerYAnchor.constraint(equalTo: centerYAnchor),
 
       addMoreButton.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -4),
       addMoreButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -151,6 +165,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     indicator.color =
       isCurrent ? accent : accent.withAlphaComponent(0.6)
     indicator.isPrivate = node.model.isPrivate
+    applyProgramStatus(input.shownProgramStatus(of: node.model.columns.flatMap(\.panes)))
 
     let workspaceIndex = node.index
     let workspaceId = node.id
@@ -172,6 +187,13 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     onAddFinderHandler = {
       [onAdd = input.onAddFinderPaneToWorkspace] in onAdd(workspaceId)
     }
+  }
+
+  /// The most urgent program status among the workspace's panes, so a
+  /// collapsed workspace, or one scrolled out of view, still shows that
+  /// one of them needs the user.
+  func applyProgramStatus(_ report: ProgramStatusReport?) {
+    programStatusIndicator.apply(report)
   }
 
   // MARK: - Inline rename

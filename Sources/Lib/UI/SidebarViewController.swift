@@ -353,12 +353,15 @@ final class SidebarViewController: NSViewController {
           pane.browserView?.isSuspended ?? false
         },
         paneIsLoading: { pane in
+          // A terminal "loads" while its program reports working.
+          if let tv = pane.terminalView { return tv.programStatusSummary?.state == .working }
           // Suspended panes have no live `WKWebView` and can't be
           // loading; the predicate short-circuits there so the cell
           // never tries to draw both rings at once.
           guard let bv = pane.browserView, !bv.isSuspended else { return false }
           return bv.webView.isLoading
         },
+        paneProgramStatus: { pane in pane.terminalView?.programStatusSummary },
         isCollapsed: { [weak self] id in
           self?.collapsedIds.contains(id) ?? false
         },
@@ -485,6 +488,13 @@ final class SidebarViewController: NSViewController {
       } ?? .labelColor
     overlay.worklane.updatePaneLoadingState(
       paneId: paneId, isLoading: isLoading, accent: accent)
+  }
+
+  /// Per-pane program status flip (OSC 7501): the indicator, and the
+  /// loading ring that stands for "working".
+  func updatePaneProgramStatus(paneId: ULID, status: ProgramStatusReport?) {
+    updatePaneLoadingState(paneId: paneId, isLoading: status?.state == .working)
+    overlay.worklane.updatePaneProgramStatus(paneId: paneId, status: status)
   }
 
   private func toggleCollapsed(_ id: ULID) {

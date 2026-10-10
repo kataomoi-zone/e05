@@ -649,6 +649,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     return false
   }
 
+  /// Coming back to e05 puts the focused pane in front of the user again
+  /// without it becoming first responder anew, so it is told directly:
+  /// a program's finished work it reported meanwhile is now seen.
+  func applicationDidBecomeActive(_: Notification) {
+    paneContainer?.noteReturnedToUser()
+  }
+
+  func windowDidBecomeKey(_: Notification) {
+    paneContainer?.noteReturnedToUser()
+  }
+
   func applicationWillTerminate(_: Notification) {
     // Block until the write lands: the process is about to exit, so the
     // async autosave path would race it and lose the final layout.

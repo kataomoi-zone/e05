@@ -77,6 +77,7 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     b.refusesFirstResponder = true
     return b
   }()
+  private let programStatusIndicator = ProgramStatusIndicatorView()
   private let statusIndicatorStack: NSStackView = {
     let s = NSStackView()
     s.orientation = .horizontal
@@ -141,6 +142,7 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     focusDot.isHidden = true
     pinIndicator.isHidden = true
     foldIndicator.isHidden = true
+    programStatusIndicator.isHidden = true
     onPinToggleHandler = nil
     onFoldToggleHandler = nil
   }
@@ -167,6 +169,8 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     closeButton.target = self
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
+
+    statusIndicatorStack.addArrangedSubview(programStatusIndicator)
 
     pinIndicator.target = self
     pinIndicator.action = #selector(pinTapped(_:))
@@ -273,6 +277,7 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
       hasActiveMedia: audio.hasActiveMedia)
     applySuspendedState(input.paneIsSuspended(pane))
     applyLoadingState(input.paneIsLoading(pane), accent: accent)
+    applyProgramStatus(input.paneProgramStatus(pane))
 
     // Single-pane column (no separate column row) surfaces its column's
     // fold / pin state here; a pane inside a multi-pane column does not
@@ -334,6 +339,12 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
       audioIndicator.image = nil
       if audioIndicator.toolTip != nil { audioIndicator.toolTip = nil }
     }
+  }
+
+  /// The pane's own program status (OSC 7501); working is the loading
+  /// ring, so only what needs the user shows here.
+  func applyProgramStatus(_ report: ProgramStatusReport?) {
+    programStatusIndicator.apply(report)
   }
 
   /// Swap just the favicon image without reconfiguring the whole row.
@@ -501,7 +512,11 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     userData _: UnsafeMutableRawPointer?
   ) -> String {
     guard let pane = node?.model, let paneTitle else { return "" }
-    return Self.toolTipText(title: paneTitle(pane), address: pane.address)
+    let text = Self.toolTipText(title: paneTitle(pane), address: pane.address)
+    guard
+      let status = pane.terminalView?.programStatusSummary.flatMap(ProgramStatusIndicatorView.line)
+    else { return text }
+    return "\(text)\n\(status)"
   }
 
   override func viewDidChangeEffectiveAppearance() {

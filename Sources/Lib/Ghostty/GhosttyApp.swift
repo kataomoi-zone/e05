@@ -350,6 +350,16 @@ public final class GhosttyApp {
         logger.debug("[ghostty/pwd] surface cwd=\(pwd, privacy: .public)")
       }
       return true
+    case GHOSTTY_ACTION_PROGRAM_STATUS:
+      // Length-delimited, like OPEN_URL: not NUL-terminated.
+      guard let view = terminalView(for: target),
+        let data = action.action.program_status.data
+      else { return false }
+      let body = String(
+        decoding: UnsafeRawBufferPointer(start: data, count: Int(action.action.program_status.len)),
+        as: UTF8.self)
+      view.applyProgramStatus(body: body)
+      return true
     case GHOSTTY_ACTION_COMMAND_FINISHED:
       // Raised only for a command whose start (OSC 133 C) was seen, so
       // the first prompt of a fresh shell never trips it.

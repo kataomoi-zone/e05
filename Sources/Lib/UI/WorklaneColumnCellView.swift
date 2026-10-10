@@ -35,6 +35,7 @@ final class WorklaneColumnCellView: NSTableCellView {
     b.refusesFirstResponder = true
     return b
   }()
+  private let programStatusIndicator = ProgramStatusIndicatorView()
   private let statusIndicatorStack: NSStackView = {
     let s = NSStackView()
     s.orientation = .horizontal
@@ -101,6 +102,8 @@ final class WorklaneColumnCellView: NSTableCellView {
     closeButton.action = #selector(closeTapped(_:))
     addSubview(closeButton)
 
+    statusIndicatorStack.addArrangedSubview(programStatusIndicator)
+
     pinIndicator.target = self
     pinIndicator.action = #selector(pinTapped(_:))
     statusIndicatorStack.addArrangedSubview(pinIndicator)
@@ -151,6 +154,13 @@ final class WorklaneColumnCellView: NSTableCellView {
     }
     pinIndicator.isHidden = !node.model.isPinned
     foldIndicator.isHidden = !node.model.isFolded
+    applyProgramStatus(input.shownProgramStatus(of: node.model.panes))
+  }
+
+  /// The most urgent program status among the column's panes, so a
+  /// collapsed column still shows that one of them needs the user.
+  func applyProgramStatus(_ report: ProgramStatusReport?) {
+    programStatusIndicator.apply(report)
   }
 
   override func updateTrackingAreas() {
