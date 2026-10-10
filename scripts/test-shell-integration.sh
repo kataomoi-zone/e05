@@ -673,17 +673,22 @@ export HOOK_OUT="$TMP/hook.out"
 # run_hook <label> <expected> <env assignments...>: runs the command the
 # way Claude does and reports what the CLI received plus the exit status.
 # `$PPID` inside the command is the process that ran `sh` — Claude in
-# real use, the subshell `$BASHPID` here.
+# real use, the subshell here. Its pid is read from the `$PPID` of an
+# `sh` exec'd in place of a command substitution's child, so its parent
+# is the subshell too, not from `$BASHPID`: macOS's bash 3.2, which is
+# the `bash` on PATH in CI, has no `$BASHPID`, and under `set -u`
+# expanding it killed the subshell before it printed anything.
 run_hook() {
   local label="$1" want="$2"
   shift 2
   rm -f "$HOOK_OUT"
   check "hook: $label" "$want" "$(
+    self=$(exec sh -c 'echo "$PPID"')
     printf '{"hook_event_name":"SessionStart"}' |
       env -u E05_BIN_DIR -u E05_PANE_ID "$@" sh -c "$HOOK_START" 2>&1
     status=$?
     received=$(cat "$HOOK_OUT" 2>/dev/null || echo none)
-    printf '%s exit=%s' "${received//$BASHPID/PPID}" "$status"
+    printf '%s exit=%s' "${received//$self/PPID}" "$status"
   )"
 }
 
