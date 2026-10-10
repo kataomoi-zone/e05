@@ -28,6 +28,14 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// whether the URL becomes a browser or finder pane.
   public var onOpenURL: ((URL) -> Void)?
 
+  /// Fired just before a clipboard confirmation sheet goes up for this
+  /// pane, so the host can bring the pane into view first.
+  public var onClipboardConfirmationNeeded: (() -> Void)?
+
+  /// The clipboard confirmation this pane has on screen, if any. See
+  /// `GhosttyTerminalView+Clipboard`.
+  var pendingClipboardConfirmation: PendingClipboardConfirmation?
+
   /// Fired when the surface's reported working directory actually
   /// changes (deduped against OSC 7's per-prompt re-emits). Lets the
   /// host persist a `cd` promptly so it survives a crash / force quit,
@@ -166,6 +174,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
       attachScreenParametersObserver()
     } else {
       detachScreenParametersObserver()
+      // A prompt about a pane that is no longer on screen cannot be
+      // answered knowingly, so it is denied — undo close included.
+      cancelClipboardConfirmation()
       if !keepSurfaceAlive {
         destroySurface()
       }
@@ -264,6 +275,8 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   private func destroySurface() {
     guard let s = surface else { return }
+    // While the surface can still take the denial.
+    cancelClipboardConfirmation()
     ghostty_surface_set_focus(s, false)
     ghostty_surface_free(s)
     surface = nil

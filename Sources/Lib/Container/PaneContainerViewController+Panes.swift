@@ -506,6 +506,14 @@ extension PaneContainerViewController {
         self?.addColumn(address: address)
       }
 
+      // A clipboard prompt is a sheet on the whole window; focusing the
+      // pane that asked shows which one it is about, even when it sits
+      // in another workspace.
+      tv.onClipboardConfirmationNeeded = { [weak self, weak pane] in
+        guard let self, let pane else { return }
+        self.focusPane(id: pane.id)
+      }
+
       // Persist a `cd` within the autosave debounce so the working
       // directory survives a crash, the same way `onURLChange` keeps a
       // browser pane's URL crash-safe. Dedup upstream means this only
