@@ -42,9 +42,12 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
 
   private var programStatus = ProgramStatusRecords()
 
-  /// Shuttles above the pane while its program reports working, like a
-  /// browser pane's page load. The host attaches it to the column.
+  /// Runs above the pane while its program reports working, like a
+  /// browser pane's page load, filling when the program says how far
+  /// along it is. The host attaches it to the column.
   public let progressBar = LoadingProgressBarView()
+
+  private var progressBarShown = false
 
   /// Fades the bar in once working has lasted
   /// `LoadingProgressBarView.revealDelay`, so a program that reports
@@ -341,10 +344,18 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     }
   }
 
-  private func showProgressBar(_ working: Bool) {
+  private func refreshProgressBar() {
+    let progress = TerminalProgress(status: programStatus.summary)
+    if let progress { progressBar.progress = progress.fraction }
+    guard (progress != nil) != progressBarShown else { return }
+    progressBarShown = progress != nil
+    showProgressBar(progressBarShown)
+  }
+
+  private func showProgressBar(_ shown: Bool) {
     progressBarReveal?.cancel()
     progressBarReveal = nil
-    guard working else {
+    guard shown else {
       progressBar.dismiss()
       return
     }
@@ -378,13 +389,19 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     change(&programStatus)
     let after = programStatus.summary
     guard after != before else { return }
-    if (after?.state == .working) != (before?.state == .working) {
-      showProgressBar(after?.state == .working)
-    }
+    refreshProgressBar()
+    // A new percentage moves only the bar; the worklane rows show none.
+    guard after.map(Self.withoutProgress) != before.map(Self.withoutProgress) else { return }
     logger.debug(
       "[program-status] \(reason, privacy: .public): \(before?.state.rawValue ?? "none", privacy: .public) -> \(after?.state.rawValue ?? "none", privacy: .public)"
     )
     onProgramStatusChange?()
+  }
+
+  private static func withoutProgress(_ report: ProgramStatusReport) -> ProgramStatusReport {
+    var report = report
+    report.progress = nil
+    return report
   }
 
   /// Type the restored pane's agent command into the shell, once. Called

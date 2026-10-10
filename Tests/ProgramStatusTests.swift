@@ -31,6 +31,34 @@ struct ProgramStatusTests {
     #expect(report("state=done:kind=permission").kind == nil)
   }
 
+  @Test("progress only counts for a working program")
+  func progressNeedsWork() {
+    #expect(report("state=working:progress=40").progress == 40)
+    #expect(report("state=blocked:progress=40").progress == nil)
+    #expect(report("state=done:progress=40").progress == nil)
+  }
+
+  @Test(
+    "progress reads plain digits up to 100 and is otherwise absent",
+    arguments: [
+      ("0", 0), ("100", 100), ("007", 7), ("101", nil), ("99999999999999999999", nil),
+      ("-1", nil), ("+1", nil), ("4.5", nil), ("1_0", nil), ("", nil),
+    ] as [(String, Int?)])
+  func progressRange(value: String, expected: Int?) {
+    let r = ProgramStatusReport(body: "state=working:progress=\(value)")
+    #expect(r?.state == .working)
+    #expect(r?.progress == expected)
+  }
+
+  @Test("the bar shuttles or fills for working, and hides otherwise")
+  func terminalProgress() {
+    #expect(TerminalProgress(status: report("state=working"))?.fraction == nil)
+    #expect(TerminalProgress(status: report("state=working:progress=40"))?.fraction == 0.4)
+    #expect(TerminalProgress(status: report("state=working")) != nil)
+    #expect(TerminalProgress(status: report("state=blocked:progress=40")) == nil)
+    #expect(TerminalProgress(status: nil) == nil)
+  }
+
   @Test("the last of a repeated key wins")
   func lastValueWins() {
     #expect(report("state=idle:state=working").state == .working)

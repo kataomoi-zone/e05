@@ -19,6 +19,11 @@ struct ProgramStatusReport: Equatable {
   let id: String
   /// What a blocked program needs from the user.
   let kind: Kind?
+  /// How far along a working program is, from 0 to 100. The
+  /// specification lets a blocked one carry it too, but nothing shows
+  /// it there. The one `var`, so a caller can tell a new percentage
+  /// from a new status by comparing reports without it.
+  var progress: Int?
   /// A stable machine-readable name, such as `claude-code`.
   let app: String?
   let title: String?
@@ -40,9 +45,20 @@ struct ProgramStatusReport: Equatable {
     self.state = state
     id = values["id"].map(String.init) ?? ""
     kind = state == .blocked ? values["kind"].flatMap { Kind(rawValue: String($0)) } : nil
+    progress = state == .working ? values["progress"].flatMap(Self.percent) : nil
     app = values["app"].map(String.init)
     title = values["title"].flatMap(Self.decode)
     message = values["msg"].flatMap(Self.decode)
+  }
+
+  /// Only plain digits up to 100, as libghostty reads it: `Int` would
+  /// also take a sign, and anything else means no percentage, not no
+  /// report.
+  private static func percent(_ value: Substring) -> Int? {
+    guard value.allSatisfy({ ("0"..."9").contains($0) }), let n = Int(value), n <= 100 else {
+      return nil
+    }
+    return n
   }
 
   /// Padding is optional in the specification, and Foundation's
