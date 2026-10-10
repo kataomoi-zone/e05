@@ -24,6 +24,8 @@ Alpha. macOS 26+ only.
 - Per-host site permissions for camera / microphone / geolocation / notifications, and per-site mute.
 - Finder pane (`e05://finder`) with inline rename, undo/redo across move / trash / new folder / duplicate / drag-drop, icon view with QuickLook thumbnails, and a rich right-click menu (Open, Open With, Get Info, Rename, Compress, Duplicate, Make Alias, Quick Look, Copy / Copy as Pathname, Paste, Share, Show in Finder, New Folder with Selection).
 - Toast feedback overlay, command palette, per-pane find bar.
+- Program status in the sidebar: a terminal program that reports what it is doing over [OSC 7501](https://www.superlogical.com/rex/docs/build/program-status) — Claude Code does — shows as working, waiting for you, done or failed on its pane's row, rolled up to its workspace, with a loading bar above the pane while it works. No plugin or hook needed.
+- Clipboard prompts: a paste that looks like it would run commands, and a program reading or writing the clipboard (OSC 52, Kitty clipboard protocol), ask first, following Ghostty's `clipboard-paste-protection`, `clipboard-read` and `clipboard-write`.
 - `e05` CLI for scripting and shell integration; bundled `open` shim that routes shell-typed `open <url>` / `open <dir>` inside terminal panes to new columns.
 
 ## Install
@@ -158,7 +160,30 @@ A pane running any other shell still works as a terminal. It opens without its p
 
 Scrollback restore can be turned off in **Settings → General → Terminal**, and the saved screens deleted in **Settings → About → Reset**. Worth knowing before leaving it on: a saved screen is the pane verbatim, so anything that was displayed — a token you echoed, the output of `env` — is in the file. They live in `~/Library/Application Support/<bundle-id>/scrollback/`, in a `0700` directory, each file `0600` once written.
 
+### Program status (OSC 7501)
+
+A program can tell its terminal what it is doing through the [program status protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501): idle, working, blocked on the user, done, or failed, with an optional one-line reason. e05 shows it without any setup on the program's side beyond supporting the protocol — Claude Code 2.1.295 and later does.
+
+| Reported | Shown |
+|---|---|
+| working | the loading ring around the pane's icon in the sidebar, and a bar shuttling above the pane (after half a second, so a moment's work never flashes it) |
+| blocked | an orange icon on the pane's row: a hand for permission, a question mark for a question, a key for a sign-in, an exclamation mark otherwise |
+| failed | a red ✕ |
+| done | a green ✓ |
+
+Hovering the row shows the program's own reason. A column's and a workspace's row carry the most urgent icon among their panes, so a collapsed workspace still shows that something in it is waiting. Working and blocked clear when the program returns to the shell prompt (Ghostty's shell integration reports that; without it they stay until cleared or the pane closes); done and failed stay until you look at the pane.
+
+Try it from any pane — the record clears once the `sleep` returns to the prompt:
+
+```sh
+printf '\e]7501;state=blocked:msg=%s\e\\' "$(printf 'Apply 3 changes?' | base64)"; sleep 10
+```
+
+Programs only report after the terminal has answered the protocol's support query, which upstream libghostty does not do inside an app yet; e05's build patches it in (`patches/ghostty-program-status.patch`).
+
 ### Claude Code
+
+Claude Code's working / waiting / done state shows in the sidebar on its own — see [Program status](#program-status-osc-7501) above; nothing here is needed for that.
 
 A pane that was running [Claude Code](https://code.claude.com) when e05 quit can reopen that conversation on the next launch: after the scrollback replay, e05 types `claude --resume <session-id>` at the restored shell's first prompt. Claude Code reports which session runs in which pane through its own hooks, which ship as a plugin in this repository:
 
