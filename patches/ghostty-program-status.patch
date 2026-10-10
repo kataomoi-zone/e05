@@ -1,0 +1,183 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index ef64879..63ea484 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -884,6 +884,12 @@ typedef struct {
+   uintptr_t len;
+ } ghostty_action_open_url_s;
+ 
++// apprt.action.ProgramStatus.C
++typedef struct {
++  const char* data;
++  uintptr_t len;
++} ghostty_action_program_status_s;
++
+ // apprt.action.CloseTabMode
+ typedef enum {
+   GHOSTTY_ACTION_CLOSE_TAB_MODE_THIS,
+@@ -1016,6 +1022,7 @@ typedef enum {
+   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
++  GHOSTTY_ACTION_PROGRAM_STATUS,
+ } ghostty_action_tag_e;
+ 
+ typedef union {
+@@ -1051,6 +1058,7 @@ typedef union {
+   ghostty_action_reload_config_s reload_config;
+   ghostty_action_config_change_s config_change;
+   ghostty_action_open_url_s open_url;
++  ghostty_action_program_status_s program_status;
+   ghostty_action_close_tab_mode_e close_tab_mode;
+   ghostty_surface_message_childexited_s child_exited;
+   ghostty_action_progress_report_s progress_report;
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 22e4ae4..56da1f6 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -1153,6 +1153,17 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
+             };
+         },
+ 
++        .program_status => |w| {
++            defer w.deinit();
++            _ = self.rt_app.performAction(
++                .{ .surface = self },
++                .program_status,
++                .{ .data = w.slice() },
++            ) catch |err| {
++                log.warn("apprt failed to report program status err={}", .{err});
++            };
++        },
++
+         .selection_scroll_tick => |active| {
+             self.selection_scroll_active = active;
+             try self.selectionScrollTick();
+diff --git a/src/apprt/action.zig b/src/apprt/action.zig
+index 54a8faf..a38a635 100644
+--- a/src/apprt/action.zig
++++ b/src/apprt/action.zig
+@@ -364,6 +364,13 @@ pub const Action = union(Key) {
+     /// split or the window is fullscreen.
+     resize_window: ResizeWindow,
+ 
++    /// A program reported its status with OSC 7501 (the program status
++    /// protocol). The payload is the report body, everything after
++    /// `7501;`, already validated by the parser. The apprt keeps one
++    /// record per id and applies the specification's lifetime rules. A
++    /// full reset reports `state=clear`.
++    program_status: ProgramStatus,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -436,6 +443,7 @@ pub const Action = union(Key) {
+         copy_title_to_clipboard,
+         move_tab_to_new_window,
+         resize_window,
++        program_status,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -989,6 +997,24 @@ pub const OpenUrl = struct {
+     }
+ };
+ 
++pub const ProgramStatus = struct {
++    /// The report body, everything after `7501;`.
++    data: []const u8,
++
++    // Sync with: ghostty_action_program_status_s
++    pub const C = extern struct {
++        data: [*]const u8,
++        len: usize,
++    };
++
++    pub fn cval(self: ProgramStatus) C {
++        return .{
++            .data = self.data.ptr,
++            .len = self.data.len,
++        };
++    }
++};
++
+ /// sync with ghostty_action_close_tab_mode_e in ghostty.h
+ pub const CloseTabMode = enum(c_int) {
+     /// Close the current tab.
+diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
+index 3b1a04d..ad1f347 100644
+--- a/src/apprt/surface.zig
++++ b/src/apprt/surface.zig
+@@ -134,6 +134,10 @@ pub const Message = union(enum) {
+     /// The terminal has reported a change in the working directory.
+     pwd_change: WriteReq,
+ 
++    /// A program reported its status with OSC 7501. The body after
++    /// `7501;`, copied out of the parser's buffer.
++    program_status: WriteReq,
++
+     /// The terminal encountered a bell character.
+     ring_bell,
+ 
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index aa7f807..d6d4564 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -349,6 +349,7 @@ pub const StreamHandler = struct {
+             .report_pwd => try self.reportPwd(value.url),
+             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
+             .progress_report => self.progressReport(value),
++            .program_status => self.programStatus(value),
+             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
+             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
+             .semantic_prompt => try self.semanticPrompt(value),
+@@ -389,7 +390,6 @@ pub const StreamHandler = struct {
+             .title_pop,
+             .kitty_dnd,
+             .osc_unknown,
+-            .program_status,
+             => {},
+         }
+     }
+@@ -928,6 +928,9 @@ pub const StreamHandler = struct {
+ 
+         // Clear the progress bar
+         self.progressReport(.{ .state = .remove });
++
++        // A full reset clears every program status record.
++        self.programStatusReport("state=clear");
+     }
+ 
+     /// Record a Kitty clipboard protocol session grant so future
+@@ -1927,6 +1930,31 @@ pub const StreamHandler = struct {
+     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
+         self.surfaceMessageWriter(.{ .progress_report = report });
+     }
++
++    fn programStatus(self: *StreamHandler, cmd: terminal.osc.Command.ProgramStatus) void {
++        switch (cmd) {
++            .report => |report| self.programStatusReport(report.data),
++
++            // The reply is always the same fixed bytes, ended with the
++            // terminator the query used. The specification never allows
++            // sending report contents back to the program.
++            .query => |terminator| switch (terminator) {
++                inline else => |t| self.messageWriter(.{
++                    .write_stable = "\x1b]7501;?" ++ comptime t.string(),
++                }),
++            },
++        }
++    }
++
++    /// The body points into the parser's buffer, which the next sequence
++    /// overwrites, so it is copied before it crosses to the surface.
++    fn programStatusReport(self: *StreamHandler, body: []const u8) void {
++        const req = apprt.surface.Message.WriteReq.init(self.alloc, body) catch |err| {
++            log.warn("failed to copy program status report err={}", .{err});
++            return;
++        };
++        self.surfaceMessageWriter(.{ .program_status = req });
++    }
+ };
+ 
+ test "kitty clipboard read: targets-only never consumes a one-time grant" {
