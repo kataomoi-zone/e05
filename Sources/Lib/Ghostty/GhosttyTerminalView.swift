@@ -358,7 +358,7 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   }
 
   private func refreshProgressBar() {
-    let progress = TerminalProgress(status: programStatus.summary, report: progressReport)
+    let progress = TerminalProgress(records: programStatus, report: progressReport)
     if let progress {
       progressBar.progress = progress.fraction
       progressBar.tint =
@@ -406,11 +406,12 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   private func updateProgramStatus(
     _ reason: StaticString, _ change: (inout ProgramStatusRecords) -> Void
   ) {
-    let before = programStatus.summary
+    let records = programStatus
     change(&programStatus)
-    let after = programStatus.summary
-    guard after != before else { return }
+    guard programStatus != records else { return }
     refreshProgressBar()
+    let before = records.summary
+    let after = programStatus.summary
     // A new percentage moves only the bar; the worklane rows show none.
     guard after.map(Self.withoutProgress) != before.map(Self.withoutProgress) else { return }
     logger.debug(

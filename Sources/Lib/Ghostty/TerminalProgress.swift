@@ -25,16 +25,17 @@ struct TerminalProgress: Equatable {
 
 extension TerminalProgress {
   /// `nil` hides the bar. A program reporting through OSC 7501 owns it
-  /// while working or blocked. Blocked hides it, since the pane's row
-  /// already says the program waits on the user, even if the same
-  /// program left an OSC 9;4 report up.
-  init?(status: ProgramStatusReport?, report: ProgressReport?) {
-    switch status?.state {
-    case .working:
-      self.init(percent: status?.progress, tone: .normal)
-    case .blocked:
-      return nil
-    default:
+  /// while working or blocked, even if it left an OSC 9;4 report up.
+  /// Any blocked record hides it, since the pane's row already says
+  /// the program waits on the user; otherwise any working record runs
+  /// it, though a failed or finished one beside it takes the row.
+  init?(records: ProgramStatusRecords, report: ProgressReport?) {
+    let reports = Array(records.records.values)
+    if reports.contains(where: { $0.state == .blocked }) { return nil }
+    let working = ProgramStatusRecords.mostUrgent(reports.filter { $0.state == .working })
+    if let working {
+      self.init(percent: working.progress, tone: .normal)
+    } else {
       guard let report else { return nil }
       switch report.state {
       case .set: self.init(percent: report.progress, tone: .normal)

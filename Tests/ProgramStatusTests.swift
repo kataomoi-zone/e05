@@ -51,16 +51,25 @@ struct ProgramStatusTests {
   }
 
   private func bar(_ body: String?, _ report: ProgressReport? = nil) -> TerminalProgress? {
-    TerminalProgress(status: body.map(self.report), report: report)
+    TerminalProgress(records: body.map { records($0) } ?? ProgramStatusRecords(), report: report)
   }
 
-  @Test("the bar shuttles or fills for working, and hides otherwise")
+  @Test("without an OSC 9;4 report, the bar runs only for working")
   func terminalProgress() {
     #expect(bar("state=working") == TerminalProgress(fraction: nil, tone: .normal))
     #expect(bar("state=working:progress=40")?.fraction == 0.4)
     #expect(bar("state=blocked:progress=40") == nil)
     #expect(bar("state=done") == nil)
     #expect(bar(nil) == nil)
+  }
+
+  @Test("work beside a failed record keeps the bar; a blocked one hides it")
+  func terminalProgressBesideOthers() {
+    let failed = records("state=working:progress=40", "state=error:id=a/b")
+    #expect(failed.summary?.state == .error)
+    #expect(TerminalProgress(records: failed, report: nil)?.fraction == 0.4)
+    let blocked = records("state=working:progress=40", "state=blocked:id=a/b")
+    #expect(TerminalProgress(records: blocked, report: nil) == nil)
   }
 
   @Test("an OSC 9;4 report runs the bar unless OSC 7501 has it")
