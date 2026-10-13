@@ -41,9 +41,9 @@ final class DownloadsSidebarView: NSView {
   /// the invariant "active downloads can't be removed without first
   /// being cancelled".
   var onRemove: ((Int64) -> Void)?
-  /// Fired when reveal-in-Finder is requested on a completed row.
+  /// Fired when reveal is requested on a completed row.
   /// The payload is the destination file path; empty paths are
-  /// filtered by the sidebar controller before reaching Finder.
+  /// filtered by the sidebar controller before opening a pane.
   var onShowInFinder: ((String) -> Void)?
   /// Fired when Copy URL is requested on any row. The payload is
   /// the download's id; the parent view controller looks up the
@@ -192,7 +192,7 @@ final class DownloadsSidebarView: NSView {
     guard rows.indices.contains(row) else { return }
     let entry = rows[row]
     // UX policy: only completed rows have a row-click action
-    // (reveal in Finder). Downloading / paused / failed / cancelled
+    // (reveal in a Finder pane). Downloading / paused / failed / cancelled
     // rows are inert — their state-dependent actions live in the
     // hover-revealed trailing buttons so the click target isn't
     // ambiguous with the per-state action set.
@@ -430,7 +430,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     for view in actionsStack.arrangedSubviews { view.removeFromSuperview() }
 
     // Leading primary action: transport control for active rows,
-    // reveal-in-Finder for completed rows, absent for terminal
+    // reveal for completed rows, absent for terminal
     // failure states (nothing primary to do there — the user
     // either copies the URL to retry manually or removes the row).
     switch state {
@@ -449,7 +449,7 @@ private final class DownloadsSidebarCellView: SidebarListCellView {
     case .completed:
       actionsStack.addArrangedSubview(
         makeButton(
-          symbol: "folder", tooltip: "Show in Finder",
+          symbol: "folder", tooltip: "Show in Finder Pane",
           action: #selector(handleShowInFinderTapped)
         ))
     case .failed, .cancelled:

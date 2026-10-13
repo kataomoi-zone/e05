@@ -207,14 +207,24 @@ final class SidebarViewController: NSViewController {
     downloadsView.onRemove = { [weak container] id in
       container?.downloadsManager.remove(id: id)
     }
-    downloadsView.onShowInFinder = { path in
+    downloadsView.onShowInFinder = { [weak container] path in
       // Empty `destination` means the download never reached the
       // `decideDestinationUsing` step (e.g. failed mid-negotiation)
-      // — bailing avoids handing Finder an invalid file URL.
-      guard !path.isEmpty else { return }
-      NSWorkspace.shared.activateFileViewerSelecting(
-        [URL(fileURLWithPath: path)]
-      )
+      // — bailing avoids opening a pane on an invalid file URL.
+      guard let container, !path.isEmpty else { return }
+      // UX policy: a new Finder pane column in the current workspace,
+      // matching bookmarks and history, with the file selected once
+      // its folder has loaded. A file moved or deleted since says so
+      // rather than opening a folder with nothing selected, or a pane
+      // on a folder that is gone.
+      guard FileManager.default.fileExists(atPath: path) else {
+        container.showToast("No such path: \(path)", style: .error)
+        return
+      }
+      let file = URL(fileURLWithPath: path)
+      let folder = file.deletingLastPathComponent().path(percentEncoded: false)
+      let column = container.addColumn(address: .finder(path: folder))
+      column.panes.first?.finderView?.reloadItemsAndSelect(at: [file])
     }
     downloadsView.onCopyURL = { [weak container] id in
       // Re-read through the manager rather than caching the URL

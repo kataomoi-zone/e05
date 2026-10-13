@@ -397,7 +397,7 @@ public final class DownloadsManager: NSObject, WKDownloadDelegate {
       destinationURL = Self.destinationURL(for: sanitized)
     }
     // Surface the final on-disk name so what the user sees in the
-    // downloads pane matches what Show in Finder reveals.
+    // downloads sidebar matches the file it reveals.
     let filename = destinationURL.lastPathComponent
     entry.filename = filename
     entry.destination = destinationURL.path
