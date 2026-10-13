@@ -124,13 +124,6 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// and `NotificationCenter.removeObserver` is documented thread-safe.
   nonisolated(unsafe) private var screenParametersObserver: NSObjectProtocol?
 
-  /// Backing scale most recently pushed to libghostty's content scale
-  /// and the view's layer by `syncMetrics`. It only advances when a sync
-  /// actually lands (never while hidden), so a pane that was parked
-  /// across a display change re-applies the new scale on unhide via the
-  /// `scale != lastSyncedScale` check. 0 = never synced.
-  private var lastSyncedScale: CGFloat = 0
-
   /// `CGDirectDisplayID` last handed to `ghostty_surface_set_display_id`,
   /// which points the surface's renderer CVDisplayLink at the display it
   /// lives on so vsync runs at that display's refresh rate. 0 = never set.
@@ -483,9 +476,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   /// fold flips `pane.containerView.isHidden = true` and shrinks the
   /// column to `foldedColumnWidth` (30pt); forwarding that tiny size
   /// would reflow ghostty and lose the preserved scrollback of an
-  /// already-exited shell. `lastSyncedScale` / `lastSyncedDisplayID` only
-  /// advance when a sync lands, so a pane parked across a display change
-  /// re-applies everything on unhide.
+  /// already-exited shell. The scale is checked against the layer itself
+  /// and `lastSyncedDisplayID` only advances when a sync lands, so a pane
+  /// parked across a display change re-applies everything on unhide.
   private func syncMetrics() {
     guard let surface else { return }
     guard !isHiddenOrHasHiddenAncestor else { return }
@@ -499,23 +492,27 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     let w = UInt32(bounds.width * scale)
     let h = UInt32(bounds.height * scale)
     guard w > 0, h > 0 else { return }
-    var scaleChanged = false
-    if scale != lastSyncedScale {
-      // `self.layer` is libghostty's own IOSurfaceLayer (it replaces the
-      // view's layer on surface creation). ghostty sets that layer's
-      // contentsScale only once, at creation, so we must keep it in step
-      // with the window here or the high-resolution glyphs it renders get
-      // composited at the stale scale — cells then look too large or
-      // small after a display change. Wrapped in a no-action CATransaction
-      // so Core Animation does not animate the change as a brief zoom.
+    // `self.layer` is libghostty's own IOSurfaceLayer (it replaces the
+    // view's layer on surface creation). ghostty sets that layer's
+    // contentsScale only once, at creation, so we must keep it in step
+    // with the window here or the high-resolution glyphs it renders get
+    // composited at the stale scale — cells then look too large or
+    // small after a display change. Compared against the layer rather
+    // than a remembered value: the layer is not ours alone, and a
+    // remembered value that matches the window leaves a layer changed
+    // behind our back at the wrong scale for good. Wrapped in a
+    // no-action CATransaction so Core Animation does not animate the
+    // change as a brief zoom.
+    let scaleChanged = layer?.contentsScale != scale
+    if scaleChanged {
       CATransaction.begin()
       CATransaction.setDisableActions(true)
       layer?.contentsScale = scale
       CATransaction.commit()
-      ghostty_surface_set_content_scale(surface, scale, scale)
-      lastSyncedScale = scale
-      scaleChanged = true
     }
+    // Every pass, for the same reason; libghostty does nothing when the
+    // DPI it works out is the one it already has.
+    ghostty_surface_set_content_scale(surface, scale, scale)
     ghostty_surface_set_size(surface, w, h)
     // A focused surface only repaints on its CVDisplayLink vsync, which
     // may not fire for a frame or two right after a display change. Force
