@@ -1,21 +1,21 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index eec6550..ef64879 100644
+index 9a12b9c..2e9b549 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -1202,6 +1202,8 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
-                                                    ghostty_input_key_s,
+@@ -1203,6 +1203,8 @@ GHOSTTY_API bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                                     ghostty_binding_flags_e*);
  GHOSTTY_API void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
+ GHOSTTY_API void ghostty_surface_paste_text(ghostty_surface_t, const char*, uintptr_t);
 +GHOSTTY_API bool ghostty_surface_command_text(ghostty_surface_t, ghostty_point_s, bool, uint8_t, ghostty_text_s*);
 +GHOSTTY_API bool ghostty_surface_read_primary_text(ghostty_surface_t, ghostty_selection_s, bool, ghostty_text_s*);
  GHOSTTY_API void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
  GHOSTTY_API bool ghostty_surface_mouse_captured(ghostty_surface_t);
  GHOSTTY_API bool ghostty_surface_mouse_button(ghostty_surface_t,
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index b90366a..cec5765 100644
+index 3c6b2c1..05f756f 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1940,6 +1940,200 @@ pub const CAPI = struct {
+@@ -1978,6 +1978,200 @@ pub const CAPI = struct {
          ptr.deinit();
      }
  
