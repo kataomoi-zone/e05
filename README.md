@@ -196,6 +196,8 @@ claude plugin install e05@e05
 
 (or `/plugin marketplace add kawarimidoll/e05` and `/plugin install e05@e05` inside Claude Code).
 
+Settings → General → Terminal changes the typed command, with `{session}` standing for the session id: a leading space keeps it out of a shell history that ignores such lines, and a wrapper command or extra flags go around it (` nono run -- claude --resume {session}`).
+
 The hook does nothing outside an e05 terminal pane, and prints nothing. Only a session whose `claude` process is still running at quit is reopened; one you exited, or one Claude Code ran headless from inside another session, is not. The command is typed when the shell reports its directory over OSC 7 at its first prompt, so it needs a shell whose integration does that — zsh, bash, fish and elvish.
 
 ## Building from source

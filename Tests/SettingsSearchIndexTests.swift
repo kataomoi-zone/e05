@@ -55,6 +55,15 @@ struct SettingsSearchIndexTests {
     #expect(results.contains { $0.title == "Terminal Configuration" })
   }
 
+  /// General's terminal section shares a word with the Terminal tab; the
+  /// tab's own row stays first for the bare word.
+  @Test("terminal restore settings are found without outranking the Terminal tab")
+  func terminalRestore() {
+    #expect(SettingsSearchIndex.search("claude").first?.title == "Terminal Restore")
+    #expect(SettingsSearchIndex.search("scrollback").first?.title == "Terminal Restore")
+    #expect(SettingsSearchIndex.search("terminal").first?.title == "Terminal Configuration")
+  }
+
   @Test("internal and full-width whitespace in the query collapses")
   func whitespaceNormalisation() {
     // Sloppy spacing still matches the multi-word "dark mode" keyword.

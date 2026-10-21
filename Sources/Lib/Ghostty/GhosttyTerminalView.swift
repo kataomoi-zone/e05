@@ -145,7 +145,9 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
     self.ghosttyApp = ghosttyApp
     self.restoreWorkingDirectory = restoreWorkingDirectory
     self.restoreScrollbackPath = restoreScrollbackPath
-    if let command = resumeAgentSession?.resumeCommand {
+    if let command = resumeAgentSession?.resumeCommand(
+      template: PreferencesStore.shared.preferences.claudeResumeCommand)
+    {
       pendingStartupCommand = command
       restoredAgentSession = resumeAgentSession
     }
@@ -428,12 +430,17 @@ public final class GhosttyTerminalView: NSView, @preconcurrency NSTextInputClien
   func sendPendingStartupCommand() {
     guard let command = pendingStartupCommand, let surface else { return }
     pendingStartupCommand = nil
-    // `text:` takes a Zig string literal; the command is a fixed word and
-    // a UUID, so `\n` is the only escape in it.
-    let action = "text:\(command)\\n"
+    let action = Self.textAction(typing: command)
     action.withCString { ptr in
       _ = ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
     }
+  }
+
+  /// A `text:` binding that types `command` and presses Return. `text:`
+  /// takes a Zig string literal body, where only a backslash starts an
+  /// escape, and the command comes from a user setting that may hold one.
+  nonisolated static func textAction(typing command: String) -> String {
+    "text:\(command.replacingOccurrences(of: "\\", with: "\\\\"))\\n"
   }
 
   /// Record the shell's reported working directory, delivered by

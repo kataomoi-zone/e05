@@ -31,7 +31,45 @@ struct TerminalAgentSessionTests {
 
   @Test("the resume command names the session")
   func resumeCommand() {
-    #expect(session(idA).resumeCommand == "claude --resume \(idA)")
+    #expect(session(idA).resumeCommand(template: nil) == "claude --resume \(idA)")
+  }
+
+  @Test("a template is used verbatim, leading space and wrapper included")
+  func resumeCommandFromTemplate() {
+    #expect(
+      session(idA).resumeCommand(template: " nono run -- claude -r {session} --verbose")
+        == " nono run -- claude -r \(idA) --verbose")
+  }
+
+  /// Typing a command without the id would open a fresh conversation.
+  /// A bare id is not a command, and a newline would press Return before
+  /// the id is typed.
+  @Test("a template without a command around the placeholder falls back to the default")
+  func unusableTemplateFallsBack() {
+    for template in [
+      "", "   ", "claude --continue", " {session}", "claude\n--resume {session}",
+      "claude\t--resume {session}",
+    ] {
+      #expect(session(idA).resumeCommand(template: template) == "claude --resume \(idA)")
+    }
+  }
+
+  /// The settings field starts out holding the default; only a real
+  /// edit is stored, and stored as typed.
+  @Test("the settings field stores only a customized command, untrimmed")
+  func settingsFieldStoredValue() {
+    #expect(GeneralSettingsView.storedResumeCommand("") == nil)
+    #expect(
+      GeneralSettingsView.storedResumeCommand(TerminalAgentSession.defaultClaudeResumeTemplate)
+        == nil)
+    #expect(
+      GeneralSettingsView.storedResumeCommand(" claude --resume {session}")
+        == " claude --resume {session}")
+  }
+
+  @Test("the typed command escapes backslashes for the text binding")
+  func textActionEscapes() {
+    #expect(GhosttyTerminalView.textAction(typing: #"a\b"#) == #"text:a\\b\n"#)
   }
 
   /// A decoded value never passed through `init?`.
@@ -39,7 +77,7 @@ struct TerminalAgentSessionTests {
   func decodedBadIDHasNoCommand() throws {
     let json = Data(#"{"agent":"claude","sessionID":"x; rm -rf ~"}"#.utf8)
     let decoded = try JSONDecoder().decode(TerminalAgentSession.self, from: json)
-    #expect(decoded.resumeCommand == nil)
+    #expect(decoded.resumeCommand(template: nil) == nil)
   }
 
   /// Written by a build that knows more agents: decoding must not fail,
@@ -48,7 +86,7 @@ struct TerminalAgentSessionTests {
   func decodedUnknownAgentHasNoCommand() throws {
     let json = Data(#"{"agent":"codex","sessionID":"\#(idA)"}"#.utf8)
     let decoded = try JSONDecoder().decode(TerminalAgentSession.self, from: json)
-    #expect(decoded.resumeCommand == nil)
+    #expect(decoded.resumeCommand(template: nil) == nil)
   }
 }
 

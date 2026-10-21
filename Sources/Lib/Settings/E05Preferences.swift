@@ -182,6 +182,14 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   /// ``restoreTerminalScrollback`` with its default applied.
   public var restoresTerminalScrollback: Bool { restoreTerminalScrollback ?? true }
 
+  /// Command typed into a restored pane to reopen its Claude Code
+  /// conversation, with `{session}` standing for the session id. `nil`
+  /// means ``TerminalAgentSession/defaultClaudeResumeTemplate``. Kept
+  /// verbatim, leading space included: a space keeps the command out of
+  /// a shell history that ignores such lines, and the rest lets a
+  /// wrapper command or extra flags in.
+  public var claudeResumeCommand: String?
+
   public init(
     homeURL: String? = nil,
     searchTemplate: String = "https://duckduckgo.com/?q={query}",
@@ -208,7 +216,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     newFinderDirectory: String? = nil,
     inheritNewPaneWidth: Bool? = nil,
     focusPaneUnderCursor: Bool? = nil,
-    restoreTerminalScrollback: Bool? = nil
+    restoreTerminalScrollback: Bool? = nil,
+    claudeResumeCommand: String? = nil
   ) {
     self.homeURL = homeURL
     self.searchTemplate = searchTemplate
@@ -236,6 +245,7 @@ public struct E05Preferences: Codable, Equatable, Sendable {
     self.inheritNewPaneWidth = inheritNewPaneWidth
     self.focusPaneUnderCursor = focusPaneUnderCursor
     self.restoreTerminalScrollback = restoreTerminalScrollback
+    self.claudeResumeCommand = claudeResumeCommand
   }
 
   /// Factory used when the on-disk file is missing or quarantined.

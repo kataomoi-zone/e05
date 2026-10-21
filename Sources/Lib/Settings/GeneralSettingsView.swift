@@ -44,6 +44,11 @@ struct GeneralSettingsView: View {
   /// View-local finder-root option, sticky for the same reason as
   /// ``terminalDirOption``.
   @State private var finderDirOption: DirOption
+  /// The resume command field's text, the default when nothing is
+  /// stored. Held apart from `preferences` because the stored value
+  /// drops to nil for an empty or default buffer, and reading the field
+  /// back from that would refill a field the user just cleared.
+  @State private var claudeResumeInput: String
   /// Store-listener handle. Held in state so `.onDisappear` can
   /// unsubscribe, preventing the listener from outliving the view
   /// when the tab is swapped out.
@@ -74,6 +79,16 @@ struct GeneralSettingsView: View {
       initialValue: current.newTerminalDirectory?.isEmpty == false ? .custom : .inherit)
     _finderDirOption = State(
       initialValue: current.newFinderDirectory?.isEmpty == false ? .custom : .inherit)
+    _claudeResumeInput = State(
+      initialValue: current.claudeResumeCommand
+        ?? TerminalAgentSession.defaultClaudeResumeTemplate)
+  }
+
+  /// The preference value for the resume command field's text: nil for
+  /// an empty or default buffer, so the stored file holds only a real
+  /// customization. Not trimmed: a leading space is part of the value.
+  nonisolated static func storedResumeCommand(_ input: String) -> String? {
+    input.isEmpty || input == TerminalAgentSession.defaultClaudeResumeTemplate ? nil : input
   }
 
   var body: some View {
@@ -306,6 +321,53 @@ struct GeneralSettingsView: View {
         )
         .font(.caption)
         .foregroundStyle(.secondary)
+
+        // Label above the field rather than beside it: a long command
+        // would wrap the side-by-side row anyway, and the field is
+        // leading-aligned so a leading space stays visible. The field
+        // starts out holding the default so a change is an edit, not a
+        // retype.
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Claude Code resume command")
+          HStack {
+            TextField("Claude Code resume command", text: $claudeResumeInput)
+              .labelsHidden()
+              .textFieldStyle(.roundedBorder)
+              .font(.body.monospaced())
+              .multilineTextAlignment(.leading)
+              .onChange(of: claudeResumeInput) { _, input in
+                // The store listener sets the field too; writing back a
+                // value the store already holds would save it twice.
+                let stored = Self.storedResumeCommand(input)
+                guard stored != Self.storedResumeCommand(preferences.claudeResumeCommand ?? "")
+                else { return }
+                preferences.claudeResumeCommand = stored
+                persist()
+              }
+            Button("Restore Default") {
+              claudeResumeInput = TerminalAgentSession.defaultClaudeResumeTemplate
+            }
+            .disabled(claudeResumeInput == TerminalAgentSession.defaultClaudeResumeTemplate)
+          }
+          if !TerminalAgentSession.isUsableTemplate(claudeResumeInput) {
+            Label(
+              "Needs a command with {session}; the default command is used instead.",
+              systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption)
+            .foregroundStyle(.orange)
+          }
+          Text(
+            """
+            Typed into a restored pane that was running Claude Code; {session} becomes the \
+            session id. A leading space keeps it out of a shell history that ignores such \
+            lines (zsh's HIST_IGNORE_SPACE, bash's ignorespace); a wrapper command can go in \
+            front.
+            """
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
       } header: {
         Text("Terminal")
       }
@@ -378,6 +440,15 @@ struct GeneralSettingsView: View {
       splitPaneKind = SplitPaneKindPreset.resolve(new.splitPaneKind)
       terminalDirOption = new.newTerminalDirectory?.isEmpty == false ? .custom : .inherit
       finderDirOption = new.newFinderDirectory?.isEmpty == false ? .custom : .inherit
+      // Skipped when the field already maps to the stored value, which
+      // includes this view's own writes: an emptied field must not snap
+      // back to the default mid-edit.
+      if Self.storedResumeCommand(claudeResumeInput)
+        != Self.storedResumeCommand(new.claudeResumeCommand ?? "")
+      {
+        claudeResumeInput =
+          new.claudeResumeCommand ?? TerminalAgentSession.defaultClaudeResumeTemplate
+      }
     }
   }
 

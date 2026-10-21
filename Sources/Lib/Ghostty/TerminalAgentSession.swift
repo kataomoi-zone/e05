@@ -27,16 +27,37 @@ public struct TerminalAgentSession: Codable, Sendable, Equatable {
     self.sessionID = sessionID
   }
 
-  /// The command line that reopens the conversation. Re-checks both
-  /// fields because a decoded value never went through `init?` —
-  /// session.json is a file on disk like any other.
-  public var resumeCommand: String? {
+  /// Marks where the session id goes in a resume command template.
+  public static let sessionPlaceholder = "{session}"
+
+  public static let defaultClaudeResumeTemplate = "claude --resume \(sessionPlaceholder)"
+
+  /// Whether `template` can stand in for the default. It needs the
+  /// placeholder, a command around it (a bare id is not one), and no
+  /// control character: a newline would press Return early and open a
+  /// fresh conversation, silently losing the one being restored.
+  public static func isUsableTemplate(_ template: String) -> Bool {
+    template.contains(sessionPlaceholder)
+      && !template.replacingOccurrences(of: sessionPlaceholder, with: "")
+        .allSatisfy(\.isWhitespace)
+      && !template.unicodeScalars.contains { $0.properties.generalCategory == .control }
+  }
+
+  /// The command line that reopens the conversation, built from the
+  /// user's `template`, or from the default when that is not usable.
+  ///
+  /// Re-checks both fields because a decoded value never went through
+  /// `init?` — session.json is a file on disk like any other.
+  public func resumeCommand(template: String?) -> String? {
     guard let kind = Agent(rawValue: agent), UUID(uuidString: sessionID) != nil else {
       return nil
     }
+    let fallback: String
     switch kind {
-    case .claude: return "claude --resume \(sessionID)"
+    case .claude: fallback = Self.defaultClaudeResumeTemplate
     }
+    let chosen = template.flatMap { Self.isUsableTemplate($0) ? $0 : nil } ?? fallback
+    return chosen.replacingOccurrences(of: Self.sessionPlaceholder, with: sessionID)
   }
 }
 

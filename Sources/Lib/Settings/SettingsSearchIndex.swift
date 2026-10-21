@@ -112,6 +112,12 @@ enum SettingsSearchIndex {
       id: "general.downloads", title: "Downloads", tab: .general,
       keywords: ["download", "save location", "download folder", "ask where to save"]),
     SettingsSearchEntry(
+      id: "general.terminal-restore", title: "Terminal Restore", tab: .general,
+      keywords: [
+        "scrollback", "restore scrollback", "claude", "claude code", "resume",
+        "resume command", "agent", "wrapper",
+      ]),
+    SettingsSearchEntry(
       id: "general.updates", title: "Updates", tab: .general,
       keywords: [
         "update", "updates", "auto update", "automatic updates", "check for updates",
