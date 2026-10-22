@@ -2503,6 +2503,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     initiatedByFrame _: WKFrameInfo,
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
+    logger.debug("[permissions/geolocation] request via public")
     decideGeolocationPermission(
       webView: webView, origin: origin, decisionHandler: decisionHandler)
   }
@@ -2520,6 +2521,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     initiatedByFrame _: WKFrameInfo,
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
+    logger.debug("[permissions/geolocation] request via SPI")
     decideGeolocationPermission(
       webView: webView, origin: origin, decisionHandler: decisionHandler)
   }
