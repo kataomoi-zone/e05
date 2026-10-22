@@ -2489,23 +2489,44 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       completion: decisionHandler)
   }
 
-  /// Geolocation permission requests reach the delegate through the
-  /// `WKUIDelegatePrivate` SPI instead of a public selector — the
-  /// `webView(_:requestGeolocationPermissionFor:initiatedByFrame:decisionHandler:)`
-  /// counterpart is gated `WK_MAC_TBA` in WebKit trunk and absent
-  /// from every shipping macOS SDK, so `@optional` Swift methods
-  /// declared with that name are silently never invoked. The SPI
-  /// has been stable since macOS 12 and is what `UIDelegate.mm`
-  /// actually dispatches against; the `@objc` selector override
-  /// matches it without needing a bridging header. The decision
-  /// handler takes a `WKPermissionDecision`, not a `Bool`: WebKit
-  /// reads a `false` as `.prompt` and puts up its own alert instead
-  /// of denying.
+  /// Geolocation permission requests, through the public selector
+  /// from macOS 27. WebKit's `UIDelegate.mm` calls it in preference
+  /// to the SPI below when both are implemented (see its
+  /// `decidePolicyForGeolocationPermissionRequest`). The selector is spelled
+  /// out because an SDK older than 27 has no protocol requirement to
+  /// infer `@objc` from, and the release runner builds with one.
+  @available(macOS 27, *)
+  @objc(webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
+  public func webView(
+    _ webView: WKWebView,
+    requestGeolocationPermissionFor origin: WKSecurityOrigin,
+    initiatedByFrame _: WKFrameInfo,
+    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+  ) {
+    decideGeolocationPermission(
+      webView: webView, origin: origin, decisionHandler: decisionHandler)
+  }
+
+  /// The `WKUIDelegatePrivate` SPI that carries geolocation requests
+  /// on macOS 26, which has no public selector for them. The `@objc`
+  /// selector override matches it without a bridging header. The
+  /// decision handler takes a `WKPermissionDecision`, not a `Bool`:
+  /// WebKit reads a `false` as `.prompt` and puts up its own alert
+  /// instead of denying.
   @objc(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
   public func _webView(
     _ webView: WKWebView,
     requestGeolocationPermissionForOrigin origin: WKSecurityOrigin,
     initiatedByFrame _: WKFrameInfo,
+    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+  ) {
+    decideGeolocationPermission(
+      webView: webView, origin: origin, decisionHandler: decisionHandler)
+  }
+
+  private func decideGeolocationPermission(
+    webView: WKWebView,
+    origin: WKSecurityOrigin,
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     let host = origin.host
