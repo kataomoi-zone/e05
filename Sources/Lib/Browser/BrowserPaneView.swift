@@ -2497,25 +2497,25 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// declared with that name are silently never invoked. The SPI
   /// has been stable since macOS 12 and is what `UIDelegate.mm`
   /// actually dispatches against; the `@objc` selector override
-  /// matches it without needing a bridging header. The completion
-  /// handler takes `Bool` (legacy shape), so the prompt's
-  /// `WKPermissionDecision` is folded down via `== .grant`.
+  /// matches it without needing a bridging header. The decision
+  /// handler takes a `WKPermissionDecision`, not a `Bool`: WebKit
+  /// reads a `false` as `.prompt` and puts up its own alert instead
+  /// of denying.
   @objc(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
   public func _webView(
     _ webView: WKWebView,
     requestGeolocationPermissionForOrigin origin: WKSecurityOrigin,
     initiatedByFrame _: WKFrameInfo,
-    decisionHandler: @escaping @MainActor @Sendable (Bool) -> Void
+    decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     let host = origin.host
     if let resolved = resolvePermissionDecision(host: host, kinds: [.geolocation]) {
-      decisionHandler(resolved == .grant)
+      decisionHandler(resolved)
       return
     }
-    promptForPermission(host: host, kinds: [.geolocation], sourceWindow: webView.window) {
-      decision in
-      decisionHandler(decision == .grant)
-    }
+    promptForPermission(
+      host: host, kinds: [.geolocation], sourceWindow: webView.window,
+      completion: decisionHandler)
   }
 
   /// Web Notification permission requests reach the delegate
@@ -2542,6 +2542,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// follow-up. Until then this hook records grants/denies that
   /// will start producing visible notifications once the bundle
   /// work and display delegate ship.
+  ///
+  /// Unlike the geolocation SPI above, this one's decision handler
+  /// really is a `BOOL` block in `WKUIDelegatePrivate.h`, so the
+  /// decision is folded down via `== .grant`.
   @objc(_webView:requestNotificationPermissionForSecurityOrigin:decisionHandler:)
   public func _webView(
     _ webView: WKWebView,
