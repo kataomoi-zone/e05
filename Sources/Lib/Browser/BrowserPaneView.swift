@@ -782,6 +782,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     // from a click and are unaffected.
     config.preferences.javaScriptCanOpenWindowsAutomatically = false
     let webView = FocusReportingWebView(frame: .zero, configuration: config)
+    GeolocationProvider.shared.attach(to: webView)
     // WKWebView's default UA on macOS 26 omits both `Version/<n>` and
     // `Safari/<rev>`, leaving sites that key off those tokens unable
     // to identify a Safari-equivalent and falling back to "unknown
