@@ -42,17 +42,20 @@ extension PaneContainerViewController {
   /// callers that commit their own focus target after the insert loop
   /// completes (e.g. `restoreSession` finishes with
   /// `restoreFocusInCurrentWorkspace`); without that follow-up the
-  /// container is left with stale focus state.
+  /// container is left with stale focus state. `animated: false` is for
+  /// rebuilding a saved layout; see `insertColumn`.
   @discardableResult
   public func addColumn(
     address: PaneAddress = .terminal,
     dependencies: PaneDependencies = .init(),
     focusOnInsert: Bool = true,
+    animated: Bool = true,
     id: ULID = ULID()
   ) -> ColumnModel {
     insertColumn(
       with: makePane(address: address, dependencies: dependencies),
       focusOnInsert: focusOnInsert,
+      animated: animated,
       id: id)
   }
 
@@ -247,7 +250,8 @@ extension PaneContainerViewController {
 
   @discardableResult
   func insertColumn(
-    with pane: PaneModel, focusOnInsert: Bool = true, id: ULID = ULID()
+    with pane: PaneModel, focusOnInsert: Bool = true, animated: Bool = true,
+    id: ULID = ULID()
   ) -> ColumnModel {
     // Start the column at its target width so the post-insert
     // layout pass below resolves the final frame. `animateScroll(toX:)`
@@ -255,18 +259,20 @@ extension PaneContainerViewController {
     // scroll from a width-0 start would land on the wrong X.
     let (column, wc) = makeColumn(around: pane, id: id, width: defaultPaneWidth)
 
-    // Session restore runs before the window is attached and would
-    // flash every restored column through the animation; the guard
-    // keeps that path immediate.
-    let animated = view.window != nil
+    // A rebuilt layout (session restore, a reopened workspace) would
+    // flash every column through the animation, and the preset seeding
+    // and frame-in scroll below would override the saved width and
+    // scroll offset its caller applies. Session restore also runs
+    // before the window is attached, which keeps it immediate anyway.
+    let animated = animated && view.window != nil
 
     // A fresh add (window attached) opens at the user's first width-cycle
     // preset and seeds `currentPreset`, so the column starts at the
     // configured new-pane width and the first Cycle Width press steps to
     // the *next* preset instead of re-applying the width it already has.
     // Applied before the expand animation so there's no width jump.
-    // Restore runs before the window attaches (animated == false) and
-    // keeps the saved width the caller assigns after the insert.
+    // A rebuild (animated == false) keeps the saved width the caller
+    // assigns after the insert.
     if animated {
       if let inherited = inheritedNewColumnWidth() {
         column.currentPreset = inherited.preset

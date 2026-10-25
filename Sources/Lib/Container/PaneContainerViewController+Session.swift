@@ -15,9 +15,6 @@ extension PaneContainerViewController {
   /// clean-quit path turns it on, so a restart replays the history a
   /// crash would have dropped.
   public func captureSession(captureScrollback: Bool = false) -> SessionState {
-    // Ids written this pass, so `ScrollbackStore.prune` can drop the
-    // files of panes that have since closed.
-    var capturedScrollbackIDs = Set<String>()
     // Snapshot the live scroll offset onto the current workspace so
     // it's included in the save. Other workspaces already have their
     // scrollX recorded when they were last switched away from.
@@ -48,149 +45,154 @@ extension PaneContainerViewController {
       return priorCount > 0 ? priorCount - 1 : 0
     }()
 
-    // Build workspace states with extension-internal URLs pruned.
-    // WKWebExtension rotates the `<uuid>` in `webkit-extension://`
-    // every launch, so persisting one would point at a dead UUID on
-    // the next run and surface as an ERR_EXTENSION_NOT_FOUND ghost
-    // pane the user can't recover. Drop those panes at save time;
-    // legacy session.json contents already on disk fall through to
-    // the restore-side `loadExtensionUnavailableError` path and are
-    // self-cleaning on the next save round-trip.
-    var persistedIds = Set<ULID>()
-    let workspaceStates = persistedWorkspaces.compactMap {
-      _, ws -> SessionState.WorkspaceState? in
-      var columnStates: [SessionState.ColumnState] = []
-      var keptColumnOriginalIndexes: [Int] = []
-      for (colIdx, column) in ws.columns.enumerated() {
-        var paneStates: [SessionState.PaneState] = []
-        var keptPaneOriginalIndexes: [Int] = []
-        for (paneIdx, pane) in column.panes.enumerated() {
-          if pane.address.url.scheme == PaneAddress.extensionScheme {
-            continue
-          }
-          var state = SessionState.PaneState(address: pane.address.description)
-          if let bv = pane.browserView {
-            if !pane.title.isEmpty { state.title = pane.title }
-            // interactionState restores the full native back/forward
-            // list + scroll/form. Read it off the live web view, or
-            // carry the snapshot blob forward for a pane that hasn't
-            // been refocused since restore.
-            if bv.isSuspended {
-              state.interactionState = bv.suspendedInteractionState
-            } else {
-              // `interactionState` is a synchronous round-trip to the
-              // web content process; a hung process can block the main
-              // thread here for the whole autosave. Time it so a stall
-              // is attributable rather than a mystery freeze.
-              let t0 = Date()
-              state.interactionState = bv.webView.interactionState as? Data
-              let ms = Int(Date().timeIntervalSince(t0) * 1000)
-              if ms > 100 {
-                logger.warning(
-                  "[session/interactionState] slow read \(ms, privacy: .public)ms for \(pane.address.url.absoluteString, privacy: .public) — a hung web content process can block the main thread here"
-                )
-              }
-            }
-          }
-          // Terminal panes carry their shell's last-reported cwd so the
-          // restore can relaunch the surface in the same directory.
-          if let terminalView = pane.terminalView {
-            if let cwd = terminalView.currentWorkingDirectory {
-              state.terminalWorkingDirectory = cwd
-            }
-            state.terminalAgentSession = terminalView.resumableAgentSession
-            // Scrollback goes to its own file, keyed by an id in the
-            // pane state. Only captured when the caller asks: reading
-            // the whole screen for every pane is too much work for the
-            // 2.5s autosave, so it runs on quit, where losing the last
-            // few seconds of history to a crash is the accepted trade.
-            if captureScrollback, let text = terminalView.readScreenText(styled: true),
-              let id = ScrollbackStore.default.save(text)
-            {
-              state.terminalScrollbackID = id
-              capturedScrollbackIDs.insert(id)
-            }
-          }
-          paneStates.append(state)
-          keptPaneOriginalIndexes.append(paneIdx)
-        }
-        if paneStates.isEmpty { continue }
-
-        let width = Double(column.widthConstraint?.constant ?? defaultPaneWidth)
-
-        // Height ratios are computed against the first surviving pane
-        // after the prune, not the original first pane, so the ratio
-        // chain stays consistent with the column being restored.
-        var heightRatios: [Double] = []
-        let survivors = keptPaneOriginalIndexes.map { column.panes[$0] }
-        if survivors.count > 1,
-          let firstHeight = survivors.first?.containerView.frame.height,
-          firstHeight > 0
-        {
-          heightRatios = survivors.dropFirst().map { pane in
-            pane.containerView.frame.height / firstHeight
-          }
-        }
-
-        // Clamp focusedPaneIndex onto the survivor array. If the
-        // focused pane was itself pruned, fall back to 0 — there is
-        // no meaningful "next-closest" survivor to favour.
-        let clampedPaneFocus =
-          keptPaneOriginalIndexes.firstIndex(of: column.focusedPaneIndex) ?? 0
-
-        columnStates.append(
-          SessionState.ColumnState(
-            id: column.id.string,
-            panes: paneStates,
-            focusedPaneIndex: clampedPaneFocus,
-            width: width,
-            heightRatios: heightRatios,
-            isFolded: column.isFolded,
-            unfoldedWidth: Double(column.unfoldedWidth),
-            isPinned: column.isPinned
-          ))
-        keptColumnOriginalIndexes.append(colIdx)
-        persistedIds.insert(column.id)
-      }
-      if columnStates.isEmpty { return nil }
-
-      // Clamp focusedColumnIndex symmetrically with the pane-level
-      // logic above.
-      let clampedColFocus =
-        keptColumnOriginalIndexes.firstIndex(of: ws.focusedColumnIndex) ?? 0
-
-      persistedIds.insert(ws.id)
-      return SessionState.WorkspaceState(
-        id: ws.id.string,
-        name: ws.name,
-        columns: columnStates,
-        focusedColumnIndex: clampedColFocus,
-        scrollX: Double(ws.scrollX)
-      )
+    let workspaceStates = persistedWorkspaces.compactMap { _, ws in
+      captureWorkspaceState(ws, captureScrollback: captureScrollback)
     }
 
     // Filter the in-memory collapsed set down to ids that survived
     // the persistence filters. Private-workspace ids and pruned
     // column ids are dropped because their containers aren't on
     // disk — restoring such an id would be a dead entry.
+    let persistedIds = Set(
+      workspaceStates.flatMap { [$0.id] + $0.columns.map(\.id) }.compactMap { $0 })
     let collapsedIds: [String] = (sidebarVC?.collapsedItemIds() ?? [])
-      .filter(persistedIds.contains)
       .map(\.string)
+      .filter(persistedIds.contains)
       .sorted()
 
-    // Only meaningful on a capturing pass: skipping it during autosave
-    // leaves the previous quit's files alone, which is what the next
-    // restore wants to find.
-    if captureScrollback {
-      ScrollbackStore.default.prune(keeping: capturedScrollbackIDs)
-    }
-
-    return SessionState(
+    let session = SessionState(
       workspaces: workspaceStates,
       focusedWorkspaceIndex: rebasedFocusedIndex,
       urlBarVisible: urlBarVisible,
       sidebarPinned: sidebarVC?.currentState == .pinnedOpen,
       collapsedIds: collapsedIds.isEmpty ? nil : collapsedIds
+    )
+    // Only meaningful on a capturing pass: skipping it during autosave
+    // leaves the previous quit's files alone, which is what the next
+    // restore wants to find.
+    if captureScrollback {
+      ScrollbackStore.default.prune(keeping: session.scrollbackIDs)
+    }
+    return session
+  }
+
+  /// One workspace's layout as a serializable state, or `nil` when no
+  /// pane in it can be persisted.
+  ///
+  /// Extension-internal URLs are pruned: WKWebExtension rotates the
+  /// `<uuid>` in `webkit-extension://` every launch, so persisting one
+  /// would point at a dead UUID on the next run and surface as an
+  /// ERR_EXTENSION_NOT_FOUND ghost pane the user can't recover. Legacy
+  /// session.json contents already on disk fall through to the
+  /// restore-side `loadExtensionUnavailableError` path and are
+  /// self-cleaning on the next save round-trip.
+  func captureWorkspaceState(
+    _ ws: WorkspaceModel, captureScrollback: Bool
+  ) -> SessionState.WorkspaceState? {
+    var columnStates: [SessionState.ColumnState] = []
+    var keptColumnOriginalIndexes: [Int] = []
+    for (colIdx, column) in ws.columns.enumerated() {
+      var paneStates: [SessionState.PaneState] = []
+      var keptPaneOriginalIndexes: [Int] = []
+      for (paneIdx, pane) in column.panes.enumerated() {
+        if pane.address.url.scheme == PaneAddress.extensionScheme {
+          continue
+        }
+        var state = SessionState.PaneState(address: pane.address.description)
+        if let bv = pane.browserView {
+          if !pane.title.isEmpty { state.title = pane.title }
+          // interactionState restores the full native back/forward
+          // list + scroll/form. Read it off the live web view, or
+          // carry the snapshot blob forward for a pane that hasn't
+          // been refocused since restore.
+          if bv.isSuspended {
+            state.interactionState = bv.suspendedInteractionState
+          } else {
+            // `interactionState` is a synchronous round-trip to the
+            // web content process; a hung process can block the main
+            // thread here for the whole autosave. Time it so a stall
+            // is attributable rather than a mystery freeze.
+            let t0 = Date()
+            state.interactionState = bv.webView.interactionState as? Data
+            let ms = Int(Date().timeIntervalSince(t0) * 1000)
+            if ms > 100 {
+              logger.warning(
+                "[session/interactionState] slow read \(ms, privacy: .public)ms for \(pane.address.url.absoluteString, privacy: .public) — a hung web content process can block the main thread here"
+              )
+            }
+          }
+        }
+        // Terminal panes carry their shell's last-reported cwd so the
+        // restore can relaunch the surface in the same directory.
+        if let terminalView = pane.terminalView {
+          if let cwd = terminalView.currentWorkingDirectory {
+            state.terminalWorkingDirectory = cwd
+          }
+          state.terminalAgentSession = terminalView.resumableAgentSession
+          // Scrollback goes to its own file, keyed by an id in the
+          // pane state. Only captured when the caller asks: reading
+          // the whole screen for every pane is too much work for the
+          // 2.5s autosave, so it runs on quit, where losing the last
+          // few seconds of history to a crash is the accepted trade.
+          if captureScrollback, let text = terminalView.readScreenText(styled: true),
+            let id = ScrollbackStore.default.save(text)
+          {
+            state.terminalScrollbackID = id
+          }
+        }
+        paneStates.append(state)
+        keptPaneOriginalIndexes.append(paneIdx)
+      }
+      if paneStates.isEmpty { continue }
+
+      let width = Double(column.widthConstraint?.constant ?? defaultPaneWidth)
+
+      // Height ratios are computed against the first surviving pane
+      // after the prune, not the original first pane, so the ratio
+      // chain stays consistent with the column being restored.
+      var heightRatios: [Double] = []
+      let survivors = keptPaneOriginalIndexes.map { column.panes[$0] }
+      if survivors.count > 1,
+        let firstHeight = survivors.first?.containerView.frame.height,
+        firstHeight > 0
+      {
+        heightRatios = survivors.dropFirst().map { pane in
+          pane.containerView.frame.height / firstHeight
+        }
+      }
+
+      // Clamp focusedPaneIndex onto the survivor array. If the
+      // focused pane was itself pruned, fall back to 0 — there is
+      // no meaningful "next-closest" survivor to favour.
+      let clampedPaneFocus =
+        keptPaneOriginalIndexes.firstIndex(of: column.focusedPaneIndex) ?? 0
+
+      columnStates.append(
+        SessionState.ColumnState(
+          id: column.id.string,
+          panes: paneStates,
+          focusedPaneIndex: clampedPaneFocus,
+          width: width,
+          heightRatios: heightRatios,
+          isFolded: column.isFolded,
+          unfoldedWidth: Double(column.unfoldedWidth),
+          isPinned: column.isPinned
+        ))
+      keptColumnOriginalIndexes.append(colIdx)
+    }
+    if columnStates.isEmpty { return nil }
+
+    // Clamp focusedColumnIndex symmetrically with the pane-level
+    // logic above.
+    let clampedColFocus =
+      keptColumnOriginalIndexes.firstIndex(of: ws.focusedColumnIndex) ?? 0
+
+    return SessionState.WorkspaceState(
+      id: ws.id.string,
+      name: ws.name,
+      columns: columnStates,
+      focusedColumnIndex: clampedColFocus,
+      scrollX: Double(ws.scrollX)
     )
   }
 
@@ -306,131 +308,8 @@ extension PaneContainerViewController {
       return (session.focusedWorkspaceIndex, colIdx, paneIdx)
     }()
     for (wsIdx, wsState) in session.workspaces.enumerated() {
-      // Carry the saved ULID through so the sidebar's `collapsedIds`
-      // set keeps matching the restored workspace; missing ids
-      // (older session.json) fall back to a fresh ULID, which
-      // drops any persisted collapse entry that referenced the
-      // gone identity.
-      let wsId = wsState.id.map(ULID.init) ?? ULID()
-      let ws = WorkspaceModel(id: wsId)
-      ws.name = wsState.name
-      ws.scrollX = CGFloat(wsState.scrollX)
-      let vc = WorkspaceViewController(workspace: ws)
-      addChild(vc)
-      workspaces.append(ws)
-      workspaceVCs.append(vc)
-
-      // Route column creation through this WS's VC by making it current.
-      // The VC's view stays off-hierarchy during restore; the final
-      // focused VC is installed below.
-      focusedWorkspaceIndex = workspaces.count - 1
-
-      for (colIdx, colState) in wsState.columns.enumerated() {
-        guard let firstPaneState = colState.panes.first else { continue }
-        let firstAddress = PaneAddress(firstPaneState.address) ?? .terminal
-
-        let firstIsLive =
-          liveTarget?.wsIdx == wsIdx
-          && liveTarget?.colIdx == colIdx
-          && liveTarget?.paneIdx == 0
-        let columnId = colState.id.map(ULID.init) ?? ULID()
-        let column = addColumn(
-          address: firstAddress,
-          dependencies: PaneDependencies(
-            startSuspended: !firstIsLive,
-            initialTitle: firstPaneState.title,
-            initialInteractionState: firstPaneState.interactionState,
-            terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory,
-            terminalScrollbackPath: Self.scrollbackPath(for: firstPaneState),
-            terminalAgentSession: firstPaneState.terminalAgentSession
-          ),
-          focusOnInsert: false,
-          id: columnId
-        )
-        column.widthConstraint?.constant = CGFloat(colState.width)
-        // Direct assignment rather than `handleTitleChange`: restore
-        // runs before the sidebar view is installed, and we don't
-        // want the header overlay flash / window.title write /
-        // debounce timer that the shared handler triggers.
-        if let title = firstPaneState.title {
-          column.panes.first?.title = title
-        }
-
-        for (offset, paneState) in colState.panes.dropFirst().enumerated() {
-          let paneIdx = offset + 1
-          let address = PaneAddress(paneState.address) ?? .terminal
-          let isLive =
-            liveTarget?.wsIdx == wsIdx
-            && liveTarget?.colIdx == colIdx
-            && liveTarget?.paneIdx == paneIdx
-          let pane = makePane(
-            address: address,
-            dependencies: PaneDependencies(
-              startSuspended: !isLive,
-              initialTitle: paneState.title,
-              initialInteractionState: paneState.interactionState,
-              terminalWorkingDirectory: paneState.terminalWorkingDirectory,
-              terminalScrollbackPath: Self.scrollbackPath(for: paneState),
-              terminalAgentSession: paneState.terminalAgentSession
-            )
-          )
-          if let title = paneState.title { pane.title = title }
-          setupPaneCallbacks(pane: pane, column: column)
-          column.panes.append(pane)
-        }
-
-        if column.panes.count > 1 {
-          rebuildColumnView(column: column)
-
-          let expectedRatios = column.panes.count - 1
-          if colState.heightRatios.count == expectedRatios {
-            NSLayoutConstraint.deactivate(column.equalHeightConstraints)
-            column.equalHeightConstraints.removeAll()
-            let firstCV = column.panes[0].containerView
-            for (i, ratio) in colState.heightRatios.enumerated() {
-              let c = column.panes[i + 1].containerView.heightAnchor.constraint(
-                equalTo: firstCV.heightAnchor, multiplier: ratio
-              )
-              c.isActive = true
-              column.equalHeightConstraints.append(c)
-            }
-          }
-        }
-
-        if (0..<column.panes.count).contains(colState.focusedPaneIndex) {
-          column.focusedPaneIndex = colState.focusedPaneIndex
-        }
-
-        // Apply persisted fold state after every pane is in place so
-        // the folded-label text can read the right pane count and
-        // title. Focus border placement on the folded label is
-        // handled by the normal restore-focus path that runs later
-        // (already keyed off `column.isFolded`).
-        if colState.isFolded {
-          applyRestoredFoldState(
-            unfoldedWidth: CGFloat(colState.unfoldedWidth),
-            to: column
-          )
-        }
-        // Lift a persisted-pinned column into the leading overlay. The
-        // VC isn't in the window hierarchy yet, but reparenting and the
-        // inset write don't need it; `installWorkspaceView` re-applies
-        // the composed inset when it seats the view. Enforce one pin per
-        // workspace here too — a hand-edited / corrupt session with two
-        // pinned columns would otherwise stack both at the same leading
-        // x with only the first's width reserved.
-        if colState.isPinned, pinnedColumn(in: vc) == nil {
-          applyPin(column, in: vc)
-        }
-      }
-
-      preserveSurfaces(in: ws)
-      if !ws.columns.isEmpty {
-        ws.focusedColumnIndex = min(max(wsState.focusedColumnIndex, 0), ws.columns.count - 1)
-      }
-      logger.debug(
-        "restoreSession wsId=\(String(describing: ws.id), privacy: .public) saved focusedCol=\(wsState.focusedColumnIndex) → set to \(ws.focusedColumnIndex), columns=\(ws.columns.count)"
-      )
+      let livePane = liveTarget.flatMap { $0.wsIdx == wsIdx ? ($0.colIdx, $0.paneIdx) : nil }
+      buildWorkspace(from: wsState, at: workspaces.count, livePane: livePane)
     }
 
     // Drop workspaces that ended up empty (e.g. all addresses unparseable).
@@ -499,6 +378,135 @@ extension PaneContainerViewController {
       vc.view.isHidden = true
     }
     restoreScroll(in: currentWorkspace)
+  }
+
+  /// Rebuild the workspace `wsState` describes and insert it at `index`,
+  /// which becomes the focused workspace so column creation routes
+  /// through its VC. The VC's view is left out of the hierarchy for the
+  /// caller to install. Only the pane at `livePane` (column, pane) boots
+  /// a live web view; every other one starts suspended, so a restore
+  /// doesn't load every page at once.
+  @discardableResult
+  func buildWorkspace(
+    from wsState: SessionState.WorkspaceState, at index: Int, livePane: (Int, Int)?
+  ) -> WorkspaceModel {
+    // Carry the saved ULID through so the sidebar's `collapsedIds`
+    // set keeps matching the restored workspace; missing ids
+    // (older session.json) fall back to a fresh ULID, which
+    // drops any persisted collapse entry that referenced the
+    // gone identity.
+    let wsId = wsState.id.map(ULID.init) ?? ULID()
+    let ws = WorkspaceModel(id: wsId)
+    ws.name = wsState.name
+    ws.scrollX = CGFloat(wsState.scrollX)
+    let vc = WorkspaceViewController(workspace: ws)
+    addChild(vc)
+    workspaces.insert(ws, at: index)
+    workspaceVCs.insert(vc, at: index)
+    focusedWorkspaceIndex = index
+
+    for (colIdx, colState) in wsState.columns.enumerated() {
+      guard let firstPaneState = colState.panes.first else { continue }
+      let firstAddress = PaneAddress(firstPaneState.address) ?? .terminal
+
+      let firstIsLive = livePane.map { $0 == (colIdx, 0) } ?? false
+      let columnId = colState.id.map(ULID.init) ?? ULID()
+      let column = addColumn(
+        address: firstAddress,
+        dependencies: PaneDependencies(
+          startSuspended: !firstIsLive,
+          initialTitle: firstPaneState.title,
+          initialInteractionState: firstPaneState.interactionState,
+          terminalWorkingDirectory: firstPaneState.terminalWorkingDirectory,
+          terminalScrollbackPath: Self.scrollbackPath(for: firstPaneState),
+          terminalAgentSession: firstPaneState.terminalAgentSession
+        ),
+        focusOnInsert: false,
+        animated: false,
+        id: columnId
+      )
+      column.widthConstraint?.constant = CGFloat(colState.width)
+      // Direct assignment rather than `handleTitleChange`: restore
+      // runs before the sidebar view is installed, and we don't
+      // want the header overlay flash / window.title write /
+      // debounce timer that the shared handler triggers.
+      if let title = firstPaneState.title {
+        column.panes.first?.title = title
+      }
+
+      for (offset, paneState) in colState.panes.dropFirst().enumerated() {
+        let paneIdx = offset + 1
+        let address = PaneAddress(paneState.address) ?? .terminal
+        let isLive = livePane.map { $0 == (colIdx, paneIdx) } ?? false
+        let pane = makePane(
+          address: address,
+          dependencies: PaneDependencies(
+            startSuspended: !isLive,
+            initialTitle: paneState.title,
+            initialInteractionState: paneState.interactionState,
+            terminalWorkingDirectory: paneState.terminalWorkingDirectory,
+            terminalScrollbackPath: Self.scrollbackPath(for: paneState),
+            terminalAgentSession: paneState.terminalAgentSession
+          )
+        )
+        if let title = paneState.title { pane.title = title }
+        setupPaneCallbacks(pane: pane, column: column)
+        column.panes.append(pane)
+      }
+
+      if column.panes.count > 1 {
+        rebuildColumnView(column: column)
+
+        let expectedRatios = column.panes.count - 1
+        if colState.heightRatios.count == expectedRatios {
+          NSLayoutConstraint.deactivate(column.equalHeightConstraints)
+          column.equalHeightConstraints.removeAll()
+          let firstCV = column.panes[0].containerView
+          for (i, ratio) in colState.heightRatios.enumerated() {
+            let c = column.panes[i + 1].containerView.heightAnchor.constraint(
+              equalTo: firstCV.heightAnchor, multiplier: ratio
+            )
+            c.isActive = true
+            column.equalHeightConstraints.append(c)
+          }
+        }
+      }
+
+      if (0..<column.panes.count).contains(colState.focusedPaneIndex) {
+        column.focusedPaneIndex = colState.focusedPaneIndex
+      }
+
+      // Apply persisted fold state after every pane is in place so
+      // the folded-label text can read the right pane count and
+      // title. Focus border placement on the folded label is
+      // handled by the normal restore-focus path that runs later
+      // (already keyed off `column.isFolded`).
+      if colState.isFolded {
+        applyRestoredFoldState(
+          unfoldedWidth: CGFloat(colState.unfoldedWidth),
+          to: column
+        )
+      }
+      // Lift a persisted-pinned column into the leading overlay. The
+      // VC isn't in the window hierarchy yet, but reparenting and the
+      // inset write don't need it; `installWorkspaceView` re-applies
+      // the composed inset when it seats the view. Enforce one pin per
+      // workspace here too — a hand-edited / corrupt session with two
+      // pinned columns would otherwise stack both at the same leading
+      // x with only the first's width reserved.
+      if colState.isPinned, pinnedColumn(in: vc) == nil {
+        applyPin(column, in: vc)
+      }
+    }
+
+    preserveSurfaces(in: ws)
+    if !ws.columns.isEmpty {
+      ws.focusedColumnIndex = min(max(wsState.focusedColumnIndex, 0), ws.columns.count - 1)
+    }
+    logger.debug(
+      "buildWorkspace wsId=\(String(describing: ws.id), privacy: .public) saved focusedCol=\(wsState.focusedColumnIndex) → set to \(ws.focusedColumnIndex), columns=\(ws.columns.count)"
+    )
+    return ws
   }
 }
 
