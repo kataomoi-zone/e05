@@ -31,6 +31,13 @@ final class GeolocationProvider: NSObject, CLLocationManagerDelegate {
   /// can't reach a freed manager.
   private var updatingManagers: [OpaquePointer] = []
 
+  /// macOS refuses e05 location access, so no page can get a position
+  /// whatever the site was granted.
+  var isOffInSystem: Bool {
+    let status = locationManager.authorizationStatus
+    return status == .denied || status == .restricted
+  }
+
   private override init() {
     super.init()
     locationManager.delegate = self

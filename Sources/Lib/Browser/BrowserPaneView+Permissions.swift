@@ -139,6 +139,12 @@ extension BrowserPaneView {
       drainPermissionPromptsOnDetach()
       return
     }
+    // Checked here rather than at enqueue so a request queued behind
+    // another sheet sees the setting as it is when its turn comes.
+    if request.kinds == [.geolocation], GeolocationProvider.shared.isOffInSystem {
+      presentLocationOffNotice(for: request, on: window)
+      return
+    }
 
     let alert = NSAlert()
     alert.messageText = Self.promptMessage(host: request.host, kinds: request.kinds)
@@ -172,17 +178,52 @@ extension BrowserPaneView {
           host: request.host, kind: kind, state: state, persistent: persistent)
       }
       request.resolve(granted ? .grant : .deny)
-      // Pop the just-resolved entry only if it's still at the head;
-      // the drain path may already have cleared the queue.
-      if self.pendingPermissionPrompts.first === request {
-        self.pendingPermissionPrompts.removeFirst()
+      self.finishPermissionPrompt(request, alert: alert)
+    }
+  }
+
+  /// Shown in place of the prompt while macOS refuses e05 location
+  /// access: an Allow could only end in a failed lookup, and the page
+  /// alone can't tell the user that the fix is in System Settings. A
+  /// sheet rather than a toast, since it stays until read. Nothing is
+  /// recorded, so the site is asked as usual once access is back.
+  private func presentLocationOffNotice(
+    for request: PermissionPromptRequest, on window: NSWindow
+  ) {
+    logger.info("[permissions/geolocation] Location Services is off for e05")
+    let alert = NSAlert()
+    alert.messageText = "\"\(request.host)\" can't use your location."
+    alert.informativeText =
+      "Location Services is turned off for e05. To let sites use your location, "
+      + "turn on e05 in System Settings › Privacy & Security › Location Services."
+    alert.addButton(withTitle: "Open System Settings").keyEquivalent = "\r"
+    alert.addButton(withTitle: "Not Now").keyEquivalent = "\u{1b}"
+
+    activePermissionAlertWindow = alert.window
+    alert.beginSheetModal(for: window) { [weak self] response in
+      request.resolve(.deny)
+      if response == .alertFirstButtonReturn {
+        NSWorkspace.shared.open(Self.locationServicesSettingsURL)
       }
-      if self.activePermissionAlertWindow === alert.window {
-        self.activePermissionAlertWindow = nil
-      }
-      if !self.pendingPermissionPrompts.isEmpty {
-        self.presentNextPermissionPrompt()
-      }
+      self?.finishPermissionPrompt(request, alert: alert)
+    }
+  }
+
+  private static let locationServicesSettingsURL = URL(
+    string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices")!
+
+  /// Pops the just-resolved entry and presents the next one. The pop
+  /// checks the head because the drain path may already have cleared
+  /// the queue.
+  private func finishPermissionPrompt(_ request: PermissionPromptRequest, alert: NSAlert) {
+    if pendingPermissionPrompts.first === request {
+      pendingPermissionPrompts.removeFirst()
+    }
+    if activePermissionAlertWindow === alert.window {
+      activePermissionAlertWindow = nil
+    }
+    if !pendingPermissionPrompts.isEmpty {
+      presentNextPermissionPrompt()
     }
   }
 

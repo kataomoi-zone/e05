@@ -2533,7 +2533,12 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
   ) {
     let host = origin.host
-    if let resolved = resolvePermissionDecision(host: host, kinds: [.geolocation]) {
+    // A grant can't be honoured while macOS refuses e05 itself, so it
+    // goes through the queue too, whose sheet then says where to turn
+    // location on.
+    if let resolved = resolvePermissionDecision(host: host, kinds: [.geolocation]),
+      resolved == .deny || !GeolocationProvider.shared.isOffInSystem
+    {
       decisionHandler(resolved)
       return
     }
