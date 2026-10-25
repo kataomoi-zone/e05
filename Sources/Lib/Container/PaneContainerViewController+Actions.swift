@@ -56,7 +56,7 @@ extension PaneContainerViewController {
       ),
       Action(
         id: "undo_close",
-        title: "Reopen Closed Pane",
+        title: "Reopen Closed Pane or Workspace",
         keyEquivalent: "t",
         modifierMask: [.command, .shift],
         // Stay always-enabled so the handler is reachable from ⌘⇧T

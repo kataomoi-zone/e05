@@ -452,6 +452,10 @@ extension PaneContainerViewController {
         if let title = paneState.title { pane.title = title }
         setupPaneCallbacks(pane: pane, column: column)
         column.panes.append(pane)
+        // As `insertColumn` does for a column's first pane. Extensions
+        // loading at launch pick these up from their startup seed, but
+        // a workspace reopened later has nothing else to tell them.
+        ExtensionController.shared.notifyTabOpened(pane)
       }
 
       if column.panes.count > 1 {

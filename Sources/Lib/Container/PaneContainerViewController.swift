@@ -224,9 +224,31 @@ public final class PaneContainerViewController: NSViewController {
     /// true if this was the only pane in the column (column was also removed)
     let wasOnlyPaneInColumn: Bool
     let timer: Timer
+    /// Weighed against `ClosedWorkspace.closedAt`, so a reopen brings
+    /// back whichever went last. Uptime rather than a `Date`, which a
+    /// clock adjustment between two closes could put out of order.
+    let closedAt = ProcessInfo.processInfo.systemUptime
   }
 
   nonisolated(unsafe) var recentlyClosed: [ClosedPane] = []
+
+  /// Recently closed workspace, kept as the same snapshot a relaunch
+  /// restores from rather than as live panes: the close has already
+  /// ended its shells and pages, and a snapshot holds no process or
+  /// surface, so unlike a closed pane it doesn't expire. The count cap
+  /// bounds the memory its pages' saved back/forward lists take.
+  struct ClosedWorkspace {
+    let state: SessionState.WorkspaceState
+    /// The workspace it followed, so it returns next to the same
+    /// neighbour after later moves; `index` places it when that one
+    /// is gone or it was the first.
+    let previousId: ULID?
+    let index: Int
+    let closedAt = ProcessInfo.processInfo.systemUptime
+  }
+
+  var recentlyClosedWorkspaces: [ClosedWorkspace] = []
+  static let maxRecentlyClosedWorkspaces = 10
 
   /// Window-global URL bar toggle. The menu / palette action flips
   /// this for every pane simultaneously; per-pane `.peek` reveals

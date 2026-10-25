@@ -417,6 +417,7 @@ extension PaneContainerViewController {
     let closing = currentWorkspace
     let closingVC = currentWorkspaceVC
     let closingIndex = focusedWorkspaceIndex
+    stashClosedWorkspace(closing)
 
     for column in closing.columns {
       for pane in column.panes {
@@ -495,18 +496,25 @@ extension PaneContainerViewController {
     performCloseWorkspace(closing)
   }
 
-  // A non-current workspace close can't be the last one (the focused
-  // workspace always remains), so unlike `closeCurrentWorkspace` this
-  // never needs the quit path. The target is re-resolved by identity
-  // rather than a captured index: the confirmation sheet is async and a
-  // programmatic close (control socket / `open` URL) could shift indices
-  // while it's up, which would otherwise close the wrong workspace.
-  private func performCloseWorkspace(_ closing: WorkspaceModel) {
+  // Closes `closing` without asking, for callers that have confirmed
+  // already. The current workspace takes its animated path; any other
+  // can't be the last one (the focused workspace always remains), so
+  // unlike `closeCurrentWorkspace` it never needs the quit path. The
+  // target is re-resolved by identity rather than a captured index: the
+  // confirmation sheet is async and a programmatic close (control
+  // socket / `open` URL) could shift indices while it's up, which would
+  // otherwise close the wrong workspace.
+  func performCloseWorkspace(_ closing: WorkspaceModel) {
+    if closing === currentWorkspace {
+      performCloseCurrentWorkspace()
+      return
+    }
     guard let index = workspaces.firstIndex(where: { $0 === closing }) else { return }
     let closingVC = workspaceVCs[index]
     logger.info(
       "closeWorkspace(at:\(index)) non-current: focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)"
     )
+    stashClosedWorkspace(closing)
 
     for column in closing.columns {
       for pane in column.panes {
@@ -532,6 +540,83 @@ extension PaneContainerViewController {
     }
     showToast("Close Workspace")
     notifySidebarWorklaneDidChange()
+  }
+
+  /// Keep `workspace` for ``reopenClosedWorkspace()``. Called before the
+  /// close tears its panes down, since a page's back/forward list can
+  /// only be read off a live web view. Private workspaces are left out
+  /// for the reason they never reach the session file, and an emptied
+  /// one leaves nothing to keep: a workspace closed with its last pane
+  /// is kept by `removePane` before that pane goes.
+  func stashClosedWorkspace(_ workspace: WorkspaceModel) {
+    guard !workspace.isPrivate,
+      let index = workspaces.firstIndex(where: { $0 === workspace })
+    else { return }
+    // Other workspaces recorded their offset when they were switched
+    // away from; see `captureSession` for why the peek compensation
+    // and the pane map are accounted for.
+    if workspace === currentWorkspace, !isPaneMapOpen {
+      workspace.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    }
+    guard
+      let state = captureWorkspaceState(
+        workspace,
+        captureScrollback: PreferencesStore.shared.preferences.restoresTerminalScrollback)
+    else { return }
+    if recentlyClosedWorkspaces.count >= Self.maxRecentlyClosedWorkspaces {
+      // Its scrollback captures would otherwise sit on disk until the
+      // next quit prunes them, holding whatever the terminals showed.
+      let evicted = recentlyClosedWorkspaces.removeFirst().state
+      for id in evicted.columns.flatMap(\.panes).compactMap(\.terminalScrollbackID) {
+        if let url = ScrollbackStore.default.fileURL(id: id) {
+          try? FileManager.default.removeItem(at: url)
+        }
+      }
+    }
+    recentlyClosedWorkspaces.append(
+      ClosedWorkspace(
+        state: state, previousId: workspaces[safe: index - 1]?.id, index: index))
+  }
+
+  /// Bring back the most recently closed workspace at its old position
+  /// and slide to it. It comes back as a relaunch brings it back: its
+  /// pages wait suspended with their back/forward lists until reloaded,
+  /// and its terminals start fresh shells in their last directories.
+  func reopenClosedWorkspace() {
+    guard let closed = recentlyClosedWorkspaces.popLast() else { return }
+    logger.info(
+      "reopenClosedWorkspace: index=\(closed.index) focused=\(self.focusedWorkspaceIndex) wsCount=\(self.workspaces.count)"
+    )
+    dismissAllFindSessions(in: currentWorkspace)
+    focusedPane?.urlBar.dismissSuggestionDropdown()
+
+    let outgoing = currentWorkspace
+    outgoing.scrollX = scrollView.contentView.bounds.origin.x - hoverPeekScrollCompensation
+    preserveSurfaces(in: outgoing)
+    clearAllFocusBorders(in: outgoing)
+    let fromVC = currentWorkspaceVC
+    let previousFocusedIndex = focusedWorkspaceIndex
+
+    let state = closed.state
+    let colIdx = min(max(state.focusedColumnIndex, 0), state.columns.count - 1)
+    let livePane = state.columns[safe: colIdx].map { (colIdx, $0.focusedPaneIndex) }
+    let insertIndex =
+      closed.previousId.flatMap { id in workspaces.firstIndex { $0.id == id } }.map { $0 + 1 }
+      ?? min(closed.index, workspaces.count)
+    let workspace = buildWorkspace(from: state, at: insertIndex, livePane: livePane)
+    let toVC = workspaceVCs[insertIndex]
+    installWorkspaceView(toVC, makeCurrent: false)
+    // Laid out first so the clip view knows the columns' extent;
+    // before that it clamps the saved offset back to zero.
+    view.layoutSubtreeIfNeeded()
+    restoreScroll(in: workspace)
+    showToast("Reopen Closed Workspace")
+
+    // Same spatial convention as `createWorkspace`.
+    let slidingUp = insertIndex > previousFocusedIndex
+    animateSlide(fromVC: fromVC, toVC: toVC, slidingUp: slidingUp) { [weak self] in
+      self?.restoreFocusInCurrentWorkspace()
+    }
   }
 
   // MARK: - Reorder workspaces

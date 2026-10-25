@@ -1598,6 +1598,13 @@ extension PaneContainerViewController {
       column.panes.indices.contains(paneIndex)
     else { return false }
 
+    // The last pane takes its workspace with it, and the workspace
+    // close that follows finds it already empty: keep it for a reopen
+    // while it still holds the pane. Closing the only workspace quits
+    // instead, leaving nothing to reopen into.
+    if columns.count == 1, column.panes.count == 1, workspaces.count > 1 {
+      stashClosedWorkspace(currentWorkspace)
+    }
     let pane = column.panes.remove(at: paneIndex)
     // The pane is being torn out of the view tree; dismiss its
     // find bar so the orphaned panel doesn't linger as a child
@@ -1690,8 +1697,9 @@ extension PaneContainerViewController {
 
       if columns.isEmpty {
         // Workspace is now empty — its surface is going with it,
-        // so release it eagerly (undo across workspace close isn't
-        // supported: closeCurrentWorkspace flushes the undo stack).
+        // so release it eagerly: closeCurrentWorkspace flushes the
+        // pane undo stack, and a reopen of the workspace rebuilds
+        // from the snapshot taken in `removePane` instead.
         pane.terminalView?.keepSurfaceAlive = false
         for v in stackView.arrangedSubviews { v.removeFromSuperview() }
         cascadedToWorkspaceClose = true
@@ -1822,19 +1830,29 @@ extension PaneContainerViewController {
     recentlyClosed.append(closed)
   }
 
-  /// Whether the current workspace has any recently closed panes available
-  /// for undo. Stash entries belonging to other workspaces are invisible
-  /// here — undo is intentionally scoped per-workspace.
+  /// Whether ``undoClosePane()`` has anything to reopen: a closed
+  /// workspace, or a pane closed in the current workspace. Pane entries
+  /// belonging to other workspaces are invisible here — pane undo is
+  /// intentionally scoped per-workspace.
   public var canUndoClosePane: Bool {
-    recentlyClosed.contains { $0.workspaceId == currentWorkspace.id }
+    !recentlyClosedWorkspaces.isEmpty
+      || recentlyClosed.contains { $0.workspaceId == currentWorkspace.id }
   }
 
-  /// Restore the most recently closed pane in the current workspace.
-  /// Surface is still alive — full restore. No-op if all stash entries
-  /// belong to other workspaces.
+  /// Restore the most recently closed pane in the current workspace,
+  /// or the most recently closed workspace when that went later, the
+  /// way a browser's reopen brings back a closed window. A pane's
+  /// surface is still alive — full restore. Pane entries belonging to
+  /// other workspaces are skipped.
   public func undoClosePane() {
-    guard let idx = recentlyClosed.lastIndex(where: { $0.workspaceId == currentWorkspace.id })
-    else {
+    let idx = recentlyClosed.lastIndex(where: { $0.workspaceId == currentWorkspace.id })
+    if let workspace = recentlyClosedWorkspaces.last,
+      idx.map({ recentlyClosed[$0].closedAt < workspace.closedAt }) ?? true
+    {
+      reopenClosedWorkspace()
+      return
+    }
+    guard let idx else {
       // Private workspaces never feed the stash, so a request from a
       // private workspace always lands here. Surfacing the reason
       // separates "nothing to reopen" (stash empty) from "private
@@ -2013,9 +2031,10 @@ extension PaneContainerViewController {
   /// Close every pane inside a column at once. Routes through the
   /// per-pane removal path so each pane still hits the standard
   /// cleanup (audio stop, browser teardown, undo-close push,
-  /// extension `chrome.tabs.onRemoved`). When the column's the only
-  /// one left in its workspace, the last pane's removal cascades
-  /// into workspace close per the existing invariants.
+  /// extension `chrome.tabs.onRemoved`). A workspace's only column
+  /// closes the workspace instead, which runs the same cleanup for
+  /// every pane and keeps the workspace for a reopen; in the only
+  /// workspace, the last pane's removal cascades into the quit.
   ///
   /// Confirmation is bulked: if any contained pane has a ghostty
   /// surface flagged needs-confirm-quit, one "Close N panes?" sheet
@@ -2043,6 +2062,18 @@ extension PaneContainerViewController {
         logger.debug(
           "[panes/close] closeColumn post-confirm no-op: column gone id=\(columnId, privacy: .public)"
         )
+        return
+      }
+      // A workspace's only column takes the workspace with it. Closing
+      // that directly keeps every pane in the snapshot a reopen brings
+      // back, where the per-pane cascade would keep only the last one.
+      // The only workspace stays on the per-pane path, which quits.
+      if workspaces.count > 1,
+        let workspace = workspaces.first(where: {
+          $0.columns.count == 1 && $0.columns[0] === liveColumn
+        })
+      {
+        self.performCloseWorkspace(workspace)
         return
       }
       let paneIds = liveColumn.panes.map(\.id)
@@ -2527,8 +2558,9 @@ extension PaneContainerViewController {
   /// model update. Mirrors the bookkeeping of
   /// `removePane(columnIndex:paneIndex:)` minus the focus / scroll /
   /// undo machinery, which is current-WS only. The pane being
-  /// removed itself isn't stashed for undo; if removing it empties
-  /// the workspace, the cascade into `closeWorkspace(at:)` runs
+  /// removed itself isn't stashed for pane undo; if removing it empties
+  /// the workspace, it is kept in the workspace's reopen snapshot
+  /// instead, and the cascade into `closeWorkspace(at:)` runs
   /// `flushRecentlyClosed(in:)` on the way out, releasing any *other*
   /// stash entries that were captured while this workspace was
   /// previously current.
@@ -2546,6 +2578,10 @@ extension PaneContainerViewController {
     else { return false }
 
     let column = ws.columns[columnIndex]
+    // Kept now for the reason `removePane` gives.
+    if ws.columns.count == 1, column.panes.count == 1 {
+      stashClosedWorkspace(ws)
+    }
     let pane = column.panes.remove(at: paneIndex)
     pane.browserView?.closeAllPopups()
     ExtensionController.shared.notifyTabClosed(pane)
