@@ -839,6 +839,20 @@ public final class PaneContainerViewController: NSViewController {
   /// another layout pass is triggered.
   var isAnimatingWorkspaceSwitch = false
 
+  /// The slide `animateSlide` is running, so a slide started before it
+  /// ends can take it over (see there). `generation` lets the taken-over
+  /// slide's own completion handler tell it no longer has the last word.
+  struct WorkspaceSlide {
+    let generation: Int
+    /// Moves the slide's views to where it would have left them.
+    let snap: @MainActor () -> Void
+    /// The slide's completion, plus those of the slides it took over.
+    let finish: @MainActor () -> Void
+  }
+
+  var workspaceSlide: WorkspaceSlide?
+  var workspaceSlideGeneration = 0
+
   /// Factory: construct a `PaneModel` with the terminal dependency
   /// the container owns. Kept as a method so future per-pane
   /// dependencies land in one place. The browser data store comes

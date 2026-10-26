@@ -167,6 +167,50 @@ extension PaneContainerViewController {
     // animation runs from 0→0 (the "instantaneous switch" symptom).
     isAnimatingWorkspaceSwitch = true
 
+    // A slide still running (a switch, create, close or reopen pressed
+    // again before it ends) is taken over rather than left to finish
+    // underneath this one: its views jump to where it would have left
+    // them, and its completion waits to run just before this one's.
+    // Running it now would restore focus into a workspace the caller
+    // has already made current but whose view is still hidden, and
+    // its own end would clear the guard above mid-slide.
+    let previous = workspaceSlide
+    workspaceSlideGeneration &+= 1
+    let generation = workspaceSlideGeneration
+    let finish: @MainActor () -> Void = { [weak self] in
+      guard let self else { return }
+      previous?.finish()
+      // Order matters: move first responder to the target pane
+      // BEFORE hiding the from-view. Otherwise AppKit sees the
+      // current first responder land inside a hidden view, picks
+      // the next-candidate (leftmost pane), and that pane's
+      // `onFocusChanged` callback overwrites `ws.focusedColumnIndex`
+      // to 0 before `restoreFocusInCurrentWorkspace` can run.
+      completion?()
+      // A taken-over slide's from-view can be where the slides ended.
+      if fromVC !== self.currentWorkspaceVC {
+        fromVC.view.isHidden = true
+      }
+    }
+    workspaceSlide = WorkspaceSlide(
+      generation: generation,
+      snap: { [weak self] in
+        guard let self else { return }
+        // The height now, in case the window was resized mid-slide.
+        let h = self.view.bounds.height
+        NSAnimationContext.runAnimationGroup { ctx in
+          // A zero-length animation replaces the running one.
+          ctx.duration = 0
+          fromTop.animator().constant = slidingUp ? -h : h
+          toTop.animator().constant = 0
+          self.view.layoutSubtreeIfNeeded()
+        }
+      },
+      finish: finish)
+    // After `workspaceSlide` moves on, so the snapped slide's completion
+    // handler finds itself taken over even if AppKit fires it right away.
+    previous?.snap()
+
     // Snap target to its start position and unhide it so the animation
     // below has a visible view to interpolate. `layoutSubtreeIfNeeded`
     // commits the start-frame layout before the animator kicks in.
@@ -203,17 +247,12 @@ extension PaneContainerViewController {
       },
       completionHandler: { [weak self] in
         MainActor.assumeIsolated {
-          guard let self else { return }
+          // A later slide took this one over and finishes it.
+          guard let self, self.workspaceSlide?.generation == generation else { return }
+          self.workspaceSlide = nil
           self.isAnimatingWorkspaceSwitch = false
           logger.debug("animateSlide end: subviews=\(self.view.subviews.count)")
-          // Order matters: move first responder to the target pane
-          // BEFORE hiding the from-view. Otherwise AppKit sees the
-          // current first responder land inside a hidden view, picks
-          // the next-candidate (leftmost pane), and that pane's
-          // `onFocusChanged` callback overwrites `ws.focusedColumnIndex`
-          // to 0 before `restoreFocusInCurrentWorkspace` can run.
-          completion?()
-          fromVC.view.isHidden = true
+          finish()
         }
       })
   }
