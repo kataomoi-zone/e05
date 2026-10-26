@@ -59,53 +59,34 @@ extension PaneContainerViewController {
       id: id)
   }
 
-  /// Insert a column into a specific workspace, regardless of
-  /// whether that workspace is currently visible. The current-
-  /// workspace path defers to the existing `addColumn(address:)`;
-  /// for a background workspace, switch over first so the user
-  /// sees the new pane immediately after the slide. Mirrors the
-  /// completion-driven pattern used by `performCrossWorkspaceMove`
-  /// to avoid racing the focus / scroll animations.
-  public func addColumn(
-    _ address: PaneAddress, toWorkspaceId wsId: ULID,
-    dependencies: PaneDependencies = .init()
-  ) {
-    guard let wsIdx = workspaces.firstIndex(where: { $0.id == wsId }) else {
-      logger.debug("addColumn(toWorkspaceId:) guard failed: workspace not found")
-      return
-    }
-    if wsIdx == focusedWorkspaceIndex {
-      addColumn(address: address, dependencies: dependencies)
-      return
-    }
-    switchWorkspace(to: wsIdx) { [weak self] in
-      self?.addColumn(address: address, dependencies: dependencies)
-    }
-  }
-
   /// Add a column of `address` kind to the workspace identified by
-  /// `wsId` and surface the matching toast, but only when the
-  /// workspace still exists at call time. Both worklane entry points
+  /// `wsId` and surface the matching toast. Both worklane entry points
   /// for "add new pane to a specific workspace" (the workspace cell's
   /// chevron split-menu and the workspace-row right-click sentinels)
-  /// route through here so a stale workspace id never produces a
-  /// "New … Pane" toast without an actual pane creation.
-  /// ``addColumn(_:toWorkspaceId:)`` already silently returns on
-  /// stale ids; this wrapper keeps the toast in lockstep with that
-  /// outcome and consolidates the (address, toast label) tuple in
-  /// one place.
+  /// route through here. A background workspace is switched to first
+  /// so the user sees the new pane right after the slide; the pane
+  /// and its toast come together, so a stale workspace id or a switch
+  /// away before the slide ends leaves neither.
   public func addColumnAndToast(
     _ address: PaneAddress, toWorkspaceId wsId: ULID, toastLabel: String,
     dependencies: PaneDependencies = .init()
   ) {
-    guard workspaces.contains(where: { $0.id == wsId }) else {
+    guard let wsIdx = workspaces.firstIndex(where: { $0.id == wsId }) else {
       logger.debug(
         "[panes/add] addColumnAndToast stale workspace id=\(wsId, privacy: .public) toast=\(toastLabel, privacy: .public)"
       )
       return
     }
-    addColumn(address, toWorkspaceId: wsId, dependencies: dependencies)
-    showToast(toastLabel)
+    let add = { [weak self] in
+      guard let self else { return }
+      self.addColumn(address: address, dependencies: dependencies)
+      self.showToast(toastLabel)
+    }
+    if wsIdx == focusedWorkspaceIndex {
+      add()
+    } else {
+      switchWorkspace(to: wsIdx) { add() }
+    }
   }
 
   /// Open a new browser column / workspace that duplicates a pane,

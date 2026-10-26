@@ -846,8 +846,8 @@ public final class PaneContainerViewController: NSViewController {
     let generation: Int
     /// Moves the slide's views to where it would have left them.
     let snap: @MainActor () -> Void
-    /// The slide's completion, plus those of the slides it took over.
-    let finish: @MainActor () -> Void
+    /// The slide's clean-up, plus those of the slides it took over.
+    let cleanUp: @MainActor () -> Void
   }
 
   var workspaceSlide: WorkspaceSlide?

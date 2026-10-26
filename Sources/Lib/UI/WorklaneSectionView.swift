@@ -541,7 +541,7 @@ final class WorklaneSectionView: NSView {
     /// workspace. The menu uses sentinel ids that the container's
     /// ``dispatchWorkspaceMenuAction`` interprets directly — no
     /// palette-action overlap, since every entry already has a
-    /// workspace-id end-to-end path (`addColumn(_:toWorkspaceId:)`,
+    /// workspace-id end-to-end path (`addColumnAndToast(_:toWorkspaceId:toastLabel:)`,
     /// `createWorkspace(after:)`, `closeWorkspace(at:)`).
     let onWorkspaceAction: (_ actionId: String, _ workspaceId: ULID) -> Void
     /// Commit an inline workspace rename. Receives the workspace id

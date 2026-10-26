@@ -346,11 +346,9 @@ extension PaneContainerViewController {
         if wsIndex == focusedWorkspaceIndex {
           setFocus(columnIndex: colIndex, paneIndex: paneIndex)
         } else {
+          // Dropped if a later switch takes the slide over.
           switchWorkspace(to: wsIndex) { [weak self] in
-            // Guard against a manual workspace switch racing the slide:
-            // only land focus if we actually settled on the target WS.
-            guard let self, self.focusedWorkspaceIndex == wsIndex else { return }
-            self.setFocus(columnIndex: colIndex, paneIndex: paneIndex)
+            self?.setFocus(columnIndex: colIndex, paneIndex: paneIndex)
           }
         }
         return

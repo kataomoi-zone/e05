@@ -60,7 +60,8 @@ extension PaneContainerViewController {
   /// sequential navigation. Both are correct for their use case.
   /// `duration` is the slide's. A caller that brings its own transition
   /// passes 0: a slide underneath one is a second animation going the
-  /// other way.
+  /// other way. `completion` is dropped if another slide takes this one
+  /// over (see `animateSlide`).
   public func switchWorkspace(
     to index: Int,
     slidingUp: Bool? = nil,
@@ -136,12 +137,18 @@ extension PaneContainerViewController {
   /// interpolate each intermediate frame coherently — the flaky behavior
   /// where some slides appeared instantaneous was `animator().frame` on
   /// autoresize-managed views losing its animation to geometry sync.
+  ///
+  /// `cleanUp` always runs once the slides end. `completion`, which
+  /// lands the user in `toVC`'s workspace, is dropped if another slide
+  /// takes this one over: by then the user has moved on.
   func animateSlide(
     fromVC: WorkspaceViewController,
     toVC: WorkspaceViewController,
     slidingUp: Bool,
     duration: TimeInterval = 0.25,
-    completion: (@MainActor @Sendable () -> Void)? = nil
+    // Before `cleanUp`, so a trailing closure binds here.
+    completion: (@MainActor @Sendable () -> Void)? = nil,
+    cleanUp: (@MainActor () -> Void)? = nil
   ) {
     // Sidebar reveal/hide and workspace slide operate on disjoint
     // constraints (`leading` vs `top`), so the two animations can
@@ -154,7 +161,14 @@ extension PaneContainerViewController {
       logger.error(
         "animateSlide missing constraints — from=\(fromVC.topConstraint == nil ? "nil" : "ok", privacy: .public) to=\(toVC.topConstraint == nil ? "nil" : "ok", privacy: .public)"
       )
+      // Still take over a running slide, ending it here and now.
+      let previous = workspaceSlide
+      workspaceSlide = nil
+      previous?.snap()
+      isAnimatingWorkspaceSwitch = false
       completion?()
+      previous?.cleanUp()
+      cleanUp?()
       return
     }
 
@@ -170,23 +184,15 @@ extension PaneContainerViewController {
     // A slide still running (a switch, create, close or reopen pressed
     // again before it ends) is taken over rather than left to finish
     // underneath this one: its views jump to where it would have left
-    // them, and its completion waits to run just before this one's.
-    // Running it now would restore focus into a workspace the caller
-    // has already made current but whose view is still hidden, and
-    // its own end would clear the guard above mid-slide.
+    // them, and its clean-up waits to run with this one's. Its own end
+    // would otherwise clear the guard above mid-slide.
     let previous = workspaceSlide
     workspaceSlideGeneration &+= 1
     let generation = workspaceSlideGeneration
     let finish: @MainActor () -> Void = { [weak self] in
       guard let self else { return }
-      previous?.finish()
-      // Order matters: move first responder to the target pane
-      // BEFORE hiding the from-view. Otherwise AppKit sees the
-      // current first responder land inside a hidden view, picks
-      // the next-candidate (leftmost pane), and that pane's
-      // `onFocusChanged` callback overwrites `ws.focusedColumnIndex`
-      // to 0 before `restoreFocusInCurrentWorkspace` can run.
-      completion?()
+      previous?.cleanUp()
+      cleanUp?()
       // A taken-over slide's from-view can be where the slides ended.
       if fromVC !== self.currentWorkspaceVC {
         fromVC.view.isHidden = true
@@ -206,7 +212,7 @@ extension PaneContainerViewController {
           self.view.layoutSubtreeIfNeeded()
         }
       },
-      finish: finish)
+      cleanUp: finish)
     // After `workspaceSlide` moves on, so the snapped slide's completion
     // handler finds itself taken over even if AppKit fires it right away.
     previous?.snap()
@@ -247,11 +253,18 @@ extension PaneContainerViewController {
       },
       completionHandler: { [weak self] in
         MainActor.assumeIsolated {
-          // A later slide took this one over and finishes it.
+          // A later slide took this one over and runs its clean-up.
           guard let self, self.workspaceSlide?.generation == generation else { return }
           self.workspaceSlide = nil
           self.isAnimatingWorkspaceSwitch = false
           logger.debug("animateSlide end: subviews=\(self.view.subviews.count)")
+          // Order matters: move first responder to the target pane
+          // BEFORE hiding the from-view. Otherwise AppKit sees the
+          // current first responder land inside a hidden view, picks
+          // the next-candidate (leftmost pane), and that pane's
+          // `onFocusChanged` callback overwrites `ws.focusedColumnIndex`
+          // to 0 before `restoreFocusInCurrentWorkspace` can run.
+          completion?()
           finish()
         }
       })
@@ -505,11 +518,13 @@ extension PaneContainerViewController {
     // toast only fires when there's a remaining workspace to land on.
     showToast("Close Workspace")
 
-    animateSlide(fromVC: closingVC, toVC: toVC, slidingUp: slidingUp) { [weak self] in
-      closingVC.view.removeFromSuperview()
-      closingVC.removeFromParent()
-      self?.restoreFocusInCurrentWorkspace()
-    }
+    animateSlide(
+      fromVC: closingVC, toVC: toVC, slidingUp: slidingUp,
+      completion: { [weak self] in self?.restoreFocusInCurrentWorkspace() },
+      cleanUp: {
+        closingVC.view.removeFromSuperview()
+        closingVC.removeFromParent()
+      })
   }
 
   /// Close a workspace by index. Current-workspace closes route to
@@ -983,15 +998,15 @@ extension PaneContainerViewController {
       // Direction uses pre-adjustment target vs. sourceIndex — stable even
       // when source was destroyed (its removal doesn't change this comparison).
       let slidingUp = target > sourceIndex
-      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) {
-        [weak self] in
-        guard let self else { return }
-        if sourceDestroyed {
-          sourceVC.view.removeFromSuperview()
-          sourceVC.removeFromParent()
-        }
-        self.setFocus(columnIndex: insertIndex, paneIndex: 0)
-      }
+      animateSlide(
+        fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp,
+        completion: { [weak self] in self?.setFocus(columnIndex: insertIndex, paneIndex: 0) },
+        cleanUp: {
+          if sourceDestroyed {
+            sourceVC.view.removeFromSuperview()
+            sourceVC.removeFromParent()
+          }
+        })
     } else if isSameWs {
       // Same-workspace move (in-place column split). No slide:
       // source and target VCs are the same view, and the user's
@@ -1169,14 +1184,17 @@ extension PaneContainerViewController {
       restoreScroll(in: currentWorkspace)
       showToast(toastLabel)
       let slidingUp = target > sourceIndex
-      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) { [weak self] in
-        guard let self else { return }
-        if sourceDestroyed {
-          sourceVC.view.removeFromSuperview()
-          sourceVC.removeFromParent()
-        }
-        self.setFocus(columnIndex: insertIndex, paneIndex: paneIndex)
-      }
+      animateSlide(
+        fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp,
+        completion: { [weak self] in
+          self?.setFocus(columnIndex: insertIndex, paneIndex: paneIndex)
+        },
+        cleanUp: {
+          if sourceDestroyed {
+            sourceVC.view.removeFromSuperview()
+            sourceVC.removeFromParent()
+          }
+        })
     } else if isSameWs {
       showToast(toastLabel)
       if sourceIndex == originalFocusedIndex {
@@ -1438,15 +1456,17 @@ extension PaneContainerViewController {
       restoreScroll(in: currentWorkspace)
       showToast(toastLabel)
       let slidingUp = targetWsIndex > sourceWsIndex
-      animateSlide(fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp) {
-        [weak self] in
-        guard let self else { return }
-        if sourceWsDestroyed {
-          sourceVC.view.removeFromSuperview()
-          sourceVC.removeFromParent()
-        }
-        self.setFocus(columnIndex: adjustedTargetColIdx, paneIndex: insertIndex)
-      }
+      animateSlide(
+        fromVC: sourceVC, toVC: targetVC, slidingUp: slidingUp,
+        completion: { [weak self] in
+          self?.setFocus(columnIndex: adjustedTargetColIdx, paneIndex: insertIndex)
+        },
+        cleanUp: {
+          if sourceWsDestroyed {
+            sourceVC.view.removeFromSuperview()
+            sourceVC.removeFromParent()
+          }
+        })
       return
     }
 
