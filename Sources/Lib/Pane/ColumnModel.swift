@@ -39,6 +39,14 @@ public final class ColumnModel {
   public var restingWidth: CGFloat? {
     isFolded ? unfoldedWidth : widthConstraint?.constant
   }
+  /// The width the column gets, not the one it asks for: a preset can
+  /// ask for less than the floor, which Auto Layout lifts it to (fold
+  /// turns the floor off for its strip).
+  public var laidOutWidth: CGFloat? {
+    guard let width = widthConstraint?.constant else { return nil }
+    guard let floor = minimumWidthConstraint, floor.isActive else { return width }
+    return max(width, floor.constant)
+  }
 
   /// Whether the column is pinned: lifted out of the horizontal scroll
   /// flow into a fixed leading overlay so it stays on screen while the

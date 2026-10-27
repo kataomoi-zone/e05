@@ -21,7 +21,7 @@ extension PaneContainerViewController {
   /// clear the pin while a scroll still slides them under it.
   func pinnedColumnReserve(in vc: WorkspaceViewController) -> CGFloat {
     guard let pinned = pinnedColumn(in: vc),
-      let width = pinned.widthConstraint?.constant
+      let width = pinned.laidOutWidth
     else { return 0 }
     return width + WorkspaceViewController.outerMargin
   }
