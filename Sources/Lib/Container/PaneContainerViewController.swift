@@ -1254,42 +1254,48 @@ public final class PaneContainerViewController: NSViewController {
     }
   }
 
-  /// Hit-test every pane in the current workspace's columns for a
-  /// window-space point. Non-current workspaces are parked off-screen
-  /// by `viewDidLayout` so their pane frames never overlap any visible
-  /// cursor position; restricting the scan to `columns` (=
-  /// `currentWorkspace.columns`) avoids a confusing match against an
-  /// off-screen pane that happens to share a coordinate with the
-  /// cursor. Panes don't overlap within a workspace, so first-hit is
-  /// unambiguous. Returns `nil` when the cursor is over chrome
-  /// (sidebar, gaps between panes, the URL bar's hover-peek body,
-  /// etc.) — those land on the workspace by default.
+  /// The current workspace's pane a window-space point lands on.
+  /// Returns `nil` when the point is over chrome (sidebar, gaps between
+  /// panes, etc.) — those land on the workspace by default.
   private func paneAtWindowLocation(
     _ pointInWindow: NSPoint
   ) -> (pane: PaneModel, column: Int, paneIndex: Int)? {
-    // Only what the viewport actually shows can be hit. Two ways a pane
-    // frame reaches somewhere the pane is not: a column scrolled past
-    // the right edge keeps a frame that goes out of the window with it,
-    // and columns pass *under* the sidebar, which overlays the scroll
-    // view rather than shortening it. Both put a pane's frame beneath a
-    // pointer that is looking at something else entirely.
-    //
+    // The sidebar overlays the scroll view rather than shortening it, so
+    // columns pass *under* it with frames still beneath the pointer.
     // `currentLeadingInset` rather than the scroll view's own
-    // `contentInsets.left`: the latter is the sidebar reserve *plus* the
-    // pinned-column reserve, and a pinned column is a real column
-    // sitting visibly inside that strip. Subtracting the whole inset
-    // would make the pin the one column nothing can hit.
+    // `contentInsets.left`, which adds the pinned-column reserve: the pin
+    // is a real column sitting visibly inside that strip.
     var band = scrollView.convert(scrollView.bounds, to: nil)
     band.origin.x += currentLeadingInset
     band.size.width -= currentLeadingInset
     guard band.contains(pointInWindow) else { return nil }
-    for (columnIndex, col) in columns.enumerated() {
-      for (paneIndex, pane) in col.panes.enumerated() {
-        let frame = pane.containerView.convert(pane.containerView.bounds, to: nil)
-        if frame.contains(pointInWindow) {
-          return (pane, columnIndex, paneIndex)
-        }
-      }
+    // Inside the workspace, the hit test a click there would get: a
+    // pinned column and its resize handle cover the columns scrolled
+    // beneath, and a pane hidden or scrolled out of the window is never
+    // hit, none of which pane frames can tell. The workspace's own view
+    // rather than the window's, so a toast pill floating over a pane
+    // doesn't hide it, and an outgoing workspace still sliding away
+    // isn't hit instead of the current one.
+    let root = currentWorkspaceVC.view
+    guard let superview = root.superview,
+      var hit = root.hitTest(superview.convert(pointInWindow, from: nil))
+    else { return nil }
+    // The overlay scroller showing for a moment after a scroll is not
+    // chrome to stop at; the strip it floats over is what lies there.
+    if hit is NSScroller,
+      let below = scrollView.contentView.hitTest(scrollView.convert(pointInWindow, from: nil))
+    {
+      hit = below
+    }
+    for (columnIndex, col) in columns.enumerated() where hit.isDescendant(of: col.containerView) {
+      // A folded column's strip lies in no pane. It stands for the
+      // column's focused pane, as a click on it does; the gaps between
+      // an unfolded column's panes are chrome.
+      guard
+        let paneIndex = col.panes.firstIndex(where: { hit.isDescendant(of: $0.containerView) })
+          ?? (col.isFolded ? col.focusedPaneIndex : nil)
+      else { return nil }
+      return col.panes[safe: paneIndex].map { ($0, columnIndex, paneIndex) }
     }
     return nil
   }
