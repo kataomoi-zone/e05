@@ -1271,6 +1271,7 @@ extension PaneContainerViewController {
       completion?()
       return
     }
+    let land = beginStripAnimation()
     NSAnimationContext.runAnimationGroup(
       { ctx in
         ctx.duration = Self.paneAnimationDuration
@@ -1282,6 +1283,7 @@ extension PaneContainerViewController {
       completionHandler: {
         MainActor.assumeIsolated {
           completion?()
+          land()
         }
       }
     )
@@ -1489,10 +1491,13 @@ extension PaneContainerViewController {
       scrollView.contentView.setBoundsOrigin(NSPoint(x: liveTarget, y: 0))
       return
     }
+    let land = beginStripAnimation()
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = Self.paneAnimationDuration
       ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
       self.scrollView.contentView.animator().bounds.origin.x = liveTarget
+    } completionHandler: {
+      land()
     }
   }
 

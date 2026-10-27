@@ -76,6 +76,14 @@ public final class PaneContainerViewController: NSViewController {
   /// of any one VC always recovers the same logical scrollX.
   var hoverPeekScrollCompensation: CGFloat = 0
 
+  /// A focused start or blank pane whose URL field waits for the strip
+  /// to stop moving before it takes the keyboard
+  /// (`focusURLFieldWhenStripSettles`).
+  weak var urlFieldAwaitingStrip: PaneModel?
+  /// Strip scrolls and layout animations scheduled or running
+  /// (`beginStripAnimation`).
+  var stripAnimationsInFlight = 0
+
   /// `scrollView.contentInsets.left` currently set on every
   /// workspace VC. Tracked centrally so `applySidebarLayout` can
   /// compute the inset delta against the previous *target* value
@@ -1100,7 +1108,8 @@ public final class PaneContainerViewController: NSViewController {
   /// focused pane can sit entirely outside the viewport while it still
   /// owns the keyboard — keystrokes land somewhere the user can't see,
   /// and the only way back was to scroll and hunt for the pane taking
-  /// them.
+  /// them. Typing also hands a URL field waiting on the strip
+  /// (`focusURLFieldWhenStripSettles`) the keyboard before the key lands.
   ///
   /// Three things this deliberately does not react to:
   ///
@@ -1122,8 +1131,17 @@ public final class PaneContainerViewController: NSViewController {
     keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
       [weak self] event in
       guard let self, let window = self.view.window,
-        event.window === window,
-        !self.isPaneMapOpen,
+        event.window === window
+      else { return event }
+      // Typing while a URL field waits on the strip: the keys are for the
+      // field, sooner than a smooth landing.
+      if self.urlFieldAwaitingStrip != nil,
+        event.modifierFlags.isDisjoint(with: [.command, .control])
+      {
+        self.focusURLFieldAwaitingStrip()
+        return event
+      }
+      guard !self.isPaneMapOpen,
         event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift).isEmpty,
         !(window.firstResponder is NSText),
         let column = self.columns[safe: self.focusedColumnIndex],

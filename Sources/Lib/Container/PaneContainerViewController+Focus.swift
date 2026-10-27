@@ -116,6 +116,7 @@ extension PaneContainerViewController {
     // scheduler (wireURLBarHoverScheduler) observes the next hover near
     // the pane top and peeks the URL bar.
     pane.urlBarTopEdgeHitZone.isHidden = false
+    urlFieldAwaitingStrip = nil
     if pane.isBlankBrowser || pane.startView != nil {
       // A blank or start pane focuses the URL bar so the user can type a
       // destination immediately (the start page's buttons stay
@@ -128,7 +129,7 @@ extension PaneContainerViewController {
       if !pane.isURLBarVisible {
         pane.setURLBarPeek(true)
       }
-      pane.urlBar.focusURLField()
+      focusURLFieldWhenStripSettles(pane)
     } else {
       let result = view.window?.makeFirstResponder(pane.preferredFirstResponder) ?? false
       logger.debug(
@@ -161,6 +162,47 @@ extension PaneContainerViewController {
     // round-trips don't synthesize phantom transitions.
     if previouslyFocused?.id != pane.id {
       ExtensionController.shared.notifyTabActivated(next: pane, previous: previouslyFocused)
+    }
+  }
+
+  /// Hand `pane`'s URL field the keyboard once the strip stops moving.
+  /// A text field taking the keyboard activates the input method, which
+  /// can hold the main thread for a few hundred ms waiting on its server;
+  /// a strip animation running meanwhile gets no frames and lands in one
+  /// jump. Until then the window keeps the keyboard, so keys don't reach
+  /// the pane focus just left; typing hands the field the keyboard at
+  /// once (`installKeyEventMonitor`).
+  private func focusURLFieldWhenStripSettles(_ pane: PaneModel) {
+    // Already typing in it: taking the keyboard away would end the edit.
+    guard !pane.urlBar.isEditing else { return }
+    urlFieldAwaitingStrip = pane
+    view.window?.makeFirstResponder(nil)
+    // A tick later: the caller's animation, if any, has begun by then.
+    DispatchQueue.main.async { [weak self] in
+      guard let self, self.stripAnimationsInFlight == 0 else { return }
+      self.focusURLFieldAwaitingStrip()
+    }
+  }
+
+  func focusURLFieldAwaitingStrip() {
+    guard let pane = urlFieldAwaitingStrip else { return }
+    urlFieldAwaitingStrip = nil
+    // Something else took the keyboard meanwhile (the palette, a find
+    // bar, a rename): it keeps it.
+    guard pane.id == focusedPane?.id, let window = view.window, window.firstResponder === window
+    else { return }
+    pane.urlBar.focusURLField()
+  }
+
+  /// Count a strip animation as running until the returned closure is
+  /// called; the last one to finish hands a waiting URL field the
+  /// keyboard.
+  func beginStripAnimation() -> @MainActor @Sendable () -> Void {
+    stripAnimationsInFlight += 1
+    return { [weak self] in
+      guard let self else { return }
+      self.stripAnimationsInFlight -= 1
+      if self.stripAnimationsInFlight == 0 { self.focusURLFieldAwaitingStrip() }
     }
   }
 
@@ -1071,6 +1113,9 @@ extension PaneContainerViewController {
     // Overlapping animated calls (rapid-fire clicks) are resolved by
     // CoreAnimation animator reuse — writing the same property from a new
     // animator cancels the previous one, producing a smooth re-target.
+    // Counted from here, not the apply: a URL field waiting on the strip
+    // checks the count before this tick.
+    let land = beginStripAnimation()
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
       // The live origin is `logical + hoverPeekScrollCompensation`, read
@@ -1087,12 +1132,15 @@ extension PaneContainerViewController {
       let liveTarget = logicalX + comp
       if comp != 0 {
         self.scrollView.contentView.setBoundsOrigin(NSPoint(x: liveTarget, y: 0))
+        land()
         return
       }
       NSAnimationContext.runAnimationGroup { context in
         context.duration = 0.25
         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         self.scrollView.contentView.animator().bounds.origin.x = liveTarget
+      } completionHandler: {
+        land()
       }
     }
     return true
