@@ -651,7 +651,8 @@ extension PaneContainerViewController {
   /// shrink back. ``columnResizeTarget`` keeps the pull off a strip that
   /// has no scroll at all.
   func resizeColumn(_ column: ColumnModel, by deltaX: CGFloat, pullingLeadingEdge: Bool) {
-    guard let constraint = column.widthConstraint else { return }
+    guard let constraint = column.widthConstraint, let previousWidth = column.laidOutWidth
+    else { return }
     let originX = scrollView.contentView.bounds.origin.x
     var widthDelta = pullingLeadingEdge ? -deltaX : deltaX
     if pullingLeadingEdge {
@@ -662,10 +663,10 @@ extension PaneContainerViewController {
       let slack = max(0, originX - (hoverPeekScrollCompensation - scrollView.contentInsets.left))
       widthDelta = max(widthDelta, -slack)
     }
-    let previousWidth = constraint.constant
-    constraint.constant = max(Self.minPaneWidth, previousWidth + widthDelta)
-    let applied = constraint.constant - previousWidth
+    let applied = max(Self.minPaneWidth, previousWidth + widthDelta) - previousWidth
+    // Before the write: a preset's sub-floor width stays with its preset.
     guard applied != 0 else { return }
+    constraint.constant = previousWidth + applied
     column.currentPreset = nil
     guard pullingLeadingEdge else { return }
     // The origin is written against the strip's new width, so the layout
