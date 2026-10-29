@@ -57,7 +57,10 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
   /// across a single navigation but must re-read it after any
   /// suspend/restore round-trip — the old `WKWebView` is detached
   /// and the new one carries the restored `interactionState`.
-  public private(set) var webView: WKWebView
+  public private(set) var webView: WKWebView {
+    // The inspector belonged to the instance going away.
+    didSet { isInspectorOpen = false }
+  }
 
   /// Popups this pane's page has open. Owned here because a popup
   /// belongs to the page that opened it: the two talk to each other,
@@ -2141,6 +2144,24 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
       inspector.perform(InspectorSelector.show)
       logger.debug("Inspector opened (inline)")
     }
+  }
+
+  /// The `WKUIDelegatePrivate` SPIs WebKit calls however the inspector
+  /// opens or closes, including from the context menu's Inspect Element
+  /// and the inspector's own close button, neither of which goes near
+  /// `toggleInspector`.
+  @objc(_webView:didAttachLocalInspector:)
+  public func _webView(_ webView: WKWebView, didAttachLocalInspector _: NSObject) {
+    guard webView === self.webView else { return }
+    isInspectorOpen = true
+  }
+
+  @objc(_webView:willCloseLocalInspector:)
+  public func _webView(_ webView: WKWebView, willCloseLocalInspector _: NSObject) {
+    guard webView === self.webView, isInspectorOpen else { return }
+    isInspectorOpen = false
+    webView.frame = browserHostView.bounds
+    logger.debug("Inspector closed by WebKit")
   }
 
   // MARK: - Focus
