@@ -1462,9 +1462,29 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     noteRequestedNavigation("reload")
     if isSuspended {
       restore()
-    } else {
+    } else if !restartUnresponsiveWebProcess() {
       webView.reload()
     }
+  }
+
+  /// A web content process that stopped answering never acts on a
+  /// reload sent to it, and nothing else replaces it, so the pane stays
+  /// on its frozen page however often Reload is pressed. Kill it instead:
+  /// `webViewWebContentProcessDidTerminate` reloads the page in a fresh
+  /// process, as after a crash. Returns whether it did.
+  ///
+  /// A signal rather than WebKit's `_killWebContentProcess`, which leaves
+  /// a hung process running.
+  private func restartUnresponsiveWebProcess() -> Bool {
+    guard webProcessIsResponsive == false, let pid = webProcessIdentifier, pid > 0
+    else { return false }
+    let killed = kill(pid, SIGKILL) == 0
+    let outcome = killed ? "killed it" : "kill failed: \(String(cString: strerror(errno)))"
+    noteNavigation("reload of unresponsive web content process: \(outcome)")
+    logger.error(
+      "[nav/unresponsive \(self.logTag, privacy: .public)] reload asked of an unresponsive web content process, \(outcome, privacy: .public) \(self.processSummary, privacy: .public)"
+    )
+    return killed
   }
 
   /// HTTP-cache-bypassing variant of ``reload()`` for a live pane.
@@ -1480,7 +1500,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     noteRequestedNavigation("reload from origin")
     if isSuspended {
       restore()
-    } else {
+    } else if !restartUnresponsiveWebProcess() {
       webView.reloadFromOrigin()
     }
   }
