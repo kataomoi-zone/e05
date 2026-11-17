@@ -144,6 +144,13 @@ final class WorklaneOutlineView: NSOutlineView {
   }
 }
 
+/// A worklane row whose hover tint the section view can correct when the
+/// list moves under the pointer.
+@MainActor
+protocol WorklaneHoverableCell: NSView {
+  func setHovered(_ hovered: Bool)
+}
+
 /// Outline around a multi-pane column while a pane drag would land
 /// inside it. The drop line alone draws the column's end and the gap
 /// after the column at the same height, one indent level apart; the
@@ -388,6 +395,11 @@ final class WorklaneSectionView: NSView {
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(scrollView)
 
+    scrollView.contentView.postsBoundsChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(listDidScroll),
+      name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+
     footerView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(footerView)
 
@@ -410,6 +422,37 @@ final class WorklaneSectionView: NSView {
       footerView.trailingAnchor.constraint(equalTo: trailingAnchor),
       footerView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
     ])
+  }
+
+  /// A row's tracking area sees it slide under a motionless pointer but
+  /// not slide back out, so a scroll would leave every row it passed
+  /// tinted. Unlike the other sidebar lists, the hover is re-read rather
+  /// than dropped: the tint here is what says which row the pointer is on.
+  @objc private func listDidScroll() {
+    guard let window else { return }
+    // The same conditions the cells' `.activeInKeyWindow` tracking runs
+    // under; a hidden list can still scroll, to follow the focus. A drag
+    // auto-scrolls the list too, but the cells' tracking sees no entry
+    // during it, so a tint set then would get no exit to clear it.
+    let isTracking =
+      window.isKeyWindow && !isHiddenOrHasHiddenAncestor && NSEvent.pressedMouseButtons == 0
+    syncRowHover(
+      pointerInWindow: isTracking ? window.convertPoint(fromScreen: NSEvent.mouseLocation) : nil)
+  }
+
+  /// Tint the row under `pointer` and no other.
+  func syncRowHover(pointerInWindow pointer: NSPoint?) {
+    outlineView.enumerateAvailableRowViews { _, row in
+      guard
+        let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
+          as? any WorklaneHoverableCell
+      else { return }
+      // `visibleRect`: rows are realised past the clip view's edge, where
+      // the pointer can be over the footer rather than over them.
+      cell.setHovered(
+        pointer.map { NSMouseInRect(cell.convert($0, from: nil), cell.visibleRect, cell.isFlipped) }
+          ?? false)
+    }
   }
 
   /// Re-measure the rows after anything that changes how many are shown.

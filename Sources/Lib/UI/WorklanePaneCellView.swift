@@ -13,7 +13,7 @@ import AppKit
 /// Focused-pane indication is delegated to the outline view's
 /// source-list selection highlight — the cell doesn't paint a border.
 @MainActor
-final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
+final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner, WorklaneHoverableCell {
   static let height: CGFloat = 24
   static let iconSize: CGFloat = 16
 
@@ -549,7 +549,7 @@ final class WorklanePaneCellView: NSTableCellView, NSViewToolTipOwner {
     setHovered(false)
   }
 
-  private func setHovered(_ hovered: Bool) {
+  func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
     closeButton.setRevealed(hovered)

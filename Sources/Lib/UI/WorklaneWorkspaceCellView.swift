@@ -15,7 +15,7 @@ import AppKit
 /// is transient — the subsequent reload re-targets to the new
 /// workspace's focused pane.
 @MainActor
-final class WorklaneWorkspaceCellView: NSTableCellView {
+final class WorklaneWorkspaceCellView: NSTableCellView, WorklaneHoverableCell {
   static let height: CGFloat = 28
 
   private let indicator = WorkspaceAccentIndicator()
@@ -280,7 +280,7 @@ final class WorklaneWorkspaceCellView: NSTableCellView {
     setHovered(false)
   }
 
-  private func setHovered(_ hovered: Bool) {
+  func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
     closeButton.setRevealed(hovered)

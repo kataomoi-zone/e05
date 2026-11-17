@@ -14,7 +14,7 @@ import AppKit
 /// container can bulk-confirm any ghostty surfaces with running
 /// processes before tearing down.
 @MainActor
-final class WorklaneColumnCellView: NSTableCellView {
+final class WorklaneColumnCellView: NSTableCellView, WorklaneHoverableCell {
   static let height: CGFloat = 24
   private static let iconSize: CGFloat = 14
 
@@ -184,7 +184,7 @@ final class WorklaneColumnCellView: NSTableCellView {
     setHovered(false)
   }
 
-  private func setHovered(_ hovered: Bool) {
+  func setHovered(_ hovered: Bool) {
     guard hovered != isHovered else { return }
     isHovered = hovered
     closeButton.setRevealed(hovered)
