@@ -1004,7 +1004,7 @@ extension PaneContainerViewController {
 
   /// Stop in-flight loading on the focused browser pane.
   public func stopFocusedBrowser() {
-    focusedPane?.browserView?.webView.stopLoading()
+    focusedPane?.browserView?.stopLoading()
   }
 
   /// Whether the focused browser pane has a load in flight.

@@ -894,7 +894,7 @@ extension PaneContainerViewController {
       }
     }
     pane.urlBar.onStop = { [weak pane] in
-      pane?.browserView?.webView.stopLoading()
+      pane?.browserView?.stopLoading()
     }
 
     // URL bar: inline zoom indicator controls. Route through the

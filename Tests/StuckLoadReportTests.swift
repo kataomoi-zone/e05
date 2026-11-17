@@ -198,6 +198,13 @@ struct StuckLoadPaneTests {
     #expect(webView.navigationIsStuck())
   }
 
+  @Test("a stop is noted among the navigation steps")
+  func stopIsNoted() {
+    let pane = BrowserPaneView(frame: .zero)
+    pane.stopLoading()
+    #expect(pane.navigationEvents.last?.text == "stop requested")
+  }
+
   @Test("a navigation still inside the threshold is not reported")
   func notYetDue() {
     let pane = BrowserPaneView(frame: .zero)

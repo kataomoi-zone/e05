@@ -1493,6 +1493,14 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     return killed
   }
 
+  /// Stop the load in flight. Noted among the navigation steps, so a stop
+  /// a stuck navigation ignores shows as the last step in the watchdog's
+  /// next line.
+  public func stopLoading() {
+    noteNavigation("stop requested")
+    webView.stopLoading()
+  }
+
   /// HTTP-cache-bypassing variant of ``reload()`` for a live pane.
   /// The suspended branch defers cache control to WebKit's
   /// `interactionState` restore — the cache policy WebKit uses for
