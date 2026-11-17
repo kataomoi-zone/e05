@@ -76,6 +76,12 @@ extension BrowserPaneView {
     if policy == .allow { beginPendingNavigation() }
   }
 
+  /// A navigation reported stuck that is still pending. The report flag
+  /// alone outlives the navigation it was raised for.
+  var hasStuckNavigation: Bool {
+    reportedPendingNavigation && pendingNavigationSince != nil
+  }
+
   /// The process state that separates one kind of stuck from another,
   /// on one line for the watchdog log.
   var processSummary: String {

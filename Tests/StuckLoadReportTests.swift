@@ -131,6 +131,73 @@ struct StuckLoadPaneTests {
     #expect(toasts == 1)
   }
 
+  /// The web view hands shortcuts to the menu first while this holds.
+  @Test("a reported navigation reads as stuck to the web view until it ends")
+  func reportedNavigationIsStuck() throws {
+    let pane = BrowserPaneView(frame: .zero)
+    let webView = try #require(pane.webView as? FocusReportingWebView)
+    pane.beginPendingNavigation(now: overdue)
+    #expect(!webView.navigationIsStuck())
+
+    #expect(reported(pane))
+    #expect(webView.navigationIsStuck())
+
+    pane.webView(pane.webView, didCommit: nil)
+    #expect(!webView.navigationIsStuck())
+  }
+
+  @Test("a focused web view hands a shortcut to the menu first while its navigation is stuck")
+  func stuckNavigationShortcutReachesMenu() throws {
+    final class Target: NSObject {
+      var fired = 0
+      @objc func fire(_: Any?) { fired += 1 }
+    }
+    let target = Target()
+    let item = NSMenuItem(title: "Reload", action: #selector(Target.fire), keyEquivalent: "r")
+    item.target = target
+    let submenu = NSMenu()
+    submenu.addItem(item)
+    let top = NSMenuItem()
+    top.submenu = submenu
+    let menu = NSMenu()
+    menu.addItem(top)
+    let app = NSApplication.shared
+    let savedMenu = app.mainMenu
+    app.mainMenu = menu
+    defer { app.mainMenu = savedMenu }
+
+    let pane = BrowserPaneView(frame: .zero)
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: .borderless,
+      backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    defer { window.close() }
+    window.contentView?.addSubview(pane.webView)
+    window.makeFirstResponder(pane.webView)
+    let event = try #require(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: "r",
+        charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
+
+    pane.beginPendingNavigation(now: overdue)
+    #expect(reported(pane))
+    #expect(pane.webView.performKeyEquivalent(with: event))
+    #expect(target.fired == 1)
+  }
+
+  @Test("a web view rebuilt on restore still reads the pane's stuck navigation")
+  func restoredWebViewReadsStuck() throws {
+    let pane = BrowserPaneView(frame: .zero)
+    pane.navigate(to: "about:blank")
+    #expect(pane.suspend())
+    #expect(pane.restore())
+    let webView = try #require(pane.webView as? FocusReportingWebView)
+    pane.beginPendingNavigation(now: overdue, loading: false)
+    #expect(reported(pane))
+    #expect(webView.navigationIsStuck())
+  }
+
   @Test("a navigation still inside the threshold is not reported")
   func notYetDue() {
     let pane = BrowserPaneView(frame: .zero)

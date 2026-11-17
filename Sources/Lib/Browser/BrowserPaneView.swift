@@ -10,6 +10,8 @@ private let logger = Logger(
 @MainActor
 final class FocusReportingWebView: WKWebView {
   var onFocusGained: (() -> Void)?
+  /// Whether the pane holds a navigation already reported stuck.
+  var navigationIsStuck: () -> Bool = { false }
 
   override func becomeFirstResponder() -> Bool {
     let result = super.becomeFirstResponder()
@@ -24,14 +26,17 @@ final class FocusReportingWebView: WKWebView {
   /// answers. A process stuck in a script never answers, so ⌘W, ⌘R and
   /// every other e05 shortcut would vanish on the very pane the user wants
   /// to close or reload. Once WebKit has marked the process unresponsive,
-  /// the menu gets the keystroke first.
+  /// the menu gets the keystroke first. So it does while a navigation is
+  /// stuck: a process WebKit counts as answering can still leave
+  /// keystrokes unanswered all the while.
   ///
   /// LIMITATION: WebKit marks the process only after something sent to it
-  /// has gone unanswered for a few seconds, so the first shortcut pressed
-  /// on a page that has just stopped is still lost.
+  /// has gone unanswered for a few seconds, and a navigation counts as
+  /// stuck only once it is reported, so the shortcuts pressed before then
+  /// are still lost.
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if window?.firstResponder === self,
-      BrowserPaneView.webProcessIsResponsive(self) == false,
+      BrowserPaneView.webProcessIsResponsive(self) == false || navigationIsStuck(),
       NSApp.mainMenu?.performKeyEquivalent(with: event) == true
     {
       return true
@@ -565,6 +570,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     built.webView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()
     }
+    built.webView.navigationIsStuck = { [weak self] in self?.hasStuckNavigation ?? false }
 
     setupHostAndWebView()
     setupObservers()
@@ -1677,6 +1683,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
     built.webView.onFocusGained = { [weak self] in
       self?.onFocusChanged?()
     }
+    built.webView.navigationIsStuck = { [weak self] in self?.hasStuckNavigation ?? false }
 
     attachWebView()
     setupObservers()
