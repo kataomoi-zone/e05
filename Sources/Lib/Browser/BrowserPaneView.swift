@@ -43,6 +43,39 @@ final class FocusReportingWebView: WKWebView {
     }
     return super.performKeyEquivalent(with: event)
   }
+
+  // MARK: - Undo
+
+  /// The page's typing undo, kept apart from the window's. WebKit
+  /// registers each edit with an undo target only it owns, and an entry
+  /// left behind on the window's manager once that target is gone
+  /// crashes the app when ⌘Z reaches it from a terminal pane. A manager
+  /// owned by the web view goes with it, entries and all. Not the pane's
+  /// either: the pane outlives the web view a suspend drops.
+  ///
+  /// LIMITATION: the Web Inspector's own web view still registers on the
+  /// window's manager.
+  private let pageUndoManager = UndoManager()
+
+  override var undoManager: UndoManager? { pageUndoManager }
+
+  // WKWebView answers neither selector, so without these the menu's
+  // Undo walks on to the window, which undoes from its own manager.
+  @objc func undo(_ sender: Any?) { pageUndoManager.undo() }
+  @objc func redo(_ sender: Any?) { pageUndoManager.redo() }
+
+  override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+    switch item.action {
+    case #selector(undo(_:)):
+      (item as? NSMenuItem)?.title = pageUndoManager.undoMenuItemTitle
+      return pageUndoManager.canUndo
+    case #selector(redo(_:)):
+      (item as? NSMenuItem)?.title = pageUndoManager.redoMenuItemTitle
+      return pageUndoManager.canRedo
+    default:
+      return super.validateUserInterfaceItem(item)
+    }
+  }
 }
 
 /// Browser pane wrapping a WKWebView. Hosts the Web Inspector inline when attached.
