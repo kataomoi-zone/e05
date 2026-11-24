@@ -397,6 +397,11 @@ extension PaneContainerViewController {
       // letting the column extend past the visible region (scroll
       // reaches the rest). The next Cycle Width press picks up the
       // current visible region.
+      //
+      // A workspace `createWorkspace` has just installed has not been
+      // laid out, so its scroll view is still zero wide; lay it out
+      // first or the guard below skips the preset.
+      currentWorkspaceVC.view.layoutSubtreeIfNeeded()
       let visibleWidth = effectiveVisibleWidth(in: scrollView)
       let perimeter = WorkspaceViewController.outerMargin
       let usableWidth = visibleWidth - 2 * perimeter
