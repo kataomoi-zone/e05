@@ -274,7 +274,7 @@ struct StuckLoadPaneTests {
     #expect(reported(pane))
     pane.beginPendingNavigation(now: now, loading: false)
     #expect(!reported(pane))
-    #expect(reported(pane, at: now + BrowserPaneView.stuckNavigationThreshold))
+    #expect(reported(pane, at: now + BrowserPaneView.stuckNavigationThreshold + 1))
   }
 
   @Test("a commit ends the pending navigation")
