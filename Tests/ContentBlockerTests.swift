@@ -227,6 +227,25 @@ struct AdBlockerWhitelistStoreTests {
   }
 }
 
+@Suite("AdBlocker.retryDelay")
+@MainActor
+struct AdBlockerRetryDelayTests {
+  private let week: TimeInterval = 168 * 3600
+
+  @Test("an hour, doubling with each failure in a row")
+  func doubles() {
+    #expect(AdBlocker.retryDelay(afterFailures: 1, interval: week) == 3600)
+    #expect(AdBlocker.retryDelay(afterFailures: 2, interval: week) == 7200)
+    #expect(AdBlocker.retryDelay(afterFailures: 4, interval: week) == 8 * 3600)
+  }
+
+  @Test("never longer than the regular interval")
+  func capped() {
+    #expect(AdBlocker.retryDelay(afterFailures: 30, interval: week) == week)
+    #expect(AdBlocker.retryDelay(afterFailures: 3, interval: 2 * 3600) == 2 * 3600)
+  }
+}
+
 @Suite("AdBlocker.FilterSource")
 @MainActor
 struct AdBlockerFilterSourceTests {

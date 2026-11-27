@@ -431,6 +431,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       // with the AppDelegate; the unwrap is purely a liveness check
       // (no body site needs the instance) so use a `!= nil` form
       // that does not trip "unused let self" diagnostics.
+      // Refreshes in a row that missed a source. Such a refresh leaves
+      // the stamp alone, so the stamp alone would schedule the next one
+      // at once — for as long as the machine is offline or a list's URL
+      // is dead.
+      var failures = 0
       while self != nil, !Task.isCancelled {
         let prefs = PreferencesStore.shared.preferences
         let configured =
@@ -444,14 +449,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // second full rebuild concurrent with that one.
         let last = prefs.adblockerLastRefreshedAt ?? Date()
         let elapsed = Date().timeIntervalSince(last)
-        let delay = max(0, interval - elapsed)
+        let delay =
+          failures > 0
+          ? AdBlocker.retryDelay(afterFailures: failures, interval: interval)
+          : max(0, interval - elapsed)
         if delay > 0 {
           let ns = UInt64(delay * 1_000_000_000)
           try? await Task.sleep(nanoseconds: ns)
           if Task.isCancelled { return }
         }
         logger.info("[adblocker/schedule] auto-update fired")
+        let stamp = PreferencesStore.shared.preferences.adblockerLastRefreshedAt
         await AdBlocker.shared.refreshFilterlists()
+        let reachedEverySource =
+          PreferencesStore.shared.preferences.adblockerLastRefreshedAt != stamp
+        failures = reachedEverySource ? 0 : failures + 1
       }
     }
   }

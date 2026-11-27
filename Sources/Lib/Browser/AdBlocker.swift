@@ -699,6 +699,17 @@ public final class AdBlocker {
   /// window in ``loadFilterText``.
   public static let defaultAutoUpdateIntervalHours: Int = 168
 
+  /// How long the auto-update loop waits before trying again after
+  /// `failures` refreshes in a row missed a source: an hour, doubling,
+  /// and never longer than the regular `interval`. A refresh downloads
+  /// every list again, so a source that is gone for good must not turn
+  /// the weekly cadence into an hourly one.
+  public static func retryDelay(afterFailures failures: Int, interval: TimeInterval)
+    -> TimeInterval
+  {
+    min(interval, 3600 * pow(2, Double(max(failures, 1) - 1)))
+  }
+
   /// Short hex digest used to key compiled rule lists. Callers fold
   /// every recompile-relevant input (converter output version, source
   /// text) into `texts` so a change in any of them flips the digest.
