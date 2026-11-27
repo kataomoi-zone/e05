@@ -170,15 +170,29 @@ extension BrowserPaneView {
       // detach drain will already have resolved the request, so
       // these post-sheet writes are guarded by the resolve-once
       // contract anyway.
-      let granted = (response == .alertFirstButtonReturn)
-      let persistent = popup.indexOfSelectedItem == 1
-      let state: PermissionState = granted ? .grant : .deny
-      for kind in request.kinds {
-        self.recordPermissionDecision(
-          host: request.host, kind: kind, state: state, persistent: persistent)
+      if let state = Self.permissionChoice(for: response) {
+        let persistent = popup.indexOfSelectedItem == 1
+        for kind in request.kinds {
+          self.recordPermissionDecision(
+            host: request.host, kind: kind, state: state, persistent: persistent)
+        }
+        request.resolve(state == .grant ? .grant : .deny)
+      } else {
+        request.resolve(.deny)
       }
-      request.resolve(granted ? .grant : .deny)
       self.finishPermissionPrompt(request, alert: alert)
+    }
+  }
+
+  /// What the user picked on the prompt, or `nil` when the sheet ended
+  /// without a button — a detaching pane or a closing popup ends it in
+  /// code. That request is still refused, but nothing is recorded: the
+  /// user never answered, so the site asks again next time.
+  static func permissionChoice(for response: NSApplication.ModalResponse) -> PermissionState? {
+    switch response {
+    case .alertFirstButtonReturn: return .grant
+    case .alertSecondButtonReturn: return .deny
+    default: return nil
     }
   }
 
