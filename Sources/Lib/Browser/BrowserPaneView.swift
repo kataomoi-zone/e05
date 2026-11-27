@@ -315,7 +315,7 @@ public final class BrowserPaneView: NSView, WKNavigationDelegate, WKUIDelegate {
 
   /// Per-pane mute state. Mutated through ``setMuted(_:)`` /
   /// ``toggleMute()``. The actual audio suppression is performed by
-  /// the injected user script (`muteUserScript`) which sets
+  /// the injected user script (`makeMuteUserScript`) which sets
   /// `.muted = true` on every `<audio>` / `<video>` element and
   /// re-applies on DOM mutations. Web Audio / WebRTC / cross-origin
   /// iframes are out of reach of this approach; if those become a

@@ -11,8 +11,8 @@ import AppKit
 /// an `NSGlassEffectContainerView` so AppKit merges them liquidly; the
 /// current single-glass layout doesn't benefit from one.
 ///
-/// The mode area hosts four visually exclusive views (`worklane`,
-/// `bookmarksView`, `historyView`, `downloadsView`) plus a
+/// The mode area hosts five visually exclusive views (`worklane`,
+/// `bookmarksView`, `historyView`, `downloadsView`, `extensionsView`) plus a
 /// `placeholder` fallback, all sharing the same rect. `applyMode`
 /// flips `isHidden` on exactly one.
 @MainActor

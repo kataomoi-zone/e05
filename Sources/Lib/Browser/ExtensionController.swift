@@ -2182,7 +2182,7 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
   /// mutable `var` under Swift 6 strict concurrency's @Sendable.
   private static var popupCloseObserverKey: UInt8 = 0
 
-  // Hand back the single host window. e05's niri-style WM treats
+  // Hand back the single host window. e05 treats
   // every workspace as a slice of one continuous editing surface,
   // so the bridge unifies them into one `WKWebExtensionWindow`.
   // Returning the empty / nil form before `bindContainer(_:)` runs

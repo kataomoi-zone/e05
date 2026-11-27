@@ -138,7 +138,7 @@ jobs:
         if: ${{ inputs.rebuild_ghostty || steps.ghostty_cache.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
-          # Pinned ghostty commit (last non-comment line of GHOSTTY_VERSION).
+          # Pinned ghostty commit (first non-comment line of GHOSTTY_VERSION).
           GHOSTTY_SHA="$(grep -vE '^[[:space:]]*#' GHOSTTY_VERSION | grep -vE '^[[:space:]]*$' | head -1 | tr -d '[:space:]')"
           echo "Building GhosttyKit from ghostty@${GHOSTTY_SHA}"
           # Shallow-fetch exactly the pinned commit (full tree at that sha;

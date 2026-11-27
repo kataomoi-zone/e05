@@ -85,7 +85,7 @@ The `--disable-sandbox` flag is required because tests access `~/.config/e05/` p
 
 The `e05` CLI is covered by `Tests/CLITests.swift`, which runs the built binary as a process and answers it with a real `ControlSocket`. SwiftPM would happily link the executable target into the test target instead, but the CLI ends every path with `exit()`, reads `CommandLine.arguments`, and derives its socket from `_NSGetExecutablePath` — none of which mean anything inside the test runner. That runs as part of `swift test`.
 
-For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script assembles a `.app` bundle under `build/dev/` and runs the binary out of it, so `Bundle.main.bundleIdentifier` resolves and APIs that gate on bundle identity work — camera/microphone/location permission prompts, unified-log Logger subsystem, and the upcoming `UNUserNotificationCenter` wiring. The binary is run directly (not via `open`), so stderr stays attached to the terminal.
+For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script assembles a `.app` bundle under `build/dev/` and runs the binary out of it, so `Bundle.main.bundleIdentifier` resolves and APIs that gate on bundle identity work — camera/microphone/location permission prompts, unified-log Logger subsystem, and `UNUserNotificationCenter`. The binary is run directly (not via `open`), so stderr stays attached to the terminal.
 
 `dev.sh` also streams the dev bundle's own `os.Logger` output into the same terminal, so `./scripts/dev.sh &> /tmp/e05.log` puts the build, the app's stderr and its unified-log lines in one file. Started from a terminal outside any sandbox, that file is readable by a coding agent whose own sandbox refuses `log`. To follow the logs of any e05, release included, run `./scripts/logs.sh` in another terminal (it wraps `log stream --predicate 'subsystem == "com.kawarimidoll.e05"' --level debug`). The `--level debug` matters: the default stream level is `notice`, so `info`/`debug` messages are hidden without it. `os.Logger` also redacts interpolated strings as `<private>` — log a value as `\(value, privacy: .public)` to see it. (This is unrelated to `NSLog`, which a `swift run` binary does not route to the unified log at all.)
 
@@ -123,7 +123,7 @@ brew install gitleaks
 
 Known false positives are allowlisted in `.gitleaks.toml`.
 
-The bulk-reformat commit is recorded in `.git-blame-ignore-revs`; to skip it in local `git blame`:
+Bulk-reformat commits are recorded in `.git-blame-ignore-revs`; to skip them in local `git blame`:
 
 ```bash
 git config blame.ignoreRevsFile .git-blame-ignore-revs
@@ -163,7 +163,7 @@ Review feedback is applied via `git commit --fixup=<sha>` or `--amend` to the or
 
 - Logic (key conversion, scroll math, pane management, URL handling) is covered by unit tests
 - End-to-end key input is covered by AppleScript integration tests
-- Shell-integration snippets are covered by `./scripts/test-shell-integration.sh` (bash + zsh)
+- Shell-integration snippets are covered by `./scripts/test-shell-integration.sh` (bash, zsh, fish)
 - New features should ideally ship with unit tests written first
 
 ## Conventions
@@ -205,6 +205,7 @@ Sources/
     Finder/               — native file-browser pane (e05://finder)
     Settings/             — Settings window (SwiftUI) + preferences store
     IPC/                  — control socket the e05 CLI connects to
+    Update/               — Sparkle updater wiring (Check for Updates)
     Utility/              — FuzzyMatcher, Frecency, ULID, Action registry, E05Paths,
                             URLCanonicalizer, Collection+Safe
 Tests/                    — unit tests

@@ -204,7 +204,7 @@ The hook does nothing outside an e05 terminal pane, and prints nothing. Only a s
 
 For contributors, or anyone who would rather build than download. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full setup.
 
-Requirements beyond a Swift 6 toolchain (Xcode 16 or the Swift 6 CLI):
+Requirements beyond a Swift 6.2 toolchain (Xcode 26 or later):
 
 - `GhosttyKit.xcframework` at the repo root, built locally from a pinned ghostty commit — [CONTRIBUTING](./CONTRIBUTING.md#building-ghosttykit)
 - Sparkle under `.sparkle/`, fetched with `./scripts/fetch_sparkle.sh` — [CONTRIBUTING](./CONTRIBUTING.md#fetching-sparkle)

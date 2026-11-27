@@ -38,7 +38,7 @@ public struct OSSCredit: Identifiable, Hashable, Sendable {
 ///
 /// e05's own code is MIT, so it ships no GPL *engine* code: concept-
 /// only references — Brave's adblock-rust (MPL-2.0), uBlock Origin
-/// (GPL-3.0), AdGuard ExtendedCSS (GPL-3.0), zentty (GPL-3.0) —
+/// (GPL-3.0), AdGuard ExtendedCSS (GPL-3.0) —
 /// informed the design but were reimplemented rather than bundled, so
 /// they are not listed here. The one piece of GPL code that does ship
 /// is ghostty's shell-integration (GPL-3.0, derived from Kitty):

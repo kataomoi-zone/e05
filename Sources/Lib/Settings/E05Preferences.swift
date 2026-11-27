@@ -100,8 +100,8 @@ public struct E05Preferences: Codable, Equatable, Sendable {
   public var adblockerLastRefreshedAt: Date?
 
   /// User-defined filterlist URLs concatenated onto the shipped
-  /// catalog at runtime. Entries whose `url` does not parse to a
-  /// `http`/`https` URL are silently dropped by the adapter so a
+  /// catalog at runtime. Entries whose `url` does not parse to an
+  /// `https` URL are silently dropped by the adapter so a
   /// hand-edited preferences file with a typo does not quarantine.
   public var adblockerCustomSources: [AdblockerCustomSource]?
 

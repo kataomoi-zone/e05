@@ -115,7 +115,7 @@ public final class ToastOverlayView: NSView {
   }
 }
 
-/// One pill in the toast stack. Solid accent fill (~85% alpha) with a
+/// One pill in the toast stack. Solid accent fill (92% alpha) with a
 /// faint glow that lifts it above busy pane content. Tap to dismiss early.
 @MainActor
 public final class ToastPillView: NSView {

@@ -9,7 +9,7 @@ import Foundation
 /// `url` and `homepage` stay as ``String`` rather than ``URL`` to
 /// keep the JSON shape forgiving — a hand-edited preferences file
 /// with a typo still decodes, and the adapter drops entries whose
-/// `url` does not parse to a `http`/`https` URL at runtime.
+/// `url` does not parse to an `https` URL at runtime.
 public struct AdblockerCustomSource: Codable, Equatable, Sendable, Identifiable {
   /// Opaque ULID for this entry. The ``AdBlocker/FilterSource.id``
   /// the runtime sees is `"custom-" + id`, which keeps user-edited

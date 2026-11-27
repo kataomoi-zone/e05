@@ -430,7 +430,7 @@ public final class FindBarView: NSView, NSTextFieldDelegate {
   // MARK: - Testing Support
 
   /// Current text of the match-count label. Exposed so tests can
-  /// verify `setMatchCount`'s branching without reaching through the
+  /// verify `setMatchPosition`'s branching without reaching through the
   /// view hierarchy.
   var matchCountText: String {
     matchCountLabel.stringValue

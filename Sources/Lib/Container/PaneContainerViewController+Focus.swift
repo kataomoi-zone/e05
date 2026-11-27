@@ -301,7 +301,7 @@ extension PaneContainerViewController {
   /// crossed (the "stop at the first / last pane" preference). The
   /// empty-column skip is defensive either way: that state shouldn't
   /// survive `removePane`'s column-collapse path, but `setFocus`
-  /// precondition-traps on an empty column.
+  /// refuses an empty column with an error log.
   private func nextNonEmptyColumnIndex(from start: Int, step: Int, wrap: Bool) -> Int? {
     guard !columns.isEmpty else { return nil }
     let count = columns.count
