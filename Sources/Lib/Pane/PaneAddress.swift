@@ -301,10 +301,15 @@ public struct PaneAddress: Equatable, Sendable, CustomStringConvertible {
     // Already has a scheme — validate it
     if trimmed.contains("://") {
       guard let addr = PaneAddress(trimmed),
-        let scheme = addr.url.scheme,
+        let scheme = addr.url.scheme?.lowercased(),
         allowedSchemes.contains(scheme)
       else { return nil }
-      return addr
+      guard addr.url.scheme != scheme else { return addr }
+      // `URL` keeps the scheme as typed, and `kind` and the pane's own
+      // load path compare it against lower-case names.
+      var components = URLComponents(url: addr.url, resolvingAgainstBaseURL: false)
+      components?.scheme = scheme
+      return components?.url.map(PaneAddress.init)
     }
 
     // about: scheme uses "about:blank" format (no "://")

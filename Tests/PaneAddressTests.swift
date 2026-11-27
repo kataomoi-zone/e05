@@ -175,6 +175,13 @@ struct PaneAddressTests {
     #expect(addr?.kind == .browser)
   }
 
+  @Test("fromUserInput accepts a scheme typed in upper case")
+  func fromUserInputUppercaseScheme() {
+    let addr = PaneAddress.fromUserInput("HTTPS://example.com/Path")
+    #expect(addr?.url.absoluteString == "https://example.com/Path")
+    #expect(addr?.kind == .browser)
+  }
+
   @Test("requiresContentSwitch is true crossing the extension boundary")
   func extensionBoundarySwitch() {
     // Both addresses classify as `.browser`, but the extension URL
