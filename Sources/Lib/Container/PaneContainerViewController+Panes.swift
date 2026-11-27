@@ -1310,7 +1310,7 @@ extension PaneContainerViewController {
   }
 
   /// How `computeScrollTargetX` should seat a column in the viewport.
-  /// `.frameIn` is niri's minimal-fit (the default, used by focus
+  /// `.frameIn` is the minimal fit (the default, used by focus
   /// navigation); the others drive the explicit align / centre actions
   /// and the snaps that still want centring.
   enum ColumnScrollMode {
@@ -1369,15 +1369,14 @@ extension PaneContainerViewController {
       gap: WorkspaceViewController.outerMargin)
   }
 
-  /// Pure scroll-target math shared by every column scroll, ported from
-  /// niri's `compute_new_view_offset` (src/layout/scrolling.rs). Returns
+  /// Pure scroll-target math shared by every column scroll. Returns
   /// the new `scrollView.contentView.bounds.origin.x`, or `nil` for "do
   /// not scroll". All values are in the scroll view's document
   /// coordinates; the user-visible band carves out the pinned-sidebar
   /// inset as `[currentX + insetLeft, currentX + visibleWidth - insetRight]`.
   /// `gap` is the inter-column gutter the fit modes reserve beside the
   /// column — it shrinks toward 0 as the column approaches the viewport
-  /// width (niri's `padding`), so a near-full-width column still seats
+  /// width, so a near-full-width column still seats
   /// flush.
   nonisolated static func columnScrollTargetX(
     mode: ColumnScrollMode,
@@ -1405,13 +1404,14 @@ extension PaneContainerViewController {
       columnMinX + columnWidth + margin - (visibleWidth - insetRight)
     }
 
-    // Frame-in's auto-fit uses a padding that shrinks toward 0 as a
-    // column nears the viewport width, so the "already fully visible"
-    // test below stays satisfiable and repeated focus doesn't oscillate
-    // (niri's rule). The explicit align modes and the oversized-column
-    // pin instead reserve the full configured `gap`, so a column that
-    // can't fit either way still lines up with the layout's gutter
-    // rhythm instead of kissing the viewport edge.
+    // The gutter the fit modes keep on each side of the column: the
+    // configured `gap`, but never more than half the room the column
+    // leaves spare — a gutter the band can't hold on both sides would
+    // make "fully visible" unreachable, and every focus would scroll
+    // again. The explicit align modes and the oversized-column pin
+    // instead reserve the full `gap`, so a column that can't fit either
+    // way still lines up with the layout's gutter rhythm instead of
+    // kissing the viewport edge.
     let fitPadding = min(max((effective - columnWidth) / 2, 0), gap)
 
     switch mode {
@@ -1425,23 +1425,10 @@ extension PaneContainerViewController {
       if columnWidth >= effective { return clamp(leadingEdgeX(margin: gap)) }
       let visibleCenter = insetLeft + effective / 2
       return clamp(columnMinX + columnWidth / 2 - visibleCenter)
-    case .frameIn:
+    case .frameIn where columnWidth >= effective:
       // Wider than the band: pin the leading edge with the full gap.
-      if columnWidth >= effective { return clamp(leadingEdgeX(margin: gap)) }
-      let bandLeft = currentX + insetLeft
-      let bandRight = currentX + visibleWidth - insetRight
-      let needLeft = columnMinX - fitPadding
-      let needRight = columnMinX + columnWidth + fitPadding
-      // Already fully visible with padding: leave the scroll be.
-      if bandLeft <= needLeft && needRight <= bandRight { return nil }
-      // Otherwise fit to whichever edge needs the smaller move (niri's
-      // rule), never centring so neighbours stay on screen.
-      let distLeft = abs(bandLeft - needLeft)
-      let distRight = abs(bandRight - needRight)
-      return clamp(
-        distLeft <= distRight
-          ? leadingEdgeX(margin: fitPadding) : trailingEdgeX(margin: fitPadding))
-    case .settle:
+      return clamp(leadingEdgeX(margin: gap))
+    case .frameIn, .settle:
       // Round the scroll into the range of origins where the column is
       // seated, and leave it alone when it is already inside.
       //
@@ -1453,8 +1440,10 @@ extension PaneContainerViewController {
       // *fully visible*, a wider one across the origins where it *covers
       // the band*. One clamp serves both.
       //
-      // For a narrow column this reproduces `.frameIn` exactly. It earns
-      // its own case for the wide one, where `.frameIn` pins the leading
+      // A narrow column is all `.frameIn` reaches here with: the smallest
+      // scroll that shows it whole, never a centring one, so its
+      // neighbours stay on screen. The modes part for the wide one,
+      // where `.frameIn` pins the leading
       // edge — right when the user has just focused the column and wants
       // to start at its beginning, wrong at the end of a scroll, where it
       // would undo every scroll made *inside* a column bigger than the
