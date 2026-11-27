@@ -210,7 +210,7 @@ extension PaneContainerViewController {
     around pane: PaneModel, id: ULID = ULID(), width: CGFloat
   ) -> (ColumnModel, NSLayoutConstraint) {
     let column = ColumnModel(pane: pane, id: id)
-    setupPaneCallbacks(pane: pane, column: column)
+    setupPaneCallbacks(pane: pane)
     let cv = pane.containerView
     // A pane coming out of a folded column was hidden by the fold, and
     // this column starts unfolded.
@@ -440,7 +440,7 @@ extension PaneContainerViewController {
     focusedPane?.terminalView?.noteReturnedToUser()
   }
 
-  func setupPaneCallbacks(pane: PaneModel, column: ColumnModel) {
+  func setupPaneCallbacks(pane: PaneModel) {
     if let tv = pane.terminalView {
       tv.onFocusChanged = { [weak self, weak pane] focused in
         guard let self, let pane, focused else { return }
@@ -1049,7 +1049,7 @@ extension PaneContainerViewController {
     guard let column = columns[safe: focusedColumnIndex] else { return }
 
     let newPane = makeSplitPane(from: column.focusedPane)
-    setupPaneCallbacks(pane: newPane, column: column)
+    setupPaneCallbacks(pane: newPane)
 
     let insertPaneIndex = column.focusedPaneIndex + 1
     column.panes.insert(newPane, at: insertPaneIndex)
@@ -1094,7 +1094,7 @@ extension PaneContainerViewController {
     // active on the outgoing pane belongs to the dismissed bar's
     // lifecycle and shouldn't carry over.
     newPane.setURLBarVisible(urlBarVisible)
-    setupPaneCallbacks(pane: newPane, column: column)
+    setupPaneCallbacks(pane: newPane)
     column.panes[paneIdx] = newPane
     // Announce the swap to extensions: the outgoing pane leaves the tab
     // graph and the incoming one joins it. A start page → browser
@@ -1945,7 +1945,7 @@ extension PaneContainerViewController {
       if paneIndex <= column.focusedPaneIndex {
         column.focusedPaneIndex += 1
       }
-      setupPaneCallbacks(pane: pane, column: column)
+      setupPaneCallbacks(pane: pane)
       column.panes.insert(pane, at: paneIndex)
       // Restored pane re-enters the extension's tab graph as a
       // fresh tab — `notifyTabClosed` dropped the previous bridge

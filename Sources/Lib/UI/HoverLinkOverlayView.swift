@@ -68,8 +68,6 @@ public final class HoverLinkOverlayView: NSView {
   /// never intercept mouse events meant for links or scrolling.
   public override func hitTest(_: NSPoint) -> NSView? { nil }
 
-  public var currentURL: String { urlLabel.stringValue }
-
   public func show(url: String) {
     // Avoid re-running the fade-in every time the side flips: the
     // overlay position swap goes through `applyHoverLinkSide` on the

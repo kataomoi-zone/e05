@@ -283,14 +283,6 @@ public final class PaneModel {
     address == .blankBrowser
   }
 
-  /// True when this is a browser pane whose `WKWebView` has been
-  /// detached — either by an explicit `suspend()` or by being
-  /// constructed with `startSuspended: true`. Non-browser panes
-  /// always report `false`.
-  public var isBrowserSuspended: Bool {
-    browserView?.isSuspended ?? false
-  }
-
   /// The view that should become first responder when this pane is focused.
   public var preferredFirstResponder: NSView {
     switch content {

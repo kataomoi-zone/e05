@@ -253,10 +253,4 @@ public struct SessionState: Codable, Sendable {
       )
     }
   }
-
-  // MARK: - Delete
-
-  public static func delete() {
-    try? FileManager.default.removeItem(at: sessionFilePath)
-  }
 }

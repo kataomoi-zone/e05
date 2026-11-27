@@ -142,8 +142,7 @@ public enum GhosttyInput {
   /// Build ghostty_input_key_s from an NSEvent.
   public static func keyEvent(
     from event: NSEvent,
-    action: ghostty_input_action_e,
-    translationMods: ghostty_input_mods_e? = nil
+    action: ghostty_input_action_e
   ) -> ghostty_input_key_s {
     var key = ghostty_input_key_s()
     key.action = action
@@ -162,9 +161,7 @@ public enum GhosttyInput {
 
     // unshifted_codepoint: only for key events (not flagsChanged)
     if event.type == .keyDown || event.type == .keyUp {
-      let modsToApply =
-        translationMods.map { NSEvent.ModifierFlags(rawValue: UInt($0.rawValue)) } ?? []
-      if let chars = event.characters(byApplyingModifiers: modsToApply),
+      if let chars = event.characters(byApplyingModifiers: []),
         let scalar = chars.unicodeScalars.first
       {
         key.unshifted_codepoint = scalar.value

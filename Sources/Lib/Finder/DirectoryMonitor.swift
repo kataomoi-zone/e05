@@ -17,7 +17,6 @@ public final class DirectoryMonitor {
   public var onChange: (() -> Void)?
 
   private var source: DispatchSourceFileSystemObject?
-  private var fileDescriptor: CInt = -1
 
   public init() {}
 
@@ -44,14 +43,12 @@ public final class DirectoryMonitor {
     }
     src.resume()
 
-    self.fileDescriptor = fd
     self.source = src
   }
 
   public func stop() {
     source?.cancel()
     source = nil
-    fileDescriptor = -1
   }
 
   deinit {

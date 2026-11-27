@@ -161,7 +161,6 @@ public final class PaneContainerViewController: NSViewController {
   /// place the user's focus actually ends up. Created in
   /// `viewDidLoad`.
   public let toasts = ToastCenter()
-  weak var toastOverlay: ToastOverlayView?
 
   nonisolated(unsafe) var scrollEventMonitor: Any?
   nonisolated(unsafe) var keyEventMonitor: Any?
@@ -732,7 +731,6 @@ public final class PaneContainerViewController: NSViewController {
       overlay.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -32),
     ])
-    toastOverlay = overlay
     toasts.attach(overlay: overlay)
   }
 
@@ -757,20 +755,6 @@ public final class PaneContainerViewController: NSViewController {
     logger.debug(
       "installInitialWorkspaceVC done: workspaceVCs.count=\(self.workspaceVCs.count), subviews=\(self.view.subviews.count)"
     )
-  }
-
-  /// Describe each subview of the container's view for debugging. Maps
-  /// each subview back to its owning WorkspaceVC (if any) so we can tell
-  /// which workspace's view ended up where in the hierarchy.
-  func dumpSubviews(_ tag: String) {
-    let subs = view.subviews.enumerated().map { (i, sv) -> String in
-      if let vc = workspaceVCs.first(where: { $0.isViewLoaded && $0.view === sv }) {
-        return "[\(i)]ws=\(vc.workspace.id)"
-      }
-      return "[\(i)]other=\(type(of: sv))"
-    }
-    logger.debug(
-      "\(tag, privacy: .public) subviews=\(subs.joined(separator: " "), privacy: .public)")
   }
 
   /// Add `vc.view` as a constraint-pinned subview of the container. All

@@ -35,12 +35,6 @@ enum AppColors {
     light: NSColor(white: 0.98, alpha: 1.0),
     dark: NSColor(white: 0.12, alpha: 1.0))
 
-  /// Find-bar overlay surface — sits on pane content, more translucent
-  /// than other popovers so the underlying page stays partially visible.
-  static let findBarSurface = dynamic(
-    light: NSColor(white: 0.97, alpha: 0.92),
-    dark: NSColor(white: 0.13, alpha: 0.92))
-
   /// Pane header chrome — sits over pane background, partly translucent
   /// so the pane content shows through faintly.
   static let paneHeaderSurface = dynamic(

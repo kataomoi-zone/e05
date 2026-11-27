@@ -21,7 +21,6 @@ public final class FileItem: Sendable {
   public let isDirectory: Bool
   public let isPackage: Bool
   public let isHidden: Bool
-  public let isSymbolicLink: Bool
   public let size: Int64
   public let dateModified: Date?
   public let kind: String
@@ -35,7 +34,7 @@ public final class FileItem: Sendable {
   /// with thousands of files pays the icon cost only for the ~30 rows
   /// actually on screen.
   static let resourceKeys: Set<URLResourceKey> = [
-    .isDirectoryKey, .isPackageKey, .isHiddenKey, .isSymbolicLinkKey,
+    .isDirectoryKey, .isPackageKey, .isHiddenKey,
     .fileSizeKey, .contentModificationDateKey,
     .localizedTypeDescriptionKey,
   ]
@@ -49,7 +48,6 @@ public final class FileItem: Sendable {
     self.isDirectory = values?.isDirectory ?? false
     self.isPackage = values?.isPackage ?? false
     self.isHidden = values?.isHidden ?? false
-    self.isSymbolicLink = values?.isSymbolicLink ?? false
     self.size = Int64(values?.fileSize ?? 0)
     self.dateModified = values?.contentModificationDate
     self.kind = values?.localizedTypeDescription ?? "—"
@@ -70,7 +68,6 @@ public final class FileItem: Sendable {
     self.isDirectory = false
     self.isPackage = false
     self.isHidden = false
-    self.isSymbolicLink = false
     self.size = 0
     self.dateModified = Date()
     self.kind = "—"

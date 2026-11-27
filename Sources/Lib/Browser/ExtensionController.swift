@@ -412,9 +412,6 @@ public final class ExtensionController {
         return window.__e05PolyfillDisabled
           && window.__e05PolyfillDisabled.has(name);
       }
-      var isPopupContext = (location.protocol === 'webkit-extension:')
-        && (location.pathname.indexOf('/popup') !== -1
-            || /\\bpopup[._-]?(html|index)/i.test(location.pathname));
       if (!disabled('offscreen') && !chrome.offscreen) {
         chrome.offscreen = {
           Reason: {
@@ -1011,7 +1008,6 @@ public final class ExtensionController {
     case alreadyInstalled = 1
     case notLoaded = 2
     case storeFetchFailed = 3
-    case storeBadResponse = 4
     case bundleInvalid = 6
     case nativeHostNotFound = 12
     case nativeHostLaunchFailed = 13

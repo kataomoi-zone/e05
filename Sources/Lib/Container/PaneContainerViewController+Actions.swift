@@ -618,7 +618,6 @@ extension PaneContainerViewController {
       Action(
         id: "duplicate_pane",
         title: "Duplicate Pane",
-        menuTitle: "Duplicate Pane",
         // No keyboard shortcut: browsers ship no standard duplicate-tab
         // chord and claiming one here would risk a collision. Reachable
         // from the palette and the worklane pane menu.

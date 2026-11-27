@@ -187,13 +187,6 @@ public final class FaviconCache {
     fetch(host: key, url: url)
   }
 
-  /// Forget the in-memory copy for `host`, keeping the disk copy
-  /// intact. Testing helper — not currently called by production
-  /// code.
-  public func invalidateMemory(for host: String) {
-    memoryCache.removeValue(forKey: Self.normalize(host))
-  }
-
   /// Wipe both the in-memory LRU and the on-disk raw-bytes directory.
   /// Used by the Settings Reset "Clear Cache" action. The next
   /// favicon lookup for any host re-fetches from

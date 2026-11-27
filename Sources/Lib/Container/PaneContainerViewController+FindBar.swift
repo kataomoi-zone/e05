@@ -130,7 +130,7 @@ extension PaneContainerViewController {
     // gestures and dispatch synchronously for snappy keyboard nav.
     bar.onSearch = { [weak self, weak pane] needle in
       guard let pane else { return }
-      self?.scheduleFindUpdate(needle: needle, forward: true, pane: pane)
+      self?.scheduleFindUpdate(needle: needle, pane: pane)
     }
     bar.onNext = { [weak self, weak pane] in
       guard let self, let pane, pane.isFindBarVisible else { return }
@@ -172,7 +172,7 @@ extension PaneContainerViewController {
   /// other; the closure-captured pane reference also lets the stale
   /// guard fire on `pane.isFindBarVisible` rather than a single
   /// container-wide target.
-  private func scheduleFindUpdate(needle: String, forward: Bool, pane: PaneModel) {
+  private func scheduleFindUpdate(needle: String, pane: PaneModel) {
     pane.findCountDebounceTimer?.invalidate()
     guard !needle.isEmpty else {
       pane.findHelper?.endFind()
@@ -184,7 +184,7 @@ extension PaneContainerViewController {
     ) { [weak self, weak pane] _ in
       DispatchQueue.main.async {
         guard let self, let pane, pane.isFindBarVisible else { return }
-        self.applyFindResult(needle: needle, forward: forward, pane: pane)
+        self.applyFindResult(needle: needle, forward: true, pane: pane)
       }
     }
   }

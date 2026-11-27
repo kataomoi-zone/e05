@@ -450,7 +450,7 @@ extension PaneContainerViewController {
           )
         )
         if let title = paneState.title { pane.title = title }
-        setupPaneCallbacks(pane: pane, column: column)
+        setupPaneCallbacks(pane: pane)
         column.panes.append(pane)
         // As `insertColumn` does for a column's first pane. Extensions
         // loading at launch pick these up from their startup seed, but

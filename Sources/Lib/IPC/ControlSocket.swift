@@ -40,47 +40,47 @@ public final class ControlSocket: @unchecked Sendable {
       }
       switch op {
       case "open":
-        guard let url = Self.string(in: container, forKey: .url, op: op) else {
+        guard let url = Self.string(in: container, forKey: .url) else {
           self = .invalid(message: Self.fieldDiagnostic("url", in: container))
           return
         }
         self = .open(url: url)
       case "action":
-        guard let id = Self.string(in: container, forKey: .id, op: op) else {
+        guard let id = Self.string(in: container, forKey: .id) else {
           self = .invalid(message: Self.fieldDiagnostic("id", in: container))
           return
         }
         self = .action(id: id)
       case "switch-workspace":
-        guard let index = Self.int(in: container, forKey: .index, op: op) else {
+        guard let index = Self.int(in: container, forKey: .index) else {
           self = .invalid(message: Self.fieldDiagnostic("index", in: container))
           return
         }
         self = .switchWorkspace(index: index)
       case "notify":
-        guard let message = Self.string(in: container, forKey: .message, op: op) else {
+        guard let message = Self.string(in: container, forKey: .message) else {
           self = .invalid(message: Self.fieldDiagnostic("message", in: container))
           return
         }
         self = .notify(message: message)
       case "agent-session":
-        guard let agent = Self.string(in: container, forKey: .agent, op: op) else {
+        guard let agent = Self.string(in: container, forKey: .agent) else {
           self = .invalid(message: Self.fieldDiagnostic("agent", in: container))
           return
         }
-        guard let event = Self.string(in: container, forKey: .event, op: op) else {
+        guard let event = Self.string(in: container, forKey: .event) else {
           self = .invalid(message: Self.fieldDiagnostic("event", in: container))
           return
         }
-        guard let session = Self.string(in: container, forKey: .session, op: op) else {
+        guard let session = Self.string(in: container, forKey: .session) else {
           self = .invalid(message: Self.fieldDiagnostic("session", in: container))
           return
         }
-        guard let pane = Self.string(in: container, forKey: .pane, op: op) else {
+        guard let pane = Self.string(in: container, forKey: .pane) else {
           self = .invalid(message: Self.fieldDiagnostic("pane", in: container))
           return
         }
-        guard let pid = Self.int(in: container, forKey: .pid, op: op) else {
+        guard let pid = Self.int(in: container, forKey: .pid) else {
           self = .invalid(message: Self.fieldDiagnostic("pid", in: container))
           return
         }
@@ -98,16 +98,14 @@ public final class ControlSocket: @unchecked Sendable {
     /// "shape error".
     private static func string(
       in container: KeyedDecodingContainer<CodingKeys>,
-      forKey key: CodingKeys,
-      op: String
+      forKey key: CodingKeys
     ) -> String? {
       try? container.decodeIfPresent(String.self, forKey: key)
     }
 
     private static func int(
       in container: KeyedDecodingContainer<CodingKeys>,
-      forKey key: CodingKeys,
-      op: String
+      forKey key: CodingKeys
     ) -> Int? {
       try? container.decodeIfPresent(Int.self, forKey: key)
     }

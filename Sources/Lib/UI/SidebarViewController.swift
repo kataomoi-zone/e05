@@ -47,12 +47,6 @@ final class SidebarViewController: NSViewController {
     collapsedIds
   }
 
-  /// True when the item (workspace or column) with `id` is currently
-  /// collapsed in the worklane.
-  func isCollapsed(_ id: ULID) -> Bool {
-    collapsedIds.contains(id)
-  }
-
   // MARK: - State machine
 
   /// Current sidebar state. Mutated only via `transition(to:animated:)`

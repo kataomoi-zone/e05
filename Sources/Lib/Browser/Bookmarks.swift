@@ -488,23 +488,6 @@ public final class Bookmarks {
     fireListeners()
   }
 
-  /// Overwrite the `sort_order` of a single entry. Use this for fine
-  /// grained drag-reorder operations where the parent doesn't change.
-  public func setSortOrder(id: Int64, sortOrder: Int) {
-    guard let db else { return }
-    let sql = "UPDATE bookmarks SET sort_order = ? WHERE id = ?"
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
-      let stmt
-    else { return }
-    defer { sqlite3_finalize(stmt) }
-    sqlite3_bind_int(stmt, 1, Int32(sortOrder))
-    sqlite3_bind_int64(stmt, 2, id)
-    if sqlite3_step(stmt) == SQLITE_DONE {
-      fireListeners()
-    }
-  }
-
   /// Remove an entry by id. Folder rows cascade through `parent_id`'s
   /// `ON DELETE CASCADE` so removing a folder also removes every
   /// descendant in a single call.
