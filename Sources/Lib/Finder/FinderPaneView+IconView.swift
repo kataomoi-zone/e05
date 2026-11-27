@@ -362,7 +362,7 @@ extension FinderPaneView {
     thumbnailFetchInFlight[url] = ThumbnailFetchHandle(token: token, request: request)
 
     QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {
-      representation, _ in
+      [weak self] representation, _ in
       // QuickLook fires the completion on its own queue. Hop to
       // MainActor before touching any per-pane state.
       let image = representation?.nsImage

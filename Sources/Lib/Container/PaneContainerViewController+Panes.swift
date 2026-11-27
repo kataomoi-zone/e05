@@ -1497,7 +1497,7 @@ extension PaneContainerViewController {
       ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
       self.scrollView.contentView.animator().bounds.origin.x = liveTarget
     } completionHandler: {
-      land()
+      MainActor.assumeIsolated { land() }
     }
   }
 
