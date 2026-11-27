@@ -190,11 +190,11 @@ Claude Code's working / waiting / done state shows in the sidebar on its own —
 A pane that was running [Claude Code](https://code.claude.com) when e05 quit can reopen that conversation on the next launch: after the scrollback replay, e05 types `claude --resume <session-id>` at the restored shell's first prompt. Claude Code reports which session runs in which pane through its own hooks, which ship as a plugin in this repository:
 
 ```
-claude plugin marketplace add kawarimidoll/e05
+claude plugin marketplace add kataomoi-zone/e05
 claude plugin install e05@e05
 ```
 
-(or `/plugin marketplace add kawarimidoll/e05` and `/plugin install e05@e05` inside Claude Code).
+(or `/plugin marketplace add kataomoi-zone/e05` and `/plugin install e05@e05` inside Claude Code).
 
 Settings → General → Terminal changes the typed command, with `{session}` standing for the session id: a leading space keeps it out of a shell history that ignores such lines, and a wrapper command or extra flags go around it (` nono run -- claude --resume {session}`).
 
