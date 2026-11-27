@@ -3,7 +3,7 @@ import Testing
 @testable import E05Lib
 
 /// `TerminalTextScanner` finds the URL / path / hash tokens the terminal
-/// context menu (and later the hint overlay) act on. These pin the
+/// context menu and the hint overlay act on. These pin the
 /// detection rules and the column bookkeeping the right-click hit test
 /// depends on, without needing a live ghostty surface.
 @Suite("TerminalTextScanner")

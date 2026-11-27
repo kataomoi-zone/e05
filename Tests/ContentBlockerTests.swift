@@ -321,7 +321,7 @@ struct AdBlockerCustomSourcesTests {
     #expect(AdBlocker.customSources(entries).isEmpty)
   }
 
-  @Test("valid homepage URL surfaces, invalid is treated as nil")
+  @Test("valid homepage URL surfaces, an unparsable-looking one passes through")
   func homepageParsing() {
     let withValid = source(
       id: "A", url: "https://e.com/l.txt", homepage: "https://e.com")
