@@ -99,6 +99,16 @@ struct ShortcutCategoryTests {
     #expect(ShortcutCategory.category(for: "workspace_new") == .workspace)
   }
 
+  @Test("actions with no default chord are still listed, so one can be assigned")
+  func chordlessActionsAreListed() {
+    #expect(ShortcutCategory.category(for: "terminal_show_link_hints") == .panes)
+    #expect(ShortcutCategory.category(for: "terminal_copy_last_command_and_output") == .panes)
+    #expect(ShortcutCategory.category(for: "terminal_copy_last_command_output") == .panes)
+    #expect(ShortcutCategory.category(for: "duplicate_pane") == .panes)
+    #expect(ShortcutCategory.category(for: "close_other_panes_in_column") == .panes)
+    #expect(ShortcutCategory.category(for: "check_for_updates") == .window)
+  }
+
   @Test("category(for:) returns nil for dynamic ids")
   func dynamicIdsAreSkipped() {
     #expect(ShortcutCategory.category(for: "workspace_switch_abc") == nil)

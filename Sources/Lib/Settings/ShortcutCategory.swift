@@ -68,8 +68,13 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
         "new_terminal_pane",
         "new_finder_pane",
         "split_vertical",
+        "duplicate_pane",
         "undo_close",
         "close_pane",
+        "close_other_panes_in_column",
+        "terminal_show_link_hints",
+        "terminal_copy_last_command_and_output",
+        "terminal_copy_last_command_output",
       ]
     ),
     (
@@ -137,6 +142,7 @@ public enum ShortcutCategory: String, CaseIterable, Identifiable, Sendable {
       .window,
       [
         "open_settings",
+        "check_for_updates",
         "command_palette",
         "toggle_sidebar_pin",
         "open_tabs",
