@@ -476,6 +476,8 @@ extension FinderPaneView: NSTextFieldDelegate {
     }
     let target = currentURL.appendingPathComponent(newName)
     do {
+      // A `/` would turn the rename into a move to another folder.
+      guard !newName.contains("/") else { throw CocoaError(.fileWriteInvalidFileName) }
       try FileManager.default.moveItem(at: oldURL, to: target)
     } catch {
       logger.error(
