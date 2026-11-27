@@ -85,7 +85,9 @@ public final class StartPaneView: NSView {
   /// the muscle memory of anyone who uses it elsewhere) would silently
   /// replace the pane with a finder.
   public override func keyDown(with event: NSEvent) {
+    // Caps Lock is a state, not a chord: with it on, T is still bare T.
     let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+      .subtracting(.capsLock)
     guard modifiers.isEmpty else {
       super.keyDown(with: event)
       return
