@@ -1865,6 +1865,8 @@ public final class ExtensionController {
     unregisterContext(filename: filename)
     disabledExtensions.remove(filename)
     pinnedExtensions.remove(filename)
+    // A reinstall under the same id must ask for private access again.
+    allowsPrivateExtensions.remove(filename)
     loadedExtensions.removeAll { $0.sourceURL == sourceURL }
     savePersistedState()
     NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
