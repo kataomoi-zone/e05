@@ -120,7 +120,8 @@ extension FinderPaneView {
   /// must ensure `target` does not already exist — every drop / paste /
   /// duplicate path resolves a free slot, and Replace trashes the existing
   /// item first. On cancel or failure the partial target is removed so no
-  /// half-written file is left behind. `progress`, when supplied, receives
+  /// half-written file is left behind — unless `target` was there before
+  /// the copy, which is then left as it was found. `progress`, when supplied, receives
   /// the in-flight byte count for a determinate progress bar.
   nonisolated static func cancellableCopy(
     from source: URL, to target: URL, token: CopyCancellationToken,
@@ -178,6 +179,12 @@ extension FinderPaneView {
       state, UInt32(COPYFILE_STATE_STATUS_CTX),
       Unmanaged.passUnretained(context).toOpaque())
 
+    // Something already at `target` is not ours to clean up: the copy
+    // refuses to write over it, and it may be an earlier item of the
+    // same batch.
+    let fm = FileManager()
+    let targetWasFree = !fm.fileExists(atPath: target.path(percentEncoded: false))
+
     let flags = copyfile_flags_t(COPYFILE_CLONE | COPYFILE_RECURSIVE)
     let result = copyfile(
       source.path(percentEncoded: false),
@@ -190,8 +197,7 @@ extension FinderPaneView {
     // live errno still holds it. Then clear the partial target copyfile
     // leaves behind on abort.
     let code = context.errorCode != 0 ? context.errorCode : errno
-    let fm = FileManager()
-    if fm.fileExists(atPath: target.path(percentEncoded: false)) {
+    if targetWasFree, fm.fileExists(atPath: target.path(percentEncoded: false)) {
       do {
         try fm.removeItem(at: target)
       } catch {
