@@ -94,12 +94,6 @@ For interactive runs prefer `./scripts/dev.sh` over `swift run e05`. The script 
 ./scripts/build_app.sh release    # assemble build/release/e05.app (after swift build -c release)
 ```
 
-AppleScript integration tests for key input:
-
-```bash
-./scripts/test-key-input.sh       # requires GUI + Accessibility permission
-```
-
 ## Formatting
 
 Code is formatted with [swift-format](https://github.com/swiftlang/swift-format) (bundled with the Swift toolchain) in its **default configuration** — `.swift-format` pins only the schema `version` and overrides no rules (100-column limit, 2-space indent, etc.).
@@ -162,7 +156,6 @@ Review feedback is applied via `git commit --fixup=<sha>` or `--amend` to the or
 ## Testing philosophy
 
 - Logic (key conversion, scroll math, pane management, URL handling) is covered by unit tests
-- End-to-end key input is covered by AppleScript integration tests
 - Shell-integration snippets are covered by `./scripts/test-shell-integration.sh` (bash, zsh, fish)
 - New features should ideally ship with unit tests written first
 
