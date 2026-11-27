@@ -74,6 +74,7 @@ public enum NetscapeBookmarksParser {
     }
     var entries: [NetscapeBookmarkEntry] = []
     while !scanner.isAtEnd {
+      let loopStart = scanner.index
       scanner.skipWhitespaceAndIgnoredTags()
       if scanner.tryConsumeCloseTag(named: "dl") { return entries }
       if let next = scanner.peekTagName() {
@@ -97,15 +98,15 @@ public enum NetscapeBookmarksParser {
           }
         default:
           // Unknown / uninteresting tag — skip its opening element
-          // and continue. Closing tags are eaten in the loop above
-          // (`tryConsumeCloseTag` handled `</dl>`; anything else
-          // falls through to a no-op advance).
+          // and continue.
           scanner.advancePastOneTag()
         }
-      } else {
-        // No more tags — bail rather than spin on stray text.
-        return entries
       }
+      // Nothing above moved the scanner: text (a `<DD>` description), a
+      // closing tag this parser does not model, or a tag cut off before
+      // its `>`. The list goes on after it, and peeking it again would
+      // never end.
+      if scanner.index == loopStart { scanner.skipStray() }
     }
     return entries
   }
@@ -267,6 +268,19 @@ private struct Scanner {
       index += 1
     }
     if !isAtEnd { index += 1 }
+  }
+
+  /// Advance past the tag at the scanner head, or past the text up to
+  /// the next tag. Always moves unless the scanner is at the end.
+  mutating func skipStray() {
+    guard !isAtEnd else { return }
+    if scalars[index] == "<" {
+      advancePastOneTag()
+      return
+    }
+    while !isAtEnd, scalars[index] != "<" {
+      index += 1
+    }
   }
 
   /// Skip everything up to (but not including) the next opening

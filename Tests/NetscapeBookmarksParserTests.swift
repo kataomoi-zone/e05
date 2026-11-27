@@ -24,6 +24,32 @@ struct NetscapeBookmarksParserTests {
     #expect(bookmark(entries[1])?.url == "https://other.example.com")
   }
 
+  @Test("a description between entries does not end the list")
+  func descriptionBetweenEntries() throws {
+    let html = """
+      <DL><p>
+          <DT><A HREF="https://a.example.com">A</A>
+          <DD>What A is about
+          <DT><A HREF="https://b.example.com">B</A>
+      </DL><p>
+      """
+    let entries = NetscapeBookmarksParser.parse(html)
+    try #require(entries.count == 2)
+    #expect(bookmark(entries[1])?.url == "https://b.example.com")
+  }
+
+  @Test("a file cut off inside a tag ends the parse")
+  func truncatedInsideTag() throws {
+    let html = """
+      <DL><p>
+          <DT><A HREF="https://a.example.com">A</A>
+          <DT><A HREF="https://b.exam
+      """
+    let entries = NetscapeBookmarksParser.parse(html)
+    try #require(entries.count == 1)
+    #expect(bookmark(entries[0])?.url == "https://a.example.com")
+  }
+
   @Test("parses nested folders")
   func nestedFolders() {
     let html = """
