@@ -608,6 +608,8 @@ public enum FinderUndoCenter {
           logger.warning(
             "Undo new folder skipped — \(url.path, privacy: .public) is no longer empty"
           )
+          reportPartialBatchFailure(
+            target: target, succeeded: 0, total: 1, verbPhrase: "removed")
           return
         }
         do {
@@ -619,6 +621,8 @@ public enum FinderUndoCenter {
           logger.error(
             "Undo new folder \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
+          reportPartialBatchFailure(
+            target: target, succeeded: 0, total: 1, verbPhrase: "removed")
         }
       }
     }
@@ -637,6 +641,8 @@ public enum FinderUndoCenter {
           logger.error(
             "Redo new folder \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
           )
+          reportPartialBatchFailure(
+            target: target, succeeded: 0, total: 1, verbPhrase: "created")
         }
       }
     }
