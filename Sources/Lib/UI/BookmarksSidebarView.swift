@@ -357,20 +357,27 @@ extension BookmarksSidebarView: NSOutlineViewDataSource {
     // this same parent or elsewhere) and slot it in at the requested
     // child index. `bookmarks.reorder` then renumbers every sibling
     // sort_order in one transaction.
-    var newOrder: [Int64] = currentChildren(of: newParentId)
-      .map(\.id)
-      .filter { $0 != draggedId }
-    let insertIndex: Int
-    if resolvedTarget.childIndex == NSOutlineViewDropOnItemIndex
-      || resolvedTarget.childIndex < 0
-    {
-      insertIndex = newOrder.count
-    } else {
-      insertIndex = min(resolvedTarget.childIndex, newOrder.count)
-    }
-    newOrder.insert(draggedId, at: insertIndex)
+    let newOrder = Self.order(
+      of: currentChildren(of: newParentId).map(\.id),
+      dropping: draggedId, atChildIndex: resolvedTarget.childIndex)
     bookmarks.reorder(parentId: newParentId, orderedIds: newOrder)
     return true
+  }
+
+  /// `siblings` with `dragged` slotted in at AppKit's `childIndex`, which
+  /// counts rows as they sit before the drop: a row dragged down within
+  /// its own parent still occupies an earlier slot, so the index is one
+  /// too far once that row is lifted out. A negative index (a drop on the
+  /// parent itself) appends.
+  static func order(
+    of siblings: [Int64], dropping dragged: Int64, atChildIndex childIndex: Int
+  ) -> [Int64] {
+    var order = siblings.filter { $0 != dragged }
+    guard childIndex >= 0 else { return order + [dragged] }
+    var index = childIndex
+    if let oldIndex = siblings.firstIndex(of: dragged), oldIndex < childIndex { index -= 1 }
+    order.insert(dragged, at: min(index, order.count))
+    return order
   }
 
   /// When a drop is proposed onto a leaf bookmark row (only folders
