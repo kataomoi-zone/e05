@@ -340,6 +340,7 @@ extension FinderPaneView {
     // Keep Both of two same-named sources would number both to the same
     // free slot and the second would fail against the first on disk.
     var reserved: Set<URL> = []
+    var unreplaceable = 0
     for plan in plans {
       let hasConflict =
         fm.fileExists(atPath: plan.target.path(percentEncoded: false))
@@ -351,6 +352,12 @@ extension FinderPaneView {
       }
       switch resolution {
       case .replace:
+        // Replace starts by trashing the occupant, which would take any
+        // source of this drop that sits inside it to the Trash with it.
+        if plans.contains(where: { Self.occupant(at: plan.target, contains: $0.source) }) {
+          unreplaceable += 1
+          continue
+        }
         execPlans.append(
           .init(source: plan.source, target: plan.target, replaceExisting: true))
         reserved.insert(plan.target)
@@ -375,6 +382,9 @@ extension FinderPaneView {
         reserved.insert(plan.target)
       }
     }
+    // The user asked for these replacements, so say they did not happen.
+    reportOperationFailure(
+      succeeded: plans.count - unreplaceable, total: plans.count, verbPhrase: "replaced")
     // Everything was Stopped (or filtered out): a deliberate no-op.
     // Report success so AppKit dismisses the drag instead of bouncing it
     // back to the source, matching Finder's Stop.
@@ -769,6 +779,12 @@ extension FinderPaneView {
   private static func volumeIdentifier(of url: URL) -> AnyHashable? {
     let values = try? url.resourceValues(forKeys: [.volumeIdentifierKey])
     return values?.volumeIdentifier as? AnyHashable
+  }
+
+  /// Whether the item occupying a drop's `target` name is a folder the
+  /// `source` sits inside: `a/b/b` dropped on `a` targets `a/b`.
+  static func occupant(at target: URL, contains source: URL) -> Bool {
+    normalizedPath(source).hasPrefix(normalizedPath(target) + "/")
   }
 
   /// Strip trailing `/` so directory and file paths share a single
