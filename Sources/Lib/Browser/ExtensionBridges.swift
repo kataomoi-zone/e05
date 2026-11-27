@@ -337,6 +337,12 @@ final class PaneExtensionBridge: NSObject, WKWebExtensionTab {
       completionHandler(nil)
       return
     }
+    // `navigate` accepts what the user may type, `file://` included; an
+    // extension gets the same schemes here as `chrome.tabs.create`.
+    guard PaneAddress.extensionTab(url) != nil else {
+      completionHandler(URLError(.unsupportedURL))
+      return
+    }
     // Route through `navigate`, which resumes a suspended pane before
     // loading rather than loading into the detached placeholder (and
     // silently losing the request when the snapshot restores).
