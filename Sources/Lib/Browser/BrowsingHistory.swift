@@ -364,6 +364,8 @@ public final class BrowsingHistory {
     defer { sqlite3_finalize(stmt) }
     sqlite3_bind_int64(stmt, 1, id)
     sqlite3_step(stmt)
+    // The row just deleted may be the visit the dedup guard remembers.
+    lastRecordedURL = mostRecent(limit: 1).first?.url
     fireListeners()
   }
 

@@ -32,6 +32,35 @@ struct BrowsingHistoryTests {
     #expect(entries.count == 1)
   }
 
+  @Test("a visit deleted from history is recorded again on the next visit")
+  func revisitAfterDelete() throws {
+    let history = BrowsingHistory(inMemory: true)
+    history.recordVisit(url: "https://example.com", title: "Example")
+    let entry = try #require(history.mostRecent(limit: 10).first)
+
+    history.delete(id: entry.id)
+    history.recordVisit(url: "https://example.com", title: "Example")
+
+    #expect(history.mostRecent(limit: 10).count == 1)
+  }
+
+  @Test("deleting an older visit keeps the open page from being recorded twice")
+  func deleteOlderKeepsDedup() throws {
+    let history = BrowsingHistory(inMemory: true)
+    history.recordVisit(url: "https://old.example.com", title: "Old")
+    history.recordVisit(url: "https://example.com", title: "Example")
+    let old = try #require(history.mostRecent(limit: 10).last)
+
+    history.delete(id: old.id)
+    // `mostRecent` shows one row per URL, so count the writes instead: a
+    // visit skipped as a repeat fires no listener.
+    var writes = 0
+    history.addListener { writes += 1 }
+    history.recordVisit(url: "https://example.com", title: "Example")
+
+    #expect(writes == 0)
+  }
+
   @Test("search by URL substring")
   func searchURL() {
     let history = BrowsingHistory(inMemory: true)
