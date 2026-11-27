@@ -55,11 +55,6 @@ public final class Bookmarks {
   /// batch; the outermost `performBatch` drains it.
   private var pendingListenerFire = false
 
-  /// Schema version stamped into `PRAGMA user_version` after migrate.
-  /// Bump whenever the schema changes; `runMigrations` is responsible
-  /// for stepping any older database forward.
-  private static let currentSchemaVersion: Int32 = 1
-
   public struct Entry: Equatable {
     public let id: Int64
     /// `nil` for folder entries. Bookmarks always have a URL.
@@ -101,7 +96,7 @@ public final class Bookmarks {
   /// `sqlite3_open` fails outright on a missing directory.
   init(databasePath: String) {
     openDatabase(at: databasePath)
-    runMigrations()
+    createSchema()
   }
 
   deinit {
@@ -128,125 +123,26 @@ public final class Bookmarks {
     if let db { enableWALWithNormalSync(db) }
   }
 
-  private func runMigrations() {
-    guard db != nil else { return }
-    var current = readSchemaVersion()
-
-    // v0 → v1: introduce folders. Pre-v1 schemas have either no
-    // `bookmarks` table at all (fresh install) or the original flat
-    // `(id, url NOT NULL UNIQUE, title, created_at)` shape. Both are
-    // covered by creating the new schema and copying any rows over.
-    // Advance `current` only when the migration committed; bailing
-    // early on failure keeps `user_version` honest so the next
-    // launch re-attempts instead of running against a half-built
-    // schema.
-    if current < 1 {
-      guard migrateToV1() else {
-        logger.error(
-          "[bookmarks/migrate] aborted before v1; leaving user_version=\(current)")
-        return
-      }
-      current = 1
-    }
-
-    setSchemaVersion(current)
-  }
-
-  private func readSchemaVersion() -> Int32 {
-    guard let db else { return 0 }
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &stmt, nil) == SQLITE_OK,
-      let stmt
-    else { return 0 }
-    defer { sqlite3_finalize(stmt) }
-    return sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : 0
-  }
-
-  private func setSchemaVersion(_ version: Int32) {
+  private func createSchema() {
     guard let db else { return }
-    sqlite3_exec(db, "PRAGMA user_version = \(version)", nil, nil, nil)
-  }
-
-  /// Returns `true` when the database is at the v1 schema on exit,
-  /// `false` when a step failed and the table was rolled back.
-  /// `runMigrations` gates `setSchemaVersion(1)` on the return value
-  /// so a partial migrate doesn't stamp v1 over a v0 table.
-  private func migrateToV1() -> Bool {
-    guard let db else { return false }
-    // Fresh install: no rebuild needed, just create the v1 schema
-    // directly. Skipping the table-rename dance avoids the
-    // `SELECT ... FROM bookmarks` reference that would error before
-    // the EXISTS subquery filters it out (SQLite resolves table
-    // references at compile time, not at row time).
-    if !tableExists("bookmarks") {
-      let fresh = """
-        CREATE TABLE bookmarks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT,
-            title TEXT NOT NULL DEFAULT '',
-            created_at REAL NOT NULL,
-            parent_id INTEGER REFERENCES bookmarks(id) ON DELETE CASCADE,
-            is_folder INTEGER NOT NULL DEFAULT 0,
-            sort_order INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX idx_bookmarks_parent ON bookmarks(parent_id);
-        CREATE UNIQUE INDEX idx_bookmarks_url_unique
-            ON bookmarks(url) WHERE is_folder = 0 AND url IS NOT NULL;
-        """
-      if sqlite3_exec(db, fresh, nil, nil, nil) != SQLITE_OK {
-        logger.error(
-          "[bookmarks/migrate] v1 fresh schema failed: \(String(cString: sqlite3_errmsg(db)))")
-        return false
-      }
-      return true
-    }
-
-    // SQLite can't drop a column-level NOT NULL / UNIQUE in place, so
-    // rebuild the table. Wrapping in a transaction keeps the old data
-    // available if any step fails — without it, a crash mid-migrate
-    // would leave a half-built `bookmarks_new` alongside the lost
-    // original.
-    let migration = """
-      BEGIN TRANSACTION;
-      CREATE TABLE bookmarks_new (
+    let sql = """
+      CREATE TABLE IF NOT EXISTS bookmarks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           url TEXT,
           title TEXT NOT NULL DEFAULT '',
           created_at REAL NOT NULL,
-          parent_id INTEGER REFERENCES bookmarks_new(id) ON DELETE CASCADE,
+          parent_id INTEGER REFERENCES bookmarks(id) ON DELETE CASCADE,
           is_folder INTEGER NOT NULL DEFAULT 0,
           sort_order INTEGER NOT NULL DEFAULT 0
       );
-      INSERT INTO bookmarks_new (id, url, title, created_at, parent_id, is_folder, sort_order)
-          SELECT id, url, title, created_at, NULL, 0,
-                 (ROW_NUMBER() OVER (ORDER BY created_at)) - 1
-          FROM bookmarks;
-      DROP TABLE bookmarks;
-      ALTER TABLE bookmarks_new RENAME TO bookmarks;
-      CREATE INDEX idx_bookmarks_parent ON bookmarks(parent_id);
-      CREATE UNIQUE INDEX idx_bookmarks_url_unique
+      CREATE INDEX IF NOT EXISTS idx_bookmarks_parent ON bookmarks(parent_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_url_unique
           ON bookmarks(url) WHERE is_folder = 0 AND url IS NOT NULL;
-      COMMIT;
       """
-    if sqlite3_exec(db, migration, nil, nil, nil) != SQLITE_OK {
+    if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
       logger.error(
-        "[bookmarks/migrate] v1 rebuild failed: \(String(cString: sqlite3_errmsg(db)))")
-      sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
-      return false
+        "[bookmarks] schema creation failed: \(String(cString: sqlite3_errmsg(db)))")
     }
-    return true
-  }
-
-  private func tableExists(_ name: String) -> Bool {
-    guard let db else { return false }
-    let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK,
-      let stmt
-    else { return false }
-    defer { sqlite3_finalize(stmt) }
-    _ = name.withCString { sqlite3_bind_text(stmt, 1, $0, -1, SQLITE_TRANSIENT) }
-    return sqlite3_step(stmt) == SQLITE_ROW
   }
 
   // MARK: - Observers

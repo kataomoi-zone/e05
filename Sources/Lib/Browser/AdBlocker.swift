@@ -202,10 +202,6 @@ public final class AdBlocker {
       id: "adguard-japanese",
       name: "Japanese (AdGuard)",
       url: URL(string: "https://filters.adtidy.org/extension/ublock/filters/7.txt")!,
-      // Renamed from `adguard-japanese.txt` when the URL moved from the
-      // safari/ to the ublock/ variant — keeping the filename invalidates
-      // any pre-existing on-disk cache so the next launch fetches the
-      // fresh ublock variant rather than re-using stale text.
       cacheFilename: "adguard-japanese-ubo.txt",
       homepage: URL(string: "https://adguard.com/kb/general/ad-filtering/adguard-filters/"),
       category: .optional, defaultEnabled: false
@@ -742,8 +738,7 @@ public final class AdBlocker {
     for id in identifiers
     where !keep.contains(id)
       && (id.hasPrefix(Self.ruleListIdentifierPrefix)
-        || id.hasPrefix(Self.probeIdentifierPrefix)
-        || id.hasPrefix("e05-combined-v1-"))
+        || id.hasPrefix(Self.probeIdentifierPrefix))
     {
       do {
         try await store.removeContentRuleList(forIdentifier: id)

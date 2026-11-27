@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import Testing
 
 @testable import E05Lib
@@ -378,56 +377,5 @@ struct BookmarksTests {
     let ok = bm.setTitle(id: 999, title: "x")
     #expect(!ok)
     #expect(fireCount == 0)
-  }
-
-  @Test("v0 → v1 migration preserves existing rows and adds folder columns")
-  func migrationFromV0() throws {
-    // Stage a database on disk with the pre-hierarchy schema, then
-    // open it with the current `Bookmarks` and verify the old rows
-    // survive with folder columns defaulted appropriately. Using a
-    // temp file because `:memory:` databases close with their
-    // connection — migration needs the file to outlive the
-    // priming connection.
-    let dir = try #require(
-      FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-    ).appendingPathComponent("e05-test-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let path = dir.appendingPathComponent("bookmarks.db").path
-
-    do {
-      var raw: OpaquePointer?
-      try #require(sqlite3_open(path, &raw) == SQLITE_OK)
-      defer { sqlite3_close(raw) }
-      let legacy = """
-        CREATE TABLE bookmarks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT NOT NULL UNIQUE,
-            title TEXT NOT NULL DEFAULT '',
-            created_at REAL NOT NULL
-        );
-        INSERT INTO bookmarks (url, title, created_at) VALUES
-            ('https://a.example.com', 'A', 1000),
-            ('https://b.example.com', 'B', 2000);
-        PRAGMA user_version = 0;
-        """
-      try #require(sqlite3_exec(raw, legacy, nil, nil, nil) == SQLITE_OK)
-    }
-
-    // Now open through `Bookmarks` — `runMigrations` should step the
-    // file forward to v1 without losing the seeded rows.
-    let bm = Bookmarks(databasePath: path)
-    let all = bm.all()
-    #expect(all.count == 2)
-    let migratedUrls = Set(all.compactMap(\.url))
-    #expect(migratedUrls == ["https://a.example.com", "https://b.example.com"])
-    // Pre-existing rows must surface as bookmarks (not folders) and
-    // sit at the root.
-    #expect(all.allSatisfy { !$0.isFolder })
-    #expect(all.allSatisfy { $0.parentId == nil })
-    // sort_order is dense and monotonic across the migrated batch so
-    // the UI render order matches the original `created_at`.
-    let orders = bm.children(of: nil).map(\.sortOrder)
-    #expect(orders == [0, 1])
   }
 }

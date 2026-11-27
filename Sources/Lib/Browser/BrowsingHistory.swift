@@ -160,7 +160,6 @@ public final class BrowsingHistory {
     if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
       logger.error("Failed to create history table: \(String(cString: sqlite3_errmsg(db)))")
     }
-    addVisitTypeColumnIfMissing()
     createAggregationIndex()
   }
 
@@ -169,50 +168,16 @@ public final class BrowsingHistory {
   /// `visited_at` supplies `MAX(...)`, and `visit_type` feeds the
   /// typed-visit `SUM(...)` — so the aggregation subquery (the heavy
   /// all-rows scan) is served entirely from the index (the outer join
-  /// still reads `title` from the heap, once per distinct URL). Created
-  /// after `addVisitTypeColumnIfMissing` since it references
-  /// `visit_type`, and it supersedes the old url-only index (url is its
-  /// leading column), which is dropped.
+  /// still reads `title` from the heap, once per distinct URL).
   private func createAggregationIndex() {
     guard let db else { return }
     let sql = """
       CREATE INDEX IF NOT EXISTS idx_history_url_agg
           ON history(url, visited_at, visit_type);
-      DROP INDEX IF EXISTS idx_history_url;
       """
     if sqlite3_exec(db, sql, nil, nil, nil) != SQLITE_OK {
       logger.error(
         "Failed to create history aggregation index: \(String(cString: sqlite3_errmsg(db)))")
-    }
-  }
-
-  /// Databases created before `visit_type` existed carry the old
-  /// 4-column schema, and `CREATE TABLE IF NOT EXISTS` leaves them
-  /// untouched. Add the column in place — defaulting pre-existing
-  /// rows to `.link` (raw 1), the most common provenance — so prior
-  /// history survives the upgrade instead of being discarded.
-  private func addVisitTypeColumnIfMissing() {
-    guard let db else { return }
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, "PRAGMA table_info(history)", -1, &stmt, nil) == SQLITE_OK,
-      let stmt
-    else { return }
-    var hasColumn = false
-    while sqlite3_step(stmt) == SQLITE_ROW {
-      if let namePtr = sqlite3_column_text(stmt, 1),
-        String(cString: namePtr) == "visit_type"
-      {
-        hasColumn = true
-        break
-      }
-    }
-    sqlite3_finalize(stmt)
-    guard !hasColumn else { return }
-    if sqlite3_exec(
-      db, "ALTER TABLE history ADD COLUMN visit_type INTEGER NOT NULL DEFAULT 1", nil, nil, nil
-    ) != SQLITE_OK {
-      logger.error(
-        "Failed to add visit_type column: \(String(cString: sqlite3_errmsg(db)))")
     }
   }
 
