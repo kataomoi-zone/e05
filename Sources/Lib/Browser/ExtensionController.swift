@@ -2221,9 +2221,11 @@ private final class DelegateProxy: NSObject, WKWebExtensionControllerDelegate {
     // focused *and* the extension may see it; otherwise the normal
     // window, so an un-granted extension never learns a private window
     // is active.
-    let focusedPane = controller.workspaceBridge.currentBrowserPane()
+    // Asked of the container rather than the normal window's bridge,
+    // which only ever answers with panes of its own (non-private) side.
     let focusedPrivate =
-      focusedPane.flatMap { container.workspaceContaining(pane: $0)?.isPrivate } ?? false
+      container.focusedPane.flatMap { container.workspaceContaining(pane: $0)?.isPrivate }
+      ?? false
     if focusedPrivate, controller.allowsPrivate(for: context) {
       return controller.privateWorkspaceBridge
     }
